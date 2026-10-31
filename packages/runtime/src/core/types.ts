@@ -396,6 +396,9 @@ export const someOf = <T>(value: T): OptionOf<T> => ({ _tag: "Some", _0: value }
 
 export const NONE: OptionOf<never> = { _tag: "None" };
 
+/** `HttpError` as `.err` receives it. */
+export type HttpError = { status: number; message: string; body: OptionOf<string> };
+
 export type ParsedRoute = {
   path: string;
   pattern: string;

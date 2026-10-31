@@ -551,7 +551,7 @@ A name that a local bind ([Language §1.6.7](./language.md#_1-6-7-scoping-and-sh
 
 `xs.map(double)` is `xs.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. The named `fn` takes the first of those positionals, as many as it declares, so it must declare at least one and no more than the method binds — otherwise it is [E0213](#e0213-call-arity-mismatch). `fold`'s `fn` declares exactly two, because the element is the second: one of one would fold nothing in. A `filter` / `map` / `find` / `sort-by` `fn` declares two only where the fragment takes each value apart — a Map's filter or map, a pair ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)); over any other receiver whose type the checker can decide, a second parameter would receive nothing, or the JS index or the element again where the lowering falls back, and is E0213 too. Every other argument, including `fold`'s first, is a value and takes this check.
 
-The count is all the check compares. The `fn`'s parameter types are not checked against the element's, any more than the inline `f($1)` is: `xs.map(loud)` with `fn loud(t: Text)` over a `List(Int)` is not reported.
+Past the count, the name is checked as the call it stands for, in the scope the fragment binds: each parameter against the positional it is handed, of the type [Language §1.8.6](./language.md#_1-8-6-partial-application-and-higher-order-functions) gives it, and the `fn`'s result wherever the method checks the fragment's — the key of `sort-by`, the new value of `update`. So `xs.map(loud)` with `fn loud(t: Text)` over a `List(Int)` is [E0201](#e0201-type-mismatch) at `loud`, as `xs.map(loud($1))` is at the `$1`; over a `Map(Text, Int)`, `m.filter(keep)` takes `fn keep(k: Text, v: Int)` and reports `fn keep(k: Int, v: Int)`; and `xs.fold(0, f)` checks `f`'s first parameter against `Int`. A positional whose type the checker cannot decide is checked against nothing.
 
 **Fix**: Write the call — `label()`, or `greet(first, last)` with the arguments it declares.
 
@@ -613,9 +613,11 @@ The parser gives the bare name, the argument-less call and the empty brace form 
 
 So what this error reports is a value that is no name: a literal, a call (`onClick=box(text("z"))`), or a capitalised name carrying arguments or props (`onClick=Some(1)`, `onClick=Card {x: 1}`). A bare name that names no reducer is [E0102](#e0102-undef-reducer) instead, whatever its capitalisation — including a tile written there, because the handler position resolves in one namespace and the tile layer is not it.
 
-The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, a builtin tile's prop that [stdlib §2.3.11](./stdlib.md#_2-3-11-prop-types) gives a type — `modal(open=…)`, `select(options=…)` — written on the builtin's own call, as a named argument or in the `{…}` block, the fallback of `.get-or`, an argument of a `Map` / `Set` / `List` member whose parameter is the receiver's key, value or element type or another container of its type (`xs.push(x)`, `m.insert(k, v)`, `s.add(x)`, `xs.concat(ys)`; [stdlib §2.2](./stdlib.md#_2-2-collection-methods)), `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose declared return type is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
+The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), the index of a `List`, an `Int` in `xs[i]`, `xs[i] := v` and `xs.get(i)` alike ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics), [stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, a builtin tile's prop that [stdlib §2.3.11](./stdlib.md#_2-3-11-prop-types) gives a type — `modal(open=…)`, `select(options=…)` — written on the builtin's own call, as a named argument or in the `{…}` block, the fallback of `.get-or`, an argument of a `Map` / `Set` / `List` member whose parameter is the receiver's key, value or element type or another container of its type (`xs.push(x)`, `m.insert(k, v)`, `s.add(x)`, `xs.concat(ys)`; [stdlib §2.2](./stdlib.md#_2-2-collection-methods)), `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose declared return type is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
 
 An index `[k]` is checked against the type its receiver takes as an index, in a read as in a write: an `Int` on a `List`, and the key type `K` on a `Map(K, V)` ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)). With `TodoId` and `PostId` both declared `nominal Text`, `notes[postId]` on a `Map(TodoId, Text)` reports `Expected TodoId but got PostId` at the index, in a read and in `notes[postId] := v` alike, and so does `todos[postId].done := v` on a `Map(TodoId, Todo)`.
+
+Against a declared type, a value written as an `if`, a `match` or a `let … in` is checked, and reported, at what it evaluates to: each branch, each arm, the `let`'s body ([Language §1.9](./language.md#_1-9-expression-language)). An operator's operand is the exception: it is reported at the operator expression or at the operand as a whole, so `n := 1 + (let m = t in m)` is reported at `1 + …`, not at `m`.
 
 One message in this code is not about a type. A `credentials` literal that names no Fetch mode has exactly the type its position requires — a `Text` — and is wrong only in its value: the three modes are a value-domain constraint on that field, reported under this code because the mistake is the same one at the same place, a value the position cannot take.
 
@@ -751,6 +753,10 @@ A type-level application `T(...)` of a user-declared generic type passes a diffe
 
 > `Type "<name>" expects <m> type argument(s) but got <n>`
 
+`Tuple` takes any number of arguments, but at least one: a bare `Tuple` names no type.
+
+> `Type "Tuple" expects type arguments but got none`
+
 **Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list.
 
 ### E0211 `undef-tile-in-selector`
@@ -791,11 +797,19 @@ The id set is the ids of the elements the subscription is wired onto, since `#id
 
 ### W0212 `ui-event-tile-mismatch` (warning)
 
-A reducer subscribes to `ui.<ev>(<Tile>)` whose target tile has no descendant that fires `<ev>` in the DOM — e.g. `ui.focus(Card)` where `tile Card = box(...)`. Codegen silently drops the handler, so the reducer is dead code. Lifting that into a warning surfaces the silent failure at check time without breaking the build. The checker walks the tile's body (including child tiles), so a cascade pattern like `TodoRow = row(check(...), …)` + `ui.click(TodoRow)` does NOT trigger the warning — codegen routes the handler to the focusable descendant. "Including child tiles" is load-bearing on both sides: a body that names its descendant (`tile Row = box(Leaf)`) is walked exactly as the inline `box(input(...))` is, and codegen lifts the handler through the same edge ([§1.6.2](./language.md#_1-6-2-selectors)). The two used to disagree — the checker walked the reference and codegen did not — which produced the silent drop this warning exists to report, with no warning. Codegen follows the same edge when the descendant is reached through a call site that writes the same handler prop (`RemoveBtn {onClick: remove}`): that prop is joined with the lifted subscription, and the container's reducer fires beside it, in definition order ([§1.7.3](./language.md#_1-7-3-event-handler-props)).
+A reducer subscribes to `ui.<ev>(<Tile>)` whose target tile has no descendant where `<ev>` reaches the reducer — e.g. `ui.focus(Card)` where `tile Card = box(...)`. Codegen silently drops the handler, so the reducer is dead code. Lifting that into a warning surfaces the silent failure at check time without breaking the build. The checker walks the tile's body (including child tiles), so a cascade pattern like `TodoRow = row(check(...), …)` + `ui.click(TodoRow)` does NOT trigger the warning — codegen routes the handler to the focusable descendant. "Including child tiles" is load-bearing on both sides: a body that names its descendant (`tile Row = box(Leaf)`) is walked exactly as the inline `box(input(...))` is, and codegen lifts the handler through the same edge ([§1.6.2](./language.md#_1-6-2-selectors)). The two used to disagree — the checker walked the reference and codegen did not — which produced the silent drop this warning exists to report, with no warning. Codegen follows the same edge when the descendant is reached through a call site that writes the same handler prop (`RemoveBtn {onClick: remove}`): that prop is joined with the lifted subscription, and the container's reducer fires beside it, in definition order ([§1.7.3](./language.md#_1-7-3-event-handler-props)).
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
-The allowed root builtins per event are (current toolchain coverage: every kind listed receives the event, and a blank is a rule only where a note below says so; the implementation-side source of truth is `packages/compiler/src/ui-lifts.ts` — `UI_LIFTS`, which both the handler-emission gate (`propsFor` in `packages/compiler/src/codegen/selector.ts`) and the W0212 check in `typecheck.ts` derive from. Runtime DOM-event surfaces are owned by the per-tile modules under `packages/runtime/src/tiles/input/` — their shared listener registry is `_shared.ts`; `tiles-input.ts` is only the family aggregate — and the universal `applyUiEventHandlers` in `core.ts`):
+When `<ev>` is `focus` or `blur` and the body holds a `check`, `radio` or `switch`, that control's `<input>` does fire the event, so the message gives the reason that holds instead (see the note on `key` / `focus` / `blur` below). `<kinds>` is the label-wrapped kinds in the body, joined with ` / `:
+
+> `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a listener in tile "<Tile>": the runtime listens for "<ev>" on a <kinds>'s <label>, and the "<ev>" its <input> fires does not bubble to the <label> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
+Where a kind's element does fire `<ev>` but its renderer never calls the handler for it — runtime policy, not a fact about the element — the message says what the renderer does instead (`<instead>`) and names the handler. Those absences are `link` under `click`, whose renderer listens for it only to navigate (see the note on `link` below), and these under `input`, whose elements all fire it: `slider`, whose renderer listens for it only to write the bind, and `check`, `radio`, `switch` and `select`, whose renderers listen for `change` instead. Under `click` the default wording is not yet true of the other kinds either: every element fires `click`, and what keeps it from a reducer on a `text` or a `box` is that their renderers never call `onClick` — [#823](https://github.com/kumikijs/Kumiki/issues/823). Kinds whose renderers do the same are joined with ` / `, and the clauses for different ones with `; `:
+
+> `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a reducer in tile "<Tile>": a <kinds> fires "<ev>", and its renderer <instead>, never calling <handler> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
+The allowed root builtins per event are (current toolchain coverage: every kind listed receives the event, and a blank is a rule only where a note below says so; the implementation-side source of truth is `packages/compiler/src/ui-lifts.ts` — `UI_LIFTS`, which the handler-emission gate (`propsFor` in `packages/compiler/src/codegen/selector.ts`), the W0212 check in `packages/compiler/src/typecheck/reducer.ts`, E0212 in `typecheck/tile-collect.ts` and W0213 in `typecheck/tile.ts` all derive from. Runtime DOM-event surfaces are owned by the per-tile modules under `packages/runtime/src/tiles/input/` (their shared listener registry is `_shared.ts`; `tiles-input.ts` is only the family aggregate) and `packages/runtime/src/tiles/text/link.ts`, and by the universal `applyUiEventHandlers` in `packages/runtime/src/core/ui-events.ts`):
 
 | `ui.<ev>` | allowed root tile kinds |
 |---|---|
@@ -812,11 +826,11 @@ The allowed root builtins per event are (current toolchain coverage: every kind 
 
 The checker descends into control-flow bodies (`for` / `when` / `if` / `match`) too: both `if`'s `then`/`else` and every `match` arm contribute to the observed kind set. So `tile Dyn = for n in xs box(...)` triggers W0212 (only `box` reachable), while `tile T = if c then input(...) else button(...)` does not (both branches contribute an allowed root). The `error-boundary` fallback of a tile called inside the body is walked as well: it renders in that tile's place, and the subscription is wired onto it like the rest of the tree. The tile's own fallback is not, since it replaces the tile's tree from outside the tile. A tile whose body is entirely unresolvable (cycle, or a name no other tile defines) yields an empty observed set and the warning is suppressed — better silent than wrongly accusing.
 
-**Note on `link`**: `link` is intentionally not listed under `click` even though `<a>` fires click natively — the runtime reserves the click event on links for navigation interception and does not invoke user `onClick` reducers. Re-targeting a button or wiring `onClick=` on a parent tile is the current workaround. That reservation is about `click` only: an `<a href>` is focusable and in the tab order, so `link` is listed under `key`, `focus` and `blur`. A keydown on a link runs its `ui.key` reducer **before** the browser acts on the key; on Enter the browser then activates the link and the router navigates as it always does. The reducer sees the key and cannot cancel the navigation.
+**Note on `link`**: `link` is intentionally not listed under `click` even though `<a>` fires click natively — the runtime reserves the click event on links for navigation interception and does not invoke user `onClick` reducers. Re-target a button; `onClick=` on a parent tile reaches only a descendant in the `click` row. That reservation is about `click` only: an `<a href>` is focusable and in the tab order, so `link` is listed under `key`, `focus` and `blur`. A keydown on a link runs its `ui.key` reducer **before** the browser acts on the key; on Enter the browser then activates the link and the router navigates as it always does. The reducer sees the key and cannot cancel the navigation.
 
 **Note on `editable` and `change`**: `editable` is listed under `input`, `key`, `focus` and `blur` and **not** under `change`, and that one absence is the rule rather than a gap. A `<div contenteditable="true">` is an editing host, so it is focusable without a `tabindex` and the browser fires `focus`, `blur`, `keydown` and `input` on it — what differs between them is only which layer listens (`applyUiEventHandlers` for the first three, the `editable` renderer's own listener for `input`). It fires no `change` event at all, which no table row can supply. `ui.change(<editable tile>)` is therefore W0212 for a reason that is true; subscribe to `ui.input` and compare the new text against the slot holding the previous value, or use `ui.blur` if the wanted moment is when editing ends.
 
-**Note on `key` / `focus` / `blur`**: the runtime attaches these three to whatever element a renderer returned, so a kind is listed only where the event arrives at that element. Every kind whose element is itself focusable is in all three: `input`, `textarea`, `button`, `select`, `slider` (a bare `<input type="range">`), `editable` and `link`. `check`, `radio` and `switch` are listed under `key` and **not** under `focus` / `blur`. The two answers differ, although the three kinds look like one case: each renders a `<label>` around its `<input>`, and the listener sits on the label. `keydown` bubbles from the focused input to the label, so `ui.key` reaches it; `focus` and `blur` do not bubble, so a listener on the label never runs, and W0212 is correct to emit for them (its message says the tile has no descendant that fires the event; what is true is that the event never reaches the listener — [#526](https://github.com/kumikijs/Kumiki/issues/526)). The converse is not claimed: `video` (a `<video>` rendered with `controls`) and `details` (whose `<summary>` takes focus inside the returned `<details>`, the same shape as `check`) are not yet listed although those events plausibly reach them — [#525](https://github.com/kumikijs/Kumiki/issues/525). A row can also list a kind whose particular instance cannot fire: a `disabled` control is not focusable, and no compile-time table can see that.
+**Note on `key` / `focus` / `blur`**: the runtime attaches these three to whatever element a renderer returned, so a kind is listed only where the event arrives at that element. Every kind whose element is itself focusable is in all three: `input`, `textarea`, `button`, `select`, `slider` (a bare `<input type="range">`), `editable` and `link`. `check`, `radio` and `switch` are listed under `key` and **not** under `focus` / `blur`. The two answers differ, although the three kinds look like one case: each renders a `<label>` around its `<input>`, and the listener sits on the label. `keydown` bubbles from the focused input to the label, so `ui.key` reaches it; `focus` and `blur` do not bubble, so a listener on the label never runs, and W0212 is correct to emit for them. Writing `onFocus=` / `onBlur=` on the control itself attaches the listener to the same `<label>`, so that does not run either — [#821](https://github.com/kumikijs/Kumiki/issues/821). The converse is not claimed: `video` (a `<video>` rendered with `controls`) and `details` (whose `<summary>` takes focus inside the returned `<details>`, the same shape as `check`) are not yet listed although those events plausibly reach them — [#525](https://github.com/kumikijs/Kumiki/issues/525). A row can also list a kind whose particular instance cannot fire: a `disabled` control is not focusable, and no compile-time table can see that.
 
 ### E0213 `call-arity-mismatch`
 
@@ -1000,6 +1014,17 @@ Each value left out is written as the pattern that would match it, in the order 
 Coverage is judged once every arm's pattern fits the scrutinee: an arm that does not is [E0207](#e0207-pat-arity-mismatch), [E0208](#e0208-pat-type-mismatch) or [E0209](#e0209-pat-unknown-variant), reported alone. Where the scrutinee's type cannot be decided, for example `$el`, whose props the checker does not type, the result of a `fold`, `map` or `zip`, or a `map-request`'s `$1`, nothing is reported here, and a value no arm matches is a panic at run time ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)). A tuple with one such item is still judged on its other items, and its type is written with `?` in that place: `match (cs.fold(c, $2), c) with | (_, Red) -> 1 | (_, Green) -> 2` is reported on `Tuple(?, Color)` for `(_, Blue)`. The values the checker can name are reported even when other values hinge on an undecidable item. A `match` statement in a reducer body and a `match` in tile position are not values, and this code does not reach them.
 
 **Fix**: Add an arm for each value the message lists, or end the `match` with `_ -> …` for every value the other arms leave out.
+
+### E0228 `undef-route-pattern`
+
+A `route.enter` / `route.leave` / `route.error` reducer names a pattern that is not a route the app renders ([Routing §3.4](./routing.md#_3-4-route-lifecycle)).
+
+> `Reducer "<name>" subscribes to route.<ev>("<pattern>"), but no route is declared at "<pattern>", so the subscription never fires: the argument is compared to the keys of app.routes and of every sub-routes map character for character. Declared routes: "<p>", …`
+> `Reducer "<name>" subscribes to route.<ev>("<pattern>"), but "<pattern>" is a redirect (->>), which the router follows before any route is shown, so the subscription never fires. Declared routes: "<p>", …`
+
+The runtime fires a route lifecycle event for each pattern the route being shown is matched under — its top-level pattern, and the sub-route pattern it matched below it — and compares the reducer's argument to those as written. So the argument has to be the key of an entry that renders a tile (`->`, not `->>`), in `app.routes` or a `sub-routes` map, and anything else is a subscription nothing fires: `route.enter("/*")` names a route declared as `"/*"`, not every route; `route.enter("/bb")` beside a declared `"/b"` is a typo; `route.enter("/users/:userId")` beside a declared `"/users/:id"` spells the key differently; and the key of a `->>` redirect is a path the router follows before any route is shown. Each compiles to a reducer that never runs — the same dead subscription [E0211](#e0211-undef-tile-in-selector) reports for a tile name. The position is the pattern's string literal, and the message lists the declared routes in declaration order, `app.routes` first. A program with no `app` has no routes to compare against: it is [E0003](#e0003-missing-app), and this check says nothing.
+
+**Fix**: Write the key of the route the reducer is for, as it appears in `app.routes` or in the `sub-routes` map. To run on every route, subscribe to each top-level pattern, or read the [`route` slot](./routing.md#_3-2-current-route-state) where the work is done.
 
 ### E0229 `bind-target-not-slot`
 
@@ -1287,7 +1312,7 @@ A literal `icon(name="<x>")` reference whose name is not in the `iconNames` set 
 
 **Fix**: Correct the typo, register the custom path in `theme.icons`, or install `@kumikijs/icons` so the built-in name is in scope.
 
-Testing-DSL invariants (currently E0712, E0713 and E0714; E0710–E0719 reserved for this purpose) fire only inside test-family definitions and do not require an opt-in flag.
+Testing-DSL invariants (currently E0712 to E0715; E0710–E0719 reserved for this purpose) fire only inside test-family definitions and do not require an opt-in flag.
 
 ### E0712 `episode-mock-invalid`
 
@@ -1346,6 +1371,47 @@ The accepted set is always named, because it is the answer whenever the nearest 
 No name *inside* the unknown key is resolved: a name belonging to a section that does not exist would be a second diagnostic at a position that stops existing once the first is fixed. What still reports there is what is wrong wherever it is written — a wildcard in a `given` is [E0109](#e0109-test-wildcard-misuse) in any section, and survives fixing the section name.
 
 **Fix**: Spell the section the way its kind writes it. The accepted set is in the message, and it is the same table `codegen/emit-test.ts` reads a section by — so a section the checker rejects is one nothing lowers, and an `episode-test` `expect` it does not recognise throws at codegen rather than lowering to an assertion about nothing.
+
+### E0715 `for-all-no-generator`
+
+A `property-test` `for-all` variable's type is one the generator cannot build ([Testing §8.3.2](./testing.md#_8-3-2-generators)). Every trial is run on a value of each `for-all` type, built in full; a type with a part the generator has no value for would be handed to the invariant with a stand-in there: the property would be checked over values the program can never hold, and a write of one would fail every trial with a rejection that blames the stand-in rather than the type.
+
+The type holds, somewhere in it, one of:
+
+- a `File` or an `EffectId`. A `File` comes from the platform and an `EffectId` from `emit`; neither has a value to make up. A `FormData` holds one, through its `FileV` variant.
+- a recursive type with no finite value — one that cannot be built without another of itself inside it, like `Inf` below. A recursive type with a way to end — a variant without the recursive payload, or an `Option` or a collection holding it — is generated, to a bounded depth.
+- a generic that nests a parameter deeper ([Language §1.3.6](./language.md#_1-3-6-invariants)): `type Grow(T) = Stop | Deeper(Grow(List(T)))` hands `T` back as `List(T)`, so `Grow(Int)` holds a `Grow(List(Int))`, which holds a `Grow(List(List(Int)))`, a new type at every step with no one body to step back into. A generic that only swaps or rotates its parameters (`type Alt(A, B) = Nil | Cons(A, Alt(B, A))`) reaches finitely many instantiations, each stepped back into, and one reached again under another argument is a type of its own, entered once. A parameter the body never holds needs no generator: `type Tag(T) = {name: Text}` builds `Tag(File)`.
+- refinements that leave no value. Stacked refinements narrow each other — each bound the tighter of the two, a `one-of` keeping only the values the others pass, an `email`, `url` or `uuid` built at a length the others allow — so a stack is refused when nothing passes all of it: `Int where positive where negative`, `Text where len-gt(5) where len-lt(3)`, `Text where email where url`, `Text where uuid where len-gt(36)` (a uuid is 36 characters, an email or a url at least 5), or a `one-of` every value of which another refinement refuses.
+
+```kumiki invalid
+type Inf = {v: Int, next: Inf}
+
+slot count : Int = 0
+
+reducer bump on=ui.click(B) do=
+    count := count + 1
+
+tile B = button(text="+")
+
+test inf-has-no-value =
+    property-test
+        for-all   = {x: Inf}
+        given     = {slots: {count: x.v}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(bump).slots.count == x.v + 1
+```
+
+Every `Inf` holds another `Inf`, so there is no first one to build: the field `x` is reported, and no trial is run.
+
+> `` No generator for `for-all` "<name>": "<type>" has none ``
+> `` No generator for `for-all` "<name>": "<type>" has no finite value ``
+> `` No generator for `for-all` "<name>": "<generic>" nests a parameter deeper at every step: "<type>" inside "<type>" ``
+> `` No generator for `for-all` "<name>": the refinements of "<type>" leave no value: <why> ``
+
+`<why>` is one of `none is at least <m> and at most <n>`, `none is at least <m> and at most <n> characters long`, `none is both <a shape> and <a shape>`, `<a shape> is at least 5 characters long`, `a uuid is 36 characters long`, and ``no value its `one-of` lists passes the rest``.
+
+It is reported at the `for-all` field. An error in the type, or in a definition it reaches, is reported by its own code instead, and the field is not asked about its generator as well: a name that resolves to nothing ([E0117](#e0117-undef-type)), a type given the wrong number of arguments, a bare `Tuple` among them ([E0210](#e0210-type-arity-mismatch)), a refinement that cannot be checked ([E0803](#e0803-unimplemented-refinement), [E0804](#e0804-refinement-args-invalid)), or a definition that resolves to itself ([E0009](#e0009-type-cycle)).
+
+**Fix**: Generate a type the property can be stated over — a recursive type given a way to end (`next: Option(Inf)`), the part of a type that does not hold the `File`, or refinements some value passes — or write the case as a reducer-test. Codegen asks the same question, so a caller that skips `check` gets this code as a thrown error rather than a descriptor with a hole in it.
 
 ## E08xx — Runtime Hazards
 
