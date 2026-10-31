@@ -3,6 +3,7 @@ import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
 import { bindTarget } from "../bind-target.ts";
 import { BUILTIN_TILES, contentArg } from "../builtins.ts";
+import { errorField } from "../error-field.ts";
 import { TIME_INPUT_PATTERNS } from "../input-bind.ts";
 import type { ParseReading } from "../parse-reading.ts";
 import { writtenValue } from "../typecheck/tile-collect.ts";
@@ -607,11 +608,12 @@ function tileCallJs(
       }
       case "error": {
         const fieldArg = t.args.find((a) => a.name === "field");
-        const fieldName =
-          fieldArg && (fieldArg.value as Expr).kind === "Ref"
-            ? (fieldArg.value as Expr & { name: string }).name
-            : "";
-        return `({ kind: "error", field: ${JSON.stringify(fieldName)}, props: ${propsObj} })`;
+        const field = fieldArg && !isTileExpr(fieldArg.value) ? errorField(fieldArg.value) : null;
+        // Only a program lowered without `check` gets here with no path, since E0230 refuses it;
+        // a field that names no slot renders nothing.
+        const [slot, path] =
+          field?.root.kind === "Ref" && field.path ? [field.root.name, field.path] : ["", []];
+        return `({ kind: "error", field: ${JSON.stringify(slot)}, path: ${JSON.stringify(path)}, props: ${propsObj} })`;
       }
       case "route-outlet":
         return `({ kind: "route-outlet", children: [], props: ${propsObj} })`;

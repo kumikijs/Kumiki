@@ -1,18 +1,28 @@
 import {
   type BindSegment as CompilerBindSegment,
+  type FieldSegment,
   indexSegmentJs,
   UNWRAP_SEGMENT,
 } from "@kumikijs/compiler";
-import { _setPathHelper, type BindSegment as RuntimeBindSegment } from "@kumikijs/runtime";
+import {
+  _setPathHelper,
+  type PathSegment,
+  type BindSegment as RuntimeBindSegment,
+} from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
 const _compilerToRuntime: RuntimeBindSegment = null as unknown as CompilerBindSegment;
 const _runtimeToCompiler: CompilerBindSegment = null as unknown as RuntimeBindSegment;
+const _errorPathToRuntime: PathSegment = null as unknown as FieldSegment;
 
 describe("the segment the compiler emits is the one the runtime decodes", () => {
   it("keeps the two declarations mutually assignable", () => {
     expect(_compilerToRuntime).toBeNull();
     expect(_runtimeToCompiler).toBeNull();
+  });
+
+  it("lets an error tile's path be read as the runtime's path", () => {
+    expect(_errorPathToRuntime).toBeNull();
   });
 
   it("unwraps through the datum the compiler emits", () => {
