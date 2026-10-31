@@ -1,0 +1,26 @@
+{
+  "steps": [
+    {
+      "label": "a text tile renders a Bytes as its base64",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["aGk=", "raw=/wCA"]
+      }
+    },
+    {
+      "label": "show, + and fmt agree, and from-base64 reads show back",
+      "do": { "click": "#show" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "shown": "/wCA",
+          "joined": "hi=aGk=",
+          "formatted": "raw=/wCA",
+          "round": true,
+          "parsed": false
+        },
+        "domIncludes": ["shown=/wCA"]
+      }
+    }
+  ]
+}

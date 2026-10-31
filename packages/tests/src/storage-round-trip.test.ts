@@ -18,7 +18,7 @@ const SAVE_THEN_LOAD: [string, string][] = [
   ["Load", "shown: same="],
 ];
 
-const READ_BACK = "shown: same=true data=104,105 ratio=Infinity";
+const READ_BACK = "shown: same=true data=aGk= ratio=Infinity";
 const STORED = '~{"data":{"$bytes":"aGk="},"ratio":{"$float":"Infinity"}}';
 
 describe("a Bytes and a non-finite Float survive a write then a read", () => {
@@ -66,7 +66,7 @@ app D
       ["Save", "shown: saved"],
       ["Load", "shown: xs="],
     ]);
-    expect(page).toContain("shown: xs=NaN,-Infinity,2.5 m=0,255 o=Infinity");
+    expect(page).toContain("shown: xs=NaN,-Infinity,2.5 m=AP8= o=Infinity");
   });
 });
 
