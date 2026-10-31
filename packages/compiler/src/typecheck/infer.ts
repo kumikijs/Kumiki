@@ -12,7 +12,7 @@ import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
 import { qualifierType } from "../parse-reading.ts";
 import { hasMember, isOwnMember } from "../stdlib-members.ts";
 import { FILE_FIELDS, type PrimName, refType } from "../stdlib-types.ts";
-import { getOrResultType, unwrappedType } from "./against.ts";
+import { getOrResultType, indexStep, unwrappedType } from "./against.ts";
 import { type Ctx, isBuiltinCall, type SymbolTable } from "./context.ts";
 import { binOpResult, letInScope } from "./expr.ts";
 import { fnResultType } from "./fn.ts";
@@ -350,13 +350,10 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       return fixed ? prim(fixed, e.pos) : null;
     }
     case "Index": {
-      const base = unaliasType(inferType(e.base, sym, ctx), sym);
-      if (base?.kind === "TypeApp") {
-        if (base.name === "List" || base.name === "Set") return base.args[0] ?? null;
-        if (base.name === "Map") return base.args[1] ?? null;
-      }
-      if (base?.kind === "TypeRecord" && e.index.kind === "Str") {
-        return recordFieldType(base, e.index.value);
+      const step = indexStep(inferType(e.base, sym, ctx), sym);
+      if (step.kind === "place") return step.type;
+      if (step.kind === "no-place" && step.base.kind === "TypeRecord" && e.index.kind === "Str") {
+        return recordFieldType(step.base, e.index.value);
       }
       return null;
     }
