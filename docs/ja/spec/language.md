@@ -232,8 +232,8 @@ type Email     = nominal Text where email
 type Url       = nominal Text where url
 type Percent   = nominal Float where between(0.0, 100.0)
 type User      = {id: UserId, name: Text where nonempty, email: Email}
-type HttpError = {status: Int where between(400, 599), message: Text}
-type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(HttpError)
+type ApiError  = {status: Int where between(400, 599), message: Text}
+type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(ApiError)
 ```
 
 ### 1.3.5 型の一意化
@@ -299,6 +299,7 @@ type Nest(T) = Flat(T) | Deeper(Nest(List(T)))
 それ以外で汎化型の適用を展開する比較 —— 異なる汎化型どうし、または汎化型とそうでない型 —— は、両側を展開する。汎化型が**型引数を深く入れ子にする**とは、型引数が渡される先を body が適用する汎化型越しにたどると、より大きな型引数の内側でその型引数のいずれかへ戻ることをいう（`Nest` は `T` を `List(T)` として戻す）。どちらの側もそのような汎化型を適用していなければ、比較が出会う書かれたとおりの組は有限であり、汎化型が型引数をどう入れ替えたり巡回させたりしても、繰り返された組で終わる。どちらかの側が適用しているときは、下りの途中で、展開中の同じ先頭の組（両側で適用されている名前の組）へ、前回入ったときより大きな合計サイズで再入するたびに、その組について 1 回と数える。1 回の比較では、どのフィールドとペイロードも含めて先頭の組ごとに 64 回まで数え、65 回目以降の再入はすべて、繰り返された組と同じく「はい」と答える。大きくならなかった再入は数えない。この上限は不一致を「はい」に変えることしかないが、その答えはフィールドの順序で決まることがある：比較が終わらないフィールドがその組の回数を使い切ると、後のフィールドがその組への再入を経てしか届かない不一致は見逃される。こうした「はい」で分岐を結合した `if`・`match`・リストリテラルは、後の比較が拒否する型を持つことがある。
 
 5. **型引数はその定義にスコープされ**、同名のトップレベル定義を覆い隠す：`type Alias(Cents) = Cents` の body は型引数であり、ほかの場所で `Cents` が何と宣言されていようと関係しない。
+6. **値をランタイムまたは標準ライブラリが供給する型の名前は、プログラムが宣言するものではない。** `PanicInfo`・`RouteErrorInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue`（[stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）は、どのプログラムでも標準ライブラリの定義を意味する：`type PanicInfo = …` は [E0231](./errors.md#e0231-reserved-type-name) であり、その名前の使用はすべて標準ライブラリの型のままで、プログラム自身の型には独自の名前を付ける（`type AppPanic = …`）。標準ライブラリが宣言するほかのドメイン型 — `Url`・`Email`・`Uuid`・`FormData` — が名指すのは、プログラムだけが値を組み立てる型である（同じ表にある `File` は宣言された型ではなくプリミティブである）。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はプログラムの型を意味する。
 
 ---
 

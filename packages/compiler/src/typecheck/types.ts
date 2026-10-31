@@ -23,6 +23,7 @@ import {
   refinementBaseProblem,
   refinementProblem,
 } from "../refinements.ts";
+import { isReservedTypeName } from "../stdlib-types.ts";
 import type { KumikiError, SymbolTable } from "./context.ts";
 
 export function resolveType(
@@ -306,6 +307,21 @@ const EMPTY_SCOPE: ReadonlySet<string> = new Set();
 
 export function checkTypeDef(def: TypeDef, sym: SymbolTable, errors: KumikiError[]): void {
   resolveType(def.body, sym, errors, new Set(def.params));
+}
+
+/**
+ * A program's own definition under a name the standard library keeps (E0231). It is reported from
+ * the program's definitions, not from {@link checkTypeDef}, which also judges the standard library's
+ * own entries when a type reaches them.
+ */
+export function reservedTypeName(def: TypeDef): KumikiError | null {
+  if (!isReservedTypeName(def.name)) return null;
+  return {
+    code: "E0231",
+    kind: "reserved-type-name",
+    message: `Type "${def.name}" collides with the standard library's ${def.name}; uses of it never see this type`,
+    pos: def.pos,
+  };
 }
 
 /**
