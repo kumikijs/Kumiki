@@ -5,6 +5,7 @@ import type {
   EmitSpec,
   EpisodeLogger,
   EpisodeStep,
+  ReducerSpec,
 } from "@kumikijs/runtime";
 import { mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
@@ -246,25 +247,25 @@ describe("the effect-cancel step an http.cancel records", () => {
           held[name]?.push({ resolve, signal });
           signal?.addEventListener("abort", () => resolve({ kind: "err", value: ABORTED }));
         });
-    const quiet = (effect: string, outcome: "ok" | "err") => ({
+    const quiet = (effect: string, outcome: "ok" | "err"): ReducerSpec => ({
       name: `${effect}_${outcome}`,
-      event: { kind: "effect" as const, effect, outcome },
+      event: { kind: "effect", effect, outcome },
       apply: () => ({ slots: {}, emits: [] }),
     });
-    const cancelOwn = (outcome: "ok" | "err") => ({
+    const cancelOwn = (outcome: "ok" | "err"): ReducerSpec => ({
       name: `own_${outcome}`,
-      event: { kind: "effect" as const, effect: "own", outcome },
-      apply: (_l: unknown, p: Record<string, unknown>) => ({
+      event: { kind: "effect", effect: "own", outcome },
+      apply: (_l, p) => ({
         slots: {},
         emits: [{ effect: "cancel", args: [p.$1] }],
       }),
     });
     type Ev = { effect: string; id: string; target: string };
-    const click = (name: string, tile: string, emits: (ev: Ev) => EmitSpec[]) => ({
+    const click = (name: string, tile: string, emits: (ev: Ev) => EmitSpec[]): ReducerSpec => ({
       name,
-      event: { kind: "ui" as const, ev: "click" },
+      event: { kind: "ui", ev: "click" },
       selector: { tile },
-      apply: (_l: unknown, p: Record<string, unknown>) => ({
+      apply: (_l, p) => ({
         slots: {},
         emits: emits(p.$event as Ev),
       }),
