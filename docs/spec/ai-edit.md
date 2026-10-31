@@ -37,7 +37,7 @@ kumiki list <layer>                 # all definition names within a layer
 kumiki list                         # all definition names (with layer prefix)
 ```
 
-A referrer is a definition that names this one at a position where the checker or the lowering reads the name as this definition, and the qualifier of a type-member call is such a position: `ItemId.fresh()`, `ItemId.parse(t)` and `ItemId.show(v)` name the type `ItemId` ([Standard Library §2.4.1](./stdlib.md#_2-4-1-id-generation), [§2.4.3](./stdlib.md#_2-4-3-type-conversion)). So is the argument of `Decoder.Json(T)`, which the lowering decodes by: in `Decoder.Json(Map(ItemId, Item))`, `ItemId` and `Item` are references. A reducer that mints ids with `ItemId.fresh()` is a referrer of `type.ItemId`, and `rename` rewrites the qualifier with the other references. On `Decoder`, `EffectId`, `Duration` and `Bytes`, only `parse` / `show` given an argument is a type-member call: with a program's own `type Duration`, `Duration.show(d)` is a referrer of it, while the namespace's built-in calls (`Duration.ms(5)`, `EffectId.none`) name no type and `Duration.fresh()` is E0116 ([E0117](./errors.md#e0117-undef-type)).
+A referrer is a definition that names this one at a position where the checker or the lowering reads the name as this definition, and the qualifier of a type-member call is such a position: `ItemId.fresh()`, `ItemId.parse(t)` and `ItemId.show(v)` name the type `ItemId` ([Standard Library §2.4.1](./stdlib.md#_2-4-1-id-generation), [§2.4.3](./stdlib.md#_2-4-3-type-conversion)). So is the argument of `Decoder.Json(T)`, which the lowering decodes by: in `Decoder.Json(Map(ItemId, Item))`, `ItemId` and `Item` are references. A reducer that mints ids with `ItemId.fresh()` is a referrer of `type.ItemId`, and `rename` rewrites the qualifier with the other references. On `Decoder`, `EffectId`, `Duration` and `Bytes`, only `parse` / `show` given an argument is a type-member call: with a program's own `type Decoder`, `Decoder.show(d)` is a referrer of it, while the namespace's built-in calls (`Decoder.Text`, `Duration.ms(5)`, `EffectId.none`) name no type and `Decoder.fresh()` is E0116 ([E0117](./errors.md#e0117-undef-type)).
 
 ### 9.2.2 Write Commands
 
@@ -116,7 +116,7 @@ Per verb, `1` means:
 | `list` | the file does not exist, or the filter names no kind of definition. A real one with nothing under it prints nothing and exits `0` |
 | `add` / `replace` / `remove` / `rename` / `edit` / `patch` | the write was rejected and rolled back |
 | `lock` / `unlock` | another agent holds a pattern overlapping one `lock` asks for, or the agent `unlock` names holds no lock to release ([§9.8.3](#_9-8-3-task-boundaries)) |
-| `replay` | the log is unreadable, the named episode is not in it, or a replayed episode panicked |
+| `replay` | the log is unreadable, the named episode is not in it, a replayed episode panicked or surfaced an unhandled effect error, or an episode was not replayed because its entry reducer is not in the program, or the log does not name or record it ([§10.5.3](./runtime.md#_10-5-3-replay)) |
 | `dev` | the server could not start. Once it is serving it runs until interrupted, and so reports nothing |
 
 A warning never changes an exit code. That is what separates the two tiers: an `error` is a claim the program is wrong, a `warning` is a claim it is suspicious, and only the first one is allowed to stop a pipeline.

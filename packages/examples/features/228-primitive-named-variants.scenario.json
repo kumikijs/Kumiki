@@ -1,0 +1,39 @@
+{
+  "steps": [
+    {
+      "label": "the slot starts at the Name variant",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["sorted by name", "is time: false", "not by time"],
+        "state": { "sort": { "_tag": "Name" } }
+      }
+    },
+    {
+      "label": "time sets the variant named Time, and Time.parse reads a date",
+      "do": { "click": "#time" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["sorted by time", "is time: true", "parsed 2026-02-28"],
+        "state": { "sort": { "_tag": "Time" } }
+      }
+    },
+    {
+      "label": "size moves off it",
+      "do": { "click": "#size" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["sorted by size", "is time: false", "not by time"],
+        "state": { "sort": { "_tag": "Size" } }
+      }
+    },
+    {
+      "label": "name goes back to the first variant",
+      "do": { "click": "#name" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["sorted by name"],
+        "state": { "sort": { "_tag": "Name" } }
+      }
+    }
+  ]
+}

@@ -129,7 +129,7 @@ type-expr   ::= primitive
               | identifier
               | type-app
 
-primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time'
+primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time' | 'EffectId'
 nominal-type ::= 'nominal' type-expr
 record-type ::= '{' field (',' field)* '}'
 field       ::= identifier ':' type-expr
@@ -140,6 +140,8 @@ type-app    ::= identifier '(' type-expr (',' type-expr)* ')'
 refinement-type ::= type-expr 'where' pred-expr
 pred-expr   ::= identifier ('(' literal (',' literal)* ')')?
 ```
+
+`variant` は識別子であり、プリミティブ型の名前もその 1 つである：`type SortBy = Name | Time | Size` の `Time` はペイロードを持たない `SortBy` のバリアントであり、`Name` と同じく値・パターン・`==` のオペランドとして書ける。単独で型として読まれるプリミティブの名前は、そのプログラムでもプリミティブを指す：`type Stamp = Time` はプリミティブの別名であり、スロットの型・ペイロード（`At(Time)`）・レコードのフィールドの型・型引数（`Option(Time)`）としての `Time` はプリミティブそのものである。`Time` という名前のバリアントがあっても、`Time.parse(t)` は [stdlib §2.4.3](./stdlib.md#_2-4-3-型変換) の変換である。ユニオンをどこに書いても選択肢はバリアントなので、`Int | Text` はペイロードを持たない 2 つのバリアントであり、「Int または Text」ではない。値を持たせるには、それぞれにペイロードを与える：`I(Int) | T(Text)`。
 
 `refinement-type` は再帰的なので、1 つの型が `where` を **2 つ以上**持てる。そのとき述語は**連言**であり、すべてが成り立つ値だけが受理される。
 
@@ -161,6 +163,8 @@ Option(T)         ; None | Some(T)
 Result(T, E)      ; Ok(T) | Err(E)
 Tuple(T1, ..., Tn)
 ```
+
+プログラム自身の union は、variant に `Some`・`None`・`Ok`・`Err` と名付けてよい。variant 名は識別子であり（[§1.3.1](#_1-3-1-構文)）、この 4 つはどれも予約語ではない（[§1.2.2](#_1-2-2-予約語)）ので、`type Health = Ok | Degraded | Down` も他と変わらない union である。型が宣言されている場所——slot、引数、`fn` の結果、そしてそこに書かれたリテラルの各フィールドと各要素——では、値がどのタグかはその型が決める。何も型を宣言しない場所——`let` と、それが束縛するリテラル——では、この 4 つは `Option` か `Result` であり、その型のメンバー・演算子・fragment を持つ。同時にその値は、プログラムが書く union——`type` に書かれたものでも、どの型の中にインラインで書かれたものでも——のうち、同じ名前で payload の数が同じであり、書かれた payload をそれぞれの型が受け入れる variant を持つものの値でもある。generic の型引数はどんな payload も受け入れ、値が着地する場所で `Box(Int)` のような適用後の型がそれを検査する。値は、どちらかの読み方が合えば着地できる。`let next = Ok` のあとに `health := next` と書けば、`health := Ok` とまったく同じく `Health` の `Ok` が書き込まれ、同じ `next` を `Int` の slot に書けば E0201 になる。`Health` の `Ok` は何も持たないので、`let r = Ok(1)` が着地できるのは `Result` が着地できる場所だけである。`type Outcome = Ok(Int) | Fail` と並んでいれば、`Outcome` の slot にも `Result(Int, Text)` の slot にも着地できる。`if` や `match` がそのような union に着地するのは、どの分岐もその union が保持するタグであるときに限る。そのような値に対する `match` は、値を `Option` か `Result` として読む。ただし、その型にないタグをいずれかの arm が名指す場合は、すべての arm のタグを宣言し値を保持する union のうちプログラムが最初に書くものとして読み、arm はその union を網羅しなければならない。
 
 ### 1.3.3 登録済み refinement 述語
 
@@ -228,8 +232,8 @@ type Email     = nominal Text where email
 type Url       = nominal Text where url
 type Percent   = nominal Float where between(0.0, 100.0)
 type User      = {id: UserId, name: Text where nonempty, email: Email}
-type HttpError = {status: Int where between(400, 599), message: Text}
-type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(HttpError)
+type ApiError  = {status: Int where between(400, 599), message: Text}
+type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(ApiError)
 ```
 
 ### 1.3.5 型の一意化
@@ -284,7 +288,18 @@ type Shape = Leaf | Branch(Shape, Shape)
 
 いずれも不変条件 3 により、自分自身へ戻るより先に構造的な型へ到達する。2 つを比較したときに停止するのは、この関係が**書かれたとおりの型**に対して**余帰納的**に読まれるからである：比較の途中で同じ組へ再入したら「はい」と答える。これは、比較の有限な部分が下りの途中ですでに検査済みであることから健全である。停止性は値が有限であることには依存しない — 上の `Node` は `next` が optional でもコンテナでもないため値を 1 つも持たないが、それでも合法な型である。
 
+汎化型は、自分の型引数以外のものへ自分自身を適用してもよい：
+
+```kumiki fragment
+type Nest(T) = Flat(T) | Deeper(Nest(List(T)))
+```
+
+これも自分自身へ戻るより先にユニオンへ到達するので、上の 3 つと同じく合法である。ただし書き出すと有限ではない — 段ごとに別の型になる（`Nest(List(Int))`、次に `Nest(List(List(Int)))`）ため、2 つを展開して比較しても同じ組へ再入することがない。そこで**同じ汎化型**の適用どうしは型引数どうしで比較し、各型引数は body を展開したときにその型引数が読まれるとおりに読む：どの比較もその型引数に届かないとき（body がそれを名指さないとき、または適用した汎化型 —— 自分自身も含む —— が読まない型引数としてだけ名指すとき）は読まず、型引数そのものが `nominal` の内側の型であるところでは正規形で、つまり先頭の alias と nominal をすべて剥がして読み（`type Tagged(T) = nominal T` は `Tagged(Yen)` と `Tagged(Cents)` を `Int` と `Int` として比べるが、`type Tag(T) = nominal {v: T}` は `T` を書かれたとおりに比べる）、それ以外では書かれたとおりに読む。複数の読み方で読まれる型引数は、最も厳しい読み方で読む。したがって `Nest(Int)` は `Nest(Int)` や `Nest(Float)` が要求される位置では受理され、`Nest(Text)` が要求される位置では拒否される — `type Box(T) = Empty | Full(T)` のような正則な汎化型で展開が出す答えと同じである。
+
+それ以外で汎化型の適用を展開する比較 —— 異なる汎化型どうし、または汎化型とそうでない型 —— は、両側を展開する。汎化型が**型引数を深く入れ子にする**とは、型引数が渡される先を body が適用する汎化型越しにたどると、より大きな型引数の内側でその型引数のいずれかへ戻ることをいう（`Nest` は `T` を `List(T)` として戻す）。どちらの側もそのような汎化型を適用していなければ、比較が出会う書かれたとおりの組は有限であり、汎化型が型引数をどう入れ替えたり巡回させたりしても、繰り返された組で終わる。どちらかの側が適用しているときは、下りの途中で、展開中の同じ先頭の組（両側で適用されている名前の組）へ、前回入ったときより大きな合計サイズで再入するたびに、その組について 1 回と数える。1 回の比較では、どのフィールドとペイロードも含めて先頭の組ごとに 64 回まで数え、65 回目以降の再入はすべて、繰り返された組と同じく「はい」と答える。大きくならなかった再入は数えない。この上限は不一致を「はい」に変えることしかないが、その答えはフィールドの順序で決まることがある：比較が終わらないフィールドがその組の回数を使い切ると、後のフィールドがその組への再入を経てしか届かない不一致は見逃される。こうした「はい」で分岐を結合した `if`・`match`・リストリテラルは、後の比較が拒否する型を持つことがある。
+
 5. **型引数はその定義にスコープされ**、同名のトップレベル定義を覆い隠す：`type Alias(Cents) = Cents` の body は型引数であり、ほかの場所で `Cents` が何と宣言されていようと関係しない。
+6. **値をランタイムまたは標準ライブラリが供給する型の名前は、プログラムが宣言するものではない。** `PanicInfo`・`RouteErrorInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue`（[stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）は、どのプログラムでも標準ライブラリの定義を意味する：`type PanicInfo = …` は [E0231](./errors.md#e0231-reserved-type-name) であり、その名前の使用はすべて標準ライブラリの型のままで、プログラム自身の型には独自の名前を付ける（`type AppPanic = …`）。標準ライブラリが宣言するほかのドメイン型 — `Url`・`Email`・`Uuid`・`FormData` — が名指すのは、プログラムだけが値を組み立てる型である（同じ表にある `File` は宣言された型ではなくプリミティブである）。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はプログラムの型を意味する。
 
 ---
 
@@ -361,6 +376,12 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
 - `policy=latest-per-key(<expr>)` と `map-request` は effect 自身の式。どちらも
   effect の入力に適用されるため、`$1` が唯一の束縛であり、slot と `fn` は読めるが
   `$route` はここでは名前ではない
+- そこでの `$1` は effect の `in=` が宣言する型を持つ。tile の `$1` がその tile の
+  `in=` の型を持つのと同じである：`type UserQuery = {id: Text}` に対する
+  `in=UserQuery` では、`$1.id` はフィールドを読み、`$1.idd` は
+  [E0108](./errors.md#e0108-undef-member) になる。`in=Unit` と宣言された effect は
+  引数なしで放出されるため、そこでは `$1` は束縛されず、読むと
+  [E0103](./errors.md#e0103-undef-ref-undef-slot) になる
 - 両者とも他の式と同様に検査される — key 中の未定義名は dispatch 時の実行時
   エラーではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)
 - `latest-per-key` の key は `emit` が実行された地点で評価される。key が読む slot は
@@ -469,6 +490,8 @@ reducer save on=ui.submit(EditForm#edit) do= ...   # "edit" form のみ
 
 **コンテナへのセレクタは、そのイベントを発火できる子孫に届く。** コンテナ種別の多くは自分自身では何も発火しない（`box` に `keydown` も `focus` も `submit` もない）。そのため `ui.<ev>(<Container>)` は、`<ev>` の許可種別（[§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) の表）に該当する子孫すべてに配線される。`ui.hover` だけは制限がなく、`mouseenter` がバブルしないためコンテナ自身*と*各子孫の両方に配線される。
 
+**コンテナに付けた `#id` は、発火する子孫を指す。** id は dispatch した要素と比較されるので、それは子孫の id（`id="save"` と `{id: "save"}` のどちらで書いてもよい）であり、コンテナ自身の id が一致するのはコンテナ自身が発火するイベントの場合だけである。`tile Toolbar = row(button(text="Save", id="save")) {id: "toolbar"}` では、`ui.click(Toolbar#save)` は Save ボタンで発火し、`ui.click(Toolbar#toolbar)` は決して発火しない — `row` は click を dispatch しないためである。`--strict-selector-id` の下では、このセレクタは [E0212](./errors.md#e0212-selector-id-mismatch-strict-selector-id-で-opt-in) になる。
+
 **子孫の書き方は結果を変えない。** 子 tile を名前で参照する本体も、インラインの本体とまったく同じように（何段でも）辿られる。したがって次の 2 つは同じプログラムである:
 
 ```kumiki snippet
@@ -505,14 +528,14 @@ editor := editor.map($1.copy(body="Body"))
 
 **インデックスのステップはレシーバ内の場所を指し**、何を指すかはレシーバによって決まる：
 
-- **`Map(K, V)`** — そのキーのエントリ。`m[k] := v` はエントリを挿入または置換し、`m[k].f := v` はエントリのフィールドへ書き込む。`k` が存在しなければ、展開先の `update` と同じく何も書き込まない。存在しない `k` での読み取り `m[k]` は、List の末尾より先のインデックスと同じく **panic** になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：それが返せる `V` がないからである。そこで `None` を返す読み取りは `m.get(k)` である。タイルではこの読み取りはレンダー中に走るので、存在しないキーは初回を含めそのレンダーを panic させる：最も近い `error-boundary` が fallback を表示し、無ければ組み込みの panic 表示がページを置き換える（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。存在しないかもしれないキーをタイルで読むには `m.get(k)` か `m.get-or(k, d)` を使う。
+- **`Map(K, V)`** — そのキーのエントリで、インデックスは読み取りでも書き込みでも `K` である（それ以外は [E0201](./errors.md#e0201-type-mismatch)）。キーは `K` の値と同じように受け入れられる（[§1.3.5](#_1-3-5-型の一意化)）：`TodoId` と `PostId` がどちらも `nominal Text` と宣言されていれば、`PostId` は `Map(TodoId, V)` のキーではなく、`TodoId`、`Text`、リテラル `"t1"` はキーである。`m[k] := v` はエントリを挿入または置換し、`m[k].f := v` はエントリのフィールドへ書き込む。`k` が存在しなければ、展開先の `update` と同じく何も書き込まない。存在しない `k` での読み取り `m[k]` は、List の末尾より先のインデックスと同じく **panic** になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：それが返せる `V` がないからである。そこで `None` を返す読み取りは `m.get(k)` である。タイルではこの読み取りはレンダー中に走るので、存在しないキーは初回を含めそのレンダーを panic させる：最も近い `error-boundary` が fallback を表示し、無ければ組み込みの panic 表示がページを置き換える（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。存在しないかもしれないキーをタイルで読むには `m.get(k)` か `m.get-or(k, d)` を使う。
 - **`List(T)`** — その位置の要素で、インデックスは `Int` である（それ以外は [E0201](./errors.md#e0201-type-mismatch)）。`xs[i] := v` は同じ長さの新しい `List` の中で `i` の要素を置き換え、`xs[i].f := v` はその要素を通して書き込む。どの階層も形を保つ。要素を指さないインデックス — 末尾より先、または負の `i` — は **panic** である（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：その reducer の書き込みはロールバックされ、`app.error` が走る。読み取り `xs[i]` も同じインデックスで panic するので、`:=` の両側は一致する。そこで panic せずに `None` を返す読み取りは `xs.get(i)` である。リストを伸ばすには `xs := xs.push(v)` と書く。
 - **`Set(T)`** — 何も指さない。Set にあるのは所属だけで場所は無いので、`s[x] := v` は [E0602](./errors.md#e0602-unassignable-member) である。所属は `.add` / `.remove` / `.toggle` で変える（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。
 - **それ以外の型** — 何も指さない。レコード、スカラー（`Int`、`Text` など）、`Option`、`Result`、`Tuple`、ユニオンにはインデックスが指す場所が無いので、そこへのインデックスのステップも [E0602](./errors.md#e0602-unassignable-member) であり、そのステップの位置で報告される：レコードへの `r["a"] := v`、`Int` への `n[0] := v`、そして要素が `Int` である `List(Int)` への `xs[0][0] := v`。レコードのフィールドはフィールドのステップ（`r.a := v`）で、`Option` / `Result` のペイロードは `.get` を通して書き、それ以外は値全体を置き換える（`n := v`）。
 
 この名前は予約語ではなくディスパッチされる: `get` という名前のフィールドを持つレコードに対しては、`rec.get.title := v` はそのフィールドへの書き込みになる。左辺と右辺は `.get` を同じ規則（レコード自身のフィールドが優先、それ以外は unwrap）で解決する。
 
-`bind=` が `.get` を経由する場合、それは書き込みであると同時に **読み取り** でもあるため、値が空のときは panic する: `draft = None` の状態で `input(bind=draft.get.title)` は初回レンダーで失敗し、アプリはマウントしない。他の `.get` 読み取りと同様に、Option の `match` を通して到達させること。
+`bind=` が `.get` を経由する場合、それは書き込みであると同時に **読み取り** でもあるため、値が空のときは panic する: `draft = None` の状態で `input(bind=draft.get.title)` は初回レンダーで失敗し、アプリはマウントしない。他の `.get` 読み取りと同様に、Option の `match` を通して到達させ、アームの中でも slot のパスを bind すること：`| Some(_) -> input(bind=draft.get.title)`。アームが束縛する名前は値であって場所ではないので、`| Some(d) -> input(bind=d.title)` は [E0229](./errors.md#e0229-bind-target-not-slot) になる。
 
 **`.copy(field=value, ...)`**: record の immutable update を行うショートカット。method 呼び出しに見えるが、内部的には named-arg を集めて `recordCopy(rec, {field: value, ...})` に展開される。複数 field を 1 度に更新できる：
 
@@ -546,7 +569,7 @@ issue.copy(status=Done, priority=High)
 
 | 構文 | 意味 |
 |---|---|
-| `$1`, `$2`, ... | `effect-event` の bind 順、`fn` 内では引数順 |
+| `$1`, `$2`, ... | `effect-event` の bind 順、`fn` 内では引数順、**tile 内ではその tile の `in=` 引数**（`$1` のみ — tile が取る positional 引数は1つ）、effect の `map-request` と `latest-per-key` の key 内ではその effect の `in=` の入力（`$1` のみ、[§1.5.2](#_1-5-2-意味)） |
 | `$el` | イベント発火元 tile の `{...}` props |
 | `$event` | イベントペイロード |
 | `$route` | route.enter / route.leave / route.error 時の Route と、link のプリフェッチ対象 — それ以外では束縛されない（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。他の reducer は `route` slot を読む |
@@ -557,6 +580,8 @@ issue.copy(status=Done, priority=High)
 > **bind list の名前は互いに異なっていなければならない。** bind list はペイロードの positional を順に名指すので、2つの束縛が同じものを名指すと、もう一方の positional は読む手段を失う — `on=load.ok(dup, dup)` は **E0123** である。`_` は何度書かれても対象外であり、位置を飛ばすのではなく占める：reducer が読まない positional のための綴りがそれである。
 
 > **最初の束縛は effect の `out=` が宣言する型を持つ。** `out=Result(T, E)` なら `load.ok($v, _)` は `$v : T` を束縛し、`Result` 以外の `out=` では `.ok` の値全体になる。したがって別の型の slot への `session := $v` は **E0201** であり、`$v` へのメンバ呼び出しはその型の slot に対するのと同じく `T` から答えが決まる。`.err` では、storage / session / indexed の capability の effect が `$e : Text` を束縛する。これらの effect は失敗のメッセージを渡す（`map-request` やホストの provider が例外を投げた場合も同じ。[ストレージ Effect](./http.md#_6-7-storage-effects)）ので、`problem := $e` はそれを格納し、`$e.message` は **E0108** になる。その `out=` もそう宣言しなければならない — `Result(T, Text)` であり、それ以外の `E` は **E0306** である。それ以外の capability の `.err` は `out=` から型付けされない。HTTP ハンドラは `{status, message, body}` レコードを渡し、カスタム capability の値はその provider が決める（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）ため、そこでの `$e` の読み取りは検査されない。2つ目の束縛（リクエストキー）と組み込み effect の結果も宣言された型を持たない。
+
+> **`$route` は `Route` であり、panic の `$event` は型を持つ。** `route.enter` / `route.leave` / `route.error` の reducer では、`$route` は標準の `Route` 型を持つ —— `route` slot がどこでもそうであるように（[ルーティング §3.2](./routing.md#_3-2-current-route-state)）。それ以外のトリガの[プリフェッチ](./routing.md#_3-8-prefetch)対象は、それを宣言された型なしで読む：自分のトリガで発火したときは空だからだ。`app.error` reducer の `$event` は標準の `PanicInfo` であり、`route.error(<pattern>)` reducer のものは `RouteErrorInfo` —— 同じフィールドに、その reducer が指す `pattern` が乗ったもの —— である（[ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）。したがって `Int` の slot への `n := $route.path` は **E0201** であり、`$event.mesage` は **E0108** である。それ以外のトリガの `$event` は宣言された型を持たない。
 
 > **`fn` 内の positional は引数である。** `$1` は1番目の引数、`$2` は2番目の引数で、値も型もその引数が宣言するものと同じである。したがって `fn plus(a: Int, b: Int) -> Int = $1 + $2` は `a + b` である。positional は引数1つにつき1つだけあり、引数を持たない `fn` の `$1` や、引数が1つの `fn` の `$2` は未定義参照（**E0103**）になる。body 内のフラグメントは自分の `$1` / `$2` を束縛し、それが `fn` のものを隠す：`fn dbl(xs: List(Int)) -> List(Int) = $1.map($1 * 2)` では、レシーバは `xs` で、フラグメントの `$1` は各要素である。
 
@@ -586,7 +611,7 @@ reducer editTitle
 
 ### 1.6.7 スコープとシャドーイング {#_1-6-7-scoping-and-shadowing}
 
-すでにスコープにある名前の上に宣言された名前は、それを**シャドーイング**する。宣言より下のすべての読みは内側の束縛であり、内側を宣言したスコープが終われば外側が戻る。束縛するすべての形がこの規則に従う — `let` 文、`for` の束縛、match のアームのパターン、そして `let … in` 式（[§1.9](#_1-9-式言語)）である。
+すでにスコープにある名前の上に宣言された名前は、それを**シャドーイング**する。宣言より下のすべての読みは内側の束縛であり、内側を宣言したスコープが終われば外側が戻る。束縛するすべての形がこの規則に従う — `let` 文、`for` の束縛、match のアームのパターン、そして `let … in` 式（[§1.9](#_1-9-式言語)）である。シャドーイングする束縛の型は、それ自身の値だけから決まる。その型が決められないとき、その束縛を読む式の型は決められないままであり、シャドーイングされた slot や束縛の型になることはない。
 
 スコープは reducer の body と、その中の入れ子になった各文の body である：`for` の body、`if` の各分岐、そして catch-all の `_` を含む match の各アーム。そこで宣言された束縛はそのスコープとともに終わる。
 
@@ -758,7 +783,7 @@ fn matchPostTag(lr: LoadResult(Post), tag: Option(Text)) -> Bool
        | _                    -> false
 ```
 
-### 1.8.5 tile / reducer からの呼び出し
+### 1.8.5 tile / reducer からの呼び出し {#_1-8-5-calling-from-tile-reducer}
 
 ```kumiki fragment
 tile TodoList = column(
@@ -774,6 +799,12 @@ reducer normalize
 fn normalizeAll(ts: Map(TodoId, Todo)) -> Map(TodoId, Todo)
    = ts.map($2.copy(text=$2.text.trim))
 ```
+
+**宣言した `fn` は同名のビルトイン関数に優先する。** 呼び出し `name(…)` は、プログラムがその名前で `fn` を宣言していればその `fn` の呼び出しであり、していなければ[ビルトイン関数](./stdlib.md#_2-4-builtin-functions)の呼び出しである。qualifier を付けずに呼び出すビルトインすべてがこれに従う：`random`、`fmt`、`panic`、`file-url`、`prefers-dark`、`trace`、そして [property-test の invariant](./testing.md#_8-3-property-tests) における `run-reducer`。`now` は予約語なので、その名前の `fn` は宣言できない。`fn` を宣言すると、その名前の呼び出しはすべて `fn` のシグネチャで検査され、`fn` の本体を実行する：tile、reducer、別の `fn`、テスト本体、そして `fn` を名指す式断片の位置（[§1.8.6](#_1-8-6-部分適用と高階関数)）のいずれでも同じである。連鎖して書く `….run-reducer(r)` もビルトインではなくなり、どの型にも無いメソッドになる（[E0801](./errors.md#e0801-unimplemented-method)）。下の reducer 文を除けば、そのプログラムからビルトインには届かなくなるので、両方が要るプログラムは `fn` に別の名前を付ける。
+
+effect や型は事情が異なる。標準の effect や型の値はランタイム自身が供給するので、その名前でプログラムが宣言しても、`fn` のようには効力を持てない。ビルトイン関数は検査も lowering もコンパイラが受け持つので宣言を尊重でき、後から加わったビルトインが、その名前の `fn` を既に持つプログラムを壊すこともない。
+
+reducer の文として単独で書いた `panic(message)` は呼び出しではなく文の形である。そこでは `fn` の値の行き先が無いからである。プログラムが何を宣言していても、reducer を停止する。
 
 ### 1.8.6 部分適用と高階関数
 
@@ -793,6 +824,23 @@ items.filter(isActiveOnly)
 ```
 
 式断片の位置に置いた fn 名は、メソッドが式断片の positional で行う呼び出しである：`items.map(double)` は `items.map(double($1))`、`xs.fold(0, add)` は `xs.fold(0, add($1, $2))` である。括弧のない fn 名が正しいのは**この位置だけ**である — fn は値ではないので、値の位置に書いた `label` は [E0127](./errors.md#e0127-fn-as-value) であり、呼び出しは `label()` と書く。位置の一覧と、それぞれが束縛する positional の数は E0127 の項に挙げてある。
+
+**各 positional の型**は、メソッドが式断片に渡すものの型であり、レシーバの型から読み取る。`fold` のアキュムレータだけは init の型から読み取る：
+
+| メソッド | レシーバ | `$1` | `$2` |
+|---|---|---|---|
+| `filter`, `map`, `find`, `sort-by` | `List(T)` | 要素、`T` | — |
+| `filter`, `map` | `Option(T)` | 値、`T` | — |
+| `map` | `Result(T, E)` | `Ok` の値、`T` | — |
+| `filter`, `map` | `Map(K, V)` | キー、`K` | 値、`V` |
+| `fold(init, f)` | `List(T)` | アキュムレータ、init の型 | 要素、`T` |
+| `flat-map` | `Option(T)`, `Result(T, E)` | 値、`T` | — |
+| `update(k, f)` | `Map(K, V)` | 現在の値、`V` | — |
+| `map-err` | `Result(T, E)` | エラー、`E` | — |
+
+`filter`・`map`・`find`・`sort-by` では、`Tuple(A, B)` である `T`——`.entries` が返すもの——は分解され、`$1` が `A`、`$2` が `B` になる（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）。positional はその型の値として検査され、fn 名は自身が表す呼び出しとして検査される：`fn loud(t: Text)` に対して、`List(Int)` 上の `xs.map(loud($1))` は [E0201](./errors.md#e0201-type-mismatch) であり、`xs.map(loud)` も同じである。`xs.fold(0, f)` は `f` の第 1 パラメータを init の型 `Int` と、第 2 パラメータを要素と照合する。式断片の結果はアキュムレータの型と照合されないので、`$1` が init の型をもつのは最初の 1 回だけである：`xs.fold(0, $1.show)` は通り、2 回目には `Text` を渡す。
+
+型検査器が型を決められない positional には型がなく、何とも照合されない：型の決まらないレシーバの上（型パラメータ、`->` のない `fn` の結果）、[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t) が束縛を与えていない `Set` の `filter`、型として読み戻されない `Map` のキー（`Bytes` のキーや、型が型パラメータであるキーは、格納されている文字列のまま渡される）、そして init 自体に型のない `fold` のアキュムレータ——空の Map でも空の Set でもある `{}`——がそれにあたる。
 
 ---
 
@@ -838,6 +886,12 @@ unop        ::= '-' | '!'
 **`{ … }` リテラルは、最初のキーがフィールド名ならレコード、そうでなければ Map である。** フィールド名は識別子か予約語なので `{type: ui.click, target: Go}` や `{for: "name"}` はレコードだが、単独で値になる予約語 `true`・`false`・`now` はフィールド名ではない。これらはキーである。`{true: "on", false: "off"}` は `Map(Bool, Text)` で、`{(true): "on", false: "off"}` が書くのと同じ Map になり、`{now: "start"}` は `Map(Time, Text)` になる。それ以外の最初のキー — 文字列、数値、`Some(1)`、括弧で囲んだ名前 `(k)` — もリテラルを Map にする。リテラル全体の読み方は最初のキーが決める。`{a: 1, true: 2}` は `true` の位置で構文エラーになる。`true` は値であり、レコードのフィールド名ではないからである。`{true}` や `{true = 1}` も同じ構文エラーになる。Map のキーには `:` が続くので、`,`・`=`・`}` が続く `true` はフィールド名の位置にある。
 
 `if` と `match` の値はいずれかの分岐の値なので、**どの分岐も式の行き先に合っていなければならない**。`ou` が `Option(UserId)`、`p` が `PostId` のとき、`p := match ou with | Some(id) -> id | None -> p` は `Some` の arm で [E0201](./errors.md#e0201-type-mismatch) になる。各 arm はそのパターンが束縛する型で読まれ、`p := ou.get-or(p)` と同じ扱いになる。型を宣言する側がない位置（`let`、演算子のオペランド）では、式の型は分岐の共通の型になる。分岐どうしが食い違う場合、共通の型は分岐が共有する基底型で、nominal は落ちる。`UserId` の分岐と `PostId` の分岐なら `Text` になる。式が型を持たず何も報告されないのは、分岐が基底型を共有しない場合か、型が決められない分岐がある場合だけである。
+
+`let x = v in body` の値は本体の値であり、本体は `x` を `v` の型に束縛して読まれる。したがって式の行き先に入るのは本体である。`fn label(n: Int) -> Text = let m = n + 1 in m` は `m` で [E0201](./errors.md#e0201-type-mismatch) になり、`… in m.show` は通る。型を宣言する側がない位置では、式の型は本体の型であり、そこから読むメンバはその型のメンバになる。`size` フィールドを持つレコードに対する `(let b = box in b).size` はそのフィールドを読む。
+
+`match` はいずれかの arm の値に評価されるので、**scrutinee の型のすべての値に arm がいる**。union の各 variant（`Option` なら `None` と `Some`、`Result` なら `Ok` と `Err`）と、tuple の要素の組み合わせのそれぞれに arm がいる。variant パターンの bind はどのペイロードも受けるので `Some(v)` はすべての `Some` を覆い、`_` と名前はすべてを覆う。`Bool`・`Int`・`Text`・レコード・リストには名指せる variant がなく、リテラルパターンもない（[§1.9.1](#_1-9-1-禁止事項)）ので、これらを覆うのは `_` か名前である。arm が値を取りこぼす `match` は [E0227](./errors.md#e0227-non-exhaustive-match) になり、取りこぼした値をそれぞれ、それに一致するパターンとして挙げる（`Blue`、`None`、`(Some(_), Green)`）。scrutinee の型が決められない場合（たとえばチェッカーが props に型を付けない `$el` や、`fold` の結果）、どの arm にも一致しない値は **panic** になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。reducer の中なら、その書き込みはロールバックされ `app.error` が走る。描画の中なら、いちばん近い `error-boundary` が受け取る。それがなければ、アプリはページの代わりに panic を表示し、`app.error` は走らない。値としての `match` が、いずれかの arm の値以外に評価されることはない。
+
+reducer 本体の `match` 文（[§1.6.1](#_1-6-1-構文)）とタイル位置の `match`（[§1.7.1](#_1-7-1-構文)）は値ではなく、この規則の対象外である。どの arm にも一致しない `match` 文は、条件が偽のときの `else` なし `if` 文と同じく何も実行せず、どの arm にも一致しないタイルの `match` は空の `text` を描画する。
 
 ### 1.9.1 禁止事項
 

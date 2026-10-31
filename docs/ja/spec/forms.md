@@ -21,6 +21,22 @@ tile Compose = column(
 - ユーザー入力で slot が更新 → tile が再描画
 - 型と refinement は **入力ごとに検査**される
 
+`bind=` のターゲットは、コントロールが書き戻す場所を指す：slot、またはその中へのフィールドパスである — `bind=form.email`、あるいは `Option` / `Result` のペイロードを通る `bind=draft.get.title`（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）。その根は、ターゲットを書いた位置で slot でなければならず、ナビゲーションだけが動かす `route` であってはならない（[ルーティング §3.3](./routing.md#_3-3-ルート遷移)）。`for` が束縛する名前、`match` のアームが束縛する名前、tile の入力 `$1` は値であって場所ではない（slot と同名のローカルは、どの読み出しでもそうであるように slot を隠す）。リテラルやその他の式は、そもそも場所を指さない。いずれも `kumiki check` が報告する（[E0229](./errors.md#e0229-bind-target-not-slot)）。
+
+したがって、リストの行はループ変数を通して bind しない。行は `value=` で値を表示し、props にキーを持たせ、行のイベントに対する reducer がそのキーでリストに書き込む：
+
+```kumiki fragment
+type Todo = {text: Text}
+slot todos : Map(Text, Todo) = {"a": {text: "milk"}}
+
+tile TodoText in=Text = input(value=todos[$1].text) {todoId: $1}
+tile Todos = column(for k in todos.keys TodoText(k) {key: k})
+
+reducer editTodo
+    on=ui.input(TodoText)
+    do= todos[$el.todoId].text := $event.value
+```
+
 ### 5.1.1 `bind` の対応要素 {#_5-1-1-elements-that-support-bind}
 
 | 要素 | 受け取れる型 |
@@ -92,7 +108,7 @@ effect login    cap=http.post
 
 | prop | 型 | 意味 |
 |---|---|---|
-| `auto-complete` | `Bool` | ブラウザのオートコンプリート |
+| `auto-complete` | `Text` | ブラウザのオートコンプリート（`on` / `off`） |
 | `novalidate` | `Bool` | HTML5 標準バリデーションを抑制 |
 
 form 自体には `onSubmit` を書かない。submit ハンドラは **その form をラップする tile 名**で `ui.submit(WrapperTile)` を reducer の `on=` に書く。
@@ -114,7 +130,7 @@ form 自体には `onSubmit` を書かない。submit ハンドラは **その f
 
 | prop | 型 | 意味 |
 |---|---|---|
-| `bind` | slot name | 双方向束縛 |
+| `bind` | slot、またはその中へのフィールドパス（[§5.1](#_5-1-個別入力の双方向束縛)） | 双方向束縛 |
 | `value` | expr | 単方向値（`bind` の代わりに、reducer で更新） |
 | `onChange` | reducer name | 値変更時に呼ばれる reducer |
 | `onInput` | reducer name | input イベントで呼ばれる（onChange より高頻度） |
@@ -207,7 +223,7 @@ input/textarea も `bind=` で slot を更新するほか、`ui.change(InputTile
 
 ### 5.5.2 radio
 
-radio はグループ化のため `group` prop を持つ（CSS の `name` 属性に対応）：
+radio はグループ化のため `group` prop を持つ。これは radio の `<input>` の HTML `name` 属性であり、同じ `group` を共有するラジオが 1 つの組になって、一度にチェックされるのは多くとも 1 つである：
 
 ```kumiki fragment
 tile FilterRadioAll    = radio(group="filter", value=All,    selected=(filter == All))    {label: "All"}
@@ -231,6 +247,8 @@ tile FilterRadioGroup = column(
 ```
 
 こちらが推奨。
+
+`group` の代わりに `name` を引数または props ブロックに書いた radio も、同じようにそれでグループ化される。両方あれば読まれるのは `group` で、`kumiki check` は `name` について警告する（[W0217](./errors.md#w0217-name-beside-group-warning)）。
 
 ---
 
@@ -299,6 +317,19 @@ error(field=email)
 `error(field=...)` は対象フィールドの現在の検査エラーをレンダリングする組み込み tile。slot から述語を読み取り、フィールドが**表示している**値がそれを満たさないときにそのメッセージを表示し、満たすときは何も表示しない。それは slot の現在の値だが、bind されたコントロールが refinement に拒否された値を表示している間は、その値が判定される（[§5.1.2](#_5-1-2-refinement-の扱い)）。したがって型に refinement を持たない slot にはどの値についても表示すべきメッセージがない — これは slot についての言明であり、その中の値についての言明ではない。それでも表示しうるのは、値についてではない唯一のメッセージである：bind された `input` が slot の `Int` / `Float` / `Time` としてそもそも読めないテキストを表示している間（[§5.1.1](#_5-1-1-elements-that-support-bind)）、メッセージはその読み方のもの（下の `int` / `float` / `time`）であり、どの slot でも、どの refinement よりも先に出る — `Int where between(0, 120)` への `"1.5"` は整数ではないのであって、範囲外の数ではない。
 
 述語を複数持つ型（[§1.3.1](./language.md#_1-3-1-構文)）では、§1.3.1 が与える順で、現在の値が**最初に失敗した述語**のメッセージが出る。`slot draft : Text where nonempty where len-lt(7) = ""` の手つかずのフィールドは「Required」であり、空の値が十分満たしている側の境界ではない。
+
+`field=` は slot、または slot の中への**パス**を指す：slot の名前に続くステップで、各ステップはレコードのフィールド（`form.email`）、`Option` / `Result` のペイロードへの `.get`（`draft.get.title`）、あるいは `List`（`rows[0]`）や `Map`（`book["b"]`）へのリテラルのキーによるインデックスである。
+
+```kumiki snippet
+input(bind=form.email, type="email")
+error(field=form.email)
+input(bind=form.age, type="number")
+error(field=form.age)
+```
+
+パスがあるとき、tile はそのパスかそれより下の失敗だけを描画する。slot はそのパスへの `bind` と同じようにそのパスで判定される（[§5.6](#_5-6-バリデーション戦略)） — パスに沿った述語と、パスの終点より下のすべての述語 — ので、兄弟の失敗はこの tile のものではない。`email` と `age` がどちらも失敗するレコードでは、各フィールドがレコードのどこにあっても、`error(field=form.email)` は email のメッセージを、`error(field=form.age)` は age のメッセージを描画する。bind された `input` が読めないテキストは、その input が bind するパスでの失敗である：age のフィールドの `"1.5"` は `error(field=form.age)` では「Must be a whole number」であり、`error(field=form.email)` のメッセージではない。slot だけを書けば slot 全体が対象になる：`error(field=form)` は `form` のどこかで最初に見つかった失敗を描画する。値に届かないパス — `None` や `Err` への `.get`、`List` の末尾を越えたインデックス、`Map` にないキー — にはそこで失敗するものがなく、何も描画しない。
+
+パスは slot の型に照らして検査される：レコードにないフィールドは [E0108](./errors.md#e0108-undef-member)、`Int` でない `List` のインデックスや型の違う `Map` のキーは [E0201](./errors.md#e0201-type-mismatch) である。それ以外は slot の中のどの場所も指さず、tile が描画しうる失敗がないので [E0230](./errors.md#e0230-error-field-not-path) になる：リテラル（`field="email"`）、`for` の変数や tile の `$1` のようなローカルな名前、`route` slot、値を導出するメンバー（`.length`）、`Tuple` や union へのステップ、呼び出し、そのほかの式、`List` でも `Map` でもないものへのインデックス。`field=` を持たない `error()` と、tile が読まない `{…}` ブロックに書かれた `field` も同じである。キーが計算されるインデックス（`error(field=rows[i].email)`）も E0230 である：パスは要素や項目をリテラルのキーで指す。これは規則ではなく既知の制限である（[#828](https://github.com/kumikijs/Kumiki/issues/828)）。
 
 ### 5.7.2 標準メッセージ {#_5-7-2-standard-messages}
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkSource } from "./helpers/diagnostics.ts";
+import { locatedSummariesOf } from "./helpers/diagnostics.ts";
 
 const app = (slots: string, http: string): string =>
   `${slots}
@@ -12,9 +12,6 @@ app Types
     routes = {"/" -> Main, "/404" -> Main}
     init   = []`;
 
-const diagnostics = (src: string) =>
-  checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
-
 const notPositive = (literal: string): string =>
   `timeout ${literal} is not a positive number of milliseconds; every request is aborted before it can answer`;
 
@@ -24,7 +21,9 @@ const BOGUS_MODE =
 describe("app.http value fields are checked against their types", () => {
   it("reports each field at its own position, in the order they are written", () => {
     expect(
-      diagnostics(app("", `base-url: 42, headers: 7, timeout: "soon", credentials: "bogus"`)),
+      locatedSummariesOf(
+        app("", `base-url: 42, headers: 7, timeout: "soon", credentials: "bogus"`),
+      ),
     ).toEqual([
       "E0201 7:25 Expected Text but got Int",
       "E0201 7:38 Expected Map(Text, Text) but got Int",
@@ -35,7 +34,7 @@ describe("app.http value fields are checked against their types", () => {
 
   it("base-url takes a Text, including a slot of a type built on Text", () => {
     expect(
-      diagnostics(
+      locatedSummariesOf(
         app(
           `slot endpoint : Url = "https://api.example.com"
 slot port : Int = 80`,
@@ -43,14 +42,14 @@ slot port : Int = 80`,
         ),
       ),
     ).toEqual([]);
-    expect(diagnostics(app(`slot port : Int = 80`, `base-url: port`))).toEqual([
+    expect(locatedSummariesOf(app(`slot port : Int = 80`, `base-url: port`))).toEqual([
       "E0201 7:25 Expected Text but got Int",
     ]);
   });
 
   it("timeout takes an Int of milliseconds or a Duration, and nothing else", () => {
     expect(
-      diagnostics(
+      locatedSummariesOf(
         app(
           `slot d : Duration = Duration.s(5)
 slot label : Text = "5s"`,
@@ -58,16 +57,16 @@ slot label : Text = "5s"`,
         ),
       ),
     ).toEqual(["E0201 8:37 Expected Text but got Duration"]);
-    expect(diagnostics(app(`slot label : Text = "5s"`, `timeout: label`))).toEqual([
+    expect(locatedSummariesOf(app(`slot label : Text = "5s"`, `timeout: label`))).toEqual([
       "E0201 7:24 Expected Int but got Text",
     ]);
-    expect(diagnostics(app("", `timeout: 5000`))).toEqual([]);
-    expect(diagnostics(app("", `timeout: Duration.s(5)`))).toEqual([]);
+    expect(locatedSummariesOf(app("", `timeout: 5000`))).toEqual([]);
+    expect(locatedSummariesOf(app("", `timeout: Duration.s(5)`))).toEqual([]);
   });
 
   it("timeout takes a user nominal Int, since the boundary is assignable to Int", () => {
     expect(
-      diagnostics(
+      locatedSummariesOf(
         app(
           `type Cents = nominal Int
 slot c : Cents = 5`,
@@ -77,31 +76,33 @@ slot c : Cents = 5`,
     ).toEqual([]);
   });
 
-  it("timeout refuses a Text under a program's own type Duration = Text", () => {
-    expect(diagnostics(app(`type Duration = Text`, `timeout: "soon"`))).toEqual([
-      "E0201 7:24 Expected Int but got Text",
+  it("timeout refuses a Float: 5.5 is not an Int, by choice", () => {
+    expect(locatedSummariesOf(app("", `timeout: 5.5`))).toEqual([
+      "E0201 7:24 Expected Int but got Float",
     ]);
   });
 
   it("timeout refuses a Float: 5.5 is not an Int, by choice", () => {
-    expect(diagnostics(app("", `timeout: 5.5`))).toEqual(["E0201 7:24 Expected Int but got Float"]);
+    expect(locatedSummariesOf(app("", `timeout: 5.5`))).toEqual([
+      "E0201 7:24 Expected Int but got Float",
+    ]);
   });
 
   it("timeout refuses a literal that is not positive: 0 and a negative Int", () => {
-    expect(diagnostics(app("", `timeout: 0`))).toEqual([`E0201 7:24 ${notPositive("0")}`]);
-    expect(diagnostics(app("", `timeout: -1`))).toEqual([`E0201 7:24 ${notPositive("-1")}`]);
-    expect(diagnostics(app("", `timeout: 1`))).toEqual([]);
+    expect(locatedSummariesOf(app("", `timeout: 0`))).toEqual([`E0201 7:24 ${notPositive("0")}`]);
+    expect(locatedSummariesOf(app("", `timeout: -1`))).toEqual([`E0201 7:24 ${notPositive("-1")}`]);
+    expect(locatedSummariesOf(app("", `timeout: 1`))).toEqual([]);
   });
 
   it("timeout holds a literal to Int before holding it to positive: -5.5 is one report", () => {
-    expect(diagnostics(app("", `timeout: -5.5`))).toEqual([
+    expect(locatedSummariesOf(app("", `timeout: -5.5`))).toEqual([
       "E0201 7:24 Expected Int but got Float",
     ]);
   });
 
   it("timeout reports a wrong branch of an if, and a bare union tag, at the value", () => {
     expect(
-      diagnostics(
+      locatedSummariesOf(
         app(
           `slot fast : Bool = true
 type Speed = Quick | Slow`,
@@ -109,7 +110,7 @@ type Speed = Quick | Slow`,
         ),
       ),
     ).toEqual(["E0201 8:47 Expected Int but got Text"]);
-    expect(diagnostics(app(`type Speed = Quick | Slow`, `timeout: Quick`))).toEqual([
+    expect(locatedSummariesOf(app(`type Speed = Quick | Slow`, `timeout: Quick`))).toEqual([
       'E0201 7:24 Expected Int but got variant "Quick"',
     ]);
   });
@@ -129,44 +130,48 @@ fn soon() = "soon"`;
       [`cfg.ms`, `cfg.label`],
     ];
     for (const [base, timeout] of shapes) {
-      const b = diagnostics(app(pre, `base-url: ${base}`)).length;
-      const t = diagnostics(app(pre, `timeout: ${timeout}`)).length;
+      const b = locatedSummariesOf(app(pre, `base-url: ${base}`)).length;
+      const t = locatedSummariesOf(app(pre, `timeout: ${timeout}`)).length;
       expect([timeout, t]).toEqual([timeout, b]);
     }
   });
 
   it("credentials accepts the three modes as literals and a Text slot", () => {
     for (const mode of ["omit", "same-origin", "include"]) {
-      expect(diagnostics(app("", `credentials: "${mode}"`))).toEqual([]);
+      expect(locatedSummariesOf(app("", `credentials: "${mode}"`))).toEqual([]);
     }
-    expect(diagnostics(app(`slot mode : Text = "include"`, `credentials: mode`))).toEqual([]);
-    expect(diagnostics(app(`slot mode : Bool = true`, `credentials: mode`))).toEqual([
+    expect(locatedSummariesOf(app(`slot mode : Text = "include"`, `credentials: mode`))).toEqual(
+      [],
+    );
+    expect(locatedSummariesOf(app(`slot mode : Bool = true`, `credentials: mode`))).toEqual([
       "E0201 7:28 Expected Text but got Bool",
     ]);
   });
 
   it("a misspelt mode is reported, not merely a non-Text", () => {
-    expect(diagnostics(app("", `credentials: "includes"`))).toEqual([
+    expect(locatedSummariesOf(app("", `credentials: "includes"`))).toEqual([
       'E0201 7:28 credentials "includes" is not one of omit / same-origin / include; a browser refuses the request',
     ]);
   });
 
   it("a misspelt mode in a literal branch of an if is reported at the branch", () => {
     expect(
-      diagnostics(
+      locatedSummariesOf(
         app(`slot secure : Bool = true`, `credentials: if secure then "include" else "bogus"`),
       ),
     ).toEqual([
       'E0201 7:58 credentials "bogus" is not one of omit / same-origin / include; a browser refuses the request',
     ]);
     expect(
-      diagnostics(
+      locatedSummariesOf(
         app(`slot secure : Bool = true`, `credentials: if secure then "include" else "omit"`),
       ),
     ).toEqual([]);
     // A branch that is not a literal is held to `Text`, as the field itself is.
     expect(
-      diagnostics(app(`slot secure : Bool = true`, `credentials: if secure then "include" else 5`)),
+      locatedSummariesOf(
+        app(`slot secure : Bool = true`, `credentials: if secure then "include" else 5`),
+      ),
     ).toEqual(["E0201 7:58 Expected Text but got Int"]);
   });
 });
@@ -206,18 +211,20 @@ describe("app.http headers is a Map(Text, Text)", () => {
       "E0201 7:24 Expected Map(Text, Text) but got Map(Text, Int)",
     ],
   ])("reports %s", (_, slots, http, expected) => {
-    expect(diagnostics(app(slots, http))).toEqual([expected]);
+    expect(locatedSummariesOf(app(slots, http))).toEqual([expected]);
   });
 
   it("refuses bare header names: an unquoted key makes a record, not a map", () => {
     const pre = `slot token : Text = "t"`;
     expect(
-      diagnostics(app(pre, `headers: {Content-Type: "application/json", Authorization: token}`)),
+      locatedSummariesOf(
+        app(pre, `headers: {Content-Type: "application/json", Authorization: token}`),
+      ),
     ).toEqual([
       "E0201 7:24 Expected Map(Text, Text) but got {Content-Type: Text, Authorization: Text}",
     ]);
     expect(
-      diagnostics(
+      locatedSummariesOf(
         app(pre, `headers: {"Content-Type": "application/json", "Authorization": token}`),
       ),
     ).toEqual([]);
@@ -225,7 +232,7 @@ describe("app.http headers is a Map(Text, Text)", () => {
 
   it("accepts a map of Text values, computed, read from a slot or returned by a fn", () => {
     expect(
-      diagnostics(
+      locatedSummariesOf(
         app(
           `slot session : Option(Text) = None
 slot token : Text = "t"
@@ -234,11 +241,11 @@ slot hs : Map(Text, Text) = {}`,
         ),
       ),
     ).toEqual([]);
-    expect(diagnostics(app(`slot hs : Map(Text, Text) = {}`, `headers: hs`))).toEqual([]);
+    expect(locatedSummariesOf(app(`slot hs : Map(Text, Text) = {}`, `headers: hs`))).toEqual([]);
     expect(
-      diagnostics(app(`fn extra() -> Map(Text, Text) = {"X-A": "a"}`, `headers: extra()`)),
+      locatedSummariesOf(app(`fn extra() -> Map(Text, Text) = {"X-A": "a"}`, `headers: extra()`)),
     ).toEqual([]);
-    expect(diagnostics(app("", `headers: {}`))).toEqual([]);
+    expect(locatedSummariesOf(app("", `headers: {}`))).toEqual([]);
   });
 
   it("accepts a type built on Text, as a value and as a map's value type", () => {
@@ -247,11 +254,11 @@ slot trace : Url = "https://trace.example.com"
 slot token : Token = "t"
 slot urls : Map(Text, Url) = {}
 slot tokens : Map(Text, Token) = {}`;
-    expect(diagnostics(app(pre, `headers: {"X-Trace": trace, "Authorization": token}`))).toEqual(
-      [],
-    );
-    expect(diagnostics(app(pre, `headers: urls`))).toEqual([]);
-    expect(diagnostics(app(pre, `headers: tokens`))).toEqual([]);
+    expect(
+      locatedSummariesOf(app(pre, `headers: {"X-Trace": trace, "Authorization": token}`)),
+    ).toEqual([]);
+    expect(locatedSummariesOf(app(pre, `headers: urls`))).toEqual([]);
+    expect(locatedSummariesOf(app(pre, `headers: tokens`))).toEqual([]);
   });
 });
 
@@ -283,6 +290,8 @@ slot speed : Speed = Quick`;
     const before = shape.slice(0, shape.indexOf("X")).replaceAll("Y", good);
     const value = shape.replaceAll("Y", good).replace("X", bad);
     const col = `    http   = {${field}: ${before}`.length + 1;
-    expect(diagnostics(app(pre, `${field}: ${value}`))).toEqual([`E0201 9:${col} ${message}`]);
+    expect(locatedSummariesOf(app(pre, `${field}: ${value}`))).toEqual([
+      `E0201 9:${col} ${message}`,
+    ]);
   });
 });

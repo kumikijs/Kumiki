@@ -64,24 +64,24 @@ tile B = button(text="b")
       ]);
     });
 
-    describe("with a program's own `type Duration`, a call on the namespace", () => {
+    describe("with a program's own `type Decoder`, a call on the namespace", () => {
       it.each([
-        { call: "Duration.ms(5)", why: "a built-in call names no type", edges: [] },
+        { call: "Decoder.Text", why: "a built-in call names no type", edges: [] },
         // E0116, so this fixture does not check, but it is the case that fails if the namespace
         // exclusion is dropped: `fresh` is a type member on any other qualifier.
-        { call: "Duration.fresh()", why: "an argless fresh is E0116 and names no type", edges: [] },
+        { call: "Decoder.fresh()", why: "an argless fresh is E0116 and names no type", edges: [] },
         {
-          call: "Duration.show(raw)",
+          call: "Decoder.show(raw)",
           why: "show given its argument",
-          edges: ["type.Duration@4:12"],
+          edges: ["type.Decoder@4:12"],
         },
         {
-          call: "Duration.parse(raw)",
+          call: "Decoder.parse(raw)",
           why: "parse given its argument",
-          edges: ["type.Duration@4:12"],
+          edges: ["type.Decoder@4:12"],
         },
       ])("$call: $why", ({ call, edges }) => {
-        const src = `type Duration = nominal Text
+        const src = `type Decoder = nominal Text
 slot raw : Text = ""
 reducer r on=ui.click(B) do=
     raw := ${call}
@@ -217,6 +217,40 @@ test round-trips =
         invariant = run-reducer(inc).slots.count == count
 `;
       expect(refsOf(src, "test.round-trips")).toContain("reducer.inc@8:33");
+    });
+
+    it("reads a call to a declared fn run-reducer as a call to the fn", () => {
+      // A declared fn wins over the builtin of its name, so the argument is a value, not a reducer.
+      const src = `slot count : Int = 0
+fn run-reducer(x: Int) -> Int = x + 1
+reducer inc on=ui.click(B) do= count := run-reducer(count)
+tile B = button(text="b")
+`;
+      expect(refsOf(src, "reducer.inc")).toEqual([
+        "tile.B@3:25",
+        "slot.count@3:32",
+        "fn.run-reducer@3:41",
+        "slot.count@3:53",
+      ]);
+    });
+
+    it("reads the chained `.run-reducer(r)` as no reducer once a fn has the name", () => {
+      const src = `slot count : Int = 0
+fn run-reducer(x: Int) -> Int = x + 1
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="b")
+test chain =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {count: n}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(n).run-reducer(inc).slots.count >= 0
+`;
+      // The receiver is the fn's call, and `inc` is a value the walker finds no definition for.
+      expect(refsOf(src, "test.chain")).toEqual([
+        "slot.count@-",
+        "tile.B@8:73",
+        "fn.run-reducer@9:21",
+      ]);
     });
   });
 

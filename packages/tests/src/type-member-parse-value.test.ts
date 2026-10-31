@@ -51,6 +51,13 @@ describe("a nominal parses by the base it is declared over", () => {
     expect(live.d).toEqual({ _tag: "Some", _0: Date.UTC(2026, 0, 1) });
   });
 
+  it("answers None for a nominal Time given digits, which name no instant", async () => {
+    const live = await stateAfterGo(
+      app(`type Due = nominal Time\nslot d : Option(Due) = None`, `d := Due.parse("1")`),
+    );
+    expect(live.d).toEqual({ _tag: "None" });
+  });
+
   it("keeps the string for a nominal over Text", async () => {
     const live = await stateAfterGo(
       app(`type Slug = nominal Text\nslot s : Option(Slug) = None`, `s := Slug.parse("a-b")`),

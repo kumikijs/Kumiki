@@ -21,6 +21,22 @@ tile Compose = column(
 - User input updates the slot → the tile re-renders
 - Type and refinement are **checked on each input**
 
+A `bind=` target names the place the control writes back to: a slot, or a field path into one — `bind=form.email`, or `bind=draft.get.title` through the payload of an `Option` or a `Result` ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)). Its root has to be a slot where the target is written, and not `route`, which only navigation moves ([Routing §3.3](./routing.md#_3-3-route-transitions)). A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are values, not places — a local named like a slot hides the slot, as it does for any read — and a literal or any other expression names no place at all. Each is reported by `kumiki check` ([E0229](./errors.md#e0229-bind-target-not-slot)).
+
+So a row of a list is not bound through its loop variable. The row shows its value with `value=` and carries its key in its props, and a reducer on the row's event writes the list at that key:
+
+```kumiki fragment
+type Todo = {text: Text}
+slot todos : Map(Text, Todo) = {"a": {text: "milk"}}
+
+tile TodoText in=Text = input(value=todos[$1].text) {todoId: $1}
+tile Todos = column(for k in todos.keys TodoText(k) {key: k})
+
+reducer editTodo
+    on=ui.input(TodoText)
+    do= todos[$el.todoId].text := $event.value
+```
+
 ### 5.1.1 Elements That Support `bind`
 
 | Element | Acceptable types |
@@ -92,7 +108,7 @@ effect login    cap=http.post
 
 | prop | Type | Meaning |
 |---|---|---|
-| `auto-complete` | `Bool` | Browser autocomplete |
+| `auto-complete` | `Text` | Browser autocomplete: `on` / `off` |
 | `novalidate` | `Bool` | Suppress HTML5 standard validation |
 
 Do not write `onSubmit` on the form itself. For the submit handler, write `ui.submit(WrapperTile)` in the reducer's `on=`, using **the name of the tile that wraps the form**.
@@ -114,7 +130,7 @@ Do not write `onSubmit` on the form itself. For the submit handler, write `ui.su
 
 | prop | Type | Meaning |
 |---|---|---|
-| `bind` | slot name | Two-way binding |
+| `bind` | slot, or a field path into one ([§5.1](#_5-1-two-way-binding-of-individual-inputs)) | Two-way binding |
 | `value` | expr | One-way value (instead of `bind`; updated in a reducer) |
 | `onChange` | reducer name | Reducer called when the value changes |
 | `onInput` | reducer name | Called on the input event (more frequent than onChange) |
@@ -207,7 +223,7 @@ In addition to updating a slot via `bind=`, input/textarea can also fire via the
 
 ### 5.5.2 radio
 
-radio has a `group` prop for grouping (corresponding to CSS's `name` attribute):
+radio has a `group` prop for grouping. It is the HTML `name` attribute of the radio's `<input>`, so the radios that share a `group` are one set, of which at most one is checked at a time:
 
 ```kumiki fragment
 tile FilterRadioAll    = radio(group="filter", value=All,    selected=(filter == All))    {label: "All"}
@@ -231,6 +247,8 @@ tile FilterRadioGroup = column(
 ```
 
 This is the recommended approach.
+
+A radio written with `name` instead of `group`, as an argument or in its props block, is grouped by it the same way. With both, `group` is the one read, and `kumiki check` warns about the `name` ([W0217](./errors.md#w0217-name-beside-group-warning)).
 
 ---
 
@@ -299,6 +317,19 @@ error(field=email)
 `error(field=...)` is a built-in tile that renders the target field's current validation error: it reads the predicate off the slot and renders the message for it whenever the value the field **shows** fails, and nothing otherwise. That is the slot's current value, except while a bound control shows a value the refinement refused ([§5.1.2](#_5-1-2-handling-of-refinement)), which is judged instead. A slot whose type carries no refinement therefore has no message for any value — which is a statement about the slot, not about the value in it. What it can still show is the one message that is not about a value: while a bound `input` shows text that does not read as the slot's `Int`, `Float` or `Time` at all ([§5.1.1](#_5-1-1-elements-that-support-bind)), the message is that reading's (`int` / `float` / `time` below), on any slot and before any refinement — `"1.5"` into an `Int where between(0, 120)` is not a whole number, not a number out of range.
 
 A type carrying several predicates ([§1.3.1](./language.md#_1-3-1-syntax)) renders the message of the **first one the current value fails**, in the order §1.3.1 gives them. On `slot draft : Text where nonempty where len-lt(7) = ""` a pristine field reads "Required", not a bound the empty value is well inside.
+
+`field=` names a slot, or a **path** into one: the slot's name followed by steps, each a record field (`form.email`), `.get` into an `Option`'s or a `Result`'s payload (`draft.get.title`), or an index with a literal key into a `List` (`rows[0]`) or a `Map` (`book["b"]`).
+
+```kumiki snippet
+input(bind=form.email, type="email")
+error(field=form.email)
+input(bind=form.age, type="number")
+error(field=form.age)
+```
+
+With a path, the tile renders only a failure at or below it. The slot is judged at the path the way a `bind` to that path is ([§5.6](#_5-6-validation-strategy)) — the predicates along it and every one below where it ends — so a sibling's failure is not the tile's. On a record whose `email` and `age` both fail, `error(field=form.email)` renders the email's message and `error(field=form.age)` the age's, wherever each field sits in the record. Text a bound `input` cannot read is a failure at the path the input binds: `"1.5"` in the age field is "Must be a whole number" under `error(field=form.age)`, and is not the message under `error(field=form.email)`. A bare slot keeps the whole of it: `error(field=form)` renders the first failure anywhere in `form`. A path that reaches no value — `.get` on a `None` or an `Err`, an index past the end of the `List`, a key the `Map` lacks — has nothing there to fail, and renders nothing.
+
+The path is checked against the slot's type: a field the record lacks is [E0108](./errors.md#e0108-undef-member), and a `List` index that is no `Int`, or a `Map` key of another type, is [E0201](./errors.md#e0201-type-mismatch). Anything else names no place in a slot, so there is no failure the tile could render, and is [E0230](./errors.md#e0230-error-field-not-path): a literal (`field="email"`), a local name such as a `for` variable or a tile's `$1`, the `route` slot, a member that derives a value (`.length`), a step into a `Tuple` or a union, a call, any other expression, or an index into something other than a `List` or a `Map`. So is an `error()` with no `field=`, and a `field` written in the `{…}` block, which the tile does not read. An index whose key is computed (`error(field=rows[i].email)`) is E0230 as well: a path names its element or entry by a literal key. This is a known limitation, not a rule ([#828](https://github.com/kumikijs/Kumiki/issues/828)).
 
 ### 5.7.2 Standard Messages
 
