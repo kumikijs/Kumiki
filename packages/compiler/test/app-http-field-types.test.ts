@@ -155,7 +155,7 @@ fn soon() = "soon"`;
     for (const [base, timeout] of shapes) {
       const b = locatedSummariesOf(app(pre, `base-url: ${base}`)).length;
       const t = locatedSummariesOf(app(pre, `timeout: ${timeout}`)).length;
-      expect([timeout, t]).toEqual([timeout, b]);
+      expect([base, timeout, b, t]).toEqual([base, timeout, 1, 1]);
     }
   });
 

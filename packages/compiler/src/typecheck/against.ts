@@ -73,6 +73,22 @@ export function checkAgainst(
     }
     return;
   }
+  if (e.kind === "MapLit" && e.entries.length === 0) {
+    // `{}` is the empty Map, Set and record at once, so the declared type decides. Against a
+    // record type it is a record literal that names none of its fields.
+    if (d.kind === "TypeRecord") {
+      const none = { kind: "RecordLit" as const, fields: [], pos: e.pos };
+      checkRecordLit(none, d, sym, errors, ctx, code, omittable);
+    } else if (refusesEmptyBraces(d)) {
+      pushMismatch(
+        errors,
+        code,
+        `Expected ${typeToString(declared)} but got {}, an empty Map, Set or record`,
+        e.pos,
+      );
+    }
+    return;
+  }
   if (d.kind === "TypeApp" && e.kind === "MapLit") {
     if (d.name === "Set") return;
     if (d.name === "Map") {
@@ -437,7 +453,8 @@ export function checkIndexStep(
     checkIndexIsPlace(step, { index, pos }, "assign", errors);
     return;
   }
-  // Every other receiver with no places reads with no type and no report yet.
+  // A record read through a literal key has its field's type (`inferType`); no other receiver
+  // with no places has a type to read, and none of them is reported yet.
   if (!isSet(step.base)) return;
   errors.push({
     code: "E0232",
@@ -559,3 +576,18 @@ export function effectInput(
     omittable: (f) => builtinFieldOmittable(builtin, f),
   };
 }
+
+// A name that resolves to nothing is not read here: E0117 reports the name, not the value.
+function refusesEmptyBraces(d: TypeExpr): boolean {
+  switch (d.kind) {
+    case "TypePrim":
+    case "TypeUnion":
+      return true;
+    case "TypeApp":
+      return REFUSES_EMPTY_BRACES.has(d.name);
+    default:
+      return false;
+  }
+}
+
+const REFUSES_EMPTY_BRACES: ReadonlySet<string> = new Set(["List", "Option", "Result", "Tuple"]);

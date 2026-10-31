@@ -51,6 +51,13 @@ describe("$1 is the element a List hands its fragment", () => {
     expect(diagnostics(defs, "xs.map(loud($1))", "List(Text)")).toEqual([]);
   });
 
+  it("binds the element of a List a fn with no -> answers, which is its body's type", () => {
+    const defs = `${LOUD}\nfn anything(n: Int) = [n]`;
+    expect(diagnostics(defs, "anything(1).map(loud($1))", "List(Text)")).toEqual([
+      "E0201 Expected Text but got Int",
+    ]);
+  });
+
   it("binds the element to $2 of fold, and the accumulator to the init's type", () => {
     const defs = `${LOUD}\nslot xs : List(Int) = [1, 2]`;
     expect(diagnostics(defs, `xs.fold("", loud($2))`, "Text", '""')).toEqual([
@@ -315,7 +322,8 @@ describe("a fn named as the fragment is checked as the call it stands for", () =
   it("binds each positional FRAGMENT_ARGUMENTS lists to its type, in both spellings", () => {
     // A parameter no positional has (`Bool`), over receivers whose type arguments differ, and a
     // `fold` from a `Text`, so each mismatch names the type its positional is bound to. A row for a
-    // receiver that lacks the method would show up as E0108 here.
+    // receiver that lacks the method would show up as E0108 here. `probe` answers a `List.map`,
+    // whose answer the checker does not infer, so nothing is checked against what it returns.
     const receivers: Record<string, string> = {
       List: "List(Int)",
       Option: "Option(Int)",
@@ -350,7 +358,7 @@ describe("a fn named as the fragment is checked as the call it stands for", () =
         const lead = ["", method === "fold" ? '"", ' : '"k", '][fragment.index];
         const errors = (f: string) =>
           summariesOf(
-            withApp(`fn probe(${params}) = true
+            withApp(`fn probe(${params}) = [true].map($1)
 fn run(c: ${receivers[receiver]}) = c.${method}(${lead}${f})
 tile App = text("x")`),
           );
@@ -366,7 +374,7 @@ tile App = text("x")`),
 
 describe("where the lowering's reading is not certain, nothing is bound", () => {
   it("a receiver whose type is not decided", () => {
-    const defs = `${LOUD}\nfn anything(n: Int) = [n]`;
+    const defs = `${LOUD}\nfn anything(n: Int) = [n].map($1)`;
     expect(diagnostics(defs, "anything(1).map(loud($1))", "List(Text)")).not.toContain(
       "E0201 Expected Text but got Int",
     );
