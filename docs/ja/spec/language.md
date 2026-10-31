@@ -391,18 +391,23 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
   リクエストの key と `==`（[§1.9.4](#_1-9-4-演算子の型)）である emit はそのリクエスト
   を中断し、`==` でない emit はそれを走らせたままにする。key は Map の key が格納
   されるのと同じ書き方で書かれ（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）、
-  その書き方は 3 つの型を除くすべての型で値を `==` のとおりに区別する。そのいずれか
-  の key、またはフィールド・ペイロード・要素にそのいずれかを持つ型の key は、key の
-  位置で [E0233](./errors.md#e0233-policy-key-type) になる：
+  その書き方は 2 つの型を除くすべての型で値を `==` のとおりに区別する — ただし宣言
+  された型が何であれ、有限でない数は例外である。そのいずれかの key、またはフィールド・
+  ペイロード・要素・`Map` の値にそのいずれかを持つ型の key は、key の位置で
+  [E0233](./errors.md#e0233-policy-key-type) になる：
   - `Float`：`NaN` は 1 つの key だが自身と `==` ではなく、レコード・タプル・`List`・
-    バリアントの中では `NaN`、`Infinity`、`-Infinity` が 1 つの key になる
-  - `File`：すべての `File` が 1 つの key になる
-  - `Set`：その `==` は Set の作られ方に依存する
+    `Map` の値・バリアントの中では `NaN`、`Infinity`、`-Infinity` が 1 つの key になる
+  - `File`：名前・サイズ・型が同じ 2 つの File は 1 つの key になるが、`==` は File と
+    それ自身の間でしか成り立たない
+- `Set` の key はその `==` であり、その `==` 自体が Set の作られ方に依存するので、
+  `Set` である key、または `Set` を持つ key も E0233 になる
 - それ以外の型はすべて key になる：`Text`、`Int`、`Bool`、`Time`、`Bytes`、
   `EffectId`、`Unit`、それらの上の `nominal` や refinement、そしてそれらから作られた
   レコード、タプル、`List`、`Map`、`Option`、`Result`、ユニオン —
   `latest-per-key({user: $1.user, page: $1.page})` はユーザーとページごとに 1 つの
-  リクエストを走らせる。`Float` は `.show` か `.round` を通して key にする
+  リクエストを走らせる。`Map` 自身の key も同じ書き方で格納されるので、`Map(Float, V)`
+  はその値が key になるなら key になる。`Float` は `.show` を、`File` は
+  `{name: $1.name, size: $1.size}` を通して key にする
 
 ### 1.5.3 例
 

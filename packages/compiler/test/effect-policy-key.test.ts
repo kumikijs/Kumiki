@@ -286,10 +286,20 @@ function keyTypeApp(input: string, key = "$1"): string {
   return `type Spot = {lat: Float, lng: Float}
 type Page = {user: Text, page: Int}
 type Box(A) = {v: A}
+type Pair(A) = {a: A, b: A}
+type L(A) = Nil | Cons(A, L(A))
+type Chain(A) = {v: A, next: Option(Chain(List(A)))}
+type Ph(A) = {name: Text}
+type Div(A) = Z | W(Div(Box(A)))
 type Tree = Leaf | Node(Tree, Tree)
 type TaskId = nominal Int
 type Color = Red | Blue
 type Upload = Empty | Picked(File)
+type Ratio = Float
+type Price = nominal Float
+type Score = Float where positive
+type Doc = File
+type Place = nominal Spot
 slot ratio : Float = 0.5
 slot user : Text = "ada"
 effect load cap=http.get in=${input} out=Result(Text, HttpError)
@@ -323,46 +333,71 @@ describe("a latest-per-key key of a type keyed by its value is accepted", () => 
     ["Bytes", "Bytes", "$1"],
     ["an EffectId", "EffectId", "$1"],
     ["Unit", "Text", "()"],
+    ["a generic applying itself to a growing argument", "Chain(Int)", "$1"],
+    ["a generic that does not hold its Float argument", "Ph(Float)", "$1"],
+    ["a generic whose Float argument stays in its own type", "Div(Float)", "$1"],
+    ["a Float shown as Text", "Spot", "$1.lat.show"],
+    ["a File's name and size", "File", "{name: $1.name, size: $1.size}"],
+    ["a Map from Float", "Map(Float, Text)", "$1"],
   ])("%s", (_what, input, key) => {
     expect(codesOf(keyTypeApp(input, key))).toEqual([]);
   });
 });
 
 describe("a latest-per-key key of a type not keyed by its value is E0233", () => {
-  const FLOAT =
-    "a Float, whose NaN is not == to itself and whose NaN, Infinity and -Infinity are one key inside a record, tuple, List or variant";
+  const FLOAT = "it is a Float, and NaN is one key though NaN == NaN is false";
+  const HOLDS_FLOAT = "it holds a Float, and inside it NaN, Infinity and -Infinity are one key";
+  const FILE =
+    "a File, and two Files with the same name, size and type are one key, while == holds only of a File and itself";
+  const SET = "a Set, whose == depends on how it was built";
   it.each([
-    ["a Float", "Float", "$1", "Float", `it is ${FLOAT}`],
-    ["a Float slot", "Text", "ratio", "Float", `it is ${FLOAT}`],
-    ["a division, which is a Float", "Int", "$1 / 2", "Float", `it is ${FLOAT}`],
-    ["a record holding a Float", "Spot", "$1", "Spot", `it holds ${FLOAT}`],
-    ["a record literal holding a Float", "Float", "{at: $1}", "{at: Float}", `it holds ${FLOAT}`],
-    ["a generic record over Float", "Box(Float)", "$1", "Box(Float)", `it holds ${FLOAT}`],
-    ["a List of Float", "List(Float)", "$1", "List(Float)", `it holds ${FLOAT}`],
-    ["an Option of Float", "Option(Float)", "$1", "Option(Float)", `it holds ${FLOAT}`],
-    ["a Map to Float", "Map(Text, Float)", "$1", "Map(Text, Float)", `it holds ${FLOAT}`],
-    ["a File", "File", "$1", "File", "it is a File, and every File is one key"],
+    ["a Float", "Float", "$1", "Float", FLOAT],
+    ["a Float slot", "Text", "ratio", "Float", FLOAT],
+    ["a division, which is a Float", "Int", "$1 / 2", "Float", FLOAT],
+    ["an alias of Float", "Ratio", "$1", "Ratio", FLOAT],
+    ["a nominal over Float", "Price", "$1", "Price", FLOAT],
+    ["a refinement of Float", "Score", "$1", "Score", FLOAT],
+    ["a record holding a Float", "Spot", "$1", "Spot", HOLDS_FLOAT],
+    ["a nominal over a record holding a Float", "Place", "$1", "Place", HOLDS_FLOAT],
+    ["a record literal holding a Float", "Float", "{at: $1}", "{at: Float}", HOLDS_FLOAT],
+    ["a generic record over Float", "Box(Float)", "$1", "Box(Float)", HOLDS_FLOAT],
+    ["a generic applied to itself", "Box(Box(Float))", "$1", "Box(Box(Float))", HOLDS_FLOAT],
     [
-      "a union whose variant holds a File",
-      "Upload",
+      "a two-field generic applied to itself",
+      "Pair(Pair(Float))",
       "$1",
-      "Upload",
-      "it holds a File, and every File is one key",
+      "Pair(Pair(Float))",
+      HOLDS_FLOAT,
     ],
+    ["a recursive union applied to itself", "L(L(Float))", "$1", "L(L(Float))", HOLDS_FLOAT],
+    [
+      "a generic applied to a List of itself",
+      "Box(List(Box(Float)))",
+      "$1",
+      "Box(List(Box(Float)))",
+      HOLDS_FLOAT,
+    ],
+    ["a List of Float", "List(Float)", "$1", "List(Float)", HOLDS_FLOAT],
+    ["an Option of Float", "Option(Float)", "$1", "Option(Float)", HOLDS_FLOAT],
+    ["a Map to Float", "Map(Text, Float)", "$1", "Map(Text, Float)", HOLDS_FLOAT],
+    ["a File", "File", "$1", "File", `it is ${FILE}`],
+    ["an alias of File", "Doc", "$1", "Doc", `it is ${FILE}`],
+    ["a union whose variant holds a File", "Upload", "$1", "Upload", `it holds ${FILE}`],
     [
       "the stdlib's FormValue, whose NumberV holds a Float",
       "FormValue",
       "$1",
       "FormValue",
-      `it holds ${FLOAT}`,
+      HOLDS_FLOAT,
     ],
-    ["a Set", "Set(Text)", "$1", "Set(Text)", "it is a Set, whose == depends on how it was built"],
+    ["a Set", "Set(Text)", "$1", "Set(Text)", `it is ${SET}`],
+    ["a List of Sets", "List(Set(Text))", "$1", "List(Set(Text))", `it holds ${SET}`],
     [
-      "a List of Sets",
-      "List(Set(Text))",
+      "a generic applied to itself around a Set",
+      "Box(Box(Set(Text)))",
       "$1",
-      "List(Set(Text))",
-      "it holds a Set, whose == depends on how it was built",
+      "Box(Box(Set(Text)))",
+      `it holds ${SET}`,
     ],
   ])("%s", (_what, input, key, shown, why) => {
     const source = keyTypeApp(input, key);
@@ -510,7 +545,16 @@ describe("a `latest-per-key` key tells its values apart as `==` does", () => {
     ["a List whose Text holds a comma", "List(Text)", [`["a,b"]`, `["a,b"]`, `["a", "b"]`]],
     ["an Option", "Option(Text)", [`Some("x")`, `Some("x")`, `Some("y")`]],
     ["an enum", "Color", ["Red", "Red", "Blue"]],
-    ["a tuple", "Tuple(Text, Int)", [`("x", 1)`, `("x", 1)`, `("x", 2)`]],
+    [
+      "a tuple whose Text holds a comma",
+      "Tuple(Text, Text)",
+      [`("a,b", "c")`, `("a,b", "c")`, `("a", "b,c")`],
+    ],
+    [
+      "a Map, its entries in either order",
+      "Map(Text, Int)",
+      [`{"a": 1, "b": 2}`, `{"b": 2, "a": 1}`, `{"a": 1, "b": 3}`],
+    ],
   ])("%s", { timeout: 30_000 }, async (_what, input, args) => {
     const { keys, ids, keyOf } = await emitKeys(input, args);
     expect(keys[0]).toBe(keys[1]);

@@ -1,22 +1,11 @@
 import { feature } from "@kumikijs/examples";
 import type { AppShape } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
-import { click, mountApp, waitUntil } from "./helpers/dom.ts";
-import { type FetchDouble, stubFetch } from "./helpers/http-double.ts";
+import { clickThrough } from "./helpers/dom.ts";
+import { answerAfter, type FetchDouble, stubFetch } from "./helpers/http-double.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("241-latest-per-key-record-key");
-
-/** The URL's path as its body, a tick later — or an `AbortError` if the signal fires first. */
-function answerATickLater(url: string, signal: AbortSignal | null | undefined): Promise<Response> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => resolve(new Response(new URL(url, "http://x/").pathname)), 0);
-    signal?.addEventListener("abort", () => {
-      clearTimeout(timer);
-      reject(new DOMException("The operation was aborted.", "AbortError"));
-    });
-  });
-}
 
 let double: FetchDouble | undefined;
 
@@ -25,27 +14,29 @@ afterEach(() => {
   double = undefined;
 });
 
-/** Mount `app`, click `button`, wait for `settled` to be in the text, and report each request. */
+const pathOf = (url: string): string => new URL(url, "http://x/").pathname;
+
+/**
+ * Mount `app` with each request answered by its URL's path a tick later, click `button`, wait for
+ * `settled` to be in the text, and report each request.
+ */
 async function clickAndSettle(
   app: AppShape,
   button: string,
   settled: string,
 ): Promise<{ urls: string[]; aborted: (boolean | undefined)[]; text: string }> {
-  const fetches = stubFetch((call) => answerATickLater(call.url, call.init.signal));
+  const fetches = stubFetch(answerAfter(0, [(call) => new Response(pathOf(call.url))]).respond);
   double = fetches;
-  const { root, handle } = mountApp(app);
-  try {
-    click(root, button);
-    await waitUntil(() => (root.textContent ?? "").includes(settled));
-    return {
-      urls: fetches.calls.map((c) => new URL(c.url, "http://x/").pathname),
-      aborted: fetches.calls.map((c) => c.init.signal?.aborted),
-      text: root.textContent ?? "",
-    };
-  } finally {
-    handle.dispose();
-    root.remove();
-  }
+  const [text = ""] = await clickThrough(
+    app,
+    [[button, settled]],
+    (root) => root.textContent ?? "",
+  );
+  return {
+    urls: fetches.calls.map((c) => pathOf(c.url)),
+    aborted: fetches.calls.map((c) => c.init.signal?.aborted),
+    text,
+  };
 }
 
 describe("two record keys that are not `==` are two keys", () => {

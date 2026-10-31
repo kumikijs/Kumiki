@@ -86,24 +86,29 @@ export type TimedResponder = {
 
 /**
  * A responder that answers the `i`th call with `responses[i]` (the last one for every call past
- * the end), `latencyMs` after the call is made. A call whose signal aborts first rejects the way
- * `fetch` does.
+ * the end), made from the call, `latencyMs` after the call is made. A call whose signal aborts
+ * first rejects the way `fetch` does.
  */
-export function answerAfter(latencyMs: number, responses: Array<() => Response>): TimedResponder {
+export function answerAfter(
+  latencyMs: number,
+  responses: Array<(call: FetchCall) => Response>,
+): TimedResponder {
   const madeAt: number[] = [];
   let answered = 0;
   return {
     madeAt,
     answered: () => answered,
     respond: (call) => {
-      const make = responses[Math.min(madeAt.length, responses.length - 1)] as () => Response;
+      const make = responses[Math.min(madeAt.length, responses.length - 1)] as (
+        call: FetchCall,
+      ) => Response;
       madeAt.push(performance.now());
       const signal = call.init.signal;
       return new Promise((resolve, reject) => {
         if (signal?.aborted) return reject(abortError());
         const h = setTimeout(() => {
           answered++;
-          resolve(make());
+          resolve(make(call));
         }, latencyMs);
         signal?.addEventListener("abort", () => {
           clearTimeout(h);

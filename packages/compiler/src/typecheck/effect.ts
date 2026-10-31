@@ -1,7 +1,7 @@
 import { typeToString, unaliasType } from "../assignable.ts";
 import type { EffectDef, Expr, TypeExpr } from "../ast.ts";
 import { declaresNoInput, failsWithText } from "../capabilities.ts";
-import { type UnkeyedPart, unkeyedPart } from "../key-representation.ts";
+import { type UnkeyedPart, unkeyedPart } from "../unkeyed-part.ts";
 import { type Ctx, type KumikiError, pureScope, type SymbolTable } from "./context.ts";
 import { checkExpr } from "./expr.ts";
 import { inferType } from "./infer.ts";
@@ -87,12 +87,20 @@ export function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiErro
   }
 }
 
-const UNKEYED_PART_REASON: Record<UnkeyedPart["part"], string> = {
-  Float:
-    "a Float, whose NaN is not == to itself and whose NaN, Infinity and -Infinity are one key inside a record, tuple, List or variant",
-  File: "a File, and every File is one key",
-  Set: "a Set, whose == depends on how it was built",
-};
+/** Why a key that is `part`, or holds it, is not keyed by its value. */
+function unkeyedReason({ part, whole }: UnkeyedPart): string {
+  const subject = `${whole ? "it is" : "it holds"} a ${part}`;
+  switch (part) {
+    case "Float":
+      return whole
+        ? `${subject}, and NaN is one key though NaN == NaN is false`
+        : `${subject}, and inside it NaN, Infinity and -Infinity are one key`;
+    case "File":
+      return `${subject}, and two Files with the same name, size and type are one key, while == holds only of a File and itself`;
+    case "Set":
+      return `${subject}, whose == depends on how it was built`;
+  }
+}
 
 // The dispatcher aborts an in-flight request when another starts under the same key, so a key
 // that is one key for two values `==` calls different aborts a request it has no reason to.
@@ -103,7 +111,7 @@ function checkPolicyKeyType(key: Expr, sym: SymbolTable, scope: Ctx, errors: Kum
   errors.push({
     code: "E0233",
     kind: "policy-key-type",
-    message: `A latest-per-key key of type ${typeToString(type)} is not keyed by its value: ${unkeyed.whole ? "it is" : "it holds"} ${UNKEYED_PART_REASON[unkeyed.part]} (see docs/spec/language.md)`,
+    message: `A latest-per-key key of type ${typeToString(type)} is not keyed by its value: ${unkeyedReason(unkeyed)} (see docs/spec/language.md)`,
     pos: key.pos,
   });
 }
