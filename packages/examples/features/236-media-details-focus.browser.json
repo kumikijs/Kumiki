@@ -33,6 +33,18 @@
       }
     },
     {
+      "label": "nor does a click on it",
+      "do": {
+        "click": "#clip"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "log": ""
+        }
+      }
+    },
+    {
       "label": "the toggle turns the controls on",
       "do": {
         "click": "#toggle"

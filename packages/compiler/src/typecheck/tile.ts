@@ -27,6 +27,7 @@ import {
   checkBindStrictProp,
   checkBindTargetRoot,
   checkBindTargetSteps,
+  checkErrorField,
   checkInputBindType,
   checkSecondSpelling,
   checkToggleBind,
@@ -495,6 +496,7 @@ function checkTileCall(
       checkBuiltinProp(t.name, prop.name, prop.value, sym, errors, ctx);
     }
   }
+  checkErrorField(t, sym, errors, ctx);
 }
 
 const PREFETCH_ARGS_TYPE = appType("Map", primType("Text"), primType("Text"));

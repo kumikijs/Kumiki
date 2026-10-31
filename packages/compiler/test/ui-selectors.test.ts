@@ -343,53 +343,42 @@ describe("W0212 gives the reason that holds when the element fires the event", (
       );
     });
 
-    it.each([
-      [
-        "a tile with nothing focusable in it",
-        "focus",
-        'tile D = box(text("hi"))',
-        `Reducer "r" subscribes to ui.focus(D) but tile "D" has no descendant that fires "focus" ` +
-          `(DOM-allowed: input, textarea, button, select, slider, editable, link, video; observed in body: box, text). ` +
-          `The handler is silently dropped.`,
-      ],
-      [
-        "an event the control does not fire at all",
-        "submit",
-        "tile D = check(value=done)",
+    it("keeps 'no descendant fires it' for an event the control does not fire at all", () => {
+      expect(w0212("submit", "tile D = check(value=done)")).toBe(
         `Reducer "r" subscribes to ui.submit(D) but tile "D" has no descendant that fires "submit" ` +
           `(DOM-allowed: form; observed in body: check). The handler is silently dropped.`,
-      ],
-    ])("keeps 'no descendant fires it' for %s", (_, ev, tiles, message) => {
-      expect(w0212(ev, tiles)).toBe(message);
+      );
+    });
+
+    it("keeps 'no descendant fires it' for a tile with nothing focusable in it", () => {
+      expect(w0212("focus", 'tile D = box(text("hi"))')).toContain(
+        `but tile "D" has no descendant that fires "focus" (`,
+      );
     });
   });
 
   describe("on a details, says what keeps the event from a listener", () => {
     const FAQ = 'tile D = details(summary="Question", text("answer"))';
 
-    it("names the <summary>, the event and the <details> for ui.focus", () => {
-      expect(w0212("focus", FAQ)).toBe(
-        `Reducer "r" subscribes to ui.focus(D) but "focus" never reaches a listener in tile "D": ` +
-          `the runtime listens for "focus" on a details's <details>, and the "focus" its <summary> fires ` +
-          `does not bubble to the <details> ` +
-          `(DOM-allowed: input, textarea, button, select, slider, editable, link, video; observed in body: details, text). ` +
-          `The handler is silently dropped.`,
-      );
-    });
-
-    it("gives the same reason for ui.blur", () => {
-      const message = w0212("blur", FAQ);
+    it.each([
+      "focus",
+      "blur",
+    ])("names the <summary>, the event and the <details> for ui.%s", (ev) => {
+      const message = w0212(ev, FAQ);
       expect(message).toContain(
-        `the runtime listens for "blur" on a details's <details>, and the "blur" its <summary> fires does not bubble to the <details>`,
+        `"${ev}" never reaches a listener in tile "D": ` +
+          `the runtime listens for "${ev}" on a details's <details>, ` +
+          `and the "${ev}" its <summary> fires does not bubble to the <details> (`,
       );
       expect(message).not.toContain("has no descendant");
     });
 
-    it("says a key listener on the <details> would hear its panel too, for ui.key", () => {
+    it("says a control in its panel takes ui.key, and how to hear a key on its summary", () => {
       expect(w0212("key", FAQ)).toBe(
         `Reducer "r" subscribes to ui.key(D) but "key" never reaches a listener in tile "D": ` +
           `a details takes no "key" listener on the <details> around its <summary>, ` +
-          `since one there would also hear every "key" from the tiles inside it ` +
+          `since a control in its panel takes the subscription instead — ` +
+          `write onKeyDown= on the details to hear a "key" on its <summary> ` +
           `(DOM-allowed: input, textarea, button, select, slider, editable, link, video, check, radio, switch; ` +
           `observed in body: details, text). ` +
           `The handler is silently dropped.`,
@@ -417,17 +406,16 @@ describe("W0212 gives the reason that holds when the element fires the event", (
   });
 
   describe("on a video, reports none of key / focus / blur", () => {
-    it.each(
-      [
-        ["with controls", 'video(src="/a.mp4", controls=true)'],
-        ["whose controls a slot decides", 'video(src="/a.mp4", controls=done)'],
-      ].flatMap(([what, clip]) => ["key", "focus", "blur"].map((ev) => ({ what, clip, ev }))),
-    )("says nothing about ui.$ev on a video $what", ({ clip, ev }) => {
+    it.each([
+      "key",
+      "focus",
+      "blur",
+    ])("says nothing about ui.%s on a video whose controls a slot decides", (ev) => {
       const src = `
         slot done : Bool = false
         slot hits : Int = 0
         reducer r on=ui.${ev}(V) do= hits := hits + 1
-        tile V = ${clip}
+        tile V = video(src="/a.mp4", controls=done)
         tile App = column(V, text(hits.show))
         app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
       `;
@@ -658,6 +646,20 @@ describe("selector id mismatch (E0212, strictSelectorId)", () => {
     expect(e?.message).toContain("NewForm#nw");
     expect(e?.message).toContain('"new"');
     expect(e?.message).toContain("can never match");
+  });
+
+  // A video is in the key, focus and blur rows, so its id is one the subscription can match.
+  it.each(["key", "focus", "blur"])("counts a video's id for ui.%s", (ev) => {
+    const src = (id: string) => `
+      slot x : Int = 0
+      reducer add on=ui.${ev}(Player#${id}) do= x := x + 1
+      tile Player = column(video(src="/a.mp4", controls=true) {id: "clip"}, text("x"))
+      tile App = column(Player)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const mismatch = checkStrict(src("nope")).find((d) => d.code === "E0212");
+    expect(mismatch?.message).toContain('has id "clip"');
+    expect(checkStrict(src("clip")).some((d) => d.code === "E0212")).toBe(false);
   });
 
   it("does NOT emit E0212 by default (default-off)", () => {

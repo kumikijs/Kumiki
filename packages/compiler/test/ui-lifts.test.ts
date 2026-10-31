@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UiEventKind } from "../src/ast.ts";
-import { BUILTIN_TILES } from "../src/builtins.ts";
+import { BUILTIN_TILES, CHILD_RENDERING_BUILTINS } from "../src/builtins.ts";
 import { compile } from "../src/compile.ts";
 import { lex } from "../src/lexer.ts";
 import { parse } from "../src/parser.ts";
@@ -66,6 +66,15 @@ describe("UI_LIFTS", () => {
     expect(byEv.get("focus")?.tiles).toEqual(new Set(focusable));
     expect(byEv.get("blur")?.tiles).toEqual(new Set(focusable));
   });
+
+  // A listener on an element that holds children hears every key from them too, so it would run
+  // the reducer a second time for a key pressed in a listed control inside it.
+  it("lists under key no kind that renders its children", () => {
+    const holders = [...(UI_EVENT_TILE_KINDS.key ?? [])].filter((k) =>
+      CHILD_RENDERING_BUILTINS.has(k),
+    );
+    expect(holders).toEqual([]);
+  });
 });
 
 describe("wrappedUnreached", () => {
@@ -73,18 +82,19 @@ describe("wrappedUnreached", () => {
   const LABEL = { wrapper: "label", focused: "input" } as const;
   const DETAILS = { wrapper: "details", focused: "summary" } as const;
 
-  it("answers focus and blur for every wrapped kind, which do not bubble to the wrapper", () => {
-    const groups = [
-      { kinds: ["check", "radio", "switch"], ...LABEL, bubbles: false },
-      { kinds: ["details"], ...DETAILS, bubbles: false },
-    ];
-    expect(wrappedUnreached("focus", WRAPPED)).toEqual(groups);
-    expect(wrappedUnreached("blur", WRAPPED)).toEqual(groups);
+  it.each([
+    ["focus", "onFocus"],
+    ["blur", "onBlur"],
+  ] as const)("answers %s for every wrapped kind, which does not bubble to the wrapper", (ev, handler) => {
+    expect(wrappedUnreached(ev, WRAPPED)).toEqual([
+      { kinds: ["check", "radio", "switch"], ...LABEL, bubbles: false, handler },
+      { kinds: ["details"], ...DETAILS, bubbles: false, handler },
+    ]);
   });
 
   it("answers key for details alone, whose wrapper holds its panel too", () => {
     expect(wrappedUnreached("key", WRAPPED)).toEqual([
-      { kinds: ["details"], ...DETAILS, bubbles: true },
+      { kinds: ["details"], ...DETAILS, bubbles: true, handler: "onKeyDown" },
     ]);
   });
 
@@ -96,7 +106,7 @@ describe("wrappedUnreached", () => {
   it("names only kinds the event's row leaves out, so W0212 can give it as the reason", () => {
     for (const ev of ALL_UI_EVENT_KINDS) {
       const row = UI_EVENT_TILE_KINDS[ev];
-      for (const { kinds } of wrappedUnreached(ev, WRAPPED)) {
+      for (const { kinds } of wrappedUnreached(ev, BUILTIN_TILES)) {
         for (const kind of kinds) expect(row?.has(kind), `${kind} in the ${ev} row`).toBe(false);
       }
     }
@@ -104,8 +114,8 @@ describe("wrappedUnreached", () => {
 
   it("keeps the wrapped kinds of a body and drops the rest, sorted", () => {
     expect(wrappedUnreached("focus", ["text", "switch", "details", "box", "check"])).toEqual([
-      { kinds: ["check", "switch"], ...LABEL, bubbles: false },
-      { kinds: ["details"], ...DETAILS, bubbles: false },
+      { kinds: ["check", "switch"], ...LABEL, bubbles: false, handler: "onFocus" },
+      { kinds: ["details"], ...DETAILS, bubbles: false, handler: "onFocus" },
     ]);
     expect(wrappedUnreached("focus", ["box", "text", "video"])).toEqual([]);
   });
@@ -135,9 +145,9 @@ describe("firesUnheard / firesUnheardIn", () => {
   });
 
   // W0212 gives one reason or the other, so a body could not be given both.
-  it("answers nothing on the rows a wrapped control's focused element leaves unreached", () => {
+  it("answers nothing on the rows a wrapped kind's focused element leaves unreached", () => {
     for (const lift of UI_LIFTS) {
-      if (wrappedUnreached(lift.ev, ["check", "radio", "switch", "details"]).length === 0) continue;
+      if (wrappedUnreached(lift.ev, BUILTIN_TILES).length === 0) continue;
       expect(firesUnheardIn(lift.ev, BUILTIN_TILES), `the ${lift.ev} row`).toEqual([]);
     }
   });
