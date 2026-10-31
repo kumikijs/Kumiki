@@ -17,6 +17,7 @@ export const CLI_ARGV: readonly string[] = [
 // spawnSync blocks the worker, so vitest's timeout cannot interrupt a hung child; the child's own limit must fire first.
 export const CHILD_TIMEOUT_MS = 60_000;
 export const SPAWN = { timeout: CHILD_TIMEOUT_MS + 10_000 };
+export const TWO_SPAWNS = { timeout: 2 * CHILD_TIMEOUT_MS + 10_000 };
 
 export type CliResult = { stdout: string; stderr: string; out: string; code: number };
 
@@ -42,6 +43,11 @@ export function runCli(
     timeout: CHILD_TIMEOUT_MS,
     env: childEnv(options.env),
   });
+  if ((res.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+    throw new Error(
+      `\`kumiki ${args.join(" ")}\` was stopped after ${CHILD_TIMEOUT_MS} ms, the time a test allows one CLI process`,
+    );
+  }
   // A child that never started or was killed has no status; reporting it as a failure exit would satisfy `code: 1` assertions without the CLI having run.
   if (res.error) throw res.error;
   return {
