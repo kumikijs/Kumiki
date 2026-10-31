@@ -1079,6 +1079,26 @@ reducer editTodo on=ui.input(TodoText) do= todos[$el.todoId].text := $event.valu
 
 **修正**：所属を尋ねる — `tags.has(x)` は `Bool` である。`check` でそれを表示するなら `value=tags.has(x)` を与え、そのクリックで動く reducer が `tags := tags.toggle(x)` を書く（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。キーの下に値を保持したいなら、代わりに `Map(K, V)` を宣言する。`error(field=…)` では、Set の失敗を出すために Set の slot そのものを指す：`error(field=tags)`。
 
+### E0233 `policy-key-type`
+
+`policy=latest-per-key(<key>)` の key が、key が値を `==` のとおりに区別しない型を持つ（[言語 §1.5.2](./language.md#_1-5-2-意味)）。
+
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Float, and NaN is one key though NaN == NaN is false (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it holds a Float, and inside it NaN, Infinity and -Infinity are one key (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it holds a File, and two Files with the same name, size and type are one key, while == holds only of a File and itself (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Set, whose == depends on how it was built (see docs/spec/language.md)`
+
+dispatcher は各リクエストをその key で実行し、同じ key で別のリクエストが始まると実行中のリクエストを中断する（[HTTP §6.4](./http.md#_6-4-cancellation)）。key は Map の key が格納されるのと同じ書き方で書かれ（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）、その書き方では 2 つの型を除いて、2 つの key が 1 つの key になるのはそれらが `==` であるときに限られる — ただし宣言された型が何であれ、有限でない数は例外である。`==` が異なるとする 2 つの値を 1 つの key にする key は、プログラムからは見えない理由でリクエストを中断する：
+
+- `Float`：`NaN` は 1 つの key だが `NaN == NaN` は `false` である。また、レコード・タプル・`List`・`Map` の値・バリアントの中では `NaN`、`Infinity`、`-Infinity` がすべて 1 つの key になる
+- `File`：名前・サイズ・型が同じ 2 つの File は 1 つの key になるが、`==` は File とそれ自身の間でしか成り立たない
+
+`Set` の key はその `==` であり、その `==` 自体が Set の作られ方に依存する（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）。したがって Set の key はプログラムが頼れない規則でリクエストを中断するので、これも報告する。
+
+メッセージは、key の型がそのいずれかであれば `it is`、エイリアス・ジェネリクス・`nominal` を通して、レコードのフィールド・バリアントのペイロード・コンテナの要素・`Map` の値にそのいずれかを持つ場合は `it holds` と言う：`$1` で key にした `type Spot = {lat: Float, lng: Float}` は報告され、`List(Set(Text))` も、`type Box(A) = {v: A}` に対する `Box(Box(Float))` も報告される。`Map` 自身の key も同じ書き方で格納されるので、2 つの Map の `==` はその key と一致し、`Map(Float, Text)` は報告しない。型を検査器が決められない key は報告せず、`Int` も報告しない。ただし `Int` も有限でない数（`n % 0`、あふれた `pow`、有限でない Float の `.round`）を持つことがあり、そのときは Float と同じく key になる。
+
+**修正**：別の型の値を key にする — リクエストを識別する入力のフィールド（`latest-per-key($1.id)`）、Float の `.show`、File の `{name: $1.name, size: $1.size}`、あるいはそのようなフィールドのレコード（`latest-per-key({user: $1.user, page: $1.page})`）。
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。

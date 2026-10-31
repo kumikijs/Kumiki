@@ -1101,6 +1101,26 @@ The read has no type, so the one mistake is reported once: a position that expec
 
 **Fix**: Ask for membership — `tags.has(x)` is a `Bool`. A `check` shows it with `value=tags.has(x)`, and a reducer on its click writes `tags := tags.toggle(x)` ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)). For a value stored under a key, declare a `Map(K, V)` instead. In `error(field=…)`, name the Set slot itself, `error(field=tags)`, for the failure of the Set.
 
+### E0233 `policy-key-type`
+
+A `policy=latest-per-key(<key>)` key has a type whose values the key does not tell apart by `==` ([Language §1.5.2](./language.md#_1-5-2-semantics)).
+
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Float, and NaN is one key though NaN == NaN is false (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it holds a Float, and inside it NaN, Infinity and -Infinity are one key (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it holds a File, and two Files with the same name, size and type are one key, while == holds only of a File and itself (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Set, whose == depends on how it was built (see docs/spec/language.md)`
+
+The dispatcher runs each request under its key and aborts an in-flight request when another starts under the same one ([HTTP §6.4](./http.md#_6-4-cancellation)). The key is written the way a Map key is stored ([Stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)), which makes two keys one key exactly when they are `==` but for two types — and, whatever its declared type, not for a non-finite number. A key that is one key for two values `==` calls different aborts a request for no reason the program can see:
+
+- a `Float`: `NaN` is one key, yet `NaN == NaN` is `false`; and inside a record, a tuple, a `List`, a `Map`'s value or a variant, `NaN`, `Infinity` and `-Infinity` are all one key
+- a `File`: two Files with the same name, size and type are one key, while `==` holds only of a File and itself
+
+A `Set`'s key is its `==`, which itself depends on how the Set was built ([Language §1.9.4](./language.md#_1-9-4-operator-types)), so a Set key aborts requests by a rule the program cannot rely on, and is reported too.
+
+The message says `it is` when the key's type is one of them, and `it holds` when it holds one in a record field, a variant payload, a container element or a `Map`'s value, through any alias, generic or `nominal`: `type Spot = {lat: Float, lng: Float}` keyed by `$1` is reported, and so are a `List(Set(Text))` and a `Box(Box(Float))` for a `type Box(A) = {v: A}`. A `Map`'s own keys are stored the same way, so `==` on two Maps agrees with their key, and a `Map(Float, Text)` is not reported. A key whose type the checker cannot decide is not reported, and neither is an `Int`, though one can hold a non-finite number (`n % 0`, an overflowing `pow`, a `.round` of a non-finite Float) and is then keyed as a Float is.
+
+**Fix**: Key on a value of another type — a field of the input that identifies the request (`latest-per-key($1.id)`), a Float's `.show`, a File's `{name: $1.name, size: $1.size}`, or a record of such fields (`latest-per-key({user: $1.user, page: $1.page})`).
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 A handler prop is written on a tile whose renderer never reads it — `row(text("card"), onClick=open)`, `card(...) {onChange: r}`. Only the tiles that own the matching DOM event wire these: `onClick` on `button` / `check` / `radio` / `switch`, `onChange` on the input tiles, `onInput` on the input tiles and `editable`, `onSubmit` on `form`, `onClose` on the overlay tiles. Everything else drops the handler with no trace, so the reducer is dead code.
