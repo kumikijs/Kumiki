@@ -388,7 +388,7 @@ export function checkErrorField(
       }
       case "FieldAccess": {
         const raw = inferType(step.base, sym, ctx);
-        if (undecided(raw)) return;
+        if (raw === null || undecided(raw)) return;
         const member = classifyMember(raw, step.field, sym);
         if (member === "field") break;
         const base = unaliasType(raw, sym);
