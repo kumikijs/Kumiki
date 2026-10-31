@@ -67,10 +67,7 @@ export const ROUTE_ERROR_INFO_TYPE: RecordType = record({
   pattern: prim("Text"),
 });
 
-// A program cannot declare its own `type Route`, `type PanicInfo` or `type RouteErrorInfo` (E0231,
-// `RESERVED_TYPE_NAMES`). The values the runtime builds (`route`, `$route`, a panic reducer's
-// `$event`) are typed from the exports above, because the runtime builds them whatever the program
-// declares.
+// `route`, `$route` and a panic reducer's `$event` are typed from the exports above.
 export const STDLIB_TYPES: readonly TypeDef[] = [
   def("HttpStatus", nominal(prim("Int"), "between", [0, 599])),
   def(

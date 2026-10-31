@@ -1,7 +1,7 @@
 import { emptyRoute, panicInfo, userPanicInfo } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { PANIC_INFO_TYPE, ROUTE_ERROR_INFO_TYPE, ROUTE_TYPE } from "../src/stdlib-types.ts";
-import { pointedErrorsOf } from "./helpers/diagnostics.ts";
+import { pointedErrorsOf, reservedTypeNameMessage } from "./helpers/diagnostics.ts";
 
 // Each field's type as the checker should print it. The keys are compared with the runtime's
 // values and with the checker's type, and each type with the checker's by a mismatch that names
@@ -210,7 +210,7 @@ ${TAIL}`;
 describe("a program's own type of the same name does not change them", () => {
   const reserved = (name: string, text: string) => ({
     code: "E0231",
-    message: `Type "${name}" collides with the standard library's ${name}; uses of it never see this type`,
+    message: reservedTypeNameMessage(name),
     text,
   });
 

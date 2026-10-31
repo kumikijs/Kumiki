@@ -2,7 +2,7 @@
 "@kumikijs/compiler": patch
 ---
 
-A program cannot declare a type under a standard-library name whose values the runtime supplies
+A program cannot declare a type under a standard-library name whose values the runtime supplies (E0231)
 
 The standard library's domain types were seeded into the checker's table before
 the program's own definitions, so a program's `type PanicInfo = …` replaced the
@@ -57,5 +57,5 @@ the standard library's and its uses mean the program's type.
 **Migration**: rename the program's type — `type AppPanic = …` instead of
 `type PanicInfo = …` — along with every use that meant it. A program that
 redeclared one of the seven identically (`type HttpStatus = nominal Int where
-between(0, 599)`) can delete the declaration: the standard library's is the
-same type.
+between(0, 599)`) must delete the declaration: it is E0231 like any other, and
+nothing else changes, since the standard library's is the same type.
