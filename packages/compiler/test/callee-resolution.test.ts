@@ -737,8 +737,8 @@ describe("a qualified stdlib member is read the same way without its parentheses
   });
 
   it("claims the qualifier position and not the name", () => {
-    const src = `type Duration = Short | Long
-slot d : Duration = Short
+    const src = `type Decoder = Short | Long
+slot d : Decoder = Short
 slot t : Text = ""
 reducer pick on=ui.click(B) do= d := Long
 tile B = button(text="b")

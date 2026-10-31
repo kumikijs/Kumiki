@@ -7,7 +7,7 @@ import {
   type GraphEdge,
 } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
-import { STDLIB_TYPES } from "./stdlib-types.ts";
+import { isReservedTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import { constructorTags, qualifierCandidates, unionsByTag } from "./symbols.ts";
 import { checkApp } from "./typecheck/app.ts";
 import type { KumikiError, SymbolTable } from "./typecheck/context.ts";
@@ -20,7 +20,7 @@ import { checkSlot } from "./typecheck/slot.ts";
 import { checkTest } from "./typecheck/test.ts";
 import { checkTile } from "./typecheck/tile.ts";
 import { collectElementIds, collectPrefetchTargets } from "./typecheck/tile-collect.ts";
-import { checkTypeDef } from "./typecheck/types.ts";
+import { checkTypeDef, reservedTypeName } from "./typecheck/types.ts";
 import { describeDuplicate, findDuplicateDefinitions, findDuplicateNames } from "./uniqueness.ts";
 
 export type { KumikiError } from "./typecheck/context.ts";
@@ -107,7 +107,7 @@ function checkAll(
   for (const def of program.defs) {
     switch (def.kind) {
       case "TypeDef":
-        sym.types.set(def.name, def);
+        if (!isReservedTypeName(def.name)) sym.types.set(def.name, def);
         break;
       case "SlotDef":
         sym.slots.set(def.name, def);
@@ -156,7 +156,11 @@ function checkAll(
   const index = buildDefIndex(program);
   const routeChain = routeChainResolver(sym);
   for (const def of program.defs) {
-    if (def.kind === "TypeDef") checkTypeDef(def, sym, errors);
+    if (def.kind === "TypeDef") {
+      const reserved = reservedTypeName(def);
+      if (reserved) errors.push(reserved);
+      checkTypeDef(def, sym, errors);
+    }
     if (def.kind === "SlotDef") checkSlot(def, sym, errors, index, routeChain);
     if (def.kind === "TileDef") checkTile(def, sym, errors);
     if (def.kind === "ReducerDef") checkReducer(def, sym, errors);

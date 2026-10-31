@@ -67,9 +67,7 @@ export const ROUTE_ERROR_INFO_TYPE: RecordType = record({
   pattern: prim("Text"),
 });
 
-// A program's own `type Route`, `type PanicInfo` or `type RouteErrorInfo` shadows the entry here.
-// The values the runtime builds (`route`, `$route`, a panic reducer's `$event`) are typed from the
-// exports above instead, because the runtime builds them whatever the program declares.
+// `route`, `$route` and a panic reducer's `$event` are typed from the exports above.
 export const STDLIB_TYPES: readonly TypeDef[] = [
   def("HttpStatus", nominal(prim("Int"), "between", [0, 599])),
   def(
@@ -99,6 +97,24 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
     pos: NO_POS,
   }),
 ];
+
+// The runtime or the standard library builds or reads values of these, so a
+// program's own definition would be what the checker reasoned about while the
+// runtime kept to the entry above. The other entries name types only a program
+// builds values of, and a program may declare its own.
+export const RESERVED_TYPE_NAMES: ReadonlySet<string> = new Set([
+  "PanicInfo",
+  "RouteErrorInfo",
+  "Route",
+  "HttpError",
+  "HttpStatus",
+  "Duration",
+  "FormValue",
+]);
+
+export function isReservedTypeName(name: string): boolean {
+  return RESERVED_TYPE_NAMES.has(name);
+}
 
 // A browser reads a file's bytes only asynchronously, so the record a `change` event
 // delivers cannot hold them; they are not a field. `File` stays a `TypePrim` with this

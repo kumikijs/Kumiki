@@ -59,6 +59,8 @@ The only operations defined on `EffectId` are equality (`==`, `!=`), storage in 
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — the payload of `app.error` and of an `error-boundary` tile's `in=` ([Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)) |
 | `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — the payload of `route.error(<pattern>)`: a `PanicInfo`'s fields and the `pattern` the reducer names |
 
+A program uses these names without declaring them. `PanicInfo`, `RouteErrorInfo`, `Route`, `HttpError`, `HttpStatus`, `Duration` and `FormValue` are **reserved**: the runtime or the standard library builds or reads their values, so a `type` declared under one of them is [E0231](./errors.md#e0231-reserved-type-name) and the name keeps the definition above. `Url`, `Email`, `Uuid` and `FormData` name types only a program builds values of; a program may declare its own type under one of them, and its uses of the name then mean that type ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 6). `File` is a primitive rather than a declared type, and is in neither group.
+
 ---
 
 ## 2.2 Collection Methods
@@ -75,7 +77,7 @@ The only operations defined on `EffectId` are equality (`==`, `!=`), storage in 
 | `List(T)` | the element, `T` | `push` / `prepend` / `contains` |
 | | `other`, a `List(T)` | `concat` |
 
-An argument is checked against that type the way a value written to a place of the type is, so a mismatch is [E0201](./errors.md#e0201-type-mismatch) at the argument: `xs.push("3")` on a `List(Int)` is reported at `"3"`, as `xs := ["3"]` is, and `m.insert(1, 0)` on a `Map(Text, Int)` at the `1`. The same rule admits what a slot admits — an `Int` where a `Float` is the element, `None` where an `Option(T)` is, a `Text` where the key is declared `nominal Text`. The other parameters are not the receiver's to type: a fragment other than `update`'s, the index of `List.get`, the numbers of `slice` / `chunk`, the separator of `join`, the initial accumulator of `fold`, and the `other` of `zip`, a `List(U)` of an element type of its own; the `default` of `get-or` is checked against what the call answers ([E0201](./errors.md#e0201-type-mismatch)). Where the checker cannot decide the receiver's type, no argument is read against a parameter type, though each argument's own expression is still checked. That is the accumulator `$1` of a `fold` from `{}`, a `fn` result with no `->`, and the result of a member whose answer the checker does not infer: `List.map` / `fold` / `zip`, `Map.map`, and `Option.map` / `Result.map`. So `xs.map($1 * 2).push("w")` on a `List(Int)` passes `check`. That is a gap in what the checker resolves, not a rule a program may rely on.
+An argument is checked against that type the way a value written to a place of the type is, so a mismatch is [E0201](./errors.md#e0201-type-mismatch) at the argument: `xs.push("3")` on a `List(Int)` is reported at `"3"`, as `xs := ["3"]` is, and `m.insert(1, 0)` on a `Map(Text, Int)` at the `1`. The same rule admits what a slot admits — an `Int` where a `Float` is the element, `None` where an `Option(T)` is, a `Text` where the key is declared `nominal Text`. The other parameters are not the receiver's to type: a fragment other than `update`'s, the numbers of `slice` / `chunk`, the separator of `join`, the initial accumulator of `fold`, and the `other` of `zip`, a `List(U)` of an element type of its own; the `default` of `get-or` is checked against what the call answers, and the index of `List.get` against `Int`, as `xs[i]`'s is ([E0201](./errors.md#e0201-type-mismatch)). Where the checker cannot decide the receiver's type, no argument is read against a parameter type, though each argument's own expression is still checked. That is the accumulator `$1` of a `fold` from `{}`, a `fn` result with no `->`, and the result of a member whose answer the checker does not infer: `List.map` / `fold` / `zip`, `Map.map`, and `Option.map` / `Result.map`. So `xs.map($1 * 2).push("w")` on a `List(Int)` passes `check`. That is a gap in what the checker resolves, not a rule a program may rely on.
 
 ### 2.2.1 Map(K, V)
 
@@ -153,7 +155,7 @@ What is converted is decided from the receiver's type, wherever the receiver com
 ```
 length                      : Int
 is-empty                    : Bool
-get(i)                      : Option(T)
+get(i)                      : Option(T)        ; i is Int
 head                        : Option(T)
 tail                        : List(T)
 last                        : Option(T)

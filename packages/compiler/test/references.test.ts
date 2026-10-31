@@ -64,24 +64,24 @@ tile B = button(text="b")
       ]);
     });
 
-    describe("with a program's own `type Duration`, a call on the namespace", () => {
+    describe("with a program's own `type Decoder`, a call on the namespace", () => {
       it.each([
-        { call: "Duration.ms(5)", why: "a built-in call names no type", edges: [] },
+        { call: "Decoder.Text", why: "a built-in call names no type", edges: [] },
         // E0116, so this fixture does not check, but it is the case that fails if the namespace
         // exclusion is dropped: `fresh` is a type member on any other qualifier.
-        { call: "Duration.fresh()", why: "an argless fresh is E0116 and names no type", edges: [] },
+        { call: "Decoder.fresh()", why: "an argless fresh is E0116 and names no type", edges: [] },
         {
-          call: "Duration.show(raw)",
+          call: "Decoder.show(raw)",
           why: "show given its argument",
-          edges: ["type.Duration@4:12"],
+          edges: ["type.Decoder@4:12"],
         },
         {
-          call: "Duration.parse(raw)",
+          call: "Decoder.parse(raw)",
           why: "parse given its argument",
-          edges: ["type.Duration@4:12"],
+          edges: ["type.Decoder@4:12"],
         },
       ])("$call: $why", ({ call, edges }) => {
-        const src = `type Duration = nominal Text
+        const src = `type Decoder = nominal Text
 slot raw : Text = ""
 reducer r on=ui.click(B) do=
     raw := ${call}

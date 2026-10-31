@@ -419,6 +419,14 @@ ${APP_A}`);
     expect(e0209[0]?.description).not.toContain("Grn0");
   });
 
+  it("proposes no tag from a program's own union under a reserved name, which the checker never reads", () => {
+    const file = seed(`type FormValue = Txt(Text) | Num(Float)
+slot v : FormValue = Txtt("a")
+tile App = column(text("x"))
+${APP_A}`);
+    expect(descriptionsOf(file).filter((d) => d.includes('"Txtt"'))).toEqual([]);
+  });
+
   it("E0106 does not fall back to unrelated top-level names (scoped candidate set)", () => {
     const store = storeOf(`slot note  : Int = 0
 slot count : Int = 0

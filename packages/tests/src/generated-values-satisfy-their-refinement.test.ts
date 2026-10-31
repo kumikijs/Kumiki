@@ -15,7 +15,7 @@ function predicate(pred: string, args: (number | string)[] = []): (v: unknown) =
 
 /** The descriptor codegen emits for that refinement over `base`. */
 const descriptor = (base: GenDescData, pred: string, args: (number | string)[] = []): GenDesc =>
-  applyRefine(base, refinement(pred, args)) as unknown as GenDesc;
+  applyRefine(base, refinement(pred, args));
 
 /**
  * 200 generated values, each asserted against the predicate.
@@ -54,5 +54,77 @@ describe("a generated value passes the check the runtime applies to a write", ()
     expect(
       generatedValuesPass(descriptor(base, pred, args), predicate(pred, args)),
     ).toBeUndefined();
+  });
+});
+
+describe("a generated value passes every refinement stacked on its type", () => {
+  // Each bound narrows the ones before it, and a shape is built at the length the rest allow.
+  it.each<[GenDescData, [string, (number | string)[]][]]>([
+    [
+      { t: "Int" },
+      [
+        ["positive", []],
+        ["between", [-5, 5]],
+      ],
+    ],
+    [{ t: "Text" }, [["len-gt", [60]]]],
+    [
+      { t: "Text" },
+      [
+        ["len-gt", [3]],
+        ["len-lt", [5]],
+      ],
+    ],
+    [
+      { t: "Text" },
+      [
+        ["email", []],
+        ["len-lt", [6]],
+      ],
+    ],
+    [
+      { t: "Text" },
+      [
+        ["email", []],
+        ["len-gt", [40]],
+      ],
+    ],
+    [
+      { t: "Text" },
+      [
+        ["url", []],
+        ["len-lt", [9]],
+      ],
+    ],
+    [
+      { t: "Text" },
+      [
+        ["url", []],
+        ["len-gt", [8]],
+        ["len-lt", [22]],
+      ],
+    ],
+    [
+      { t: "Text" },
+      [
+        ["url", []],
+        ["len-gt", [21]],
+        ["len-lt", [30]],
+      ],
+    ],
+    [
+      { t: "Text" },
+      [
+        ["uuid", []],
+        ["len-eq", [36]],
+      ],
+    ],
+  ])("generates %o under %j", (base, stack) => {
+    const desc = stack.reduce<GenDesc>(
+      (d, [pred, args]) => applyRefine(d, refinement(pred, args)),
+      base,
+    );
+    const checks = stack.map(([pred, args]) => predicate(pred, args));
+    expect(generatedValuesPass(desc, (v) => checks.every((p) => p(v)))).toBeUndefined();
   });
 });

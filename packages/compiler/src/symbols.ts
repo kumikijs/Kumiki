@@ -5,6 +5,7 @@ import { QUALIFIED_CALL_NAMESPACES } from "./builtin-calls.ts";
 import {
   BUILTIN_TYPE_CONSTRUCTORS,
   BUILTIN_UNION_TAGS,
+  isReservedTypeName,
   STDLIB_TYPES,
   typeCandidates,
 } from "./stdlib-types.ts";
@@ -132,7 +133,8 @@ function collectTagsForTypeName(
   program: Program,
   seen: Set<string>,
 ): string[] | null {
-  if (seen.has(name)) return null;
+  // The checker reads a reserved name as the standard library's type, not the program's (E0231).
+  if (seen.has(name) || isReservedTypeName(name)) return null;
   const def = program.defs.find((d): d is TypeDef => d.kind === "TypeDef" && d.name === name);
   if (!def) return null;
   const next = new Set(seen);
