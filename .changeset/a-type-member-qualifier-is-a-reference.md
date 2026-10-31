@@ -22,8 +22,8 @@ The qualifier is now an edge to the type, at the qualifier, so `refs` lists the
 reducer and `rename` writes `ThingId.fresh()` and exits 0. The walker and the
 checker read the qualifier by one rule, so the walker sees exactly the
 qualifiers the checker resolves. On `Decoder`, `EffectId`, `Duration` and
-`Bytes`, only `parse(t)` / `show(v)` is a type-member call: with `type Duration`
-declared, `Duration.show(d)` is a reference to it, while `Duration.ms(5)` and
+`Bytes`, only `parse(t)` / `show(v)` is a type-member call: with `type Decoder`
+declared, `Decoder.show(d)` is a reference to it, while `Duration.ms(5)` and
 the `EffectId.none` sentinel name no type.
 
 The argument of `Decoder.Json(T)` is read as the type it decodes by, too. In
