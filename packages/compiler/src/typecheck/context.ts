@@ -12,16 +12,22 @@ import type {
 } from "../ast.ts";
 import { callsBuiltin } from "../builtin-calls.ts";
 
+export type Severity = "error" | "warning";
+
 export type KumikiError = {
   code: string;
   kind: string;
   message: string;
   pos: Pos;
-  severity?: "error" | "warning";
+  severity?: Severity;
   unrendered?: "positional" | "text-prop" | "text-shadowed";
   /** E0218 only: the member whose append alone makes the target a List; `kumiki fix` reads it. */
   accessor?: "keys" | "to-list";
 };
+
+export function severityOf(d: Pick<KumikiError, "severity">): Severity {
+  return d.severity ?? "error";
+}
 
 export type SymbolTable = {
   types: Map<string, TypeDef>;
