@@ -15,9 +15,9 @@ import {
   checkEmitTarget,
   checkGetArity,
   checkGetOrArity,
+  checkIndexStep,
   checkRecordUpdate,
   getOrResultType,
-  indexStep,
 } from "./against.ts";
 import { arithmeticHint, checkCallee, reportRunReducerPosition } from "./callee.ts";
 import {
@@ -322,8 +322,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
     case "Index": {
       checkExpr(e.base, sym, errors, ctx);
       checkExpr(e.index, sym, errors, ctx);
-      const step = indexStep(inferType(e.base, sym, ctx), sym);
-      if (step.kind === "place" && step.key) checkAgainst(e.index, step.key, sym, errors, ctx);
+      checkIndexStep(inferType(e.base, sym, ctx), e.index, "read", e.index.pos, sym, errors, ctx);
       return;
     }
     case "Call":
@@ -737,6 +736,8 @@ function memberArgType(
       return null;
     case "self":
       return recv;
+    case "Int":
+      return prim("Int", t.pos);
     default:
       return t.args[TYPE_ARGUMENT_OF[param]] ?? null;
   }

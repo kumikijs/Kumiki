@@ -22,6 +22,7 @@ import {
   checkBindStrictProp,
   checkBindTargetRoot,
   checkBindTargetSteps,
+  checkErrorField,
   checkInputBindType,
   checkSecondSpelling,
   checkToggleBind,
@@ -379,7 +380,7 @@ function checkTileCall(
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);
-  checkBindTargetSteps(t, errors);
+  checkBindTargetSteps(t, sym, errors, ctx);
   checkBindTargetRoot(t, sym, errors, ctx);
   checkToggleBind(t, sym, errors, ctx);
   checkSecondSpelling(t, errors);
@@ -493,6 +494,7 @@ function checkTileCall(
       checkBuiltinProp(t.name, prop.name, prop.value, sym, errors, ctx);
     }
   }
+  checkErrorField(t, sym, errors, ctx);
 }
 
 const PREFETCH_ARGS_TYPE = appType("Map", primType("Text"), primType("Text"));

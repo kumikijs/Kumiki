@@ -198,6 +198,14 @@ export function recordFieldType(
   return rec.fields.find((f) => f.name === name)?.type ?? null;
 }
 
+/** The place an index into the unaliased `base` names — a List's element, a Map's value — or `null` (a Set has members, not places). */
+export function indexPlaceType(base: TypeExpr | null): TypeExpr | null {
+  if (base?.kind !== "TypeApp") return null;
+  if (base.name === "List") return base.args[0] ?? null;
+  if (base.name === "Map") return base.args[1] ?? null;
+  return null;
+}
+
 export function elementType(t: TypeExpr | null, env: TypeEnv): TypeExpr | null {
   const u = unaliasType(t, env);
   if (u?.kind !== "TypeApp") return null;
@@ -523,7 +531,7 @@ const argumentUsesIn = perTable((env): ReadonlyMap<string, readonly ArgumentUse[
  * least once inside a larger argument (`Node(G(List(T)))`). Comparing any other generics reaches
  * finitely many pairs as written, which `pairs` ends.
  */
-const nestingGenericsIn = perTable((env): ReadonlySet<string> => {
+export const nestingGenericsIn = perTable((env): ReadonlySet<string> => {
   const generics = [...env.types.values()].filter((d) => d.params.length > 0);
   // One node for each parameter of each generic, numbered on from the generic's first.
   const first = new Map<string, number>();
