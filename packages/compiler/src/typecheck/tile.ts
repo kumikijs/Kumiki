@@ -15,7 +15,12 @@ import {
   unboundRedirectNames,
 } from "../redirects.ts";
 import { appType, primType } from "../stdlib-types.ts";
-import { HANDLER_NAMES, HANDLER_PROP_TILES, handlerReducerName } from "../ui-lifts.ts";
+import {
+  HANDLER_NAMES,
+  HANDLER_PROP_TILES,
+  handlerReducerName,
+  liftForHandler,
+} from "../ui-lifts.ts";
 import { duplicateSubRoutes } from "../uniqueness.ts";
 import { checkAgainst } from "./against.ts";
 import {
@@ -37,6 +42,7 @@ import {
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
+import { firesUnheardClauses } from "./reducer.ts";
 import { collectRenderedBuiltinKinds, collectTileBuiltinKinds } from "./tile-collect.ts";
 import { checkA11y, checkBuiltinProp, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
@@ -533,24 +539,26 @@ function checkHandlerTarget(
 ): void {
   const allowed = HANDLER_PROP_TILES[handler];
   if (allowed == null) return;
+  const ev = liftForHandler(handler)?.ev;
+  const unheard = (kinds: Iterable<string>): string[] =>
+    ev === undefined ? [] : firesUnheardClauses(ev, kinds);
   if (BUILTIN_TILES.has(tileName)) {
     if (allowed.has(tileName)) return;
-    errors.push(inertHandler(tileName, handler, `${tileName} does not fire it`, allowed, pos));
+    const [because = `${tileName} does not fire it`] = unheard([tileName]);
+    errors.push(inertHandler(tileName, handler, because, allowed, pos));
     return;
   }
   if (!sym.tiles.has(tileName)) return;
   const kinds = collectTileBuiltinKinds(tileName, sym);
   if (kinds.size === 0) return;
   if ([...kinds].some((k) => allowed.has(k))) return;
-  errors.push(
-    inertHandler(
-      tileName,
-      handler,
-      `${tileName} renders nothing that fires it (observed in body: ${[...kinds].sort().join(", ")})`,
-      allowed,
-      pos,
-    ),
-  );
+  const observed = `(observed in body: ${[...kinds].sort().join(", ")})`;
+  const clauses = unheard(kinds);
+  const because =
+    clauses.length === 0
+      ? `${tileName} renders nothing that fires it ${observed}`
+      : `${tileName} renders nothing that calls it: ${clauses.join("; ")} ${observed}`;
+  errors.push(inertHandler(tileName, handler, because, allowed, pos));
 }
 
 /** One W0213, whichever side — builtin or user tile — asked for it. */

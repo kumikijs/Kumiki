@@ -149,13 +149,9 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
 // the event; "no descendant fires it" would be untrue of them. No row records a kind that fires
 // unheard under key, focus or blur, so the two reasons never both apply.
 function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet<string>): string {
-  const unheard = firesUnheardIn(ev, kinds);
+  const unheard = firesUnheardClauses(ev, kinds);
   if (unheard.length > 0) {
-    const clauses = unheard.map(
-      (g) =>
-        `a ${g.kinds.join(" / ")} fires "${ev}", and its renderer ${g.instead}, never calling ${g.handler}`,
-    );
-    return `"${ev}" never reaches a reducer in tile "${tile}": ${clauses.join("; ")}`;
+    return `"${ev}" never reaches a reducer in tile "${tile}": ${unheard.join("; ")}`;
   }
   const unreached = wrappedUnreached(ev, kinds).map((g) => wrappedClause(ev, g));
   if (unreached.length > 0) {
@@ -165,13 +161,26 @@ function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet
 }
 
 function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
-  const kinds = g.kinds.join(" / ");
+  const kinds = kindsPhrase(g.kinds);
   return g.bubbles
-    ? `a ${kinds} takes no "${ev}" listener on the <${g.wrapper}> around its <${g.focused}>, ` +
+    ? `${kinds} takes no "${ev}" listener on the <${g.wrapper}> around its <${g.focused}>, ` +
         `since a control in its panel takes the subscription instead — ` +
-        `write ${g.handler}= on the ${kinds} to hear a "${ev}" on its <${g.focused}>`
-    : `the runtime listens for "${ev}" on a ${kinds}'s <${g.wrapper}>, ` +
+        `write ${g.handler}= on the ${g.kinds.join(" / ")} to hear a "${ev}" on its <${g.focused}>`
+    : `the runtime listens for "${ev}" on ${kinds}'s <${g.wrapper}>, ` +
         `and the "${ev}" its <${g.focused}> fires does not bubble to the <${g.wrapper}>`;
+}
+
+// W0212 and W0213 both give these as their reason, so the two say the same of
+// a kind.
+export function firesUnheardClauses(ev: UiEventKind, kinds: Iterable<string>): string[] {
+  return firesUnheardIn(ev, kinds).map(
+    (g) => `${kindsPhrase(g.kinds)} fires "${ev}", and its renderer ${g.reason}`,
+  );
+}
+
+function kindsPhrase(kinds: readonly string[]): string {
+  const named = kinds.join(" / ");
+  return `${/^[aeiou]/.test(named) ? "an" : "a"} ${named}`;
 }
 
 function declaredRoutePatterns(
