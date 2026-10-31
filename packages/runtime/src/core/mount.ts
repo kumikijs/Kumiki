@@ -1,6 +1,6 @@
 import type { EnvRead, EpisodeLogger } from "../episode.ts";
 import { applyAppMeta } from "./app-meta.ts";
-import { forgetRefusedBindsWithin, submitHeldBy } from "./binding.ts";
+import { forgetMovedRefusals, forgetRefusedBindsWithin, submitHeldBy } from "./binding.ts";
 import {
   installLogEffect,
   makeCapabilityRegistry,
@@ -197,6 +197,8 @@ export function mountCore(
       lastRenderTouched = touched;
       syncMountedTiles(tree);
     });
+    // Once more without them, so no message still names a value no control shows.
+    if (forgetMovedRefusals(app)) render();
   };
   const placeRoot = (view: MountView, dom: HTMLElement): void => {
     if (view.root) view.target.replaceChild(dom, view.root);

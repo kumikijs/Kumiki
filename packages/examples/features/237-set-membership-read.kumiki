@@ -1,0 +1,48 @@
+# Feature (language.md): a Set is read by membership.
+#
+#   picked.has(5)
+#
+# An index names a place — an entry of a Map, a position of a List — and a
+# Set has membership and no places, so `picked[5]` names nothing: as a read
+# it is E0232, and on the left of `:=` it is E0602. What a Set says about a
+# value is whether it holds it, and `.has` is the read that asks, however
+# the Set is reached: a slot, a record field, an element of a List, a value
+# of a Map, the payload of an Option. Membership changes through `.add` /
+# `.remove` / `.toggle` (stdlib.md); the check below shows the
+# membership read as its `value=` and toggles it in a reducer.
+
+type Doc = { tags: Set(Text) }
+
+slot picked : Set(Int)             = [5]
+slot doc    : Doc                  = { tags: ["draft"] }
+slot groups : List(Set(Int))       = [[1, 2]]
+slot roles  : Map(Text, Set(Text)) = {"ada": ["admin"]}
+slot maybe  : Option(Set(Int))     = None
+
+reducer toggle-five on=ui.click(FiveBox)
+    do= picked := picked.toggle(5)
+
+reducer publish on=ui.click(Publish)
+    do= doc.tags := doc.tags.remove("draft").add("published")
+
+reducer fill on=ui.click(Fill)
+    do= maybe := Some({}.add(7))
+
+tile FiveBox = check(value=picked.has(5)) {id: "five"}
+tile Publish = button(text="publish") {id: "publish"}
+tile Fill    = button(text="fill") {id: "fill"}
+
+tile App = column(
+  FiveBox,
+  Publish,
+  Fill,
+  text("five: " + picked.has(5).show + " six: " + picked.has(6).show),
+  text("draft: " + doc.tags.has("draft").show + " published: " + doc.tags.has("published").show),
+  text("group has 2: " + groups[0].has(2).show),
+  text("ada is admin: " + roles["ada"].has("admin").show),
+  text("maybe has 7: " + maybe.map($1.has(7)).get-or(false).show))
+
+app SetMembershipRead
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

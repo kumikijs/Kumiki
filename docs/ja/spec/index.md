@@ -112,6 +112,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0226](./errors.md#e0226-input-bind-type) | `input-bind-type` | tile | フォーム |
 | [E0227](./errors.md#e0227-non-exhaustive-match) | `non-exhaustive-match` | type | コア |
 | [E0229](./errors.md#e0229-bind-target-not-slot) | `bind-target-not-slot` | tile | フォーム |
+| [E0231](./errors.md#e0231-reserved-type-name) | `reserved-type-name` | type | コア |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | フォーム |
@@ -126,7 +127,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0402](./errors.md#e0402-motion-invalid-timing) | `motion-invalid-timing` | tile | スタイル |
 | [E0403](./errors.md#e0403-motion-malformed) | `motion-malformed` | tile | スタイル |
 | [E0601](./errors.md#e0601-duplicate-write) | `duplicate-write` | reducer | コア |
-| [E0602](./errors.md#e0602-unassignable-member) | `unassignable-member` | reducer | コア |
+| [E0602](./errors.md#e0602-unassignable-member) | `unassignable-member` | reducer / tile | コア |
 | [E0701](./errors.md#e0701-a11y-button) | `a11y-button` | tile | ライフサイクル |
 | [E0702](./errors.md#e0702-a11y-image) | `a11y-image` | tile | ライフサイクル |
 | [E0703](./errors.md#e0703-a11y-link) | `a11y-link` | tile | ライフサイクル |

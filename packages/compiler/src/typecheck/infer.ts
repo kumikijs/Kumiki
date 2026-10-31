@@ -11,10 +11,11 @@ import type { Expr, Pos, TypeExpr } from "../ast.ts";
 import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
 import { qualifierType } from "../parse-reading.ts";
 import { hasMember, isOwnMember } from "../stdlib-members.ts";
-import { FILE_FIELDS, type PrimName, ROUTE_TYPE, refType } from "../stdlib-types.ts";
-import { getOrResultType, unwrappedType } from "./against.ts";
+import { FILE_FIELDS, type PrimName, refType } from "../stdlib-types.ts";
+import { getOrResultType, indexStep, unwrappedType } from "./against.ts";
 import { type Ctx, isBuiltinCall, type SymbolTable } from "./context.ts";
 import { binOpResult, letInScope } from "./expr.ts";
+import { fnResultType } from "./fn.ts";
 import { memberReceivers } from "./members.ts";
 import { armScope, matchedType } from "./patterns.ts";
 import { RESERVED_SLOT_NAMES } from "./slot.ts";
@@ -306,21 +307,10 @@ function unlisted(_member: never): null {
   return null;
 }
 
-/**
- * A value the runtime builds, named by its standard-library type while the program declares no
- * type of that name, so a diagnostic prints `Route` rather than the record; the record itself
- * once the program's own declaration has taken the name.
- */
-export function runtimeBuilt(name: string, record: TypeExpr, sym: SymbolTable): TypeExpr {
-  return sym.types.get(name)?.body === record ? refType(name) : record;
-}
-
 // A `$route` nothing binds has no value to type. A prefetch target fired by its own trigger is
 // handed no route, so its `$route` is typed only when that trigger is a route one too.
-function routeType(name: string, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
-  if (name === "route" || (name === "$route" && ctx.routeBind === "bound")) {
-    return runtimeBuilt("Route", ROUTE_TYPE, sym);
-  }
+function routeType(name: string, ctx: Ctx): TypeExpr | null {
+  if (name === "route" || (name === "$route" && ctx.routeBind === "bound")) return refType("Route");
   return null;
 }
 
@@ -342,7 +332,7 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       if (ctx.localBinds.has(e.name)) return null;
       // The slot table first: a program's own `slot route` is E0115, and its
       // reads keep the slot's type rather than drawing a second report.
-      return sym.slots.get(e.name)?.type ?? routeType(e.name, sym, ctx) ?? null;
+      return sym.slots.get(e.name)?.type ?? routeType(e.name, ctx) ?? null;
     }
     case "FieldAccess": {
       const base = unaliasType(inferType(e.base, sym, ctx), sym);
@@ -360,10 +350,10 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       return fixed ? prim(fixed, e.pos) : null;
     }
     case "Index": {
-      const base = unaliasType(inferType(e.base, sym, ctx), sym);
-      if (base?.kind === "TypeApp") {
-        if (base.name === "List" || base.name === "Set") return base.args[0] ?? null;
-        if (base.name === "Map") return base.args[1] ?? null;
+      const step = indexStep(inferType(e.base, sym, ctx), sym);
+      if (step.kind === "place") return step.type;
+      if (step.kind === "no-place" && step.base.kind === "TypeRecord" && e.index.kind === "Str") {
+        return recordFieldType(step.base, e.index.value);
       }
       return null;
     }
@@ -466,7 +456,7 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       if (qualifier === "Duration") return { kind: "TypeRef", name: "Duration", pos: e.pos };
       if (qualifier === "Bytes") return prim("Bytes", e.pos);
       if (qualifier !== null && member === "fresh") return freshResultType(qualifier, e.pos, sym);
-      return sym.fns.get(e.callee)?.ret ?? null;
+      return fnResultType(e.callee, sym);
     }
     default:
       return null;
@@ -488,7 +478,7 @@ function runReducerState(sym: SymbolTable, pos: Pos): TypeExpr {
     .filter((name) => !sym.slots.has(name))
     .map((name) => ({
       name,
-      type: name === "route" ? runtimeBuilt("Route", ROUTE_TYPE, sym) : unknownType(pos),
+      type: name === "route" ? refType("Route") : unknownType(pos),
       pos,
     }));
   const slots: TypeExpr = { kind: "TypeRecord", fields: [...declared, ...reserved], pos };

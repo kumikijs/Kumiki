@@ -5,9 +5,10 @@ import {
   expansionTargets,
   findCycles,
   type GraphEdge,
+  nodesOnCycles,
 } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
-import { STDLIB_TYPES } from "./stdlib-types.ts";
+import { isReservedTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import { unionsByTag } from "./symbols.ts";
 import { checkApp } from "./typecheck/app.ts";
 import type { KumikiError, SymbolTable } from "./typecheck/context.ts";
@@ -20,7 +21,7 @@ import { checkSlot } from "./typecheck/slot.ts";
 import { checkTest } from "./typecheck/test.ts";
 import { checkTile } from "./typecheck/tile.ts";
 import { collectElementIds, collectPrefetchTargets } from "./typecheck/tile-collect.ts";
-import { checkTypeDef } from "./typecheck/types.ts";
+import { checkTypeDef, reservedTypeName } from "./typecheck/types.ts";
 import { describeDuplicate, findDuplicateDefinitions, findDuplicateNames } from "./uniqueness.ts";
 
 export type { KumikiError } from "./typecheck/context.ts";
@@ -97,13 +98,15 @@ function checkAll(
     themes: new Set(),
     iconDomain,
     elementIds: new Set(),
+    fnResults: new Map(),
+    fnLoops: new Set(),
     unionsByTag: unionsByTag(program.defs),
   };
 
   for (const def of program.defs) {
     switch (def.kind) {
       case "TypeDef":
-        sym.types.set(def.name, def);
+        if (!isReservedTypeName(def.name)) sym.types.set(def.name, def);
         break;
       case "SlotDef":
         sym.slots.set(def.name, def);
@@ -150,9 +153,14 @@ function checkAll(
   }
 
   const index = buildDefIndex(program);
+  sym.fnLoops = nodesOnCycles(sym.fns.keys(), fnEdges(sym, index));
   const routeChain = routeChainResolver(sym);
   for (const def of program.defs) {
-    if (def.kind === "TypeDef") checkTypeDef(def, sym, errors);
+    if (def.kind === "TypeDef") {
+      const reserved = reservedTypeName(def);
+      if (reserved) errors.push(reserved);
+      checkTypeDef(def, sym, errors);
+    }
     if (def.kind === "SlotDef") checkSlot(def, sym, errors, index, routeChain);
     if (def.kind === "TileDef") checkTile(def, sym, errors);
     if (def.kind === "ReducerDef") checkReducer(def, sym, errors);
@@ -180,6 +188,17 @@ function checkDuplicateNames(program: Program, errors: KumikiError[]): void {
   }
   for (const d of findDuplicateNames(program))
     errors.push({ code: "E0008", ...describeDuplicate(d) });
+}
+
+/** The calls a `fn`'s body makes to other `fn`s: the edges E0006 walks. */
+function fnEdges(sym: SymbolTable, index: DefIndex): (name: string) => readonly GraphEdge[] {
+  return (name) => {
+    const def = sym.fns.get(name);
+    if (!def) return [];
+    return referencesIn(def, index)
+      .filter((r) => r.layer === "fn")
+      .map((r) => ({ to: r.name, pos: r.pos ?? def.pos }));
+  };
 }
 
 function checkCycles(
@@ -211,16 +230,9 @@ function checkCycles(
   }
 
   const fns = program.defs.filter((d): d is FnDef => d.kind === "FnDef");
-  const fnEdges = (name: string): readonly GraphEdge[] => {
-    const def = sym.fns.get(name);
-    if (!def) return [];
-    return referencesIn(def, index)
-      .filter((r) => r.layer === "fn")
-      .map((r) => ({ to: r.name, pos: r.pos ?? def.pos }));
-  };
   for (const cycle of findCycles(
     fns.map((f) => f.name),
-    fnEdges,
+    fnEdges(sym, index),
   )) {
     errors.push({
       code: "E0006",
