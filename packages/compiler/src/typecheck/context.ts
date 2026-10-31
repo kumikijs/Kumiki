@@ -45,6 +45,10 @@ export type SymbolTable = {
   subscribedKindsIn: (tileName: string) => ReadonlySet<string>;
   /** The kinds the tile renders, a positional argument only where its builtin renders it (E0113). */
   renderedKindsIn: (tileName: string) => ReadonlySet<string>;
+  /** The result of each `fn` declared without `->`, read off its body once per check. */
+  fnResults: Map<string, TypeExpr | null>;
+  /** The `fn`s that can reach themselves through the `fn`s they call: those E0006 reports. */
+  fnLoops: ReadonlySet<string>;
   /** The program's own unions, by each tag they declare: `unionsByTag`. */
   unionsByTag: ReadonlyMap<string, readonly TypeExpr[]>;
   app?: AppDef;

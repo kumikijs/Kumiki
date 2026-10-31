@@ -5,6 +5,7 @@ import {
   expansionDepths,
   findCycles,
   type GraphEdge,
+  nodesOnCycles,
   type PlacedEdge,
   type TileExpansion,
   tileExpansion,
@@ -108,6 +109,8 @@ function checkAll(
     themes: new Set(),
     iconDomain,
     elementIds: new Set(),
+    fnResults: new Map(),
+    fnLoops: new Set(),
     unionsByTag: unionsByTag(program.defs),
     // Read as the definitions are checked, by which point every tile has been registered.
     builtinKindsIn: collectTileBuiltinKinds(tiles),
@@ -165,6 +168,7 @@ function checkAll(
   }
 
   const index = buildDefIndex(program);
+  sym.fnLoops = nodesOnCycles(sym.fns.keys(), fnEdges(sym, index));
   const routeChain = routeChainResolver(sym);
   for (const def of program.defs) {
     if (def.kind === "TypeDef") {
@@ -201,6 +205,17 @@ function checkDuplicateNames(program: Program, errors: KumikiError[]): void {
     errors.push({ code: "E0008", ...describeDuplicate(d) });
 }
 
+/** The calls a `fn`'s body makes to other `fn`s: the edges E0006 walks. */
+function fnEdges(sym: SymbolTable, index: DefIndex): (name: string) => readonly GraphEdge[] {
+  return (name) => {
+    const def = sym.fns.get(name);
+    if (!def) return [];
+    return referencesIn(def, index)
+      .filter((r) => r.layer === "fn")
+      .map((r) => ({ to: r.name, pos: r.pos ?? def.pos }));
+  };
+}
+
 function checkCycles(
   program: Program,
   sym: SymbolTable,
@@ -228,16 +243,9 @@ function checkCycles(
   checkTileDepth(tileGraph, errors);
 
   const fns = program.defs.filter((d): d is FnDef => d.kind === "FnDef");
-  const fnEdges = (name: string): readonly GraphEdge[] => {
-    const def = sym.fns.get(name);
-    if (!def) return [];
-    return referencesIn(def, index)
-      .filter((r) => r.layer === "fn")
-      .map((r) => ({ to: r.name, pos: r.pos ?? def.pos }));
-  };
   for (const cycle of findCycles(
     fns.map((f) => f.name),
-    fnEdges,
+    fnEdges(sym, index),
   )) {
     errors.push({
       code: "E0006",

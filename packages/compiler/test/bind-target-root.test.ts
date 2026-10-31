@@ -33,7 +33,7 @@ tile App = column(
   text("todos=" + todos.map($1.text).join(",")),
   text("title=" + title))`);
     const reported = checkSource(source).map((d) => [d.code, d.kind, d.pos, d.message]);
-    const tail = "a bind writes back to a slot or a field path into one";
+    const tail = "a bind writes back to a slot or a path into one";
     const see = "(see docs/spec/forms.md)";
     expect(reported).toEqual([
       [
@@ -46,7 +46,7 @@ tile App = column(
         "E0229",
         "bind-target-not-slot",
         { line: 6, col: 29 },
-        `input(bind=…) cannot write to "t": it is the variable of a for, not a slot — ${tail}. To edit a row, show it with value= and update the list from a reducer ${see}`,
+        `input(bind=…) cannot write to "t": it is the variable of a for, not a slot — ${tail}. To edit a row, bind it through the slot by a Map key or an index the page holds (bind=rows[i].title), or show it with value= and update the list from a reducer ${see}`,
       ],
       [
         "E0229",

@@ -21,9 +21,20 @@ tile Compose = column(
 - ユーザー入力で slot が更新 → tile が再描画
 - 型と refinement は **入力ごとに検査**される
 
-`bind=` のターゲットは、コントロールが書き戻す場所を指す：slot、またはその中へのフィールドパスである — `bind=form.email`、あるいは `Option` / `Result` のペイロードを通る `bind=draft.get.title`（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）。その根は、ターゲットを書いた位置で slot でなければならず、ナビゲーションだけが動かす `route` であってはならない（[ルーティング §3.3](./routing.md#_3-3-ルート遷移)）。`for` が束縛する名前、`match` のアームが束縛する名前、tile の入力 `$1` は値であって場所ではない（slot と同名のローカルは、どの読み出しでもそうであるように slot を隠す）。リテラルやその他の式は、そもそも場所を指さない。いずれも `kumiki check` が報告する（[E0229](./errors.md#e0229-bind-target-not-slot)）。
+`bind=` のターゲットは、コントロールが書き戻す場所を指す：slot、またはその中へのパスであり、そのステップは代入が書き込みに通るステップと同じである（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）— フィールド（`bind=form.email`）、`Option` / `Result` のペイロードを通る `.get`（`bind=draft.get.title`）、そしてインデックス（`bind=rows[i].title`）。その根は、ターゲットを書いた位置で slot でなければならず、ナビゲーションだけが動かす `route` であってはならない（[ルーティング §3.3](./routing.md#_3-3-ルート遷移)）。`for` が束縛する名前、`match` のアームが束縛する名前、tile の入力 `$1` は値であって場所ではない（slot と同名のローカルは、どの読み出しでもそうであるように slot を隠す）。リテラルやその他の式は、そもそも場所を指さない。いずれも `kumiki check` が報告する（[E0229](./errors.md#e0229-bind-target-not-slot)）。
 
-したがって、リストの行はループ変数を通して bind しない。行は `value=` で値を表示し、props にキーを持たせ、行のイベントに対する reducer がそのキーでリストに書き込む：
+インデックスのステップは、`:=` の左辺で指すものと同じものを指す：`List` なら `Int` の位置にある要素、`Map` ならキーにあるエントリである。コントロールは読み出し `rows[i].title` が読むものを表示し、`rows[i].title := v` が書くものを同じ setter を通して書く。したがって要素は同じ長さの新しい `List` の中で置き換えられ、他の要素はそのまま残る。キーはインデックスの型の任意の式で（`List` なら `Int`、`Map` ならキーの型。そうでなければ [E0201](./errors.md#e0201-type-mismatch)）、その読み出しと同じく描画のたびに読み直される：slot `i` が変われば、コントロールはそのとき `i` が指す要素を表示し、そこへ書く。どの要素も指さないインデックス — `List` の範囲外の位置、`Map` が持たないキー — は、読み出しと同じく描画を panic させる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。インデックスで指せる場所を持つのは `Map` と `List` だけ（`Set` が持つのはメンバー、レコードが持つのはフィールド）なので、`form["email"] := v` と同じく、レコードに対する `bind=form["email"]` は [E0602](./errors.md#e0602-unassignable-member) である。`bind=rows.get(0)` のように呼び出しとして書いたステップも同様である。`Set` に対する `bind=tags[x]` は読み出しの [E0232](./errors.md#e0232-index-into-set) になる：コントロールは対象を書く前にそれを表示する。
+
+したがって、行はループ変数ではなく slot を通して bind する：`List` の要素はページが保持するインデックス、たとえば slot で（`bind=rows[i].title`）、`Map` のエントリはそのキーで bind する。Map のキーに対する `for` は、各エントリをそれを表示する場所で bind する：
+
+```kumiki fragment
+type Todo = {text: Text}
+slot todos : Map(Text, Todo) = {"a": {text: "milk"}}
+
+tile Todos = column(for k in todos.keys input(bind=todos[k].text) {key: k})
+```
+
+行は `value=` で値を表示し、props にキーを持たせ、書き込みを行のイベントに対する reducer に任せることもできる。reducer はそのキーでリストに書き込む：
 
 ```kumiki fragment
 type Todo = {text: Text}
@@ -48,7 +59,7 @@ reducer editTodo
 | `check` / `switch` | `Bool` |
 | `radio` | union 型のいずれか |
 
-`Int` / `Float` / `Time` に bind した `input` は、テキストを `Int.parse` / `Float.parse` / `Time.parse` と同じように読み（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）、読んだ値を書き込む。型は bind した位置の基底型である：slot の型をレコードのフィールド、または `.get` による `Option` / `Result` のペイロードを辿り、エイリアスを解いた型なので、`type Qty = Int where positive` や `nominal Int` は `Int` として読まれる。読み方は `T.parse` と完全に同じである — number フィールドが保持しうる `".5"` は `Float` ではなく、`"1e3"` は `Float` だが `Int` ではない。基底型の値を表さないテキスト（`""`、`Int` に対する `"1.5"` など）は refinement 違反と同じく拒否される（[§5.1.2](#_5-1-2-refinement-の扱い)）：slot は最後に受け入れた値を保ち、フィールドは入力されたテキストを保ち、`error(field=…)` は失敗した読み方を示す（[§5.7.2](#_5-7-2-standard-messages)）。`Time` は `type="date"` のフィールドには `yyyy-MM-dd`、`type="datetime-local"` のフィールドには `yyyy-MM-ddTHH:mm` として、`Time.parse` がゾーンなし文字列を読むのと同じローカル時刻で表示されるので、フィールドの表示は同じ日（または同じ分）として読み戻される。`Text` は入力されたとおりに書き込まれるので、値が入力されたテキストそのものであるどのフィールドとも組み合わせられる。`Int` / `Float` / `Time` は表にあるフィールド種別、つまりテキストが往復できるものとだけ組み合わせられる。それ以外の組み合わせ — `type="time"` のフィールドの `Time`、text フィールドの `Int`、`Bool`、`.get` を通さずに丸ごと bind した `Option` など — は `kumiki check` が報告する（[E0226](./errors.md#e0226-input-bind-type)）。（`type="datetime"` は HTML では廃止されており、text フィールドとして描画される。）
+`Int` / `Float` / `Time` に bind した `input` は、テキストを `Int.parse` / `Float.parse` / `Time.parse` と同じように読み（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）、読んだ値を書き込む。型は bind した位置の基底型である：slot の型をレコードのフィールド、`List` / `Map` へのインデックス、または `.get` による `Option` / `Result` のペイロードを辿り、エイリアスを解いた型なので、`type Qty = Int where positive` や `nominal Int` は `Int` として読まれる。読み方は `T.parse` と完全に同じである — number フィールドが保持しうる `".5"` は `Float` ではなく、`"1e3"` は `Float` だが `Int` ではない。基底型の値を表さないテキスト（`""`、`Int` に対する `"1.5"` など）は refinement 違反と同じく拒否される（[§5.1.2](#_5-1-2-refinement-の扱い)）：slot は最後に受け入れた値を保ち、フィールドは入力されたテキストを保ち、`error(field=…)` は失敗した読み方を示す（[§5.7.2](#_5-7-2-standard-messages)）。`Time` は `type="date"` のフィールドには `yyyy-MM-dd`、`type="datetime-local"` のフィールドには `yyyy-MM-ddTHH:mm` として、`Time.parse` がゾーンなし文字列を読むのと同じローカル時刻で表示されるので、フィールドの表示は同じ日（または同じ分）として読み戻される。`Text` は入力されたとおりに書き込まれるので、値が入力されたテキストそのものであるどのフィールドとも組み合わせられる。`Int` / `Float` / `Time` は表にあるフィールド種別、つまりテキストが往復できるものとだけ組み合わせられる。それ以外の組み合わせ — `type="time"` のフィールドの `Time`、text フィールドの `Int`、`Bool`、`.get` を通さずに丸ごと bind した `Option` など — は `kumiki check` が報告する（[E0226](./errors.md#e0226-input-bind-type)）。（`type="datetime"` は HTML では廃止されており、text フィールドとして描画される。）
 
 `check` / `switch` は bind した `Bool` を表示し、チェックの切り替えで新しい状態を書き戻す。`radio(group=…, bind=b, value=V)` は `b == V` のときちょうど選択状態になり、選ばれると `V` を書き込む。3 つとも `input` と同じ書き戻し経路を通り、[§5.1.2](#_5-1-2-refinement-の扱い) の refinement による拒否もそのまま適用される。書き戻しはコントロール自身の `onClick` / `onChange` より先に行われるので、ハンドラは書き込み済みの slot を読む：`check(value=b, onClick=toggle)` を `check(bind=b, onClick=toggle)` に移すと `b` は 2 回反転するので、`onClick` は外す必要がある。`bind=` があるとき、bind していないコントロールの選択状態を決める引数 — `check` / `switch` の `value=`、`radio` の `selected=` — は読まれない（[W0216](./errors.md#w0216-selection-beside-bind-warning)）。radio 自身の `value=` は引き続き書き込む値である。`check` / `switch` に別の型を bind した場合や、bind した型の値でない radio の `value` は `kumiki check` が報告する（[E0201](./errors.md#e0201-type-mismatch)。別の union のバリアントなら [E0216](./errors.md#e0216-unknown-variant)）。書き込む `value=` のない bind した radio も同様である（[E0225](./errors.md#e0225-radio-bind-without-value)）。
 
@@ -130,7 +141,7 @@ form 自体には `onSubmit` を書かない。submit ハンドラは **その f
 
 | prop | 型 | 意味 |
 |---|---|---|
-| `bind` | slot、またはその中へのフィールドパス（[§5.1](#_5-1-個別入力の双方向束縛)） | 双方向束縛 |
+| `bind` | slot、またはその中へのパス（[§5.1](#_5-1-個別入力の双方向束縛)） | 双方向束縛 |
 | `value` | expr | 単方向値（`bind` の代わりに、reducer で更新） |
 | `onChange` | reducer name | 値変更時に呼ばれる reducer |
 | `onInput` | reducer name | input イベントで呼ばれる（onChange より高頻度） |
@@ -199,7 +210,7 @@ tile FilterSelect = select(
 | 形式 | 例 | 用途 |
 |---|---|---|
 | `bind=<slot>` | `bind=filter` | 単一 slot に直結。change で slot を自動更新 |
-| `bind=<slot.field>` | `bind=draft.priority` | record の field path に bind。`_setPath` で immutable update |
+| `bind=<path>` | `bind=draft.priority`、`bind=issues[id].status` | slot の中へのパス（フィールド、`.get`、インデックス）に bind。`_setPath` で immutable update |
 | `value=<expr>` | `value=issues[id].status` | **read-only 表示**。change は `ui.change(SelectTile)` reducer で自分でハンドル |
 
 `value=` 形式の場合、change イベントで `ui.change(<SelectTile>)` を購読する reducer が呼ばれ、`$event.value` で選択された variant 値を受け取れる：
