@@ -1,6 +1,7 @@
 import type { Expr, FragmentShape, KeyKind, Pattern, Pos } from "../ast.ts";
 import { callsBuiltin, decodedType, RUN_REDUCER } from "../builtin-calls.ts";
 import { type ParseReading, parseQualifier } from "../parse-reading.ts";
+import { fragmentArgument } from "../stdlib-members.ts";
 import {
   addBind,
   bindRef,
@@ -299,19 +300,15 @@ export const METHOD_MIN_ARGS: ReadonlyMap<string, number> = new Map([
   ["zip", 1],
 ]);
 
-export const FRAGMENT_ARGUMENTS: ReadonlyMap<
-  string,
-  { index: number; binds: 1 | 2; second?: "element" | "pair-value" }
-> = new Map([
-  ["filter", { index: 0, binds: 2, second: "pair-value" }],
-  ["map", { index: 0, binds: 2, second: "pair-value" }],
-  ["find", { index: 0, binds: 2, second: "pair-value" }],
-  ["sort-by", { index: 0, binds: 2, second: "pair-value" }],
-  ["fold", { index: 1, binds: 2, second: "element" }],
-  ["flat-map", { index: 0, binds: 1 }],
-  ["update", { index: 1, binds: 1 }],
-  ["map-err", { index: 0, binds: 1 }],
-]);
+/** `fragmentFnCall` lowers this call and the checker checks it, so both read the bare name alike. */
+export function fragmentCall(fn: string, arity: number, pos: Pos): Expr & { kind: "Call" } {
+  return {
+    kind: "Call",
+    callee: fn,
+    args: ["$1", "$2"].slice(0, arity).map((name) => ({ kind: "Ref", name, pos })),
+    pos,
+  };
+}
 
 export const KNOWN_METHODS: ReadonlySet<string> = new Set([
   "filter",
@@ -444,17 +441,11 @@ function keyKindArg(kind: KeyKind | undefined): string {
 }
 
 function fragmentFnCall(method: string, index: number, a: Expr, ctx: EvalCtx): Expr | null {
-  if (FRAGMENT_ARGUMENTS.get(method)?.index !== index || a.kind !== "Ref") return null;
+  if (fragmentArgument(method)?.index !== index || a.kind !== "Ref") return null;
   if (ctx.localBinds.has(a.name) || ctx.gen.slots.some((s) => s.name === a.name)) return null;
   const fn = ctx.gen.fns.find((f) => f.name === a.name);
   if (!fn) return null;
-  const positionals = ["$1", "$2"].slice(0, fn.params.length);
-  return {
-    kind: "Call",
-    callee: a.name,
-    args: positionals.map((name) => ({ kind: "Ref", name, pos: a.pos })),
-    pos: a.pos,
-  };
+  return fragmentCall(a.name, fn.params.length, a.pos);
 }
 
 export function methodCallJs(

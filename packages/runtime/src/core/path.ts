@@ -13,6 +13,20 @@ function isIndexSegment(seg: PathSegment): seg is { at: unknown } {
   return typeof seg === "object" && seg !== null && Object.hasOwn(seg, "at");
 }
 
+export function bindPathStartsWith(
+  path: readonly PathSegment[],
+  prefix: readonly PathSegment[],
+): boolean {
+  return prefix.length <= path.length && prefix.every((step, i) => sameSegment(path[i], step));
+}
+
+function sameSegment(own: PathSegment | undefined, step: PathSegment): boolean {
+  if (typeof step !== "object" || step === null) return own === step;
+  if (typeof own !== "object" || own === null) return false;
+  if (isUnwrapSegment(step)) return isUnwrapSegment(own);
+  return isIndexSegment(step) && isIndexSegment(own) && own.at === step.at;
+}
+
 export function entryKey(x: unknown): string {
   return x !== null && typeof x === "object" ? sortedJson(x) : String(x);
 }
