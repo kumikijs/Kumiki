@@ -77,7 +77,7 @@ A program uses these names without declaring them. `PanicInfo`, `RouteErrorInfo`
 | `List(T)` | the element, `T` | `push` / `prepend` / `contains` |
 | | `other`, a `List(T)` | `concat` |
 
-An argument is checked against that type the way a value written to a place of the type is, so a mismatch is [E0201](./errors.md#e0201-type-mismatch) at the argument: `xs.push("3")` on a `List(Int)` is reported at `"3"`, as `xs := ["3"]` is, and `m.insert(1, 0)` on a `Map(Text, Int)` at the `1`. The same rule admits what a slot admits — an `Int` where a `Float` is the element, `None` where an `Option(T)` is, a `Text` where the key is declared `nominal Text`. The other parameters are not the receiver's to type: a fragment other than `update`'s, the numbers of `slice` / `chunk`, the separator of `join`, the initial accumulator of `fold`, and the `other` of `zip`, a `List(U)` of an element type of its own; the `default` of `get-or` is checked against what the call answers, and the index of `List.get` against `Int`, as `xs[i]`'s is ([E0201](./errors.md#e0201-type-mismatch)). Where the checker cannot decide the receiver's type, no argument is read against a parameter type, though each argument's own expression is still checked. That is the accumulator `$1` of a `fold` from `{}`, the result of a `fn` with no `->` whose body's type is not decided, and the result of a member whose answer the checker does not infer: `List.map` / `fold` / `zip`, `Map.map`, and `Option.map` / `Result.map`. So `xs.map($1 * 2).push("w")` on a `List(Int)` passes `check`. That is a gap in what the checker resolves, not a rule a program may rely on.
+An argument is checked against that type the way a value written to a place of the type is, so a mismatch is [E0201](./errors.md#e0201-type-mismatch) at the argument: `xs.push("3")` on a `List(Int)` is reported at `"3"`, as `xs := ["3"]` is, and `m.insert(1, 0)` on a `Map(Text, Int)` at the `1`. The same rule admits what a slot admits — an `Int` where a `Float` is the element, `None` where an `Option(T)` is, a `Text` where the key is declared `nominal Text`. The other parameters are not the receiver's to type: a fragment other than `update`'s, the separator of `join`, the initial accumulator of `fold`, and the `other` of `zip`, a `List(U)` of an element type of its own; the `default` of `get-or` is checked against what the call answers, and the index of `List.get`, the bounds of `slice` and the size of `chunk` against `Int`, as `xs[i]`'s is ([E0201](./errors.md#e0201-type-mismatch)). Where the checker cannot decide the receiver's type, no argument is read against a parameter type, though each argument's own expression is still checked. That is the accumulator `$1` of a `fold` from `{}`, the result of a `fn` with no `->` whose body's type is not decided, and the result of a member whose answer the checker does not infer: `List.map` / `fold` / `zip`, `Map.map`, and `Option.map` / `Result.map`. So `xs.map($1 * 2).push("w")` on a `List(Int)` passes `check`. That is a gap in what the checker resolves, not a rule a program may rely on.
 
 ### 2.2.1 Map(K, V)
 
@@ -162,7 +162,7 @@ last                        : Option(T)
 push(x)                     : List(T)
 prepend(x)                  : List(T)
 concat(other)               : List(T)
-slice(start, end)           : List(T)
+slice(start, end)           : List(T)          ; start and end are Int
 reverse                     : List(T)
 sort                        : List(T)          ; T is Ord; ascending, as < orders it
 sort-by(expr)               : List(T)          ; ascending by expr, as < orders it; stable
@@ -173,7 +173,7 @@ contains(x)                 : Bool
 find(pred)                  : Option(T)
 fold(init, expr)            : Acc              ; within expr, $1=acc, $2=elem
 join(sep)                   : Text             ; T is Text
-chunk(n)                    : List(List(T))
+chunk(n)                    : List(List(T))    ; n is Int
 zip(other)                  : List(Tuple(T, U))
 ```
 
