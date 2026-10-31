@@ -1,5 +1,5 @@
 import type { SlotDiff } from "../episode.ts";
-import type { BindSegment } from "./path.ts";
+import type { PathSegment } from "./path.ts";
 import type { RefinementCheck } from "./types.ts";
 
 export type RefinementPart = {
@@ -16,7 +16,7 @@ export type SlotMeta = {
   refineKind?: string;
   refineArgs?: (number | string)[];
   refineAll?: RefinementPart[];
-  refineFailure?: (v: unknown, at?: readonly BindSegment[]) => RefinementFailure | undefined;
+  refineFailure?: (v: unknown, at?: readonly PathSegment[]) => RefinementFailure | undefined;
 };
 
 export type RefinementStep =
@@ -73,7 +73,7 @@ export type SlotGate = {
 export function slotAccepts(
   meta: SlotGate | undefined,
   value: unknown,
-  at?: readonly BindSegment[],
+  at?: readonly PathSegment[],
 ): boolean {
   if (meta?.refineFailure) return meta.refineFailure(value, at) === undefined;
   return meta?.refine ? meta.refine(value) : true;
@@ -83,16 +83,17 @@ export type RefinementNaming = {
   refineKind?: string;
   refineArgs?: (number | string)[];
   refineAll?: RefinementPart[];
-  refineFailure?: (v: unknown, at?: readonly BindSegment[]) => RefinementFailure | undefined;
+  refineFailure?: (v: unknown, at?: readonly PathSegment[]) => RefinementFailure | undefined;
 };
 
 export function failedRefinement(
   value: unknown,
   meta: RefinementNaming | undefined,
+  at?: readonly PathSegment[],
 ): { kind?: string; args?: (number | string)[]; path?: readonly RefinementStep[] } {
   // A type with predicates below its own chain answers with the failure itself, which is the only reader that can say *where* inside the value.
   if (meta?.refineFailure) {
-    const deep = meta.refineFailure(value);
+    const deep = meta.refineFailure(value, at);
     if (!deep) return {};
     return deep.path.length === 0 ? { kind: deep.kind, args: deep.args } : deep;
   }
@@ -181,10 +182,16 @@ export function reportRejectedBatch(
   rejections: readonly RefinementRejection[],
 ): void {
   console.error(
-    `[kumiki] reducer ${JSON.stringify(reducer)} was rejected: ${rejections
-      .map(describeRejection)
-      .join(", ")}. No slot was written and no effect was emitted.`,
+    `[kumiki] ${rejectedBatchText(reducer, rejections)}. No slot was written and no effect was emitted.`,
   );
+}
+
+/** `reducer "bump" was rejected: slot "count" cannot hold 4 (between(0, 3))`, as the report above and a property-test trial's failure both say it. */
+export function rejectedBatchText(
+  reducer: string,
+  rejections: readonly RefinementRejection[],
+): string {
+  return `reducer ${JSON.stringify(reducer)} was rejected: ${rejections.map(describeRejection).join(", ")}`;
 }
 
 export function computeSlotDiffs(

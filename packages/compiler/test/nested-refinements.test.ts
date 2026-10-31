@@ -1,5 +1,11 @@
 import { compile } from "@kumikijs/compiler";
-import { type AppShape, type BindSegment, type SlotMeta, slotAccepts } from "@kumikijs/runtime";
+import {
+  type AppShape,
+  type BindSegment,
+  type PathSegment,
+  type SlotMeta,
+  slotAccepts,
+} from "@kumikijs/runtime";
 import { beforeAll, describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
 import { compileOrFail, importModule, LOADABLE } from "./helpers/module.ts";
@@ -481,4 +487,39 @@ slot draft  : Option(Entry) = None`);
       expect(f?.path).toEqual(path);
     });
   }
+});
+
+describe("a gate asked about a path with an index step", () => {
+  const at = (slot: string, v: unknown, focus?: PathSegment[]) =>
+    defined(meta(slot).refineFailure, `slot "${slot}"'s failure reader`)(v, focus);
+  const contact = (email: string, age: number) => ({ email, age });
+
+  it("enters the List element the index names, and that one only", () => {
+    const sheet = { rows: [contact("nope", 36), contact("ada@example.com", 999)] };
+    expect(at("sheet", sheet)?.path).toEqual(["rows", 0, "email"]);
+    expect(at("sheet", sheet, ["rows", { at: 1 }])).toEqual({
+      kind: "between",
+      args: [0, 120],
+      path: ["rows", 1, "age"],
+    });
+    expect(at("sheet", sheet, ["rows", { at: 1 }, "email"])).toBeUndefined();
+    expect(at("sheet", sheet, ["rows", { at: 5 }])).toBeUndefined();
+  });
+
+  it("enters the Map entry the key names, passing over the keys", () => {
+    // `byId : Map(Int where positive, Short)` in the fixture above.
+    const byId = { "-1": "abcdef", "2": "ghijkl", "3": "ok" };
+    expect(at("byId", byId)?.path).toEqual([{ key: -1 }]);
+    expect(at("byId", byId, [{ at: 2 }])).toEqual({
+      kind: "len-lt",
+      args: [4],
+      path: [{ entry: 2 }],
+    });
+    expect(at("byId", byId, [{ at: 3 }])).toBeUndefined();
+    expect(at("byId", byId, [{ at: 7 }])).toBeUndefined();
+  });
+
+  it("checks a Set member whole whatever the index, as no index names one", () => {
+    expect(at("nums", [-1], [{ at: 0 }])?.path).toEqual([{ member: -1 }]);
+  });
 });
