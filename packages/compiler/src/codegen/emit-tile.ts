@@ -609,11 +609,11 @@ function tileCallJs(
       case "error": {
         const fieldArg = t.args.find((a) => a.name === "field");
         const field = fieldArg && !isTileExpr(fieldArg.value) ? errorField(fieldArg.value) : null;
-        if (field?.root.kind !== "Ref" || !field.path) {
-          throw new Error("error() lowers only a slot or a path into one, which E0230 holds it to");
-        }
-        const slot = JSON.stringify(field.root.name);
-        return `({ kind: "error", field: ${slot}, path: ${JSON.stringify(field.path)}, props: ${propsObj} })`;
+        // Only a program lowered without `check` gets here with no path, since E0230 refuses it;
+        // a field that names no slot renders nothing.
+        const [slot, path] =
+          field?.root.kind === "Ref" && field.path ? [field.root.name, field.path] : ["", []];
+        return `({ kind: "error", field: ${JSON.stringify(slot)}, path: ${JSON.stringify(path)}, props: ${propsObj} })`;
       }
       case "route-outlet":
         return `({ kind: "route-outlet", children: [], props: ${propsObj} })`;
