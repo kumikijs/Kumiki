@@ -1,0 +1,67 @@
+{
+  "steps": [
+    {
+      "label": "typing into a field bound through an index writes the element at that index",
+      "do": { "fill": "#title", "value": "oat milk" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "rows": [
+            { "title": "oat milk", "done": false, "qty": 1 },
+            { "title": "eggs", "done": false, "qty": 6 }
+          ]
+        },
+        "domIncludes": ["rows=oat milk/false/1,eggs/false/6"]
+      }
+    },
+    {
+      "label": "a box bound through it writes its own field of that element",
+      "do": { "click": "#done input" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["rows=oat milk/true/1,eggs/false/6"]
+      }
+    },
+    {
+      "label": "a number field bound through it writes the Int it reads",
+      "do": { "fill": "#qty", "value": "2" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "rows": [
+            { "title": "oat milk", "done": true, "qty": 2 },
+            { "title": "eggs", "done": false, "qty": 6 }
+          ]
+        }
+      }
+    },
+    {
+      "label": "moving the index moves the controls to the row it now names",
+      "do": { "click": "#next" },
+      "expect": { "noErrors": true, "state": { "i": 1 }, "domIncludes": ["row=1"] }
+    },
+    {
+      "label": "and typing there writes that row, leaving the first as it was",
+      "do": { "fill": "#title", "value": "brown eggs" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "rows": [
+            { "title": "oat milk", "done": true, "qty": 2 },
+            { "title": "brown eggs", "done": false, "qty": 6 }
+          ]
+        },
+        "domIncludes": ["rows=oat milk/true/2,brown eggs/false/6"]
+      }
+    },
+    {
+      "label": "a Map entry bound by key writes that entry",
+      "do": { "fill": "#note-b", "value": "later" },
+      "expect": {
+        "noErrors": true,
+        "state": { "notes": { "a": "first", "b": "later" } },
+        "domIncludes": ["notes=first,later"]
+      }
+    }
+  ]
+}

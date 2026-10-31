@@ -434,12 +434,7 @@ export function checkIndexStep(
   if (step.kind === "place" && step.key) checkAgainst(index, step.key, sym, errors, ctx);
   if (step.kind !== "no-place") return;
   if (side === "write") {
-    errors.push({
-      code: "E0602",
-      kind: "unassignable-member",
-      message: noPlaceMessage(step, index),
-      pos,
-    });
+    checkIndexIsPlace(step, { index, pos }, "assign", errors);
     return;
   }
   // Every other receiver with no places reads with no type and no report yet.
@@ -452,13 +447,35 @@ export function checkIndexStep(
   });
 }
 
+/** An index step a write goes through, on the left of `:=` or in a `bind=` target. */
+export function checkIndexIsPlace(
+  step: IndexStep,
+  at: { index: Expr; pos: Pos },
+  verb: "assign" | "bind",
+  errors: KumikiError[],
+): void {
+  if (step.kind !== "no-place") return;
+  // A bound control reads its target before it writes it, and that read is E0232 on a Set.
+  if (verb === "bind" && isSet(step.base)) return;
+  errors.push({
+    code: "E0602",
+    kind: "unassignable-member",
+    message: noPlaceMessage(step, at.index, verb),
+    pos: at.pos,
+  });
+}
+
 function isSet(base: TypeExpr): boolean {
   return base.kind === "TypeApp" && base.name === "Set";
 }
 
-function noPlaceMessage(step: IndexStep & { kind: "no-place" }, index: Expr): string {
+function noPlaceMessage(
+  step: IndexStep & { kind: "no-place" },
+  index: Expr,
+  verb: "assign" | "bind",
+): string {
   const { raw, base } = step;
-  const into = `Cannot assign through an index into "${typeToString(raw)}"`;
+  const into = `Cannot ${verb} through an index into "${typeToString(raw)}"`;
   if (isSet(base)) return `${into}: a Set has members, not places — use .add / .remove / .toggle`;
   const field =
     base.kind === "TypeRecord" && index.kind === "Str" && recordFieldType(base, index.value)
