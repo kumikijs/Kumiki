@@ -11,23 +11,34 @@ export class ParseError extends Error {
 
 const MAX_NESTING_DEPTH = 256;
 
+/** A chain the parser is reading with a loop; see `TokenStream.startChain`. */
+export interface Chain {
+  /** What the enclosing measurement had reached, handed back by `endChain`. */
+  enclosing: number;
+  /** How many levels under the chain's own its first operand and the steps so far reach. */
+  below: number;
+}
+
 export class TokenStream {
   protected i = 0;
   protected depth = 0;
+  /** The deepest level a node of the part being measured sits at. */
+  protected reached = 0;
 
   constructor(protected tokens: Token[]) {}
 
   /** The one place the budget is refused, so every caller reports alike. */
-  protected refuseDepth(): never {
+  protected refuseDepth(at: Pos): never {
     throw new ParseError(
       `Nesting is deeper than ${MAX_NESTING_DEPTH} levels — extract part of this into a definition of its own`,
-      this.peek().pos,
+      at,
     );
   }
 
   protected descend<T>(parseNested: () => T): T {
-    if (this.depth >= MAX_NESTING_DEPTH) this.refuseDepth();
+    if (this.depth >= MAX_NESTING_DEPTH) this.refuseDepth(this.peek().pos);
     this.depth += 1;
+    if (this.depth > this.reached) this.reached = this.depth;
     try {
       return parseNested();
     } finally {
@@ -35,8 +46,40 @@ export class TokenStream {
     }
   }
 
-  protected widen(built: number): void {
-    if (this.depth + built >= MAX_NESTING_DEPTH) this.refuseDepth();
+  /** Returns what the enclosing measurement had reached, for `measured` to fold back in. */
+  protected measure(): number {
+    const enclosing = this.reached;
+    this.reached = this.depth;
+    return enclosing;
+  }
+
+  /** Levels under the current one the part read since `measure` reaches. */
+  protected measured(enclosing: number): number {
+    const below = this.reached - this.depth;
+    if (enclosing > this.reached) this.reached = enclosing;
+    return below;
+  }
+
+  /** Puts a node `below` levels under the current one without recursing. */
+  protected charge(below: number, at: Pos): void {
+    if (this.depth + below >= MAX_NESTING_DEPTH) this.refuseDepth(at);
+    if (this.depth + below > this.reached) this.reached = this.depth + below;
+  }
+
+  // A loop costs the parser no stack, but each step's node sits over every operand read
+  // before it, and everything downstream walks those nodes by recursion.
+  protected startChain(): Chain {
+    return { enclosing: this.measure(), below: 0 };
+  }
+
+  protected chainStep(chain: Chain): void {
+    chain.below = Math.max(chain.below, this.measured(chain.enclosing)) + 1;
+    this.charge(chain.below, this.peek().pos);
+    chain.enclosing = this.measure();
+  }
+
+  protected endChain(chain: Chain): void {
+    this.measured(chain.enclosing);
   }
 
   protected peek(offset = 0): Token {

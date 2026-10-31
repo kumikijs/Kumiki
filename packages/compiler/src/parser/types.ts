@@ -21,6 +21,7 @@ export class TypeParser extends TokenStream {
   }
 
   protected parseTypeExprNested(): TypeExpr {
+    const chain = this.startChain();
     const first = this.parseTypeUnionAtom();
     if (this.matchOp("|")) {
       const variants: { name: string; payloads: TypeExpr[]; pos: Pos }[] = [
@@ -30,17 +31,17 @@ export class TypeParser extends TokenStream {
         this.next();
         variants.push(this.typeAsVariant(this.parseTypeUnionAtom()));
       }
+      this.endChain(chain);
       return { kind: "TypeUnion", variants, pos: first.pos };
     }
     let refined = first;
-    let built = 0;
     while (this.matchKw("where")) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       this.next();
       const ref = this.parseRefinement();
       refined = { kind: "TypeRefinement", inner: refined, refinement: ref, pos: refined.pos };
     }
+    this.endChain(chain);
     return refined;
   }
 
