@@ -405,9 +405,6 @@ export type IndexStep =
 export function indexStep(raw: TypeExpr | null, sym: SymbolTable): IndexStep {
   const base = unaliasType(raw, sym);
   if (raw === null || base === null || base.kind === "TypeRef") return { kind: "undecidable" };
-  // An applied name that resolves to nothing is E0117 where it is written; what it would have
-  // named may well be a Map.
-  if (base.kind === "TypeApp" && !isKnownTypeName(base.name, sym)) return { kind: "undecidable" };
   if (base.kind === "TypeApp" && base.name === "List") {
     const [type] = base.args;
     return type ? { kind: "place", key: prim("Int", base.pos), type } : { kind: "undecidable" };

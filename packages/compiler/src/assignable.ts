@@ -7,7 +7,10 @@ export type TypeEnv = { types: ReadonlyMap<string, TypeDef> };
 
 export const unknownType = (pos: Pos): TypeExpr => ({ kind: "TypeRef", name: "?", pos });
 
-/** True when nothing can be concluded about `t` — an unresolved name, or absent. */
+/**
+ * True when nothing can be concluded about `t`: it is absent, a bare name that is no type, or a
+ * name that is no type constructor applied to arguments.
+ */
 export function isOpaque(t: TypeExpr | null, env: TypeEnv): boolean {
   const u = unaliasType(t, env);
   return u === null || u.kind === "TypeRef";
@@ -95,7 +98,12 @@ function unaliasFrom(t: TypeExpr | null, outer: ReadonlySet<string>, walk: Walk)
   const seen = walk.origins.get(t) ?? outer;
   if (t.kind === "TypeRef" || t.kind === "TypeApp") {
     const def = walk.env.types.get(t.name);
-    if (!def) return t;
+    // Arguments to a name that is no type constructor describe nothing to compare against.
+    if (!def) {
+      return t.kind === "TypeApp" && !isKnownTypeName(t.name, walk.env)
+        ? { kind: "TypeRef", name: t.name, pos: t.pos }
+        : t;
+    }
     if (seen.has(t.name)) return null;
     const arg = forwardedArg(t, def, walk.forwarded.through);
     if (arg) return unaliasFrom(arg, seen, walk);
@@ -169,6 +177,9 @@ export function substituteType(t: TypeExpr, sub: ReadonlyMap<string, TypeExpr>):
     case "TypeRef":
       return sub.get(t.name) ?? t;
     case "TypeApp":
+      // A parameter takes no arguments (E0210 where written); left in place, the head
+      // would resolve against a top-level type that shares the parameter's name.
+      if (sub.has(t.name)) return unknownType(t.pos);
       return { ...t, args: t.args.map((a) => substituteType(a, sub)) };
     case "TypeRecord":
       return {

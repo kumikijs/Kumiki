@@ -423,7 +423,9 @@ A type name resolves to nothing: it names no `type` definition, no [standard-lib
 
 An unresolved name is *opaque*, and an opaque type accepts every value — so before this check `slot v : NoSuchType = 1` was accepted, and so was every subsequent use of `v`. One misspelling turned off value checking for everything downstream of it.
 
-Type parameters are in scope inside the body of the definition that declares them, and only there: `type Box(T) = {v: T}` is fine, `type Box(T) = {v: U}` is not. No other declaration site (`slot`, `fn`, `effect`, `tile in=`) has type parameters, so an unresolved name at one of those is always an error.
+The name is the one mistake, so E0117 is the one report of it: past it the name is opaque, and neither a value written against it nor a use of that value is an [E0201](#e0201-type-mismatch) against a type that does not exist. An **application** of the name is opaque the same way — `slot y : Foo(Int) = 1` is E0117 alone, with no E0201 on the `1` — and so is an application of a misspelt constructor such as `Lst(Int)`, wherever the application is written: a record field, a `List(…)`, an alias, a `nominal`, a `where`. An application of a standard-library constructor (`List(Int)`, `Option(Text)`) or of a program's own generic (`G(Int)` for a `type G(T) = …`) is a type, and a value is checked against its arguments as usual.
+
+Type parameters are in scope inside the body of the definition that declares them, and only there: `type Box(T) = {v: T}` is fine, `type Box(T) = {v: U}` is not. A parameter written with arguments (`T(Int)`) is in scope too, and is [E0210](#e0210-type-arity-mismatch) rather than this. No other declaration site (`slot`, `fn`, `effect`, `tile in=`) has type parameters, so an unresolved name at one of those is always an error.
 
 A **call's qualifier** is a type name too. `T.fresh()`, `T.parse(t)` and `T.show(v)` are lowered on any capitalised `T` — codegen matches the shape by regex — so a qualifier that names no type is lowered anyway unless it is refused here. `parse` reads its text by the base the qualifier resolves to ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)), and a name that resolves to no type has no base to read by. When `parse` branched on the qualifier's name instead, a misspelling did not fail, it changed which branch ran: `Itn.parse("12")` answered `Some("12")`, which an `Int` slot then held and every later sum concatenated. `fresh` and `show` discard the qualifier, so a misspelling there produces the same value — and the name is reported because a qualifier that resolves to no type is wrong on its own terms, which makes this check deliberately stricter than the lowering for those two. The qualifier resolves against the same namespace as any other type name, primitives included, and must be spelled as one: a name with a hyphen is not a qualifier, and a call written with one is [E0116](#e0116-undef-call) rather than this. A qualifier that resolves to a type **constructor** — `List`, or a `type Box(T)` — names a type and is not one; that is [E0124](#e0124-type-constructor-qualifier).
 
@@ -753,12 +755,15 @@ A `match` arm names a variant tag that is not declared by the scrutinee's union 
 A type-level application `T(...)` of a user-declared generic type passes a different number of type arguments than the declaration's parameters. Without this check, downstream type-param substitution would silently produce a short map and leave unresolved `TypeRef`s in payloads, which would then turn pattern checking into a no-op — exactly the silent-failure shape this error band is meant to catch.
 
 > `Type "<name>" expects <m> type argument(s) but got <n>`
+> `Type parameter "<param>" of "<type>" takes no type arguments, but is written "<application>"`
+
+A type parameter takes none. It names a type — the one its generic is applied to — not a type constructor, so inside `type H(T) = …` it is written bare: `T(Int)`, `T(Int, Text)` and `T()` are each reported here, at the application, wherever in the body it is written — a record field, a `List(…)`, a variant payload, a `nominal`, a `where`. The parameter shadows a top-level type of the same name ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 5), so `List(Int)` in the body of `type H(List) = …` is this too. This is the one report: past it the application is opaque, as an application of an undefined name is under [E0117](#e0117-undef-type), and a value written against `H(Text)` is not an [E0201](#e0201-type-mismatch) for it.
 
 `Tuple` takes any number of arguments, but at least one: a bare `Tuple` names no type.
 
 > `Type "Tuple" expects type arguments but got none`
 
-**Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list.
+**Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list. Write a type parameter bare (`T`), or apply a generic to it (`List(T)`) where a container of it was meant.
 
 ### E0211 `undef-tile-in-selector`
 
@@ -1545,7 +1550,7 @@ The base is the other half of the same rule. Every predicate tests one shape of 
 
 `one-of` lowers to a strict membership test, so each literal has to be a value of the base: `Text where one-of(1, 2)` lists choices no text equals, and a `Bool`, a record or a union has no literal at all. A list with one wrong literal among right ones is reported too — that choice can never be taken.
 
-The base is read through the chain the refinement is written on — an alias, a `nominal`, an earlier `where` — so `type Handle = nominal Text` under `where positive` is reported and a `nominal Int` under `where between(0, 9)` is not. A record, a union or a container is not a base either family tests, and neither is an opaque type such as `EffectId`: whatever represents it at runtime, a program has no value of it the predicate is a question about.
+The base is read through the chain the refinement is written on — an alias, a `nominal`, an earlier `where` — so `type Handle = nominal Text` under `where positive` is reported and a `nominal Int` under `where between(0, 9)` is not. A record, a union or a container is not a base either family tests, and neither is an abstract handle type such as `EffectId`: whatever represents it at runtime, a program has no value of it the predicate is a question about.
 
 A type parameter says nothing about the base on its own, so the definition `type NonEmpty(T) = T where nonempty` is not reported. Its **application** is: the arguments are substituted into the body — through nested applications, record fields and union payloads — and a refinement they put over a base it cannot test is reported at the application, `NonEmpty(Int)` in `slot n : NonEmpty(Int)` or in `type N = NonEmpty(Int)`, and `W(Text)` for `type W(T) = nominal T where positive`. A problem the definition has whatever its arguments are is reported once, at the definition. A problem the arguments bring is reported at the application once for each refinement and base it is put over, however many paths through the body reach that refinement: `type D1(T) = D0(D0(D0(T)))` over `type D0(T) = T where nonempty` gives `D1(Int)` one E0804, not three, while `type P(T) = {a: T where nonempty, b: T where nonempty}` gives `P(Int)` two, one for each refinement.
 
