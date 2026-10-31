@@ -5,15 +5,21 @@ import { app } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 import { type KumikiPluginOptions, kumiki } from "../src/index.ts";
 import { buildInto, configOf, project, resolveIdOf, transformCode } from "./helpers/plugin.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
 
 const COUNTER = app("01-counter");
+const TMP = scratchRoot(import.meta.url);
 
 /** A literal the runtime carries and nothing else does — one hit set per copy. */
 const RUNTIME_MARK = "kumiki-state-styles";
 
 /** `where` defaults to the workspace, where the project itself resolves `@kumikijs/runtime`. */
-function buildProject(main: string, opts?: KumikiPluginOptions, where?: string): Promise<string> {
-  const root = project(readFileSync(COUNTER, "utf8"), main, where);
+function buildProject(
+  main: string,
+  opts?: KumikiPluginOptions,
+  where: string = TMP,
+): Promise<string> {
+  const root = project(where, readFileSync(COUNTER, "utf8"), main);
   return buildInto(root, join(root, "dist"), [kumiki(opts)]);
 }
 

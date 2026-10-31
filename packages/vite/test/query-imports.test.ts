@@ -5,10 +5,13 @@ import { createServer, type PluginOption } from "vite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { kumiki } from "../src/index.ts";
 import { buildInto, project as projectWith } from "./helpers/plugin.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
 
 const SOURCE = readFileSync(app("01-counter"), "utf8");
 
-const project = (main = ""): string => projectWith(SOURCE, main);
+const TMP = scratchRoot(import.meta.url);
+
+const project = (main = ""): string => projectWith(TMP, SOURCE, main);
 
 function buildMain(main: string, plugins: PluginOption[]): Promise<string> {
   const root = project(main);
