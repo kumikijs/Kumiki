@@ -8,7 +8,6 @@ import {
   type TypeExpr,
 } from "../ast.ts";
 import { bindTarget } from "../bind-target.ts";
-import { errorField, fieldSegment } from "../error-field.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "../input-bind.ts";
 import { checkAgainst, checkIndexIsPlace, indexStep, unwrappedType } from "./against.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
@@ -351,7 +350,7 @@ export function checkErrorField(
     errors.some(
       (e) => e.severity !== "warning" && e.pos.line === pos.line && e.pos.col === pos.col,
     );
-  const field = errorField(arg.value);
+  const field = bindTarget(arg.value);
   const { root } = field;
   const notASlot = errorFieldRootProblem(root, sym, ctx);
   if (notASlot) {
@@ -359,7 +358,7 @@ export function checkErrorField(
       refuse(rootProblem(notASlot.named, notASlot.is, notASlot.fix), root.pos);
     return;
   }
-  const steps = `A path's steps are fields, ".get", and indices with a literal key ${see}`;
+  const steps = `A path's steps are fields, ".get", and indices ${see}`;
   // A type the checker cannot decide is reported where it is written (E0117).
   const undecided = (raw: TypeExpr | null): boolean => indexStep(raw, sym).kind === "undecidable";
   // The first step that names no place is the mistake; the steps after it have nothing to step into.
@@ -374,13 +373,6 @@ export function checkErrorField(
         return;
       case "Index": {
         if (reported(step.index.pos)) return;
-        if (fieldSegment(step) === null) {
-          refuse(
-            `error(field=…) cannot step through an index that is not a literal: a path names one element or entry by a literal key, such as [0] or ["k"] ${see}`,
-            step.index.pos,
-          );
-          return;
-        }
         const at = indexStep(inferType(step.base, sym, ctx), sym);
         if (at.kind === "undecidable") return;
         if (at.kind === "no-place") {

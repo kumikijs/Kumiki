@@ -3,7 +3,6 @@ import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
 import { bindTarget } from "../bind-target.ts";
 import { BUILTIN_TILES, contentArg } from "../builtins.ts";
-import { errorField } from "../error-field.ts";
 import { TIME_INPUT_PATTERNS } from "../input-bind.ts";
 import type { ParseReading } from "../parse-reading.ts";
 import { writtenValue } from "../typecheck/tile-collect.ts";
@@ -202,8 +201,12 @@ export function extractBindPath(
     else if ("at" in seg) readRaw = `_s.index(${readRaw}, ${keyJs(seg.at)})`;
     else readRaw = `_s.unwrap(${readRaw})`;
   }
-  const pathJs = `[${path.map((seg) => segmentJs(seg, keyJs)).join(",")}]`;
-  return { root, path, pathJs, read: readRaw };
+  return { root, path, pathJs: pathJs(path, ctx), read: readRaw };
+}
+
+/** A path's index keys are evaluated where the path is, on every render of the tile that holds it. */
+function pathJs(path: readonly PathStep[], ctx: EvalCtx): string {
+  return `[${path.map((seg) => segmentJs(seg, (key) => jsOfExpr(key, ctx))).join(",")}]`;
 }
 
 function bindFields(bindInfo: Pick<BindInfo, "root" | "path" | "pathJs">): string[] {
@@ -615,12 +618,14 @@ function tileCallJs(
       }
       case "error": {
         const fieldArg = t.args.find((a) => a.name === "field");
-        const field = fieldArg && !isTileExpr(fieldArg.value) ? errorField(fieldArg.value) : null;
+        const field = fieldArg && !isTileExpr(fieldArg.value) ? bindTarget(fieldArg.value) : null;
         // Only a program lowered without `check` gets here with no path, since E0230 refuses it;
         // a field that names no slot renders nothing.
         const [slot, path] =
-          field?.root.kind === "Ref" && field.path ? [field.root.name, field.path] : ["", []];
-        return `({ kind: "error", field: ${JSON.stringify(slot)}, path: ${JSON.stringify(path)}, props: ${propsObj} })`;
+          field?.root.kind === "Ref" && field.path
+            ? [field.root.name, pathJs(field.path, ctx)]
+            : ["", "[]"];
+        return `({ kind: "error", field: ${JSON.stringify(slot)}, path: ${path}, props: ${propsObj} })`;
       }
       case "route-outlet":
         return `({ kind: "route-outlet", children: [], props: ${propsObj} })`;
