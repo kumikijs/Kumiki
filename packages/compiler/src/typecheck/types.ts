@@ -16,12 +16,14 @@ import {
   type TypeDef,
   type TypeExpr,
 } from "../ast.ts";
+import { aliasTarget } from "../def-graph.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "../refinement-positions.ts";
 import {
   type RefinementProblem,
   refinementBaseProblem,
   refinementProblem,
 } from "../refinements.ts";
+import { isReservedTypeName } from "../stdlib-types.ts";
 import type { KumikiError, SymbolTable } from "./context.ts";
 
 export function resolveType(
@@ -291,11 +293,15 @@ function checkTypeArity(
   errors: KumikiError[],
 ): void {
   const arity = constructorArity(name, sym);
-  if (arity === null || arity === given) return;
+  // `Tuple` takes any number of arguments, and none is still not a type.
+  if (arity === null ? given > 0 : arity === given) return;
   errors.push({
     code: "E0210",
     kind: "type-arity-mismatch",
-    message: `Type "${name}" expects ${arity} type argument(s) but got ${given}`,
+    message:
+      arity === null
+        ? `Type "${name}" expects type arguments but got none`
+        : `Type "${name}" expects ${arity} type argument(s) but got ${given}`,
     pos,
   });
 }
@@ -306,4 +312,79 @@ const EMPTY_SCOPE: TypeScope = { owner: "", params: new Set() };
 
 export function checkTypeDef(def: TypeDef, sym: SymbolTable, errors: KumikiError[]): void {
   resolveType(def.body, sym, errors, { owner: def.name, params: new Set(def.params) });
+}
+
+/**
+ * A program's own definition under a name the standard library keeps (E0231). It is reported from
+ * the program's definitions, not from {@link checkTypeDef}, which also judges the standard library's
+ * own entries when a type reaches them.
+ */
+export function reservedTypeName(def: TypeDef): KumikiError | null {
+  if (!isReservedTypeName(def.name)) return null;
+  return {
+    code: "E0231",
+    kind: "reserved-type-name",
+    message: `Type "${def.name}" collides with the standard library's ${def.name}; uses of it never see this type`,
+    pos: def.pos,
+  };
+}
+
+/**
+ * Whether a definition `t` names, directly or through the ones it names, has an error of its own:
+ * one {@link checkTypeDef} reports, or an alias that resolves to itself (E0009).
+ */
+export function reachesBrokenDefinition(t: TypeExpr, sym: SymbolTable): boolean {
+  const reached = new Map<string, TypeDef>();
+  const todo: { t: TypeExpr; params: ReadonlySet<string> }[] = [{ t, params: EMPTY_SCOPE }];
+  for (let at = todo.pop(); at !== undefined; at = todo.pop()) {
+    const { t: cur, params } = at;
+    const inside = (parts: readonly TypeExpr[]) => {
+      for (const p of parts) todo.push({ t: p, params });
+    };
+    switch (cur.kind) {
+      case "TypePrim":
+        break;
+      case "TypeRef":
+      case "TypeApp": {
+        if (cur.kind === "TypeApp") inside(cur.args);
+        const def = params.has(cur.name) ? undefined : sym.types.get(cur.name);
+        if (!def || reached.has(def.name)) break;
+        reached.set(def.name, def);
+        todo.push({ t: def.body, params: new Set(def.params) });
+        break;
+      }
+      case "TypeRecord":
+        inside(cur.fields.map((f) => f.type));
+        break;
+      case "TypeUnion":
+        inside(cur.variants.flatMap((v) => v.payloads));
+        break;
+      case "TypeNominal":
+      case "TypeRefinement":
+        inside([cur.inner]);
+        break;
+      default:
+        assertNever(cur);
+    }
+  }
+  const scratch: KumikiError[] = [];
+  for (const def of reached.values()) checkTypeDef(def, sym, scratch);
+  return scratch.length > 0 || [...reached.values()].some(aliasCycleFinder(sym));
+}
+
+/** Whether following alias targets from a definition comes back round, each one walked once. */
+function aliasCycleFinder(sym: SymbolTable): (def: TypeDef) => boolean {
+  const typeOf = (name: string): TypeDef | undefined => sym.types.get(name);
+  const settled = new Set<string>();
+  return (start) => {
+    const path = new Set<string>();
+    for (let d = typeOf(start.name); d !== undefined && !settled.has(d.name); ) {
+      if (path.has(d.name)) return true;
+      path.add(d.name);
+      const edge = aliasTarget(d, typeOf);
+      d = edge ? typeOf(edge.to) : undefined;
+    }
+    for (const name of path) settled.add(name);
+    return false;
+  };
 }

@@ -1,13 +1,22 @@
-import { assignable, isOpaque, recordFieldType, unaliasType, unknownType } from "../assignable.ts";
+import {
+  assignable,
+  asWritten,
+  isOpaque,
+  recordFieldType,
+  unaliasType,
+  unknownType,
+  writtenVariants,
+} from "../assignable.ts";
 import type { Expr, Pos, TypeExpr } from "../ast.ts";
-import { isQualifierName } from "../builtin-calls.ts";
+import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
 import { qualifierType } from "../parse-reading.ts";
 import { hasMember, isOwnMember } from "../stdlib-members.ts";
-import { getOrResultType, unwrappedType } from "./against.ts";
-import type { Ctx, SymbolTable } from "./context.ts";
-import { binOpResult } from "./expr.ts";
+import { FILE_FIELDS, type PrimName, refType } from "../stdlib-types.ts";
+import { getOrResultType, indexStep, unwrappedType } from "./against.ts";
+import { type Ctx, isBuiltinCall, type SymbolTable } from "./context.ts";
+import { binOpResult, letInScope } from "./expr.ts";
 import { memberReceivers } from "./members.ts";
-import { armScope } from "./patterns.ts";
+import { armScope, matchedType } from "./patterns.ts";
 import { RESERVED_SLOT_NAMES } from "./slot.ts";
 
 export const KNOWN_TOKEN_GROUPS: ReadonlySet<string> = new Set([
@@ -19,14 +28,8 @@ export const KNOWN_TOKEN_GROUPS: ReadonlySet<string> = new Set([
   "breakpoints",
 ]);
 
-export const PRIM_FIELDS: Record<string, Record<string, "Text" | "Int">> = {
-  File: { name: "Text", size: "Int", type: "Text" },
-};
-
-function primFieldType(primName: string, field: string, pos: Pos): TypeExpr | null {
-  const name = PRIM_FIELDS[primName]?.[field];
-  if (!name) return null;
-  return { kind: "TypePrim", name, pos };
+export function primFieldType(primName: PrimName, field: string): TypeExpr | null {
+  return primName === "File" ? recordFieldType(FILE_FIELDS, field) : null;
 }
 
 export const prim = (name: PrimName, pos: Pos): TypeExpr => ({ kind: "TypePrim", name, pos });
@@ -37,8 +40,6 @@ export const container = (name: string, args: TypeExpr[], pos: Pos): TypeExpr =>
   args,
   pos,
 });
-
-type PrimName = Extract<TypeExpr, { kind: "TypePrim" }>["name"];
 
 /** True when `t` is a number — the operand family arithmetic is defined on. */
 export function isNumeric(t: TypeExpr | null, sym: SymbolTable): boolean {
@@ -64,6 +65,17 @@ export function typeName(t: TypeExpr | null, sym: SymbolTable): string {
 export function isPrimNamed(t: TypeExpr | null, sym: SymbolTable, name: PrimName): boolean {
   const u = unaliasType(t, sym);
   return u?.kind === "TypePrim" && u.name === name;
+}
+
+/** Through an alias or a `nominal` too: one answer for both halves of E0204, the operators and rendering. */
+export function isEffectId(t: TypeExpr | null, sym: SymbolTable): boolean {
+  return isPrimNamed(t, sym, "EffectId");
+}
+
+/** The member a qualified call names (`show` in `Int.show(v)`), by the spelling rule codegen and `builtinArity` apply. */
+export function qualifiedMember(callee: string): string | null {
+  const dot = callee.indexOf(".");
+  return dot > 0 && isQualifierName(callee.slice(0, dot)) ? callee.slice(dot + 1) : null;
 }
 
 const METHOD_RESULT: ReadonlyMap<string, PrimName> = new Map<string, PrimName>([
@@ -294,6 +306,13 @@ function unlisted(_member: never): null {
   return null;
 }
 
+// A `$route` nothing binds has no value to type. A prefetch target fired by its own trigger is
+// handed no route, so its `$route` is typed only when that trigger is a route one too.
+function routeType(name: string, ctx: Ctx): TypeExpr | null {
+  if (name === "route" || (name === "$route" && ctx.routeBind === "bound")) return refType("Route");
+  return null;
+}
+
 /** Best-effort static type of an expression; `null` = undecidable / dynamic. */
 export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
   switch (e.kind) {
@@ -308,14 +327,18 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
     case "Ref": {
       const bound = ctx.localTypes.get(e.name);
       if (bound) return bound;
-      return sym.slots.get(e.name)?.type ?? null;
+      // A local whose type is undecided still hides the slot of its name.
+      if (ctx.localBinds.has(e.name)) return null;
+      // The slot table first: a program's own `slot route` is E0115, and its
+      // reads keep the slot's type rather than drawing a second report.
+      return sym.slots.get(e.name)?.type ?? routeType(e.name, ctx) ?? null;
     }
     case "FieldAccess": {
       const base = unaliasType(inferType(e.base, sym, ctx), sym);
       if (!base) return null;
       if (base.kind === "TypeRecord") return recordFieldType(base, e.field);
       if (base.kind === "TypePrim") {
-        const t = primFieldType(base.name, e.field, e.pos);
+        const t = primFieldType(base.name, e.field);
         if (t) return t;
       }
       const decided = receiverMemberResult(base, e.field, 0, sym, e.pos);
@@ -326,16 +349,14 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       return fixed ? prim(fixed, e.pos) : null;
     }
     case "Index": {
-      const base = unaliasType(inferType(e.base, sym, ctx), sym);
-      if (base?.kind === "TypeApp") {
-        if (base.name === "List" || base.name === "Set") return base.args[0] ?? null;
-        if (base.name === "Map") return base.args[1] ?? null;
-      }
-      return null;
+      const step = indexStep(inferType(e.base, sym, ctx), sym);
+      return step.kind === "place" ? step.type : null;
     }
     case "MethodCall": {
       if (e.method === "copy") return inferType(e.receiver, sym, ctx);
-      if (e.method === "run-reducer" && ctx.runReducerScope) return runReducerState(sym, e.pos);
+      if (e.method === RUN_REDUCER && ctx.runReducerScope && isBuiltinCall(e.method, sym)) {
+        return runReducerState(sym, e.pos);
+      }
       const decided = receiverMemberResult(
         inferType(e.receiver, sym, ctx),
         e.method,
@@ -383,14 +404,12 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       return container("Map", [k ?? unknownType(e.pos), v ?? unknownType(e.pos)], e.pos);
     }
     case "Variant": {
-      const inner = e.payload[0]
-        ? (inferType(e.payload[0], sym, ctx) ?? unknownType(e.pos))
-        : unknownType(e.pos);
-      if (e.name === "Some") return container("Option", [inner], e.pos);
-      if (e.name === "None") return container("Option", [unknownType(e.pos)], e.pos);
-      if (e.name === "Ok") return container("Result", [inner, unknownType(e.pos)], e.pos);
-      if (e.name === "Err") return container("Result", [unknownType(e.pos), inner], e.pos);
-      return null;
+      const payloads = e.payload.map((p) => inferType(p, sym, ctx) ?? unknownType(e.pos));
+      const builtin = builtinTagType(e.name, payloads[0] ?? unknownType(e.pos), e.pos);
+      if (builtin === null || !sym.unionsByTag.has(e.name)) return builtin;
+      // A union of the program's own declares the tag too, so the value is as much that union's:
+      // it keeps the built-in type's members, and lands in a union whose variant holds it.
+      return asWritten(builtin, [{ tag: e.name, payloads }]);
     }
     case "BinOp":
       return binOpResult(e, sym, ctx);
@@ -403,22 +422,27 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       return commonType([inferType(e.consequent, sym, ctx), inferType(e.alternate, sym, ctx)], sym);
     }
     case "MatchExpr": {
-      const scrutType = inferType(e.scrutinee, sym, ctx);
+      const scrutType = matchedType(inferType(e.scrutinee, sym, ctx), e.arms, sym);
       return commonType(
         e.arms.map((arm) => inferType(arm.body, sym, armScope(arm, scrutType, sym, ctx))),
         sym,
       );
     }
+    case "LetIn":
+      // The body is the value, read with the name bound.
+      return inferType(e.body, sym, letInScope(e, sym, ctx));
     case "EmitExpr":
       return prim("EffectId", e.pos);
     case "Call": {
-      if (e.callee === "run-reducer" && ctx.runReducerScope) return runReducerState(sym, e.pos);
-      const fixed = CALL_RESULT.get(e.callee);
+      const builtin = isBuiltinCall(e.callee, sym);
+      if (builtin && e.callee === RUN_REDUCER && ctx.runReducerScope) {
+        return runReducerState(sym, e.pos);
+      }
+      const fixed = builtin ? CALL_RESULT.get(e.callee) : undefined;
       if (fixed) return prim(fixed, e.pos);
       const dot = e.callee.indexOf(".");
       const qualifier = dot > 0 ? e.callee.slice(0, dot) : null;
-      const member =
-        qualifier !== null && isQualifierName(qualifier) ? e.callee.slice(dot + 1) : null;
+      const member = qualifiedMember(e.callee);
       if (member === "show") return prim("Text", e.pos);
       if (qualifier !== null && member === "parse") {
         const named = qualifierType(qualifier, e.pos, sym);
@@ -434,13 +458,24 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
   }
 }
 
+function builtinTagType(tag: string, inner: TypeExpr, pos: Pos): TypeExpr | null {
+  if (tag === "Some") return container("Option", [inner], pos);
+  if (tag === "None") return container("Option", [unknownType(pos)], pos);
+  if (tag === "Ok") return container("Result", [inner, unknownType(pos)], pos);
+  if (tag === "Err") return container("Result", [unknownType(pos), inner], pos);
+  return null;
+}
+
 function runReducerState(sym: SymbolTable, pos: Pos): TypeExpr {
   const declared = [...sym.slots.values()].map((s) => ({ name: s.name, type: s.type, pos: s.pos }));
-  // The runtime's own slots (`route`) are in the state too, with a type the
-  // program does not declare — present, and undecided.
+  // The runtime's own `route` slot is in the state too, typed as it is everywhere else.
   const reserved = [...RESERVED_SLOT_NAMES.keys()]
     .filter((name) => !sym.slots.has(name))
-    .map((name) => ({ name, type: unknownType(pos), pos }));
+    .map((name) => ({
+      name,
+      type: name === "route" ? refType("Route") : unknownType(pos),
+      pos,
+    }));
   const slots: TypeExpr = { kind: "TypeRecord", fields: [...declared, ...reserved], pos };
   return { kind: "TypeRecord", fields: [{ name: "slots", type: slots, pos }], pos };
 }
@@ -451,9 +486,19 @@ function commonType(types: (TypeExpr | null)[], sym: SymbolTable): TypeExpr | nu
   for (const t of types.slice(1)) {
     if (!t) return null;
     if (!assignable(t, first, sym) || !assignable(first, t, sym))
-      return sharedBase(types, first, sym);
+      return keepWritten(sharedBase(types, first, sym), types);
   }
-  return first;
+  return keepWritten(first, types);
+}
+
+// The value is one of `types`' values, so it lands in a union only when each of them was written
+// as a tag that union holds.
+function keepWritten(common: TypeExpr | null, types: (TypeExpr | null)[]): TypeExpr | null {
+  if (common === null) return null;
+  const each = types.map(writtenVariants);
+  const kept = each.every((w) => w !== undefined) ? each.flatMap((w) => w ?? []) : null;
+  if (kept !== null) return asWritten({ ...common }, kept);
+  return writtenVariants(common) === undefined ? common : { ...common };
 }
 
 function sharedBase(

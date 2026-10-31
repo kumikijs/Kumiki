@@ -60,6 +60,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0007](./errors.md#e0007-duplicate-definition) | `duplicate-definition` | all | core |
 | [E0008](./errors.md#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) | `duplicate-clause` / `duplicate-key` / `duplicate-field` / `duplicate-param` / `duplicate-variant` | all | core |
 | [E0009](./errors.md#e0009-type-cycle) | `type-cycle` | type | core |
+| [E0010](./errors.md#e0010-redirect-cycle) | `redirect-cycle` | app | routing |
 | [E0102](./errors.md#e0102-undef-reducer) | `undef-reducer` | reducer | core |
 | [E0103](./errors.md#e0103-undef-ref-undef-slot) | `undef-ref` / `undef-slot` | slot | core |
 | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) | `undef-effect` / `init-not-effect-call` | effect | core |
@@ -83,6 +84,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0122](./errors.md#e0122-duplicate-pattern-bind) | `duplicate-pattern-bind` | reducer | core |
 | [E0123](./errors.md#e0123-duplicate-effect-bind) | `duplicate-effect-bind` | reducer | core |
 | [E0124](./errors.md#e0124-type-constructor-qualifier) | `type-constructor-qualifier` | type | core |
+| [E0125](./errors.md#e0125-redirect-unbound-param) | `redirect-unbound-param` | app | routing |
 | [E0127](./errors.md#e0127-fn-as-value) | `fn-as-value` | all | core |
 | [E0128](./errors.md#e0128-value-as-child) | `value-as-child` | tile | core |
 | [E0129](./errors.md#e0129-unrendered-arg) | `unrendered-arg` | tile | core |
@@ -108,9 +110,13 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0220](./errors.md#e0220-boundary-fallback-input) | `boundary-fallback-input` | tile | lifecycle |
 | [E0225](./errors.md#e0225-radio-bind-without-value) | `radio-bind-without-value` | tile | forms |
 | [E0226](./errors.md#e0226-input-bind-type) | `input-bind-type` | tile | forms |
+| [E0227](./errors.md#e0227-non-exhaustive-match) | `non-exhaustive-match` | type | core |
+| [E0229](./errors.md#e0229-bind-target-not-slot) | `bind-target-not-slot` | tile | forms |
+| [E0231](./errors.md#e0231-reserved-type-name) | `reserved-type-name` | type | core |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | core |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | stdlib |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | forms |
+| [W0217](./errors.md#w0217-name-beside-group-warning) | `name-beside-group` | tile | forms |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | stdlib |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | stdlib |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | http |
@@ -121,7 +127,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0402](./errors.md#e0402-motion-invalid-timing) | `motion-invalid-timing` | tile | style |
 | [E0403](./errors.md#e0403-motion-malformed) | `motion-malformed` | tile | style |
 | [E0601](./errors.md#e0601-duplicate-write) | `duplicate-write` | reducer | core |
-| [E0602](./errors.md#e0602-unassignable-member) | `unassignable-member` | reducer | core |
+| [E0602](./errors.md#e0602-unassignable-member) | `unassignable-member` | reducer / tile | core |
 | [E0701](./errors.md#e0701-a11y-button) | `a11y-button` | tile | lifecycle |
 | [E0702](./errors.md#e0702-a11y-image) | `a11y-image` | tile | lifecycle |
 | [E0703](./errors.md#e0703-a11y-link) | `a11y-link` | tile | lifecycle |
@@ -130,6 +136,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0712](./errors.md#e0712-episode-mock-invalid) | `episode-mock-invalid` | effect | testing |
 | [E0713](./errors.md#e0713-test-shape-invalid) | `test-shape-invalid` | effect | testing |
 | [E0714](./errors.md#e0714-test-section-unknown) | `test-section-unknown` | effect | testing |
+| [E0715](./errors.md#e0715-for-all-no-generator) | `for-all-no-generator` | effect | testing |
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | stdlib |
 | [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | stdlib |
 | [E0803](./errors.md#e0803-unimplemented-refinement) | `unimplemented-refinement` | type | core |
@@ -297,5 +304,8 @@ Layers name the definitions the example centers on; Spec links the section it de
 | `168-map-index-absent-key.kumiki` | type, slot, reducer, tile | core | [§1.6.3](./language.md#_1-6-3-lvalue-semantics) |
 | `169-for-repeated-values.kumiki` | slot, reducer, tile | core | [§10.3.10](./runtime.md#_10-3-10-stable-tile-identity) |
 | `170-slot-wildcard-key.kumiki` | slot, reducer, tile | testing | [§8.2.2](./testing.md#_8-2-2-wildcards) |
+| `171-property-test-count.kumiki` | slot, reducer, tile | testing | [§8.3.1](./testing.md#_8-3-1-syntax) |
+| `204-input-props-rendered.kumiki` | slot, reducer, tile | stdlib | [§2.3.4](./stdlib.md#_2-3-4-input-elements) [§2.3.5](./stdlib.md#_2-3-5-forms) |
+| `216-selector-id-descendants.kumiki` | slot, reducer, tile | core | [§1.6.2](./language.md#_1-6-2-selectors) |
 <!-- examples:end -->
 :::

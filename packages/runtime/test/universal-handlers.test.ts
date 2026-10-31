@@ -172,3 +172,47 @@ describe("a universally-lifted handler across renders", () => {
     }
   });
 });
+
+// The premise of the compiler's lift rows for these kinds: they lift `ui.key`, and W0212 tells a
+// `ui.focus` / `ui.blur` on them that the event their <input> fires never reaches the <label>.
+describe("a label-wrapped control hears key from its <input>, and never focus or blur", () => {
+  let root: HTMLElement;
+
+  beforeEach(() => {
+    root = freshRoot();
+  });
+
+  afterEach(() => {
+    root.remove();
+  });
+
+  function mountWithSpies(node: TileNode) {
+    const spies = { onFocus: vi.fn(), onBlur: vi.fn(), onKeyDown: vi.fn() };
+    const { dispose } = mount(bareApp({ root: (): TileNode => ({ ...node, props: spies }) }), root);
+    const input = defined(root.querySelector("input"), "the control's <input>");
+    input.focus();
+    expect(document.activeElement, "the <input> took focus").toBe(input);
+    input.blur();
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+    dispose();
+    return spies;
+  }
+
+  it.each<TileNode>([
+    { kind: "check", checked: false },
+    { kind: "switch", checked: false },
+    { kind: "radio", group: "g" },
+  ])("runs no focus or blur listener, and the key listener once, on a $kind", (node) => {
+    const spies = mountWithSpies(node);
+    expect(spies.onFocus).not.toHaveBeenCalled();
+    expect(spies.onBlur).not.toHaveBeenCalled();
+    expect(spies.onKeyDown).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs all three on an input, which takes focus itself", () => {
+    const spies = mountWithSpies({ kind: "input", value: "" });
+    expect(spies.onFocus).toHaveBeenCalledTimes(1);
+    expect(spies.onBlur).toHaveBeenCalledTimes(1);
+    expect(spies.onKeyDown).toHaveBeenCalledTimes(1);
+  });
+});

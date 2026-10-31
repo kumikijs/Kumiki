@@ -16,6 +16,10 @@ describe("a definition declared twice in one layer", () => {
       `slot a : Int = 0\ntile B = button(text="b", onClick=r)\nreducer r on=ui.click(B) do= a := 1\nreducer r on=ui.click(B) do= a := 2`,
     ],
     [
+      "reducer under another trigger",
+      `slot a : Int = 0\ntile B = button(text="b", onClick=r)\nreducer r on=ui.click(B) do= a := 1\nreducer r on=tile.mount(B) do= a := 2`,
+    ],
+    [
       "effect",
       `effect E cap=custom.thing in=Text out=Result(Unit, Text)\neffect E cap=custom.thing in=Text out=Result(Unit, Text)`,
     ],
@@ -56,8 +60,12 @@ ${APP}${TAIL}`;
     );
   });
 
-  it("leaves a program's own definition shadowing the standard library alone", () => {
-    expect(codesOf(`type Route = Text\nslot r : Route = "x"\n${APP}${TAIL}`)).toEqual([]);
+  it("leaves a program's own definition of a declarable standard library name alone", () => {
+    expect(codesOf(`type Email = Text\nslot r : Email = "x"\n${APP}${TAIL}`)).toEqual([]);
+  });
+
+  it("leaves a program's own definition of a reserved standard library name to E0231, not E0007", () => {
+    expect(codesOf(`type Route = {path: Text}\n${APP}${TAIL}`)).toEqual(["E0231"]);
   });
 
   it("leaves a second app to E0004", () => {
@@ -264,6 +272,20 @@ ${APP}${TAIL}`,
       "E0008",
     );
     expect(codesOf(`slot s : Map(Int, Int) = {-1: 1, -1: 2}\n${APP}${TAIL}`)).toContain("E0008");
+    expect(codesOf(`slot s : Map(Bool, Int) = {true: 1, "true": 2}\n${APP}${TAIL}`)).not.toContain(
+      "E0008",
+    );
+  });
+
+  it.each([
+    ["{true: 1, true: 2}", "1:37", "true"],
+    ["{(true): 1, true: 2}", "1:39", "true"],
+    ["{false: 1, (false): 2}", "1:39", "false"],
+  ])("reports the Bool key written twice in %s, parenthesised or not", (literal, at, key) => {
+    const found = checkSource(`slot s : Map(Bool, Int) = ${literal}\n${APP}${TAIL}`);
+    expect(found.map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`)).toEqual([
+      `E0008 ${at} Map key "${key}" is written more than once`,
+    ]);
   });
 
   it("says nothing about two computed keys", () => {

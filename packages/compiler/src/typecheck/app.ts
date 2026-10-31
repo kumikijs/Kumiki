@@ -1,8 +1,8 @@
-import type { AppDef, Expr } from "../ast.ts";
+import { type AppDef, numberLiteral } from "../ast.ts";
 import { STANDARD_CAPABILITIES } from "../capabilities.ts";
-import { checkAgainst, checkEmitTarget } from "./against.ts";
+import { checkAgainst, checkEmitTarget, type LiteralDomain } from "./against.ts";
 import { type Ctx, type KumikiError, pureScope, type SymbolTable } from "./context.ts";
-import { checkExpr, pushMismatch } from "./expr.ts";
+import { checkExpr } from "./expr.ts";
 import { container, prim } from "./infer.ts";
 import {
   type RouteChainResolver,
@@ -10,7 +10,7 @@ import {
   routeReachedThroughCalls,
   servesNotFound,
 } from "./route-chain.ts";
-import { checkRouteTargetArity } from "./tile.ts";
+import { checkRedirects, checkRouteTargetArity } from "./tile.ts";
 
 export function checkApp(
   app: AppDef,
@@ -41,6 +41,7 @@ export function checkApp(
     }
     checkRouteTargetArity(r, `Route "${r.path}"`, sym, errors);
   }
+  checkRedirects(app.routes, errors);
   if (!servesNotFound(app.routes)) {
     errors.push({
       code: "E0001",
@@ -53,6 +54,7 @@ export function checkApp(
     kind: "app-init",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     capsAvailable: new Set(app.caps),
     routeBind: "unbound",
   };
@@ -106,32 +108,34 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
     const text = prim("Text", pos);
     checkAgainst(http.headers, container("Map", [text, text], pos), sym, errors, fieldCtx);
   }
-  if (http.timeout !== undefined)
-    checkAgainst(http.timeout, prim("Int", http.timeout.pos), sym, errors, fieldCtx);
-  if (http.credentials !== undefined) checkHttpCredentials(http.credentials, sym, errors, fieldCtx);
+  if (http.timeout !== undefined) {
+    const int = prim("Int", http.timeout.pos);
+    checkAgainst(http.timeout, int, sym, errors, fieldCtx, "E0201", undefined, timerMs);
+  }
+  if (http.credentials !== undefined) {
+    const text = prim("Text", http.credentials.pos);
+    checkAgainst(http.credentials, text, sym, errors, fieldCtx, "E0201", undefined, fetchMode);
+  }
 }
+
+/** The longest delay `setTimeout` holds: a browser wraps a longer one below 0, and Node shortens it to 1. */
+const MAX_TIMER_MS = 2_147_483_647;
+
+/** The runtime arms each request's abort with the timeout, so a delay the timer cannot hold fires it at once. */
+const timerMs: LiteralDomain = (e) => {
+  const literal = numberLiteral(e);
+  return literal === null || (literal.value > 0 && literal.value <= MAX_TIMER_MS)
+    ? null
+    : `timeout ${literal.raw} is not a number of milliseconds from 1 to ${MAX_TIMER_MS}; every request is aborted before it can answer`;
+};
 
 /** The `RequestCredentials` modes of the Fetch standard. */
 const HTTP_CREDENTIALS = ["omit", "same-origin", "include"];
 
-function checkHttpCredentials(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  if (e.kind === "IfExpr") {
-    checkHttpCredentials(e.consequent, sym, errors, ctx);
-    checkHttpCredentials(e.alternate, sym, errors, ctx);
-    return;
-  }
-  if (e.kind === "Str") {
-    if (HTTP_CREDENTIALS.includes(e.value)) return;
-    pushMismatch(
-      errors,
-      "E0201",
-      `credentials "${e.value}" is not one of ${HTTP_CREDENTIALS.join(" / ")}; a browser refuses the request`,
-      e.pos,
-    );
-    return;
-  }
-  checkAgainst(e, prim("Text", e.pos), sym, errors, ctx);
-}
+const fetchMode: LiteralDomain = (e) =>
+  e.kind !== "Str" || HTTP_CREDENTIALS.includes(e.value)
+    ? null
+    : `credentials "${e.value}" is not one of ${HTTP_CREDENTIALS.join(" / ")}; a browser refuses the request`;
 
 function checkAppTheme(app: AppDef, sym: SymbolTable, errors: KumikiError[]): void {
   const theme = app.theme;
