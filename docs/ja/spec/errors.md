@@ -1050,11 +1050,25 @@ reducer editTodo on=ui.input(TodoText) do= todos[$el.todoId].text := $event.valu
 > `error(field=…) cannot step through an index that is not a literal: a path names one element or entry by a literal key, such as [0] or ["k"] (see docs/spec/forms.md)`
 > `error(field=…) cannot step through an index into "<T>": a path's index names a List element or a Map entry (see docs/spec/forms.md)`
 
-この tile が描画するのは、ある場所の失敗である：field の根が指す slot の、field のステップが辿るパスかそれより下の失敗。1 つ目の形は、根が slot でないもの — リテラル、ローカルな名前（`for` の変数、tile の `$1`）、型が失敗しうる refinement を持たない `route` slot、値を計算する式、あるいは名前付き引数が tile として持つ `for` や `when`。2 つ目は `field=` をまったく持たない `error()`、3 つ目は tile が読まない `{…}` ブロックに書かれた `field` である。残りは、パスのステップでないステップである：値を導出するメンバー（`.length`、あるいは `Map` の `.get`）、フィールドを持たない値（`Tuple`・union）へのステップ、呼び出し、キーがリテラルでないインデックス、`List` でも `Map` でもない値へのインデックス。いずれも失敗がありうる場所を指さないので、slot が何を保持していても tile はメッセージを決して描画できない。slot の名前を綴ったテキストリテラルには修正案が付く。意図したのはおそらくその slot だからである。ただし、その場所で同じ名前のローカルが slot を隠しているときは付かない。報告するのは、場所を指さない最初のステップだけである。
+この tile が描画するのは、ある場所の失敗である：field の根が指す slot の、field のステップが辿るパスかそれより下の失敗。1 つ目の形は、根が slot でないもの — リテラル、ローカルな名前（`for` の変数、tile の `$1`）、型が失敗しうる refinement を持たない `route` slot、値を計算する式、あるいは名前付き引数が tile として持つ `for` や `when`。2 つ目は `field=` をまったく持たない `error()`、3 つ目は tile が読まない `{…}` ブロックに書かれた `field` である。残りは、パスのステップでないステップである：値を導出するメンバー（`.length`、あるいは `Map` の `.get`）、フィールドを持たない値（`Tuple`・union）へのステップ、呼び出し、キーがリテラルでないインデックス、`List`・`Map`・`Set` のいずれでもない値へのインデックス。いずれも失敗がありうる場所を指さないので、slot が何を保持していても tile はメッセージを決して描画できない。slot の名前を綴ったテキストリテラルには修正案が付く。意図したのはおそらくその slot だからである。ただし、その場所で同じ名前のローカルが slot を隠しているときは付かない。報告するのは、場所を指さない最初のステップだけである。
 
-計算されたインデックス — `error(field=rows[i].email)` — は、キーがリテラルでないインデックスとして拒否される：パスは要素をリテラルのキーで指す。これは規則ではなく既知の制限である（[#828](https://github.com/kumikijs/Kumiki/issues/828)）。field が持ちうるほかのコードは E0230 として重ねて報告しない：何にも解決しない名前は [E0103](#e0103-undef-ref-undef-slot)、呼び出さずに名指した `fn` は [E0127](#e0127-fn-as-value)、レコードにないフィールドは [E0108](#e0108-undef-member)、取る引数なしで名指したメンバーは [E0213](#e0213-call-arity-mismatch)、`Int` でない `List` のインデックスや型の違う `Map` のキーは [E0201](#e0201-type-mismatch)、どの `fn` も定義しない名前の呼び出し（値として書かれた tile、`error(field=text("form"))` など）は [E0116](#e0116-undef-call)、型が何も指さない slot へのステップは [E0117](#e0117-undef-type) である。
+計算されたインデックス — `error(field=rows[i].email)` — は、キーがリテラルでないインデックスとして拒否される：パスは要素をリテラルのキーで指す。これは規則ではなく既知の制限である（[#828](https://github.com/kumikijs/Kumiki/issues/828)）。field が持ちうるほかのコードは E0230 として重ねて報告しない：何にも解決しない名前は [E0103](#e0103-undef-ref-undef-slot)、呼び出さずに名指した `fn` は [E0127](#e0127-fn-as-value)、レコードにないフィールドは [E0108](#e0108-undef-member)、取る引数なしで名指したメンバーは [E0213](#e0213-call-arity-mismatch)、`Int` でない `List` のインデックスや型の違う `Map` のキーは [E0201](#e0201-type-mismatch)、`Set` へのインデックスは [E0232](#e0232-index-into-set)、どの `fn` も定義しない名前の呼び出し（値として書かれた tile、`error(field=text("form"))` など）は [E0116](#e0116-undef-call)、型が何も指さない slot へのステップは [E0117](#e0117-undef-type) である。
 
 **修正**：slot か、メッセージをここに出したいそのフィールドを指す — `form` のどこかの失敗なら `error(field=form)`、email の失敗だけなら `error(field=form.email)`。要素はリテラルのキーで書く：`error(field=rows[0].email)`。
+
+### E0232 `index-into-set`
+
+型が `Set` だと分かるレシーバから、インデックスで読んでいる — どう到達したかは問わない：直接の宣言、エイリアスや `nominal`、フィールド・`List` の要素・`Map` の値・`.get`、`s.add(x)` のように Set を返す呼び出し。
+
+> `Cannot read through an index into "<T>": a Set has members, not places — use .has`
+
+メッセージは、E0602 と同じく、レシーバの型をプログラムが書いたとおりに示す：`type Tags = Set(Text)` のもとで `Tags` と宣言した slot なら `"Tags"` である。報告する位置はインデックスのキーなので、`sets[0][1]` では Set へのステップの `1` を指す。
+
+インデックスは場所 — `Map` のエントリ、`List` の位置 — を指す（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）が、Set にあるのは所属だけで場所は無いので、`tags[x]` には答える値が無い。これは `:=` の左辺で [E0602](#e0602-unassignable-member) が拒否するステップを、読み取りが踏んだものである。Set がある値について言えるのはそれを含むかどうかであり、それを尋ねる読み取りが `tags.has(x)` である。
+
+この読み取りには型が無いので、1 つの誤りは 1 度だけ報告される：型を期待する位置 — `n := tags[x]`、`if tags[x] then …`、`->` と照合される `fn` の本体 — も、その後に続くステップ（`tags[x].foo` など）も、その隣に何も足さない。`bind=` の対象は、値を書き込む前にその位置の値を表示するので、`input(bind=tags[x])` や `check(bind=tags[x])` もこのコードになる。`error` tile の field も同じである：`error(field=tags[x])` はまず値として読まれ、そのステップは [E0230](#e0230-error-field-not-path) ではなく E0232 になる。型が決定できないレシーバ — `{}` から始まる `fold` のアキュムレータ `$1` など — は報告しない。
+
+**修正**：所属を尋ねる — `tags.has(x)` は `Bool` である。`check` でそれを表示するなら `value=tags.has(x)` を与え、そのクリックで動く reducer が `tags := tags.toggle(x)` を書く（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。キーの下に値を保持したいなら、代わりに `Map(K, V)` を宣言する。`error(field=…)` では、Set の失敗を出すために Set の slot そのものを指す：`error(field=tags)`。
 
 ### W0213 `handler-on-inert-tile` (warning)
 
@@ -1280,6 +1294,8 @@ lvalue のステップがレシーバ内のどの場所も指していない：�
 どちらのメッセージも、レシーバの型をプログラムが書いた通りに名指す：`type Tags = Set(Text)` のもとで `Tags` と宣言された slot は `"Tags"`、`Set(Int)` と宣言された slot は `"Set(Int)"` である。
 
 ユニオンへのメンバーは判定しないが、ユニオンへのインデックスはここで判定する：メンバー表にユニオンの行は無いが、ユニオンの値はどの variant を持っていても `Map` でも `List` でもない。エラーはそのステップの位置に出て、その後ろに型の不一致は続かない：場所を指さないステップより先のパスには型が無いので、それ以降のステップも右辺も、型と照合されない。この検査が無いと、書き込みは黙って通っていた：`type R = {a: Int}` に対する `r["a"] := "oops"` は `check` を通って Int のフィールドに Text を格納し — `r.a := "oops"` は [E0201](#e0201-type-mismatch) なのに — `Int` や `Text` に対しては、`n[0] := v` は実行時に panic し、`n["a"] := v` はメンバーへの書き込みがそうであったように slot をレコード `{"a": v}` で置き換えていた。レコードに対して、キーがそのフィールドの一つを名指すリテラルとして書かれていれば、そのフィールドのステップで答える：`— write the field step ".a"`。型が分からないレシーバ — 何にも解決されない型名 — では何も報告しない。その名前は書かれた位置で [E0117](#e0117-undef-type) になる。
+
+Set からの読み取り `tags[x]` も同じステップを踏み、やはり答えるものが無い。こちらは [E0232](#e0232-index-into-set) である。
 
 **`bind=` の対象**も同じように書き込まれる — コントロールが書き込む場所である（[フォーム §5.1](./forms.md#_5-1-個別入力の双方向束縛)）— ので、そのステップはパスのステップであり、括弧を付けずに書く。呼び出しとして書かれたステップは場所ではなく呼び出しが返す値を指すので、レシーバを問わずその呼び出しの位置で E0602 になる：
 
