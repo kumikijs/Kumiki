@@ -14,7 +14,7 @@ import {
  */
 function resolveFieldError(field: string, path: readonly PathSegment[] = []): string {
   const app = getRenderingApp();
-  if (!app || !field) return "";
+  if (!app) return "";
   const meta = app.slots?.[field];
   if (!meta) return "";
   const shown = judgeShownField(app, field, getRenderingView(), path);

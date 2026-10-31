@@ -138,7 +138,7 @@ export type TileNode = (
   | {
       kind: "error";
       field: string;
-      /** Absent for the whole slot. */
+      /** Empty, or absent, for the whole slot. */
       path?: PathSegment[];
       props?: TileProps;
     }

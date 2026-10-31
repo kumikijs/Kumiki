@@ -1,4 +1,4 @@
-import type { Expr } from "./ast.ts";
+import { type Expr, numberLiteral } from "./ast.ts";
 import { type BindStep, bindTarget } from "./bind-target.ts";
 import { type BindSegment, isUnwrapStep, UNWRAP_SEGMENT } from "./codegen/path-segment.ts";
 
@@ -12,35 +12,33 @@ export type FieldSegment = BindSegment | { at: string | number | boolean };
 export type ErrorField = {
   root: Expr;
   steps: BindStep[];
-  /** `null` for a step that names no place: a call, or an index whose key is not a literal. */
-  segments: (FieldSegment | null)[];
+  /** `null` once a step names no place. */
+  path: FieldSegment[] | null;
 };
 
 export function errorField(value: Expr): ErrorField {
   const { root, steps } = bindTarget(value);
-  return { root, steps, segments: steps.map(fieldSegment) };
+  const path: FieldSegment[] = [];
+  for (const step of steps) {
+    const segment = fieldSegment(step);
+    if (segment === null) return { root, steps, path: null };
+    path.push(segment);
+  }
+  return { root, steps, path };
 }
 
-function fieldSegment(step: BindStep): FieldSegment | null {
+/** `null` for a step that names no place: a call, or an index whose key is not a literal. */
+export function fieldSegment(step: BindStep): FieldSegment | null {
   switch (step.kind) {
     case "FieldAccess":
       return isUnwrapStep(step.field, step.accessKind) ? UNWRAP_SEGMENT : step.field;
     case "Index": {
       const key = step.index;
-      return key.kind === "Str" || key.kind === "Num" || key.kind === "Bool"
-        ? { at: key.value }
-        : null;
+      const n = numberLiteral(key);
+      if (n) return { at: n.value };
+      return key.kind === "Str" || key.kind === "Bool" ? { at: key.value } : null;
     }
     case "MethodCall":
       return null;
   }
-}
-
-export function fieldPath(field: ErrorField): FieldSegment[] | null {
-  const path: FieldSegment[] = [];
-  for (const segment of field.segments) {
-    if (segment === null) return null;
-    path.push(segment);
-  }
-  return path;
 }

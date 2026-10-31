@@ -13,19 +13,18 @@ function isIndexSegment(seg: PathSegment): seg is { at: unknown } {
   return typeof seg === "object" && seg !== null && Object.hasOwn(seg, "at");
 }
 
-/** A bind path never indexes, so an index step of `prefix` matches none of its steps. */
 export function bindPathStartsWith(
-  path: readonly BindSegment[],
+  path: readonly PathSegment[],
   prefix: readonly PathSegment[],
 ): boolean {
-  return (
-    prefix.length <= path.length &&
-    prefix.every((step, i) => {
-      const own = path[i];
-      if (typeof step !== "object" || step === null) return own === step;
-      return !isIndexSegment(step) && isUnwrapSegment(step) && typeof own === "object";
-    })
-  );
+  return prefix.length <= path.length && prefix.every((step, i) => sameSegment(path[i], step));
+}
+
+function sameSegment(own: PathSegment | undefined, step: PathSegment): boolean {
+  if (typeof step !== "object" || step === null) return own === step;
+  if (typeof own !== "object" || own === null) return false;
+  if (isUnwrapSegment(step)) return isUnwrapSegment(own);
+  return isIndexSegment(step) && isIndexSegment(own) && own.at === step.at;
 }
 
 export function entryKey(x: unknown): string {

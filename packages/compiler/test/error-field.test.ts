@@ -1,24 +1,40 @@
-import { compile } from "@kumikijs/compiler";
+import type { TileNode } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { loadApp } from "./helpers/module.ts";
 import { withApp } from "./helpers/programs.ts";
 
 const DEFS = `
 type Contact = {email: Text where email, age: Int where between(0, 120)}
 type Post    = {title: Text where nonempty}
-slot form  : Contact                        = {email: "", age: 0}
-slot draft : Option(Post)                   = None
-slot res   : Result(Post, Text)             = Err("x")
-slot xs    : List(Text where email)         = []
-slot rows  : List(Contact)                  = []
-slot m     : Map(Text, Text where nonempty) = {}
-slot n     : Map(Int, Text where nonempty)  = {}
-slot i     : Int                            = 0
+type Pair    = {pair: Tuple(Text where email, Int where between(18, 120))}
+type Shape   = Circle(Int where positive) | Square(Int where positive)
+type Drawing = {shape: Shape}
+slot form  : Contact                         = {email: "", age: 0}
+slot draft : Option(Post)                    = None
+slot res   : Result(Post, Text)              = Err("x")
+slot xs    : List(Text where email)          = []
+slot rows  : List(Contact)                   = []
+slot m     : Map(Text, Text where nonempty)  = {}
+slot n     : Map(Int, Text where nonempty)   = {}
+slot fm    : Map(Float, Text where nonempty) = {}
+slot b     : Map(Bool, Text where nonempty)  = {}
+slot opts  : List(Option(Post))              = []
+slot maybe : Option(List(Text where email))  = None
+slot grid  : List(List(Text where email))    = []
+slot book  : Map(Text, Contact)              = {}
+slot r     : Pair                            = {pair: ("", 0)}
+slot d     : Drawing                         = {shape: Circle(0)}
+slot i     : Int                             = 0
+fn shout(t: Text) -> Text = t
 `;
 const program = (tile: string) => withApp(`${DEFS}\n${tile}`);
+const diagnosticsOf = (tile: string): string[][] =>
+  checkSource(program(tile)).map((e) => [e.code, e.kind, e.message]);
 const SEE = "(see docs/spec/forms.md)";
 const ROOT_TAIL = "field= names a slot, or a path into one";
 const STEPS = `A path's steps are fields, ".get", and indices with a literal key ${SEE}`;
+const E0230 = (message: string): string[] => ["E0230", "error-field-not-path", message];
 
 describe("a field= that is not a slot or a path into one is E0230", () => {
   it.each([
@@ -26,6 +42,11 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
       "a text literal that spells a slot's name",
       `tile App = error(field="form")`,
       `error(field=…) cannot show the failure of the text literal "form": a literal is a value, not a slot. ${ROOT_TAIL} — write the slot's name without quotes: error(field=form) ${SEE}`,
+    ],
+    [
+      "a text literal that spells a local's name, which hides the slot",
+      `tile App = column(for form in rows error(field="form"))`,
+      `error(field=…) cannot show the failure of the text literal "form": a literal is a value, not a slot. ${ROOT_TAIL} ${SEE}`,
     ],
     [
       "a text literal",
@@ -38,6 +59,11 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
       `error(field=…) cannot show the failure of the literal 3: a literal is a value, not a slot. ${ROOT_TAIL} ${SEE}`,
     ],
     [
+      "a negative number literal",
+      `tile App = error(field=-3)`,
+      `error(field=…) cannot show the failure of the literal -3: a literal is a value, not a slot. ${ROOT_TAIL} ${SEE}`,
+    ],
+    [
       "an expression",
       `tile App = error(field=i + 1)`,
       `error(field=…) cannot show the failure of this expression: it computes a value, not a slot. ${ROOT_TAIL} ${SEE}`,
@@ -48,19 +74,49 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
       `error(field=…) cannot show the failure of "x": it is a local name, not a slot. ${ROOT_TAIL} ${SEE}`,
     ],
     [
+      "a local that hides a slot of its name",
+      `tile App = column(for form in rows error(field=form.email))`,
+      `error(field=…) cannot show the failure of "form": it is a local name, not a slot. ${ROOT_TAIL} ${SEE}`,
+    ],
+    [
       "a tile's input",
       `tile Row in=Contact = error(field=$1.email)\ntile App = Row(form)`,
       `error(field=…) cannot show the failure of "$1": it is a local name, not a slot. ${ROOT_TAIL} ${SEE}`,
     ],
     [
-      "a name the runtime provides",
+      "the route slot",
       `tile App = error(field=route)`,
-      `error(field=…) cannot show the failure of "route": it is not a slot. ${ROOT_TAIL} ${SEE}`,
+      `error(field=…) cannot show the failure of "route": it is the route slot, whose type carries no refinement to fail. ${ROOT_TAIL} ${SEE}`,
+    ],
+    [
+      "a for, which a named argument holds as a tile",
+      `tile App = error(field=for x in xs text(x))`,
+      `error(field=…) cannot show the failure of a "for": it is a tile, not a slot. ${ROOT_TAIL} ${SEE}`,
     ],
     [
       "a member, which derives a value",
       `tile App = error(field=form.email.length)`,
       `error(field=…) cannot step through ".length": it is a member of "Text", not a field. ${STEPS}`,
+    ],
+    [
+      "a Map's .get, which is a member rather than an unwrap",
+      `tile App = error(field=m.get)`,
+      `error(field=…) cannot step through ".get": it is a member of "Map", not a field. ${STEPS}`,
+    ],
+    [
+      "a step into a Tuple",
+      `tile App = error(field=r.pair._1)`,
+      `error(field=…) cannot step through "._1": "Tuple(Text, Int)" has no fields. ${STEPS}`,
+    ],
+    [
+      "a misspelt step into a union",
+      `tile App = error(field=d.shape.nmae)`,
+      `error(field=…) cannot step through ".nmae": "Shape" has no fields. ${STEPS}`,
+    ],
+    [
+      "a variant's name as a step into a union",
+      `tile App = error(field=d.shape.Square)`,
+      `error(field=…) cannot step through ".Square": "Shape" has no fields. ${STEPS}`,
     ],
     [
       "a call",
@@ -75,11 +131,38 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
     [
       "an index into a record",
       `tile App = error(field=form[0])`,
-      `error(field=…) cannot step through an index into "Contact": an index names a List element or a Map entry ${SEE}`,
+      `error(field=…) cannot step through an index into "Contact": a path's index names a List element or a Map entry ${SEE}`,
     ],
-  ])("reports %s", (_label, tile, message) => {
-    const e0230 = checkSource(program(tile)).filter((e) => e.code === "E0230");
-    expect(e0230.map((e) => [e.kind, e.message])).toEqual([["error-field-not-path", message]]);
+    [
+      "an index into a Tuple",
+      `tile App = error(field=r.pair[0])`,
+      `error(field=…) cannot step through an index into "Tuple(Text, Int)": a path's index names a List element or a Map entry ${SEE}`,
+    ],
+    [
+      "no field at all",
+      `tile App = error()`,
+      `error() names no field, so it has no failure to show: ${ROOT_TAIL} ${SEE}`,
+    ],
+    [
+      "a field in the props block",
+      `tile App = error() {field: draft.get.title}`,
+      `error() {field: …} is not read: field is a named argument — write error(field=…) ${SEE}`,
+    ],
+  ])("reports %s, and nothing else", (_label, tile, message) => {
+    expect(diagnosticsOf(tile)).toEqual([E0230(message)]);
+  });
+
+  it("is reported beside a warning at the same position", () => {
+    expect(diagnosticsOf(`tile App = error(field=fmt("{0}{1}", form.email))`)).toEqual([
+      [
+        "W0214",
+        "fmt-placeholder-argument-mismatch",
+        "fmt template and arguments disagree: {1} has no argument",
+      ],
+      E0230(
+        `error(field=…) cannot show the failure of this expression: it computes a value, not a slot. ${ROOT_TAIL} ${SEE}`,
+      ),
+    ]);
   });
 
   it("points at an index's key", () => {
@@ -91,62 +174,66 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
 
 describe("a slot, or a path into one, is accepted", () => {
   it.each([
-    ["a slot", `tile App = error(field=form)`],
-    ["a record field", `tile App = error(field=form.email)`],
-    ["an Option's payload through .get", `tile App = error(field=draft.get.title)`],
-    ["a Result's Ok payload through .get", `tile App = error(field=res.get.title)`],
-    ["a List element at a literal index", `tile App = error(field=xs[0])`],
-    ["a field of a List element", `tile App = error(field=rows[1].email)`],
-    ["a Map entry at a literal key", `tile App = error(field=m["a"])`],
-    ["a Map entry at an Int key", `tile App = error(field=n[3])`],
-    ["no field at all", `tile App = error()`],
-    [
-      "a path beside a bound control in a form",
-      `tile App = form(input(bind=form.email), error(field=form.email))`,
-    ],
-  ])("accepts %s", (_label, tile) => {
+    ["a slot", `form`],
+    ["a record field", `form.email`],
+    ["an Option's payload through .get", `draft.get.title`],
+    ["a Result's Ok payload through .get", `res.get.title`],
+    ["a List element at a literal index", `xs[0]`],
+    ["a List element at a negative index, which names none", `xs[-1]`],
+    ["a field of a List element", `rows[1].email`],
+    ["a Map entry at a literal key", `m["a"]`],
+    ["a Map entry at an Int key", `n[3]`],
+    ["a Map entry at a negative Int key", `n[-1]`],
+    ["a Map entry at a negative Float key", `fm[-1.5]`],
+    ["a Map entry at a Bool key", `b[true]`],
+    ["an Option's payload through a List element", `opts[0].get.title`],
+    ["a List element through an Option's payload", `maybe.get[1]`],
+    ["an element of an element", `grid[0][1]`],
+    ["a field of a Map entry", `book["b"].age`],
+  ])("accepts %s", (_label, field) => {
+    expect(codesOf(program(`tile App = error(field=${field})`))).toEqual([]);
+  });
+
+  it("accepts a path beside a bound control in a form", () => {
+    const tile = `tile App = form(input(bind=form.email), error(field=form.email))`;
     expect(codesOf(program(tile))).toEqual([]);
   });
 });
 
 describe("a path another code reports is not E0230 as well", () => {
   it.each([
-    ["a field the record lacks", `tile App = error(field=form.emial)`, "E0108"],
-    ["a name that resolves to nothing", `tile App = error(field=nope)`, "E0103"],
-    ["a List index that is not an Int", `tile App = error(field=xs["a"])`, "E0201"],
-    [
-      "a tile, which a named argument does not hold",
-      `tile App = error(field=text("form"))`,
-      "E0116",
-    ],
-  ])("leaves %s to %s", (_label, tile, code) => {
-    expect(codesOf(program(tile))).toEqual([code]);
+    ["a field the record lacks", `form.emial`, "E0108"],
+    ["a member named without its call", `form.email.contains`, "E0213"],
+    ["a name that resolves to nothing", `nope`, "E0103"],
+    ["a fn named without a call", `shout`, "E0127"],
+    ["a List index that is not an Int", `xs["a"]`, "E0201"],
+    ["a Map key of another type", `m[3]`, "E0201"],
+    ["a call to a name no fn defines, such as a tile written as a value", `text("form")`, "E0116"],
+  ])("leaves %s to %s", (_label, field, code) => {
+    expect(codesOf(program(`tile App = error(field=${field})`))).toEqual([code]);
+  });
+
+  it.each([
+    "s[0]",
+    "s.x",
+  ])("leaves a step into a slot whose type names nothing to E0117: %s", (field) => {
+    const src = withApp(`slot s : Nope = 0\ntile App = error(field=${field})`);
+    expect(codesOf(src)).toEqual(["E0117"]);
   });
 });
 
 describe("the error node names its slot and the path into it", () => {
-  const nodeOf = (tile: string): string => {
-    const r = compile(program(tile), { runtimeSpecifier: "@kumikijs/runtime" });
-    if (r.kind !== "ok") throw new Error(JSON.stringify(r.errors));
-    const m = r.js.match(/\(\{ kind: "error"[^\n]*?\}\)/);
-    if (!m) throw new Error("no error node in the output");
-    return m[0];
-  };
-
-  it("lowers a slot to its name, with no path", () => {
-    expect(nodeOf(`tile App = error(field=form)`)).toBe(
-      `({ kind: "error", field: "form", props: {  } })`,
-    );
-  });
-
-  it.each([
-    [`rows[1].email`, `({ kind: "error", field: "rows", path: [{"at":1},"email"], props: {  } })`],
-    [
-      `draft.get.title`,
-      `({ kind: "error", field: "draft", path: [{"get":true},"title"], props: {  } })`,
-    ],
-    [`m["a"]`, `({ kind: "error", field: "m", path: [{"at":"a"}], props: {  } })`],
-  ])("lowers each step of %s the way the runtime's PathSegment spells it", (field, node) => {
-    expect(nodeOf(`tile App = error(field=${field})`)).toBe(node);
+  it.each<[string, string, unknown[]]>([
+    ["form", "form", []],
+    ["rows[1].email", "rows", [{ at: 1 }, "email"]],
+    ["draft.get.title", "draft", [{ get: true }, "title"]],
+    [`m["a"]`, "m", [{ at: "a" }]],
+    ["n[-1]", "n", [{ at: -1 }]],
+    ["b[true]", "b", [{ at: true }]],
+  ])("lowers %s to the slot %s and the path %j", async (field, slot, path) => {
+    const src = program(`tile App = error(field=${field})`);
+    const app = await loadApp<{ routes: { tile: () => TileNode }[] }>(src);
+    const node = app.routes[0]?.tile() as Extract<TileNode, { kind: "error" }>;
+    expect([node.field, node.path]).toEqual([slot, path]);
   });
 });

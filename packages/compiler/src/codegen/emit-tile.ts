@@ -3,7 +3,7 @@ import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
 import { bindTarget } from "../bind-target.ts";
 import { BUILTIN_TILES, contentArg } from "../builtins.ts";
-import { errorField, fieldPath } from "../error-field.ts";
+import { errorField } from "../error-field.ts";
 import { TIME_INPUT_PATTERNS } from "../input-bind.ts";
 import type { ParseReading } from "../parse-reading.ts";
 import { writtenValue } from "../typecheck/tile-collect.ts";
@@ -609,16 +609,11 @@ function tileCallJs(
       case "error": {
         const fieldArg = t.args.find((a) => a.name === "field");
         const field = fieldArg && !isTileExpr(fieldArg.value) ? errorField(fieldArg.value) : null;
-        const path = field ? fieldPath(field) : null;
-        const fields = [`kind: "error"`];
-        if (field?.root.kind === "Ref" && path) {
-          fields.push(`field: ${JSON.stringify(field.root.name)}`);
-          if (path.length > 0) fields.push(`path: ${JSON.stringify(path)}`);
-        } else {
-          fields.push(`field: ""`);
+        if (field?.root.kind !== "Ref" || !field.path) {
+          throw new Error("error() lowers only a slot or a path into one, which E0230 holds it to");
         }
-        fields.push(`props: ${propsObj}`);
-        return `({ ${fields.join(", ")} })`;
+        const slot = JSON.stringify(field.root.name);
+        return `({ kind: "error", field: ${slot}, path: ${JSON.stringify(field.path)}, props: ${propsObj} })`;
       }
       case "route-outlet":
         return `({ kind: "route-outlet", children: [], props: ${propsObj} })`;

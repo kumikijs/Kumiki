@@ -39,15 +39,11 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
 
   /**
    * A focus whose next step is not an index names nothing here, so the position
-   * is checked whole, as `at` checks one no step can name. A Map key (`keyJs`
-   * `null`) is named by no index, so it sits beside every index step.
+   * is checked whole, as `at` checks one no step can name. A Map key (`atJs`
+   * `null`) is named by no index, so a focus that names an entry skips the key's
+   * predicates.
    */
-  const atIndex = (
-    stepJs: string,
-    check: string,
-    valueJs: string,
-    keyJs: string | null,
-  ): string => {
+  const atIndex = (stepJs: string, check: string, valueJs: string, atJs: string | null): string => {
     if (!indexDeclared) {
       indexDeclared = true;
       decls.push(
@@ -55,9 +51,9 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
       );
     }
     const found = `return { ...f, path: [${stepJs}, ...f.path] };`;
-    return keyJs === null
+    return atJs === null
       ? `if (!_rqAt(o) && (f = ${named$(check)}(${valueJs}))) ${found}`
-      : `if ((!_rqAt(o) || o[0].at === ${keyJs}) && (f = ${named$(check)}(${valueJs}, _rqAt(o) ? o.slice(1) : undefined))) ${found}`;
+      : `if ((!_rqAt(o) || o[0].at === ${atJs}) && (f = ${named$(check)}(${valueJs}, _rqAt(o) ? o.slice(1) : undefined))) ${found}`;
   };
 
   /** `check` as a helper's name, declaring it first when it is an arrow. */

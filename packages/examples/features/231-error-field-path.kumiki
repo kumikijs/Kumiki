@@ -3,9 +3,9 @@
 # fail — `email: ""` and `age: 0`, which a declared default may hold — and
 # each field's tile shows its own message beside the other's: the age's
 # message does not wait behind the email's, which comes first in the record.
-# Text the age field cannot read is a failure at `form.age`, so it is that
-# tile's alone. The bare slot, `error(field=form)`, shows the first failure
-# anywhere in it.
+# Text the age field cannot read is a failure at `form.age`: the age's tile
+# and the bare slot's say it, the email's does not. The bare slot,
+# `error(field=form)`, shows the first failure anywhere in it.
 
 type Contact = {email: Text where email, age: Int where between(18, 120)}
 
