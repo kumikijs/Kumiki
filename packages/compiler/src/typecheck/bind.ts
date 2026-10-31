@@ -310,7 +310,7 @@ export function checkInputBindType(
 
 /**
  * Run after the field has been checked as a value, so what that read already
- * reported (E0103, E0127, E0108, E0213, an E0201 on a key) is not reported again.
+ * reported (E0103, E0127, E0108, E0213, an E0201 or E0232 at a key) is not reported again.
  */
 export function checkErrorField(
   t: TileExpr & { kind: "TileCall" },
@@ -373,6 +373,7 @@ export function checkErrorField(
         );
         return;
       case "Index": {
+        if (reported(step.index.pos)) return;
         if (fieldSegment(step) === null) {
           refuse(
             `error(field=…) cannot step through an index that is not a literal: a path names one element or entry by a literal key, such as [0] or ["k"] ${see}`,

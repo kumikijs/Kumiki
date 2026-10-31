@@ -78,10 +78,10 @@ tile App = column(B)`);
 describe("what the checker asks of an index step in a bind target", () => {
   it.each([
     [
-      "a Set: E0602 at the step",
-      `s["a"]`,
-      `"Set(Text)": a Set has members, not places — use .add / .remove / .toggle`,
-      "true",
+      "an Int: E0602 at the step",
+      "i[0]",
+      `"Int": an index names a place only in a Map or a List`,
+      "1",
     ],
     [
       "a record: E0602 naming the field step",
@@ -103,14 +103,33 @@ tile App = column(B)`),
   });
 
   it("is reported on every control that binds", () => {
-    const message = `Cannot bind through an index into "Set(Text)": a Set has members, not places — use .add / .remove / .toggle`;
+    const message = `Cannot bind through an index into "Int": an index names a place only in a Map or a List`;
     expect(
       pointedErrorsOf(
-        program(`tile App = column(textarea(bind=s["a"]), select(bind=s["a"], options=[]))`),
+        program(`tile App = column(textarea(bind=i[0]), select(bind=i[0], options=[]))`),
       ),
     ).toEqual([
-      { code: "E0602", message, text: `s["a"]), select(bind=s["a"], options=[]))` },
-      { code: "E0602", message, text: `s["a"], options=[]))` },
+      { code: "E0602", message, text: `i[0]), select(bind=i[0], options=[]))` },
+      { code: "E0602", message, text: `i[0], options=[]))` },
+    ]);
+  });
+
+  // The control shows its target before it writes one, and that read is the one report.
+  it("leaves a Set to the read's E0232, where the step on the left of := is E0602", () => {
+    expect(pointedErrorsOf(program(`tile App = column(input(bind=s["a"]))`))).toEqual([
+      {
+        code: "E0232",
+        message: `Cannot read through an index into "Set(Text)": a Set has members, not places — use .has`,
+        text: `"a"]))`,
+      },
+    ]);
+    expect(
+      summariesOf(
+        program(`reducer r on=ui.click(B) do= s["a"] := true
+tile App = column(B)`),
+      ),
+    ).toEqual([
+      `E0602 Cannot assign through an index into "Set(Text)": a Set has members, not places — use .add / .remove / .toggle`,
     ]);
   });
 

@@ -7,8 +7,7 @@ import { firesUnheardIn, labelWrappedUnreached, UI_EVENT_TILE_KINDS } from "../u
 import {
   checkAgainst,
   checkEmitTarget,
-  checkIndexIsPlace,
-  indexStep,
+  checkIndexStep,
   lvalueType,
   unwrappedType,
 } from "./against.ts";
@@ -352,7 +351,7 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
   checkLvalue(lv.base, sym, errors, ctx);
   if (lv.kind === "LIndex") {
     checkExpr(lv.index, sym, errors, ctx);
-    checkIndexLvalue(lv, sym, errors, ctx);
+    checkIndexStep(lvalueType(lv.base, sym), lv.index, "write", lv.pos, sym, errors, ctx);
   } else {
     const raw = lvalueType(lv.base, sym);
     const base = unaliasType(raw, sym);
@@ -361,17 +360,6 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
       checkMemberLvalue(lv, raw, base, sym, errors);
     }
   }
-}
-
-function checkIndexLvalue(
-  lv: Lvalue & { kind: "LIndex" },
-  sym: SymbolTable,
-  errors: KumikiError[],
-  ctx: Ctx,
-): void {
-  const step = indexStep(lvalueType(lv.base, sym), sym);
-  if (step.kind === "place" && step.key) checkAgainst(lv.index, step.key, sym, errors, ctx);
-  checkIndexIsPlace(step, lv, "assign", errors);
 }
 
 function checkMemberLvalue(

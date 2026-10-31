@@ -26,6 +26,7 @@ slot book  : Map(Text, Contact)              = {}
 slot r     : Pair                            = {pair: ("", 0)}
 slot d     : Drawing                         = {shape: Circle(0)}
 slot i     : Int                             = 0
+slot tags  : Set(Text where email)           = Set.empty
 fn shout(t: Text) -> Text = t
 `;
 const program = (tile: string) => withApp(`${DEFS}\n${tile}`);
@@ -208,6 +209,7 @@ describe("a path another code reports is not E0230 as well", () => {
     ["a fn named without a call", `shout`, "E0127"],
     ["a List index that is not an Int", `xs["a"]`, "E0201"],
     ["a Map key of another type", `m[3]`, "E0201"],
+    ["an index into a Set", `tags[0]`, "E0232"],
     ["a call to a name no fn defines, such as a tile written as a value", `text("form")`, "E0116"],
   ])("leaves %s to %s", (_label, field, code) => {
     expect(codesOf(program(`tile App = error(field=${field})`))).toEqual([code]);

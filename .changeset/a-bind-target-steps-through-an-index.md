@@ -39,11 +39,15 @@ element or entry refuses a write through the index as it refuses the same
 write by `:=`, and `error(field=…)` and a `form`'s submit judge what the
 control shows.
 
-Only a `Map` and a `List` have places to index, so an index into anything
-else is **E0602**, with the sentence the same step gets on the left of `:=`
-(`bind` for `assign`). On `slot s : Set(Text)`, `bind=s["a"]` gets:
+Only a `Map` and a `List` have places to index, so an index into a record,
+a scalar, an `Option`, a `Result`, a `Tuple` or a union is **E0602**, with the
+sentence the same step gets on the left of `:=` (`bind` for `assign`). On
+`slot draft : Option(D)`, with `type D = {title: Text}`, `bind=draft.get["title"]` gets:
 
-> `Cannot bind through an index into "Set(Text)": a Set has members, not places — use .add / .remove / .toggle`
+> `Cannot bind through an index into "D": an index names a place only in a Map or a List — write the field step ".title"`
+
+An index into a `Set` stays the read's E0232, since the control shows its
+target before it writes one.
 
 E0229's message says a bind writes back to "a slot or a path into one" (it
 said "a field path"), and for a `for` variable it names binding the row
