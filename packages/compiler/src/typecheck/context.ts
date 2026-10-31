@@ -39,21 +39,13 @@ export type SymbolTable = {
   themes: Set<string>;
   iconDomain: Set<string>;
   elementIds: Set<string>;
-  fnResults: FnResults;
+  /** The result of each `fn` declared without `->`, read off its body once per check. */
+  fnResults: Map<string, TypeExpr | null>;
+  /** The `fn`s that can reach themselves through the `fn`s they call: those E0006 reports. */
+  fnLoops: ReadonlySet<string>;
   /** The program's own unions, by each tag they declare: `unionsByTag`. */
   unionsByTag: ReadonlyMap<string, readonly TypeExpr[]>;
   app?: AppDef;
-};
-
-/**
- * The results of the `fn`s declared without `->`, each read off its body once per check:
- * `reading` holds the `fn`s whose bodies are being read right now, innermost last, and `onLoop`
- * every `fn` found calling back into one of those.
- */
-export type FnResults = {
-  answers: Map<string, TypeExpr | null>;
-  reading: string[];
-  onLoop: Set<string>;
 };
 
 export type LocalBinder = "input" | "for";

@@ -73,8 +73,12 @@ export function checkAgainst(
     return;
   }
   if (e.kind === "MapLit" && e.entries.length === 0) {
-    // `{}` is the empty Map, Set and record at once, so the declared type decides.
-    if (refusesEmptyBraces(d)) {
+    // `{}` is the empty Map, Set and record at once, so the declared type decides. Against a
+    // record type it is a record literal that names none of its fields.
+    if (d.kind === "TypeRecord") {
+      const none = { kind: "RecordLit" as const, fields: [], pos: e.pos };
+      checkRecordLit(none, d, sym, errors, ctx, code, omittable);
+    } else if (refusesEmptyBraces(d)) {
       pushMismatch(
         errors,
         code,
@@ -438,7 +442,8 @@ export function checkIndexStep(
     });
     return;
   }
-  // Every other receiver with no places reads with no type and no report yet.
+  // A record read through a literal key has its field's type (`inferType`); no other receiver
+  // with no places has a type to read, and none of them is reported yet.
   if (!isSet(step.base)) return;
   errors.push({
     code: "E0232",

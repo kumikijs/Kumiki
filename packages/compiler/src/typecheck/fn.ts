@@ -35,25 +35,19 @@ export function checkFn(fn: FnDef, sym: SymbolTable, errors: KumikiError[]): voi
 
 /**
  * What a call to the `fn` named `name` answers: its `->`, and without one the type of its body.
- * A body that reaches itself (E0006) has no type to stop at, so every `fn` on the loop answers
- * `null`, whichever of them is asked first.
+ * A `fn` that can reach itself (E0006) has no type to stop at, so every `fn` on a loop answers
+ * `null` unless it declares `->`, whichever of them is asked first.
  */
 export function fnResultType(name: string, sym: SymbolTable): TypeExpr | null {
   const fn = sym.fns.get(name);
   if (!fn) return null;
   if (fn.ret) return fn.ret;
-  const memo = sym.fnResults;
-  const known = memo.answers.get(name);
+  if (sym.fnLoops.has(name)) return null;
+  const known = sym.fnResults.get(name);
   if (known !== undefined) return known;
-  const at = memo.reading.indexOf(name);
-  if (at >= 0) {
-    for (const on of memo.reading.slice(at)) memo.onLoop.add(on);
-    return null;
-  }
-  memo.reading.push(name);
-  const body = inferType(fn.body, sym, fnBodyScope(fn));
-  memo.reading.pop();
-  const answer = memo.onLoop.has(name) ? null : body;
-  memo.answers.set(name, answer);
+  // Answered before the body is read, so a call back that the loop check does not see ends here.
+  sym.fnResults.set(name, null);
+  const answer = inferType(fn.body, sym, fnBodyScope(fn));
+  sym.fnResults.set(name, answer);
   return answer;
 }

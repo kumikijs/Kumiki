@@ -1,21 +1,21 @@
 # Feature (language.md): a `fn` that leaves out `->` returns the type
 # of its body.
 #
-#   fn-def ::= 'fn' identifier '(' fn-param* ')' ('->' type-expr)? '=' expr
-#
 # A call to one is held to every declared type it lands in, as a call to a
 # `fn` that declares the same type is: `slot n : Int = greeting()` is E0201,
-# `Expected Int but got Text`. A `fn` on a loop of calls (E0006), and one
-# whose body's type the checker cannot decide, have no result type, and their
-# calls are not checked.
+# `Expected Int but got Text`. A `fn` without `->` on a loop of calls (E0006),
+# and one whose body's type the checker cannot decide, have no result type:
+# their calls' arguments are still checked, and nothing is checked against
+# what the calls return.
 #
 # What is read off the call is decided by that type too. `withThree(names)` is
 # a `Map(Int, Text)`, so its `.keys` read back as `Int`s and add up to 6.
 #
 # Two neighbouring shapes are typed the same way: `cfg["ms"]` reads the field
-# the literal names, as `cfg.ms` does, and `{}` is an empty Map, Set or
-# record, so where none of those is declared — `slot n : Int = {}` — it is
-# E0201.
+# the literal names, as `cfg.ms` does, and `{}` is an empty Map or Set, or a
+# record literal naming no field: against a record type each field it lacks is
+# E0214, and where none of the three is declared — `slot n : Int = {}` — it
+# is E0201.
 
 type Config = {ms: Int, label: Text}
 

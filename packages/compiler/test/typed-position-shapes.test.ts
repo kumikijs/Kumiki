@@ -135,40 +135,147 @@ describe("a call to a fn with no -> has its body's type", () => {
 });
 
 describe("a call to a fn with no -> stays unchecked where its body's type cannot be known", () => {
-  // Each of these is wrong where it lands and would be reported against a
-  // declared result. Without one, the checker has no type to compare, and a
-  // guess would report programs that run.
-  const notE0201 = (src: string) => pointedErrorsOf(src).filter((d) => d.code === "E0201");
+  // Each row is wrong where it lands, and is paired with a twin whose fns declare their results:
+  // the twin is E0201 at the same call, so what the row shows missing is the type, not the check.
+  const e0201s = (src: string): string[] =>
+    pointedErrorsOf(src)
+      .filter((d) => d.code === "E0201")
+      .map((d) => `${d.message} @ ${d.text}`);
+  const codes = (src: string): string[] => pointedErrorsOf(src).map((d) => d.code);
+  const LOOP = `fn a(n: Int) = w(n) + 1
+fn w(n: Int) = g(n)
+fn g(n: Int) = p(n) - q(n)
+fn p(n: Int) = g(n) - 1`;
 
-  it("a fn that calls itself: E0006 reports the loop, and no type is read off it", () => {
-    // `countdown(n - 1) - 1` is an Int whatever `countdown` answers, so the
-    // body alone would decide a type; a fn on a loop has none all the same.
+  // [what, the fns, their twin with ->, the call read into a Text, its type in the twin, a loop]
+  it.each([
+    [
+      "a fn that calls itself",
+      "fn countdown(n: Int) = if n == 0 then 0 else countdown(n - 1) - 1",
+      "fn countdown(n: Int) -> Int = if n == 0 then 0 else countdown(n - 1) - 1",
+      "countdown(3)",
+      "Int",
+      true,
+    ],
+    [
+      "the first of two fns that call each other",
+      "fn ping(n: Int) = pong(n) - 1\nfn pong(n: Int) = ping(n) - 1",
+      "fn ping(n: Int) -> Int = pong(n) - 1\nfn pong(n: Int) -> Int = ping(n) - 1",
+      "ping(1)",
+      "Int",
+      true,
+    ],
+    [
+      "the second of two fns that call each other",
+      "fn ping(n: Int) = pong(n) - 1\nfn pong(n: Int) = ping(n) - 1",
+      "fn ping(n: Int) -> Int = pong(n) - 1\nfn pong(n: Int) -> Int = ping(n) - 1",
+      "pong(1)",
+      "Int",
+      true,
+    ],
+    [
+      "a fn on a loop through an operand the checker answers without reading",
+      "fn f(n: Int) = f(n) == 1",
+      "fn f(n: Int) -> Bool = f(n) == 1",
+      "f(1)",
+      "Bool",
+      true,
+    ],
+    [
+      "a fn on a loop that a fn off it reaches first",
+      `${LOOP}\nfn q(n: Int) = p(n) - 1`,
+      `${LOOP}\nfn q(n: Int) -> Int = p(n) - 1`,
+      "q(1)",
+      "Int",
+      true,
+    ],
+    [
+      "a fn on a loop that no fn off it reaches",
+      `${LOOP.slice(LOOP.indexOf("\n") + 1)}\nfn q(n: Int) = p(n) - 1`,
+      `${LOOP.slice(LOOP.indexOf("\n") + 1)}\nfn q(n: Int) -> Int = p(n) - 1`,
+      "q(1)",
+      "Int",
+      true,
+    ],
+    [
+      "a fn on a loop that another fn on it declares ->",
+      "fn a(n: Int) -> Int = b(n)\nfn b(n: Int) = a(n) - 1",
+      "fn a(n: Int) -> Int = b(n)\nfn b(n: Int) -> Int = a(n) - 1",
+      "b(1)",
+      "Int",
+      true,
+    ],
+    [
+      "a fn that calls one on a loop, though it is not on the loop",
+      "fn spin(n: Int) = spin(n) - 1\nfn viaSpin() = spin(3)",
+      "fn spin(n: Int) -> Int = spin(n) - 1\nfn viaSpin() = spin(3)",
+      "viaSpin()",
+      "Int",
+      true,
+    ],
+    [
+      "a body that is a fragment's result",
+      "fn bumped(xs: List(Int)) = xs.map($1 + 1)",
+      "fn bumped(xs: List(Int)) -> List(Int) = xs.map($1 + 1)",
+      "bumped([1])",
+      "List(Int)",
+      false,
+    ],
+    [
+      "a body that is {}",
+      "fn blank() = {}",
+      "fn blank() -> Map(Text, Int) = {}",
+      "blank()",
+      "Map(Text, Int)",
+      false,
+    ],
+  ] as [
+    string,
+    string,
+    string,
+    string,
+    string,
+    boolean,
+  ][])("%s", (_what, defs, twin, call, twinType, loop) => {
+    const src = program(`${defs}\nslot probe : Text = ${call}`);
+    const twinSrc = program(`${twin}\nslot probe : Text = ${call}`);
+    expect(e0201s(src)).toEqual([]);
+    expect(e0201s(twinSrc)).toEqual([`Expected Text but got ${twinType} @ ${call}`]);
+    expect(codes(src).includes("E0006")).toBe(loop);
+  });
+
+  it("a fn that calls one on a loop keeps its own type, though a slot asks it before any fn is checked", () => {
+    // `outer` is on no loop, and `spin(3) - 1` is an Int whatever `spin` answers.
     const src = program(
-      `fn countdown(n: Int) = if n == 0 then 0 else countdown(n - 1) - 1\nslot probe : Text = countdown(3)`,
+      `slot probe : Text = outer()\nfn outer() = spin(3) - 1\nfn spin(n: Int) = spin(n) - 1`,
     );
-    expect(pointedErrorsOf(src).map((d) => d.code)).toContain("E0006");
-    expect(notE0201(src)).toEqual([]);
+    expect(e0201s(src)).toEqual(["Expected Text but got Int @ outer()"]);
+    expect(codes(src)).toContain("E0006");
+  });
+});
+
+describe("a call to a fn whose body is a literal has the literal's own type", () => {
+  // Written inline, a literal takes its shape from the position; through a fn it arrives with the
+  // type its body has, so a Set position no longer makes it a Set.
+  const FNS = `fn ids() = [1, 2]\nfn empty() = []\nfn none() = None\nfn fail() = Err("x")`;
+
+  it.each([
+    ["List(Int)", "empty()"],
+    ["Option(Int)", "none()"],
+    ["Result(Int, Text)", "fail()"],
+    ["List(Int)", "ids()"],
+  ])("accepted as %s: %s", (ty, call) => {
+    expect(reported(program(`${FNS}\nslot probe : ${ty} = ${call}`))).toEqual([]);
   });
 
-  it("two fns that call each other, whichever of the two is read first", () => {
-    const defs = `fn ping(n: Int) = pong(n) - 1\nfn pong(n: Int) = ping(n) - 1`;
-    for (const first of ["ping", "pong"]) {
-      const src = program(`${defs}\nslot probe : Text = ${first}(1)`);
-      expect(pointedErrorsOf(src).map((d) => d.code)).toContain("E0006");
-      expect(notE0201(src)).toEqual([]);
-    }
-  });
-
-  it("a fn that calls one on a loop takes no type from it, though it is not on the loop", () => {
-    const defs = `fn spin(n: Int) = spin(n) - 1\nfn viaSpin() = spin(3)`;
-    const src = program(`${defs}\nslot probe : Text = viaSpin()`);
-    expect(notE0201(src)).toEqual([]);
-  });
-
-  it("a body whose own type is not decided: a fragment's result, or {}", () => {
-    const defs = `fn bumped(xs: List(Int)) = xs.map($1 + 1)\nfn blank() = {}`;
-    expect(notE0201(program(`${defs}\nslot probe : Text = bumped([1])`))).toEqual([]);
-    expect(notE0201(program(`${defs}\nslot probe : Text = blank()`))).toEqual([]);
+  it.each([
+    ["Set(Int)", "ids()", "List(Int)"],
+    ["Set(Int)", "empty()", "List(?)"],
+    ["Text", "none()", "Option(?)"],
+  ])("refused as %s: %s, which is a %s", (ty, call, has) => {
+    expect(reported(program(`${FNS}\nslot probe : ${ty} = ${call}`))).toEqual([
+      `E0201 Expected ${ty} but got ${has} @ ${call}`,
+    ]);
   });
 });
 
@@ -182,8 +289,11 @@ describe("a record read through a literal key has that field's type", () => {
   });
 
   it("a key that is not a literal names no one field, so nothing is checked against it", () => {
-    const src = program(`slot probe : Int = 0\nreducer act on=ui.click(B) do= probe := cfg[key]`);
-    expect(pointedErrorsOf(src).filter((d) => d.code === "E0201")).toEqual([]);
+    // No field of `cfg` is a Bool, so any type read off `cfg[key]` would be reported.
+    const read = (key: string) =>
+      program(`slot probe : Bool = false\nreducer act on=ui.click(B) do= probe := cfg[${key}]`);
+    expect(reported(read("key"))).toEqual([]);
+    expect(reported(read(`"label"`))).toEqual(['E0201 Expected Bool but got Text @ cfg["label"]']);
   });
 });
 
@@ -242,12 +352,40 @@ reducer act on=ui.click(B) do= emit save({})`,
   it.each([
     "Map(Text, Int)",
     "Set(Int)",
-    "{a: Option(Int)}",
-    "{a: Int}",
     "List(Map(Text, Int))",
   ])("is accepted declared %s, where {} or an item of it is one of the three", (ty) => {
     const value = ty.startsWith("List") ? "[{}]" : "{}";
     expect(reported(program(`slot probe : ${ty} = ${value}`))).toEqual([]);
+  });
+
+  it.each([
+    ["{a: Int}", ['field "a" of type Int']],
+    ["{a: Option(Int)}", ['field "a" of type Option(Int)']],
+    ["{ms: Int, label: Text}", ['field "ms" of type Int', 'field "label" of type Text']],
+  ])("declared the record %s, is a record literal missing every field", (ty, missing) => {
+    expect(reported(program(`slot probe : ${ty} = {}`))).toEqual(
+      missing.map((m) => `E0214 Record literal is missing field ${m.slice(6)} @ {}`),
+    );
+  });
+
+  it("is a record literal missing every field at an emit argument, except those the effect lets go", () => {
+    const effect = program(
+      `effect save cap=storage.write in={key: Text, value: Text} out=Unit map-request=$1
+reducer act on=ui.click(B) do= emit save({})`,
+    ).replace("caps   = []", "caps   = [storage.write]");
+    expect(reported(effect)).toEqual([
+      'E0214 Record literal is missing field "key" of type Text @ {})',
+      'E0214 Record literal is missing field "value" of type Text @ {})',
+    ]);
+    // `duration` is an Option, which a standard effect's argument may leave out.
+    const toast = program(`reducer act on=ui.click(B) do= emit toast({})`).replace(
+      "caps   = []",
+      "caps   = [notification.show]",
+    );
+    expect(reported(toast)).toEqual([
+      'E0214 Record literal is missing field "kind" of type Text @ {})',
+      'E0214 Record literal is missing field "text" of type Text @ {})',
+    ]);
   });
 
   it("is accepted against a type the checker cannot read, which it does not speak for", () => {
