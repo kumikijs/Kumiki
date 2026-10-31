@@ -1,12 +1,12 @@
 import { isTileExpr, type TileExpr, type UiEventKind } from "../ast.ts";
 import { HANDLER_NAMES, handlerReducerName, UI_LIFTS } from "../ui-lifts.ts";
 import { type EnclosingTiles, type EvalCtx, fieldKey, handlerRef, jsProperty } from "./context.ts";
-import { jsOfExpr } from "./expr.ts";
+import { jsOfExpr, showJs } from "./expr.ts";
 
 export function keyFor(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string | null {
   const keyProp = t.props.find((p) => p.name === "key");
   if (!keyProp) return null;
-  return `_s.show(${jsOfExpr(keyProp.value, ctx)})`;
+  return showJs(jsOfExpr(keyProp.value, ctx), keyProp.value);
 }
 
 function isNotPropData(tile: string, name: string, forEl = false): boolean {
