@@ -4,6 +4,12 @@ export type UiLift = {
   readonly ev: UiEventKind;
   readonly handler: string;
   readonly tiles: ReadonlySet<string> | null;
+  /**
+   * Kinds left out of `tiles` whose element fires `ev` but whose renderer never calls `handler`,
+   * each mapped to the verb phrase W0212 prints after "its renderer". A kind not named here gets
+   * the "no descendant fires it" wording.
+   */
+  readonly firesUnheard?: Readonly<Record<string, string>>;
 };
 
 const FOCUSABLE_ROOT = [
@@ -18,11 +24,39 @@ const FOCUSABLE_ROOT = [
 
 const LABEL_WRAPPED_CONTROL = ["check", "radio", "switch"] as const;
 
+// The focus-dependent events the runtime listens for on the element a renderer returned, and
+// whether each bubbles from a label-wrapped control's <input> to its <label>.
+const ROOT_LISTENED_BUBBLES = { key: true, focus: false, blur: false } as const;
+
+type RootListened = keyof typeof ROOT_LISTENED_BUBBLES;
+
+function isRootListened(ev: UiEventKind): ev is RootListened {
+  return Object.hasOwn(ROOT_LISTENED_BUBBLES, ev);
+}
+
+function rootListenedTiles(ev: RootListened): ReadonlySet<string> {
+  const reached: readonly string[] = ROOT_LISTENED_BUBBLES[ev]
+    ? [...FOCUSABLE_ROOT, ...LABEL_WRAPPED_CONTROL]
+    : FOCUSABLE_ROOT;
+  return new Set(reached);
+}
+
+const LABEL_WRAPPED: ReadonlySet<string> = new Set(LABEL_WRAPPED_CONTROL);
+
+export function labelWrappedUnreached(ev: UiEventKind, kinds: Iterable<string>): string[] {
+  if (!isRootListened(ev) || ROOT_LISTENED_BUBBLES[ev]) return [];
+  return [...kinds].filter((k) => LABEL_WRAPPED.has(k)).sort();
+}
+
+// Grouped by this exact text into one clause, so the four kinds share the constant.
+const LISTENS_FOR_CHANGE = 'listens for "change" instead';
+
 export const UI_LIFTS: ReadonlyArray<UiLift> = [
   {
     ev: "click",
     handler: "onClick",
     tiles: new Set(["button", "check", "switch", "radio"]),
+    firesUnheard: { link: "listens for it only to navigate" },
   },
   { ev: "submit", handler: "onSubmit", tiles: new Set(["form"]) },
   {
@@ -30,16 +64,43 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
     handler: "onChange",
     tiles: new Set(["select", "input", "textarea", "check", "radio", "switch", "slider"]),
   },
-  { ev: "input", handler: "onInput", tiles: new Set(["input", "textarea", "editable"]) },
   {
-    ev: "key",
-    handler: "onKeyDown",
-    tiles: new Set([...FOCUSABLE_ROOT, ...LABEL_WRAPPED_CONTROL]),
+    ev: "input",
+    handler: "onInput",
+    tiles: new Set(["input", "textarea", "editable"]),
+    firesUnheard: {
+      slider: "listens for it only to write the bind",
+      check: LISTENS_FOR_CHANGE,
+      radio: LISTENS_FOR_CHANGE,
+      switch: LISTENS_FOR_CHANGE,
+      select: LISTENS_FOR_CHANGE,
+    },
   },
+  { ev: "key", handler: "onKeyDown", tiles: rootListenedTiles("key") },
   { ev: "hover", handler: "onMouseEnter", tiles: null },
-  { ev: "focus", handler: "onFocus", tiles: new Set(FOCUSABLE_ROOT) },
-  { ev: "blur", handler: "onBlur", tiles: new Set(FOCUSABLE_ROOT) },
+  { ev: "focus", handler: "onFocus", tiles: rootListenedTiles("focus") },
+  { ev: "blur", handler: "onBlur", tiles: rootListenedTiles("blur") },
 ];
+
+export function firesUnheardIn(
+  ev: UiEventKind,
+  kinds: Iterable<string>,
+): Array<{ readonly kinds: string[]; readonly instead: string; readonly handler: string }> {
+  const lift = UI_LIFTS.find((l) => l.ev === ev);
+  const record = lift?.firesUnheard;
+  if (lift === undefined || record === undefined) return [];
+  const byInstead = new Map<string, string[]>();
+  for (const kind of [...kinds].sort()) {
+    const instead = Object.hasOwn(record, kind) ? record[kind] : undefined;
+    if (instead === undefined) continue;
+    byInstead.set(instead, [...(byInstead.get(instead) ?? []), kind]);
+  }
+  return [...byInstead].map(([instead, grouped]) => ({
+    kinds: grouped,
+    instead,
+    handler: lift.handler,
+  }));
+}
 
 /** Derived view for the W0212 typecheck — keyed by ui-kind. */
 export const UI_EVENT_TILE_KINDS: Record<string, ReadonlySet<string> | null> = Object.fromEntries(

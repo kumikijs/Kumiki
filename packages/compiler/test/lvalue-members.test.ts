@@ -1,7 +1,7 @@
 import { check, codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
-import { checkSource, codesOf, textAt } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf, pointedErrorsOf, textAt } from "./helpers/diagnostics.ts";
 import { compileOrFail, loweredOf } from "./helpers/module.ts";
 import { withApp } from "./helpers/programs.ts";
 
@@ -390,6 +390,124 @@ describe("a List index is an Int", () => {
 
   it("leaves a Map's key to the Map", () => {
     expect(codesOf(withBody(`slot m : Map(Text, Int) = {}`, `m["a"] := 1`))).toEqual([]);
+  });
+});
+
+describe("the index of List.get is an Int", () => {
+  const list = `slot xs : List(Int) = [1, 2, 3]\nslot got : Option(Int) = None`;
+
+  it("reports a Text index in a tile, at the index", () => {
+    const src = withApp(
+      `slot xs : List(Int) = [1, 2, 3]\ntile App = column(text("g: " + xs.get("0").get-or(-1).show))`,
+    );
+    expect(pointedErrorsOf(src)).toEqual([
+      { code: "E0201", message: "Expected Int but got Text", text: `"0").get-or(-1).show))` },
+    ]);
+  });
+
+  it.each([
+    ["Text", `slot k : Text = "0"`],
+    ["Float", `slot k : Float = 0.5`],
+  ])("reports a %s index as E0201", (name, decl) => {
+    const errs = checkSource(withBody(`${list}\n${decl}`, `got := xs.get(k)`));
+    expect(errs.map((x) => x.code)).toEqual(["E0201"]);
+    expect(errs[0]?.message).toBe(`Expected Int but got ${name}`);
+  });
+
+  it("reports a fractional literal", () => {
+    const errs = checkSource(withBody(list, `got := xs.get(0.5)`));
+    expect(errs.map((x) => `${x.code} ${x.message}`)).toEqual(["E0201 Expected Int but got Float"]);
+  });
+
+  it("holds a List(Float) to an Int index, not to its element type", () => {
+    const floats = `slot fs : List(Float) = [1.5, 2.5]\nslot f : Option(Float) = None`;
+    expect(codesOf(withBody(floats, `f := fs.get(0)`))).toEqual([]);
+    expect(codesOf(withBody(floats, `f := fs.get(1.5)`))).toEqual(["E0201"]);
+  });
+
+  it.each([
+    ["an alias", `type Nums = List(Int)\nslot ns : Nums = []`, `got := ns.get("0")`],
+    ["a nominal type", `type Nums = nominal List(Int)\nslot ns : Nums = []`, `got := ns.get("0")`],
+    [
+      "a record field",
+      `type Doc = { ns: List(Int) }\nslot doc : Doc = { ns: [] }`,
+      `got := doc.ns.get("0")`,
+    ],
+    ["a fn's declared result", `fn nums() -> List(Int) = [1]`, `got := nums().get("0")`],
+    [
+      "an element of a List",
+      `slot xss : List(List(Int)) = [[1]]`,
+      `got := xss.get(0).get-or([]).get("0")`,
+    ],
+  ])("reports the index of a List reached through %s", (_how, decls, body) => {
+    expect(codesOf(withBody(`${list}\n${decls}`, body))).toEqual(["E0201"]);
+  });
+
+  it("reports the outer index of a nested read, and not the inner one", () => {
+    const decls = `${list}\nslot xss : List(List(Int)) = [[1]]`;
+    expect(pointedErrorsOf(withBody(decls, `got := xss.get("0").get-or([]).get(0)`))).toEqual([
+      { code: "E0201", message: "Expected Int but got Text", text: `"0").get-or([]).get(0)` },
+    ]);
+  });
+
+  it("reports a fragment's element that is no Int, at the positional", () => {
+    const decls = `${list}\nslot ts : List(Text) = []\nslot r : List(Option(Int)) = []`;
+    expect(pointedErrorsOf(withBody(decls, `r := ts.map(xs.get($1))`))).toEqual([
+      { code: "E0201", message: "Expected Int but got Text", text: "$1))" },
+    ]);
+  });
+
+  it.each([
+    ["a literal", ``, `got := xs.get(0)`],
+    ["a negative literal", ``, `got := xs.get(-1)`],
+    ["an Int slot", `slot k : Int = 0`, `got := xs.get(k)`],
+    ["arithmetic on an Int", `slot k : Int = 0`, `got := xs.get(k + 1)`],
+    ["an Int member", `slot name : Text = "ab"`, `got := xs.get(name.length)`],
+    [
+      "a refinement of Int",
+      `type Idx = Int where between(0, 2)\nslot k : Idx = 0`,
+      `got := xs.get(k)`,
+    ],
+    ["an Int fragment's element", ``, `got := xs.map(xs.get($1)).head.get-or(None)`],
+    ["a nested read", `slot xss : List(List(Int)) = [[1]]`, `got := xss.get(0).get-or([]).get(0)`],
+  ])("accepts %s", (_how, decl, body) => {
+    expect(codesOf(withBody(`${list}\n${decl}`, body))).toEqual([]);
+  });
+
+  // A call with fewer arguments than the reading takes has none read against it, as for every
+  // member; one with more still has its first read as the index, as `Map.get` reads its key.
+  it.each([
+    ["xs.get()", ``, `got := xs.get()`, ["E0213"]],
+    [`xs.get("0", 1)`, ``, `got := xs.get("0", 1)`, ["E0213", "E0201"]],
+    [`m.get()`, `slot m : Map(Text, Int) = {}`, `got := m.get()`, ["E0213"]],
+    [`m.get(1, 2)`, `slot m : Map(Text, Int) = {}`, `got := m.get(1, 2)`, ["E0213", "E0201"]],
+    [
+      `o.get("0") on an Option(List(Int))`,
+      `slot o : Option(List(Int)) = None\nslot l : List(Int) = []`,
+      `l := o.get("0")`,
+      ["E0213"],
+    ],
+  ])("reads the arguments of %s as Map.get and List.get both do", (_call, decl, body, want) => {
+    expect(codesOf(withBody(`${list}\n${decl}`, body))).toEqual(want);
+  });
+
+  it("leaves a Map's key to the Map", () => {
+    const decls = `${list}\nslot m : Map(Text, Int) = {}`;
+    expect(codesOf(withBody(decls, `got := m.get("a")`))).toEqual([]);
+  });
+
+  it.each([
+    ["Text", `slot k : Text = "0"`, ["E0201"]],
+    ["Float", `slot k : Float = 0.5`, ["E0201"]],
+    ["Option(Int)", `slot k : Option(Int) = None`, ["E0201"]],
+    ["Int", `slot k : Int = 0`, []],
+    ["a nominal Int", `type Idx = nominal Int\nslot k : Idx = 0`, []],
+    ["a refinement of Int", `type Idx = Int where between(0, 2)\nslot k : Idx = 0`, []],
+  ])("reads xs[k], xs[k] := v and xs.get(k) alike where k is %s", (_name, decl, want) => {
+    const decls = `${list}\nslot picked : Int = 0\n${decl}`;
+    expect(codesOf(withBody(decls, `picked := xs[k]`))).toEqual(want);
+    expect(codesOf(withBody(decls, `xs[k] := 7`))).toEqual(want);
+    expect(codesOf(withBody(decls, `got := xs.get(k)`))).toEqual(want);
   });
 });
 
