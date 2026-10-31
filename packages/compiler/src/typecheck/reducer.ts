@@ -2,7 +2,7 @@ import { unaliasType } from "../assignable.ts";
 import type { AppDef, Lvalue, ReducerDef, Statement, TypeExpr, UiEventKind } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
-import { PANIC_INFO_TYPE, ROUTE_ERROR_INFO_TYPE } from "../stdlib-types.ts";
+import { refType } from "../stdlib-types.ts";
 import { firesUnheardIn, labelWrappedUnreached, UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
 import {
   checkAgainst,
@@ -15,7 +15,7 @@ import {
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
 import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
-import { inferType, prim, runtimeBuilt } from "./infer.ts";
+import { inferType, prim } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
 import { bindsRoute, namedByHandler, subscribedKinds, subscriptionIds } from "./tile-collect.ts";
@@ -135,7 +135,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   ctx.localBinds.add("$el");
-  bindLocal(ctx, "$event", eventPayloadType(r.on, sym));
+  bindLocal(ctx, "$event", eventPayloadType(r.on));
 
   const writtenRoots = new Set<string>();
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
@@ -206,12 +206,10 @@ function routeBindOf(r: ReducerDef, sym: SymbolTable): Ctx["routeBind"] {
   return bindsRoute(r, sym) ? "prefetch" : "unbound";
 }
 
-function eventPayloadType(on: ReducerDef["on"], sym: SymbolTable): TypeExpr | null {
+function eventPayloadType(on: ReducerDef["on"]): TypeExpr | null {
   if (on.kind !== "LifecycleEvent") return null;
-  if (on.name === "app.error") return runtimeBuilt("PanicInfo", PANIC_INFO_TYPE, sym);
-  if (on.name.startsWith("route.error(")) {
-    return runtimeBuilt("RouteErrorInfo", ROUTE_ERROR_INFO_TYPE, sym);
-  }
+  if (on.name === "app.error") return refType("PanicInfo");
+  if (on.name.startsWith("route.error(")) return refType("RouteErrorInfo");
   return null;
 }
 
