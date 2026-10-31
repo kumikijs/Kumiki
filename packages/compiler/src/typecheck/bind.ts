@@ -1,11 +1,20 @@
 import { assignable, typeToString, unaliasType } from "../assignable.ts";
-import { type Expr, isTileExpr, type Pos, type TileExpr } from "../ast.ts";
+import {
+  type Expr,
+  isTileExpr,
+  numberLiteral,
+  type Pos,
+  type TileExpr,
+  type TypeExpr,
+} from "../ast.ts";
 import { bindTarget } from "../bind-target.ts";
+import { errorField, fieldSegment } from "../error-field.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "../input-bind.ts";
-import { checkAgainst } from "./against.ts";
+import { checkAgainst, indexStep, unwrappedType } from "./against.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { pushMismatch } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
+import { classifyMember, receiverName } from "./members.ts";
 
 const BIND_CONTROLS = new Set([
   "input",
@@ -292,4 +301,144 @@ export function checkInputBindType(
     message: `input(bind=…) with ${field} cannot bind a value of type ${typeName}: ${base === "Int" ? "an" : "a"} ${base} binds with ${kinds} ${see}`,
     pos: typeArg !== undefined && !isTileExpr(typeArg) ? typeArg.pos : bindArg.value.pos,
   });
+}
+
+/**
+ * Run after the field has been checked as a value, so what that read already
+ * reported (E0103, E0127, E0108, E0213, an E0201 or E0232 at a key) is not reported again.
+ */
+export function checkErrorField(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  if (t.name !== "error") return;
+  const see = "(see docs/spec/forms.md)";
+  const refuse = (message: string, pos: Pos): void => {
+    errors.push({ code: "E0230", kind: "error-field-not-path", message, pos });
+  };
+  const inBlock = t.props.find((p) => p.name === "field");
+  if (inBlock) {
+    refuse(
+      `error() {field: …} is not read: field is a named argument — write error(field=…) ${see}`,
+      inBlock.pos,
+    );
+  }
+  const arg = t.args.find((a) => a.name === "field");
+  if (!arg) {
+    if (!inBlock) {
+      refuse(
+        `error() names no field, so it has no failure to show: field= names a slot, or a path into one ${see}`,
+        t.pos,
+      );
+    }
+    return;
+  }
+  const rootProblem = (named: string, is: string, fix?: string): string =>
+    `error(field=…) cannot show the failure of ${named}: ${is}. field= names a slot, or a path into one${fix ? ` — ${fix}` : ""} ${see}`;
+  if (isTileExpr(arg.value)) {
+    const kind = arg.value.kind === "TileFor" ? "for" : "when";
+    refuse(rootProblem(`a "${kind}"`, "it is a tile, not a slot"), arg.value.pos);
+    return;
+  }
+  const reported = (pos: Pos): boolean =>
+    errors.some(
+      (e) => e.severity !== "warning" && e.pos.line === pos.line && e.pos.col === pos.col,
+    );
+  const field = errorField(arg.value);
+  const { root } = field;
+  const notASlot = errorFieldRootProblem(root, sym, ctx);
+  if (notASlot) {
+    if (!reported(root.pos))
+      refuse(rootProblem(notASlot.named, notASlot.is, notASlot.fix), root.pos);
+    return;
+  }
+  const steps = `A path's steps are fields, ".get", and indices with a literal key ${see}`;
+  // A type the checker cannot decide is reported where it is written (E0117).
+  const undecided = (raw: TypeExpr | null): boolean => indexStep(raw, sym).kind === "undecidable";
+  // The first step that names no place is the mistake; the steps after it have nothing to step into.
+  for (const step of field.steps) {
+    if (reported(step.pos)) return;
+    switch (step.kind) {
+      case "MethodCall":
+        refuse(
+          `error(field=…) cannot step through ".${step.method}(${step.args.length === 0 ? "" : "…"})": a call is not a step of a path. ${steps}`,
+          step.pos,
+        );
+        return;
+      case "Index": {
+        if (reported(step.index.pos)) return;
+        if (fieldSegment(step) === null) {
+          refuse(
+            `error(field=…) cannot step through an index that is not a literal: a path names one element or entry by a literal key, such as [0] or ["k"] ${see}`,
+            step.index.pos,
+          );
+          return;
+        }
+        const at = indexStep(inferType(step.base, sym, ctx), sym);
+        if (at.kind === "undecidable") return;
+        if (at.kind === "no-place") {
+          refuse(
+            `error(field=…) cannot step through an index into "${typeToString(at.raw)}": a path's index names a List element or a Map entry ${see}`,
+            step.pos,
+          );
+          return;
+        }
+        break;
+      }
+      case "FieldAccess": {
+        const raw = inferType(step.base, sym, ctx);
+        if (raw === null || undecided(raw)) return;
+        const member = classifyMember(raw, step.field, sym);
+        if (member === "field") break;
+        const base = unaliasType(raw, sym);
+        if (step.field === "get" && base && unwrappedType(base) !== null) break;
+        // E0108 names a field the record lacks.
+        if (member === "unknown") return;
+        refuse(
+          member === "member" && base
+            ? `error(field=…) cannot step through ".${step.field}": it is a member of "${receiverName(raw, base, sym)}", not a field. ${steps}`
+            : `error(field=…) cannot step through ".${step.field}": "${typeToString(raw)}" has no fields. ${steps}`,
+          step.pos,
+        );
+        return;
+      }
+    }
+  }
+}
+
+/** A local named like a slot hides the slot here, as it does for any read. */
+function errorFieldRootProblem(
+  root: Expr,
+  sym: SymbolTable,
+  ctx: Ctx,
+): { named: string; is: string; fix?: string } | null {
+  const literal = "a literal is a value, not a slot";
+  const n = numberLiteral(root);
+  if (n) return { named: `the literal ${n.raw}`, is: literal };
+  switch (root.kind) {
+    case "Ref":
+      if (ctx.localBinds.has(root.name)) {
+        return { named: `"${root.name}"`, is: "it is a local name, not a slot" };
+      }
+      if (sym.slots.has(root.name)) return null;
+      return root.name === "route"
+        ? { named: `"route"`, is: "it is the route slot, whose type carries no refinement to fail" }
+        : { named: `"${root.name}"`, is: "it is not a slot" };
+    case "Str": {
+      const named = `the text literal ${JSON.stringify(root.value)}`;
+      return sym.slots.has(root.value) && !ctx.localBinds.has(root.value)
+        ? {
+            named,
+            is: literal,
+            fix: `write the slot's name without quotes: error(field=${root.value})`,
+          }
+        : { named, is: literal };
+    }
+    case "Bool":
+      return { named: `the literal ${root.value}`, is: literal };
+    default:
+      return { named: "this expression", is: "it computes a value, not a slot" };
+  }
 }

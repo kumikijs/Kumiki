@@ -1,24 +1,10 @@
-// The example's `.browser.json` has no key action, and these claims need the
-// real keyboard and tab order.
+// A browser-tier step has no key action and cannot press Tab, so these drive
+// the real keyboard and tab order.
 
-import { readFileSync } from "node:fs";
-import { runOnPage } from "@kumikijs/e2e";
-import { feature } from "@kumikijs/examples";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { useFeatureLog } from "./helpers/feature-log.ts";
 
-const source = readFileSync(feature("236-media-details-focus"), "utf8");
-
-const log = (page: Page): Promise<string> =>
-  page.evaluate(() =>
-    String((window as unknown as { __kumikiApp: { live: { log: unknown } } }).__kumikiApp.live.log),
-  );
-
-test.beforeEach(async ({ page }) => {
-  const report = await runOnPage(page, source, {
-    steps: [{ label: "mounted", expect: { noErrors: true, state: { log: "" } } }],
-  });
-  expect(report.ok, JSON.stringify(report.steps)).toBe(true);
-});
+const log = useFeatureLog("236-media-details-focus");
 
 test("Tab passes over a video without controls", async ({ page }) => {
   await page.locator("#toggle").focus();
@@ -49,7 +35,7 @@ test("a key on the summary runs only the onKeyDown written on the details", asyn
   expect(await log(page)).toBe("fk ");
 });
 
-test("a key in the panel's input runs ui.key(Faq) once, then the details' onKeyDown", async ({
+test("a key in the panel's input runs ui.key(Faq) once, then the details's onKeyDown", async ({
   page,
 }) => {
   await page.locator("#answer").focus();

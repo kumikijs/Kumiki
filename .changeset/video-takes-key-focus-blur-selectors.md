@@ -2,7 +2,7 @@
 "@kumikijs/compiler": patch
 ---
 
-`ui.key` / `ui.focus` / `ui.blur` reach a `video`, and W0212 says why they do not reach a `details` (#525)
+`ui.key` / `ui.focus` / `ui.blur` reach a `video`, and W0212 says why they do not reach a `details`
 
 A `<video>` rendered with `controls` is focusable and in the tab order, and the
 runtime's listeners are on that element. The lift table left `video` out of all
@@ -12,13 +12,11 @@ descendant that fires" the event. Before:
 > Reducer "r" subscribes to ui.focus(V) but tile "V" has no descendant that fires "focus" (DOM-allowed: input, textarea, button, select, slider, editable, link; observed in body: video). The handler is silently dropped.
 
 After, `video` is in all three rows: `ui.focus(V)` over
-`tile V = video(src=…, controls=true)` runs when Tab or a click focuses the
+`tile V = video(src=…, controls=true)` runs when Tab or `.focus()` focuses the
 video, `ui.blur(V)` when focus leaves it, and `ui.key(V)` for a key pressed
-while the `<video>` itself has focus. A key pressed while one of its own play /
-volume / fullscreen buttons has focus does not reach it. A `video` without
-`controls` takes no focus at all, so none of the three fires. That is a property
-of the instance, as `disabled` is of a button, so the rows list `video` either
-way.
+while the `<video>` has focus. A `video` without `controls` takes no focus at
+all, so none of the three fires. That is a property of the instance, as
+`disabled` is of a button, so the rows list `video` either way.
 
 A `details` stays out of all three rows, and W0212 now gives the reason instead
 of saying no descendant fires the event. Its `<summary>` takes focus inside the
@@ -32,7 +30,7 @@ A control in the panel that the `key` row lists already carries the subscription
 lifted onto it, so a listener on the `<details>` as well would run the reducer
 twice for each key pressed in that control (measured in Chromium). So:
 
-> Reducer "r" subscribes to ui.key(D) but "key" never reaches a listener in tile "D": a details takes no "key" listener on the <details> around its <summary>, since one there would also hear every "key" from the tiles inside it (…)
+> Reducer "r" subscribes to ui.key(D) but "key" never reaches a listener in tile "D": a details takes no "key" listener on the <details> around its <summary>, since a control in its panel takes the subscription instead — write onKeyDown= on the details to hear a "key" on its <summary> (…)
 
 A key on the summary reaches a handler written on the details itself
 (`details(…, onKeyDown=r)`), which hears every key from its panel too.
