@@ -374,9 +374,9 @@ export function lvalueType(lv: Lvalue, sym: SymbolTable): TypeExpr | null {
   return null;
 }
 
-// One answer for both questions the left of `:=` asks of an index step (can it be written
-// through, and what is the right-hand side checked against). It takes the receiver's type as
-// written and unaliases it here, so every caller asks about the same type.
+// One answer for every question asked of an index step, in a read or on the left of `:=`: does it
+// name a place, what is its key checked against, and what type does it hold. It takes the
+// receiver's type as written and unaliases it here, so every caller asks about the same type.
 /**
  * What an index into `raw` is: in a List or a Map, a place of type `type` whose index is checked
  * against `key`, the same in a read as in a write. `key` is `null` when the key type names nothing.
@@ -402,6 +402,53 @@ export function indexStep(raw: TypeExpr | null, sym: SymbolTable): IndexStep {
     return { kind: "place", key: key && !namesNothing(key, sym) ? key : null, type };
   }
   return { kind: "no-place", raw, base };
+}
+
+/** An index step, in a read or on the left of `:=`; `raw` is the receiver's type as written. */
+export function checkIndexStep(
+  raw: TypeExpr | null,
+  index: Expr,
+  side: "read" | "write",
+  pos: Pos,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const step = indexStep(raw, sym);
+  if (step.kind === "place" && step.key) checkAgainst(index, step.key, sym, errors, ctx);
+  if (step.kind !== "no-place") return;
+  if (side === "write") {
+    errors.push({
+      code: "E0602",
+      kind: "unassignable-member",
+      message: noPlaceMessage(step, index),
+      pos,
+    });
+    return;
+  }
+  // Every other receiver with no places reads with no type and no report yet.
+  if (!isSet(step.base)) return;
+  errors.push({
+    code: "E0232",
+    kind: "index-into-set",
+    message: `Cannot read through an index into "${typeToString(step.raw)}": a Set has members, not places — use .has`,
+    pos,
+  });
+}
+
+function isSet(base: TypeExpr): boolean {
+  return base.kind === "TypeApp" && base.name === "Set";
+}
+
+function noPlaceMessage(step: IndexStep & { kind: "no-place" }, index: Expr): string {
+  const { raw, base } = step;
+  const into = `Cannot assign through an index into "${typeToString(raw)}"`;
+  if (isSet(base)) return `${into}: a Set has members, not places — use .add / .remove / .toggle`;
+  const field =
+    base.kind === "TypeRecord" && index.kind === "Str" && recordFieldType(base, index.value)
+      ? ` — write the field step ".${index.value}"`
+      : "";
+  return `${into}: an index names a place only in a Map or a List${field}`;
 }
 
 /** A type name that resolves to nothing is E0117 where it is written, and judges no value. */
