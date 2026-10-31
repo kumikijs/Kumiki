@@ -111,6 +111,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0225](./errors.md#e0225-radio-bind-without-value) | `radio-bind-without-value` | tile | forms |
 | [E0226](./errors.md#e0226-input-bind-type) | `input-bind-type` | tile | forms |
 | [E0227](./errors.md#e0227-non-exhaustive-match) | `non-exhaustive-match` | type | core |
+| [E0229](./errors.md#e0229-bind-target-not-slot) | `bind-target-not-slot` | tile | forms |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | core |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | stdlib |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | forms |
@@ -134,6 +135,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0712](./errors.md#e0712-episode-mock-invalid) | `episode-mock-invalid` | effect | testing |
 | [E0713](./errors.md#e0713-test-shape-invalid) | `test-shape-invalid` | effect | testing |
 | [E0714](./errors.md#e0714-test-section-unknown) | `test-section-unknown` | effect | testing |
+| [E0715](./errors.md#e0715-for-all-no-generator) | `for-all-no-generator` | effect | testing |
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | stdlib |
 | [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | stdlib |
 | [E0803](./errors.md#e0803-unimplemented-refinement) | `unimplemented-refinement` | type | core |

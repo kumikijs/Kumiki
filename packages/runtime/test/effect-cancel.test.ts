@@ -2,6 +2,7 @@ import type { AppShape, EffectResult, EffectSpec, EmitSpec } from "@kumikijs/run
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { emitId, withEnvRecord, withEnvReplay } from "../src/core.ts";
+import { httpError } from "../src/effects-http.ts";
 import { _stdlibCore } from "../src/stdlib.ts";
 import { freshRoot } from "./helpers/dom.ts";
 import { tick } from "./helpers/time.ts";
@@ -34,7 +35,7 @@ function makeCancelApp(): {
             resolveFetch = resolve;
             signal?.addEventListener("abort", () => {
               log.aborted = true;
-              resolve({ kind: "err", value: { status: 0, message: "aborted", body: "" } });
+              resolve({ kind: "err", value: httpError(0, "aborted") });
             });
           }),
       },
@@ -102,7 +103,7 @@ describe("dispatcher http.cancel", () => {
       dispatch("kill", {});
       await tick(20);
       expect(log.aborted).toBe(true);
-      expect(lastErr?.value).toMatchObject({ status: 0, message: "aborted", body: "" });
+      expect(lastErr?.value).toEqual({ status: 0, message: "aborted", body: { _tag: "None" } });
       dispose();
     } finally {
       root.remove();
@@ -238,7 +239,7 @@ describe("a latest-per-key emit that carries its key", () => {
               log.signal = signal;
               signal?.addEventListener("abort", () => {
                 log.aborted = true;
-                resolve({ kind: "err", value: { status: 0, message: "aborted", body: "" } });
+                resolve({ kind: "err", value: httpError(0, "aborted") });
               });
             }),
         },
@@ -377,7 +378,7 @@ describe("dispose", () => {
             new Promise<EffectResult>((resolve) => {
               if (signal) signals.push(signal);
               signal?.addEventListener("abort", () =>
-                resolve({ kind: "err", value: { status: 0, message: "aborted", body: "" } }),
+                resolve({ kind: "err", value: httpError(0, "aborted") }),
               );
             }),
         },

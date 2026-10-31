@@ -315,11 +315,9 @@ export function runtimeBuilt(name: string, record: TypeExpr, sym: SymbolTable): 
   return sym.types.get(name)?.body === record ? refType(name) : record;
 }
 
-// A bind of either name is the program's own, typed or not, and a `$route` nothing binds has no
-// value to type. A prefetch target fired by its own trigger is handed no route, so its `$route`
-// is typed only when that trigger is a route one too.
+// A `$route` nothing binds has no value to type. A prefetch target fired by its own trigger is
+// handed no route, so its `$route` is typed only when that trigger is a route one too.
 function routeType(name: string, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
-  if (ctx.localBinds.has(name)) return null;
   if (name === "route" || (name === "$route" && ctx.routeBind === "bound")) {
     return runtimeBuilt("Route", ROUTE_TYPE, sym);
   }
@@ -340,6 +338,8 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
     case "Ref": {
       const bound = ctx.localTypes.get(e.name);
       if (bound) return bound;
+      // A local whose type is undecided still hides the slot of its name.
+      if (ctx.localBinds.has(e.name)) return null;
       // The slot table first: a program's own `slot route` is E0115, and its
       // reads keep the slot's type rather than drawing a second report.
       return sym.slots.get(e.name)?.type ?? routeType(e.name, sym, ctx) ?? null;

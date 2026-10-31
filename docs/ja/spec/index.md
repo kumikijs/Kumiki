@@ -111,6 +111,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0225](./errors.md#e0225-radio-bind-without-value) | `radio-bind-without-value` | tile | フォーム |
 | [E0226](./errors.md#e0226-input-bind-type) | `input-bind-type` | tile | フォーム |
 | [E0227](./errors.md#e0227-non-exhaustive-match) | `non-exhaustive-match` | type | コア |
+| [E0229](./errors.md#e0229-bind-target-not-slot) | `bind-target-not-slot` | tile | フォーム |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | フォーム |
@@ -134,6 +135,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0712](./errors.md#e0712-episode-mock-invalid) | `episode-mock-invalid` | effect | テスト |
 | [E0713](./errors.md#e0713-test-shape-invalid) | `test-shape-invalid` | effect | テスト |
 | [E0714](./errors.md#e0714-test-section-unknown) | `test-section-unknown` | effect | テスト |
+| [E0715](./errors.md#e0715-for-all-no-generator) | `for-all-no-generator` | effect | テスト |
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | 標準ライブラリ |
 | [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | 標準ライブラリ |
 | [E0803](./errors.md#e0803-unimplemented-refinement) | `unimplemented-refinement` | type | コア |
