@@ -602,6 +602,7 @@ A value does not have the type its position requires.
 > `Event handler prop "<name>" must be a reducer name`
 > `link prefetch must be a reducer name`
 > `credentials "<mode>" is not one of omit / same-origin / include; a browser refuses the request`
+> `timeout <n> is not a number of milliseconds from 1 to 2147483647; every request is aborted before it can answer`
 > `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md)`
 > `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is <type>`
 
@@ -619,7 +620,7 @@ An index `[k]` is checked against the type its receiver takes as an index, in a 
 
 Against a declared type, a value written as an `if`, a `match` or a `let … in` is checked, and reported, at what it evaluates to: each branch, each arm, the `let`'s body ([Language §1.9](./language.md#_1-9-expression-language)). An operator's operand is the exception: it is reported at the operator expression or at the operand as a whole, so `n := 1 + (let m = t in m)` is reported at `1 + …`, not at `m`.
 
-One message in this code is not about a type. A `credentials` literal that names no Fetch mode has exactly the type its position requires — a `Text` — and is wrong only in its value: the three modes are a value-domain constraint on that field, reported under this code because the mistake is the same one at the same place, a value the position cannot take.
+Two messages in this code are not about a type. A `credentials` literal that names no Fetch mode has exactly the type its position requires — a `Text` — and is wrong only in its value, and so is a `timeout` literal outside 1 to 2147483647, which is an `Int`: the three modes and the milliseconds a timer can hold are value-domain constraints on those fields, reported under this code because the mistake is the same one at the same place, a value the position cannot take. Both are checked after the type, on every literal that reaches the field, where it is written ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)).
 
 A `.get-or` fallback is checked against what the call answers, not against the receiver: it is the value the call produces on the empty case, so it carries the result type. That result comes out of the receiver's type argument — `Option(T)` and `Result(T, E)` answer `T`, `Map(K, V)` answers `V` — which is why `opt := opt.get-or(None)` on an `Option(S)` slot is reported twice: once at the fallback, which is not an `S`, and once at the assignment, because an `S` is not an `Option(S)`. Which of the two readings a call takes is decided by its argument count ([Runtime §10.3.7](./runtime.md#_10-3-7-polymorphic-collection-methods)), so a count that does not fit its receiver is not resolved here and is checked against nothing. It is still lowered — to the reading its count names, on the receiver it was given — which is a defect of its own rather than a silence.
 
@@ -801,9 +802,13 @@ A reducer subscribes to `ui.<ev>(<Tile>)` whose target tile has no descendant wh
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
-When `<ev>` is `focus` or `blur` and the body holds a `check`, `radio` or `switch`, that control's `<input>` does fire the event, so the message gives the reason that holds instead (see the note on `key` / `focus` / `blur` below). `<kinds>` is the label-wrapped kinds in the body, joined with ` / `:
+When `<ev>` is `focus` or `blur` and the body holds a `check`, `radio`, `switch` or `details`, the element of that kind which takes focus — a control's `<input>`, a details's `<summary>` — does fire the event, so the message gives the reason that holds instead (see the note on `key` / `focus` / `blur` below). `<kinds>` is the kinds in the body that share a wrapper, joined with ` / `. `<wrapper>` and `<focused>` print as `<label>` and `<input>` for a `check`, `radio` or `switch`, and as `<details>` and `<summary>` for a `details`; a body holding both gets one clause for each, joined with `; `:
 
-> `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a listener in tile "<Tile>": the runtime listens for "<ev>" on a <kinds>'s <label>, and the "<ev>" its <input> fires does not bubble to the <label> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+> `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a listener in tile "<Tile>": the runtime listens for "<ev>" on a <kinds>'s <wrapper>, and the "<ev>" its <focused> fires does not bubble to the <wrapper> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
+When `<ev>` is `key` and the body holds a `details`, the `keydown` its `<summary>` fires does bubble to the `<details>`. What keeps it from a listener is the panel the `<details>` holds as well (see the same note). The message says where the subscription goes instead, and which handler hears a key on the summary:
+
+> `Reducer "<r>" subscribes to ui.key(<Tile>) but "key" never reaches a listener in tile "<Tile>": a details takes no "key" listener on the <details> around its <summary>, since a control in its panel takes the subscription instead — write onKeyDown= on the details to hear a "key" on its <summary> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
 Where a kind's element does fire `<ev>` but its renderer never calls the handler for it — runtime policy, not a fact about the element — the message says what the renderer does instead (`<instead>`) and names the handler. Those absences are `link` under `click`, whose renderer listens for it only to navigate (see the note on `link` below), and these under `input`, whose elements all fire it: `slider`, whose renderer listens for it only to write the bind, and `check`, `radio`, `switch` and `select`, whose renderers listen for `change` instead. Under `click` the default wording is not yet true of the other kinds either: every element fires `click`, and what keeps it from a reducer on a `text` or a `box` is that their renderers never call `onClick` — [#823](https://github.com/kumikijs/Kumiki/issues/823). Kinds whose renderers do the same are joined with ` / `, and the clauses for different ones with `; `:
 
@@ -817,9 +822,9 @@ The allowed root builtins per event are (current toolchain coverage: every kind 
 | `submit` | `form` |
 | `change` | `select`, `input`, `textarea`, `check`, `radio`, `switch`, `slider` |
 | `input`  | `input`, `textarea`, `editable` |
-| `key`    | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `check`, `radio`, `switch` |
-| `focus`  | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link` |
-| `blur`   | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link` |
+| `key`    | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video`, `check`, `radio`, `switch` |
+| `focus`  | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video` |
+| `blur`   | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video` |
 | `hover`  | any tile |
 
 **Fix**: Re-target the selector at a tile whose root is in the allowed set, or wire the handler explicitly on the focusable element (`input(onFocus=r)`). The wildcard `_` selector and the `ui.hover` event are exempt.
@@ -830,7 +835,11 @@ The checker descends into control-flow bodies (`for` / `when` / `if` / `match`) 
 
 **Note on `editable` and `change`**: `editable` is listed under `input`, `key`, `focus` and `blur` and **not** under `change`, and that one absence is the rule rather than a gap. A `<div contenteditable="true">` is an editing host, so it is focusable without a `tabindex` and the browser fires `focus`, `blur`, `keydown` and `input` on it — what differs between them is only which layer listens (`applyUiEventHandlers` for the first three, the `editable` renderer's own listener for `input`). It fires no `change` event at all, which no table row can supply. `ui.change(<editable tile>)` is therefore W0212 for a reason that is true; subscribe to `ui.input` and compare the new text against the slot holding the previous value, or use `ui.blur` if the wanted moment is when editing ends.
 
-**Note on `key` / `focus` / `blur`**: the runtime attaches these three to whatever element a renderer returned, so a kind is listed only where the event arrives at that element. Every kind whose element is itself focusable is in all three: `input`, `textarea`, `button`, `select`, `slider` (a bare `<input type="range">`), `editable` and `link`. `check`, `radio` and `switch` are listed under `key` and **not** under `focus` / `blur`. The two answers differ, although the three kinds look like one case: each renders a `<label>` around its `<input>`, and the listener sits on the label. `keydown` bubbles from the focused input to the label, so `ui.key` reaches it; `focus` and `blur` do not bubble, so a listener on the label never runs, and W0212 is correct to emit for them. Writing `onFocus=` / `onBlur=` on the control itself attaches the listener to the same `<label>`, so that does not run either — [#821](https://github.com/kumikijs/Kumiki/issues/821). The converse is not claimed: `video` (a `<video>` rendered with `controls`) and `details` (whose `<summary>` takes focus inside the returned `<details>`, the same shape as `check`) are not yet listed although those events plausibly reach them — [#525](https://github.com/kumikijs/Kumiki/issues/525). A row can also list a kind whose particular instance cannot fire: a `disabled` control is not focusable, and no compile-time table can see that.
+**Note on `key` / `focus` / `blur`**: the runtime attaches these three to whatever element a renderer returned, so a kind is listed only where the event arrives at that element. Every kind whose element is itself focusable is in all three: `input`, `textarea`, `button`, `select`, `slider` (a bare `<input type="range">`), `editable`, `link` and `video` (a `<video>` rendered with `controls`). `check`, `radio` and `switch` are listed under `key` and **not** under `focus` / `blur`. The two answers differ, although the three kinds look like one case: each renders a `<label>` around its `<input>`, and the listener sits on the label. `keydown` bubbles from the focused input to the label, so `ui.key` reaches it; `focus` and `blur` do not bubble, so a listener on the label never runs, and W0212 is correct to emit for them. Writing `onFocus=` / `onBlur=` on the control itself attaches the listener to the same `<label>`, so that does not run either — [#821](https://github.com/kumikijs/Kumiki/issues/821).
+
+`details` is listed under none of the three, and each blank is the rule. It renders a `<details>` around its `<summary>`, which is what takes focus, and the listener would sit on the `<details>`. `focus` and `blur` from the summary do not bubble to it, as with a check's label. `keydown` does, and so does the keydown of every tile in its panel. A control there that the `key` row lists already carries the same subscription lifted onto it, so a listener on the `<details>` as well would run the reducer twice for each key pressed in that control. W0212 is correct to emit for all three, and its message gives each reason. A key on the summary does reach a handler written on the details itself (`details(…, onKeyDown=r)`), which hears every key from its panel too. `onFocus=` / `onBlur=` written there never run either, for the reason given above for a check.
+
+In Chromium, with `controls`, Tab stops on the `<video>`, and `focus` and `blur` fire on it as focus enters and leaves it. A key pressed while the `<video>` has focus reaches its `ui.key` reducer. Without `controls` it is not focusable: Tab passes it by, and `.focus()` and a click leave it unfocused, so none of the three fires. Whether a `video` has `controls` is a property of the instance, which no compile-time table can see, so the rows list it either way. The same holds of a `disabled` control, which is not focusable although its kind is listed.
 
 ### E0213 `call-arity-mismatch`
 
@@ -1030,12 +1039,12 @@ The runtime fires a route lifecycle event for each pattern the route being shown
 
 The root of a `bind=` target is not a slot where the target is written ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)).
 
-> `<tile>(bind=…) cannot write to "<name>": it is <what>, not a slot — a bind writes back to a slot or a field path into one. <fix> (see docs/spec/forms.md)`
+> `<tile>(bind=…) cannot write to "<name>": it is <what>, not a slot — a bind writes back to a slot or a path into one. <fix> (see docs/spec/forms.md)`
 > `<tile>(bind=…) cannot write to the literal <v>: a literal is a value, not a slot — … (see docs/spec/forms.md)`
 > `<tile>(bind=…) cannot write to this expression: it computes a value, not a slot — … (see docs/spec/forms.md)`
 > `<tile>(bind=…) cannot write to "route": it is the route slot, which only navigation writes. Move it with link(to=…) or emit navigate(…) (see docs/spec/routing.md)`
 
-A control writes back to the slot its target's root names, through the field path below the root. A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are locals, with no slot behind them. Without this check the lowering writes the control's edits into the live slot table under the local's name, as a slot of its own that nothing reads: the field takes every edit, and the list the row came from, or the slot the caller passed, never changes. A literal or any other expression names no place, and the bind is dropped. Nothing else reports that the root is not a slot — the program checks, builds, mounts, and survives every edit.
+A control writes back to the slot its target's root names, through the path below the root. A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are locals, with no slot behind them. Without this check the lowering writes the control's edits into the live slot table under the local's name, as a slot of its own that nothing reads: the field takes every edit, and the list the row came from, or the slot the caller passed, never changes. A literal or any other expression names no place, and the bind is dropped. Nothing else reports that the root is not a slot — the program checks, builds, mounts, and survives every edit.
 
 `<what>` is what the checker knows the root to be: `the variable of a for`, `this tile's input` (`$1` in a tile that declares `in=`), or `a local name` for any other local (a `match` binding). A text literal is named `the text literal "<v>"`. `route` is a slot, but the runtime manages it ([Routing §3.2](./routing.md#_3-2-current-route-state)) and only navigation moves it, so its message names it as the route slot and sends the edit to `link(to=…)` or `navigate` instead. A local named like a slot hides the slot, as it does for any read, so `for title in titles input(bind=title)` is reported beside a slot `title`. The controls asked are the ones that write back from a bind: `input`, `textarea`, `select`, `slider`, `check`, `switch`, `radio` and `editable`.
 
@@ -1047,7 +1056,7 @@ slot todos : List(Todo) = [{text: "milk"}]
 tile Rows = column(for t in todos input(bind=t.text))
 ```
 
-**Fix**: Bind the slot itself, or a field path into it. A text literal that spells a slot's name is that slot written with quotes: `bind=title`. Where a local of that name hides the slot, the unquoted name is the local, so the message gives the general fix instead. To edit one row of a list, show the row with `value=`, carry its key in its props, and update the list from a reducer on the row's event ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)):
+**Fix**: Bind the slot itself, or a path into it. A text literal that spells a slot's name is that slot written with quotes: `bind=title`. Where a local of that name hides the slot, the unquoted name is the local, so the message gives the general fix instead. To edit one row, bind it through the slot — a `Map` entry by its key (`for k in todos.keys input(bind=todos[k].text)` on a `Map(Text, Todo)`), a `List` element by an index the page holds (`input(bind=todos[i].text)`) — or show the row with `value=`, carry its key in its props, and update the list from a reducer on the row's event ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)):
 
 ```kumiki fragment
 type Todo = {text: Text}
@@ -1309,6 +1318,12 @@ A **`bind=` target** is written through the same way — it is the place the con
 > `Cannot bind through ".get()": a bind target is a path, and a call is not a step of one — the unwrap step is written ".get"`
 
 Without this check the bind was dropped whole: `input(bind=d.get().title)` passed `check` and `build` and rendered an input bound to nothing. The unwrap step is `.get`, in a bind as on the left of `:=` — where `d.get().title := v` does not parse, since a path step is an identifier ([Language §1.6.1](./language.md#_1-6-1-syntax)).
+
+An index step of a bind target names the place it names on the left of `:=` — a `List` element, a `Map` entry — so an index into a record, a scalar, an `Option`, a `Result`, a `Tuple` or a union is E0602 there too, at the index. The message is the second index message above, with `bind` for `assign`:
+
+> `Cannot bind through an index into "<T>": an index names a place only in a Map or a List`
+
+An index into a `Set` is [E0232](#e0232-index-into-set) there instead: the control shows its target before it writes one, and that read is reported once.
 
 **Fix**: For a member, write the value the member would have derived — `name := "some text"` rather than `name.length := 9` — or, if the receiver is a record, use a field that exists. For a Set, change membership instead of indexing: `tags := tags.add(x)`, or `.remove(x)` / `.toggle(x)` in its place ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)). For an index into anything else, write the step that names a place: a record's field as `r.a := v`, an `Option` / `Result` payload through `.get` (`o.get := v`, which writes nothing on a `None` or an `Err`), and any other value whole (`n := v`). To write an `Option` / `Result` value whatever it holds, replace it whole: `o := Some(v)`, `res := Ok(v)`.
 

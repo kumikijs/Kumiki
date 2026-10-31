@@ -11,7 +11,7 @@ import {
 import { bindTarget } from "../bind-target.ts";
 import { errorField, fieldSegment } from "../error-field.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "../input-bind.ts";
-import { checkAgainst, indexStep, unwrappedType } from "./against.ts";
+import { checkAgainst, checkIndexIsPlace, indexStep, unwrappedType } from "./against.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { pushMismatch } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
@@ -30,11 +30,16 @@ const BIND_CONTROLS = new Set([
 
 export function checkBindTargetSteps(
   t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
   errors: KumikiError[],
+  ctx: Ctx,
 ): void {
   const bind = writtenProp(t, "bind")?.value;
   if (!bind) return;
   for (const step of bindTarget(bind).steps) {
+    if (step.kind === "Index") {
+      checkIndexIsPlace(indexStep(inferType(step.base, sym, ctx), sym), step, "bind", errors);
+    }
     if (step.kind !== "MethodCall") continue;
     const hint =
       step.method === "get" && step.args.length === 0
@@ -85,7 +90,7 @@ type RootReport = { named: string; is: string; fix: string; see: string };
 
 const notASlot = (named: string, is: string, fix: string): RootReport => ({
   named,
-  is: `${is}, not a slot — a bind writes back to a slot or a field path into one`,
+  is: `${is}, not a slot — a bind writes back to a slot or a path into one`,
   fix,
   see: "forms.md",
 });
@@ -101,7 +106,7 @@ function bindRootNotASlot(root: Expr, sym: SymbolTable, ctx: Ctx): RootReport | 
             return notASlot(
               named,
               "it is the variable of a for",
-              "To edit a row, show it with value= and update the list from a reducer",
+              "To edit a row, bind it through the slot by a Map key or an index the page holds (bind=rows[i].title), or show it with value= and update the list from a reducer",
             );
           case "input":
             return notASlot(

@@ -39,11 +39,16 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
 
   /**
    * A focus whose next step is not an index names nothing here, so the position
-   * is checked whole, as `at` checks one no step can name. A Map key (`atJs`
-   * `null`) is named by no index, so a focus that names an entry skips the key's
-   * predicates.
+   * is checked whole, as `at` checks one no step can name. `named` says whether
+   * the index `o[0].at` names this position; a Map key (`named` `null`) is named
+   * by no index, so a focus that names an entry skips the key's predicates.
    */
-  const atIndex = (stepJs: string, check: string, valueJs: string, atJs: string | null): string => {
+  const atIndex = (
+    stepJs: string,
+    check: string,
+    valueJs: string,
+    named: string | null,
+  ): string => {
     if (!indexDeclared) {
       indexDeclared = true;
       decls.push(
@@ -51,9 +56,9 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
       );
     }
     const found = `return { ...f, path: [${stepJs}, ...f.path] };`;
-    return atJs === null
+    return named === null
       ? `if (!_rqAt(o) && (f = ${named$(check)}(${valueJs}))) ${found}`
-      : `if ((!_rqAt(o) || o[0].at === ${atJs}) && (f = ${named$(check)}(${valueJs}, _rqAt(o) ? o.slice(1) : undefined))) ${found}`;
+      : `if ((!_rqAt(o) || ${named}) && (f = ${named$(check)}(${valueJs}, _rqAt(o) ? o.slice(1) : undefined))) ${found}`;
   };
 
   /** `check` as a helper's name, declaring it first when it is an arrow. */
@@ -182,7 +187,9 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
         return walk(
           t,
           "Array.isArray(v)",
-          check ? [`for (const [i, e] of v.entries()) { ${atIndex("i", check, "e", "i")} }`] : [],
+          check
+            ? [`for (const [i, e] of v.entries()) { ${atIndex("i", check, "e", "o[0].at === i")} }`]
+            : [],
         );
       }
       case "Set": {
@@ -207,8 +214,10 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
         }
         const val = sub(a1);
         if (val) {
+          // By the stored key: an index that is a record or a tag is a fresh object, never `===` the entry's.
+          const named = "_s.entryKey(o[0].at) === k";
           steps.push(
-            `for (const [k, e] of Object.entries(v)) { ${bind}${atIndex(`{ entry: ${kk} }`, val, "e", kk)} }`,
+            `for (const [k, e] of Object.entries(v)) { ${bind}${atIndex(`{ entry: ${kk} }`, val, "e", named)} }`,
           );
         }
         return walk(t, `${object} && !Array.isArray(v)`, steps);

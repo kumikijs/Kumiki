@@ -1,4 +1,4 @@
-import { unaliasType } from "../assignable.ts";
+import { indexPlaceType, unaliasType } from "../assignable.ts";
 import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
 import { bindTarget } from "../bind-target.ts";
@@ -17,7 +17,7 @@ import {
   makeEvalCtx,
 } from "./context.ts";
 import { jsOfExpr, readingJs, tupleArm } from "./expr.ts";
-import type { BindSegment } from "./path-segment.ts";
+import { type PathStep, segmentJs } from "./path-segment.ts";
 import { explicitHandlers, type HandlerWiring, keyFor, propsFor, propValue } from "./selector.ts";
 
 export function genTile(tile: TileDef, gen: GenCtx): string {
@@ -180,28 +180,30 @@ export function tileExprJs(
   }
 }
 
-export type BindInfo = { root: string; path: BindSegment[]; read: string };
+export type BindInfo = { root: string; path: PathStep[]; pathJs: string; read: string };
 
-export function extractBindPath(bind: Expr | undefined): BindInfo | null {
+export function extractBindPath(bind: Expr | undefined, ctx: EvalCtx): BindInfo | null {
   if (!bind) return null;
   const target = bindTarget(bind);
   if (target.root.kind !== "Ref" || target.path === null) return null;
   const root = target.root.name;
   const path = target.path;
-  // Build a safe reader: `((_live["root"] ?? {})["a"] ?? {})["b"] ...`.
+  const keyJs = (key: Expr): string => jsOfExpr(key, ctx);
+  // `.get` and an index read as they do in `rows[i].title`, so an empty Option
+  // or an index that names no element panics here as it does there.
   let readRaw = `_live[${JSON.stringify(root)}]`;
   for (const seg of path) {
-    readRaw =
-      typeof seg === "string"
-        ? `((${readRaw}) ?? {})[${JSON.stringify(seg)}]`
-        : `_s.unwrap(${readRaw})`;
+    if (typeof seg === "string") readRaw = `((${readRaw}) ?? {})[${JSON.stringify(seg)}]`;
+    else if ("at" in seg) readRaw = `_s.index(${readRaw}, ${keyJs(seg.at)})`;
+    else readRaw = `_s.unwrap(${readRaw})`;
   }
-  return { root, path, read: readRaw };
+  const pathJs = `[${path.map((seg) => segmentJs(seg, keyJs)).join(",")}]`;
+  return { root, path, pathJs, read: readRaw };
 }
 
-function bindFields(bindInfo: Pick<BindInfo, "root" | "path">): string[] {
+function bindFields(bindInfo: Pick<BindInfo, "root" | "path" | "pathJs">): string[] {
   const fields = [`bind: ${JSON.stringify(bindInfo.root)}`];
-  if (bindInfo.path.length > 0) fields.push(`bindPath: ${JSON.stringify(bindInfo.path)}`);
+  if (bindInfo.path.length > 0) fields.push(`bindPath: ${bindInfo.pathJs}`);
   return fields;
 }
 
@@ -211,7 +213,7 @@ function toggleJs(
   ctx: EvalCtx,
   propsObj: string,
 ): string {
-  const bindInfo = extractBindPath(propValue(t, "bind", ctx));
+  const bindInfo = extractBindPath(propValue(t, "bind", ctx), ctx);
   const fields = [`kind: ${JSON.stringify(kind)}`];
   if (bindInfo) {
     fields.push(...bindFields(bindInfo), `checked: !!(${bindInfo.read})`);
@@ -224,7 +226,7 @@ function toggleJs(
 }
 
 function boundReading(
-  bindInfo: { root: string; path: BindSegment[] },
+  bindInfo: { root: string; path: PathStep[] },
   gen: GenCtx,
 ): "Int" | "Float" | "Time" | null {
   let t: TypeExpr | null = gen.slots.find((s) => s.name === bindInfo.root)?.type ?? null;
@@ -232,6 +234,8 @@ function boundReading(
     const u = unaliasType(t, gen);
     if (typeof seg === "string") {
       t = u?.kind === "TypeRecord" ? (u.fields.find((f) => f.name === seg)?.type ?? null) : null;
+    } else if ("at" in seg) {
+      t = indexPlaceType(u);
     } else {
       t =
         u?.kind === "TypeApp" && (u.name === "Option" || u.name === "Result")
@@ -381,7 +385,7 @@ function tileCallJs(
       }
       case "input": {
         const fields: string[] = [`kind: "input"`];
-        const bindInfo = extractBindPath(prop("bind"));
+        const bindInfo = extractBindPath(prop("bind"), ctx);
         field(fields, "placeholder");
         field(fields, "type");
         field(fields, "id");
@@ -405,7 +409,7 @@ function tileCallJs(
       }
       case "textarea": {
         const fields: string[] = [`kind: "textarea"`];
-        const bindInfo = extractBindPath(prop("bind"));
+        const bindInfo = extractBindPath(prop("bind"), ctx);
         field(fields, "placeholder");
         field(fields, "id");
         field(fields, "rows");
@@ -419,7 +423,7 @@ function tileCallJs(
         return toggleJs(name, t, ctx, propsObj);
       case "select": {
         const fields: string[] = [`kind: "select"`];
-        const bindInfo = extractBindPath(prop("bind"));
+        const bindInfo = extractBindPath(prop("bind"), ctx);
         if (bindInfo) {
           fields.push(...bindFields(bindInfo), `value: ${bindInfo.read}`);
         } else {
@@ -433,7 +437,7 @@ function tileCallJs(
       }
       case "radio": {
         const fields: string[] = [`kind: "radio"`];
-        const bindInfo = extractBindPath(prop("bind"));
+        const bindInfo = extractBindPath(prop("bind"), ctx);
         // The group is the `<input>`'s `name`, so `name` spells it too; `group` wins when both are written (W0217).
         const group = propJs("group") ?? propJs("name");
         if (group !== undefined) fields.push(`group: ${group}`);
@@ -567,7 +571,7 @@ function tileCallJs(
       }
       case "slider": {
         const fields: string[] = [`kind: "slider"`];
-        const bindInfo = extractBindPath(prop("bind"));
+        const bindInfo = extractBindPath(prop("bind"), ctx);
         field(fields, "min");
         field(fields, "max");
         field(fields, "step");
@@ -601,7 +605,7 @@ function tileCallJs(
       }
       case "editable": {
         const fields: string[] = [`kind: "editable"`];
-        const bindInfo = extractBindPath(prop("bind"));
+        const bindInfo = extractBindPath(prop("bind"), ctx);
         const textJs = contentJs(t, ctx);
         if (bindInfo) {
           fields.push(...bindFields(bindInfo), `text: _s.show(${bindInfo.read})`);
