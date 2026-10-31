@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { checkSource, codesOf, pointedErrorsOf } from "./helpers/diagnostics.ts";
 import { withButtonApp, withReducer } from "./helpers/programs.ts";
 
-const appCodes = (defs: string) => codesOf(withButtonApp(defs));
+const appCodes = (defs: string, opts?: { caps: string }) => codesOf(withButtonApp(defs, opts));
 const reducerCodes = (defs: string, body: string) => codesOf(withReducer(defs, body));
 
 describe("the code ⇆ kind pairing of every diagnostic this adds", () => {
@@ -168,7 +168,7 @@ describe("undefined type names (E0117)", () => {
     ).toEqual([]);
   });
 
-  it.each([
+  it.each<[string, string, { caps: string }?]>([
     ["a slot type", `slot y : Foo(Int) = 1`],
     ["a fn parameter", `fn f(x: Foo(Int)) -> Int = 1\nslot s : Int = f(1)`],
     ["a fn parameter used as its result", `fn f(x: Foo(Int)) -> Int = x`],
@@ -184,18 +184,28 @@ describe("undefined type names (E0117)", () => {
     ["an inline nominal", `slot n : nominal Foo(Int) = 1`],
     ["a refinement", `slot r : Foo(Int) where positive = 1`],
     ["a misspelt stdlib constructor", `slot l : Lst(Int) = [1]`],
-    ["a primitive written with arguments", `slot z : Int() = 1`],
-  ])("reports an undefined type applied in %s once", (_where, defs) => {
-    expect(appCodes(defs)).toEqual(["E0117"]);
+    [
+      "an effect's input",
+      `effect save cap=log.write in=Foo(Int) out=Unit\nreducer s on=ui.click(B) do= emit save(1)`,
+      { caps: "log.write" },
+    ],
+    ["a tile's input", `tile Row in=Foo(Int) = text("r")\ntile C = column(Row(1))`],
+    ["a bound control's slot", `slot y : Foo(Int) = 1\ntile C = column(input(bind=y))`],
+  ])("reports an undefined type applied in %s once", (_where, defs, opts) => {
+    expect(appCodes(defs, opts)).toEqual(["E0117"]);
   });
 
   it.each([
     `n := y`,
     `n := y + 1`,
+    `f := y < 1`,
+    `f := not y`,
+    `n := if y then 1 else 0`,
     `y := "x"`,
     `n := match y with | Some(v) -> 1 | None -> 0`,
   ])("reports nothing more where a value of an undefined application is used: %s", (body) => {
-    expect(reducerCodes(`slot y : Foo(Int) = 1\nslot n : Int = 0`, body)).toEqual(["E0117"]);
+    const defs = `slot y : Foo(Int) = 1\nslot n : Int = 0\nslot f : Bool = false`;
+    expect(reducerCodes(defs, body)).toEqual(["E0117"]);
   });
 
   it.each([

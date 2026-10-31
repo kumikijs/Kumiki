@@ -72,7 +72,7 @@ describe("the built-in type constructors", () => {
   });
 
   it("reports a constructor that is not one of them", () => {
-    expect(codesOf(`slot v : Lst(Int) = 1\n${TAIL}`)).toContain("E0117");
+    expect(codesOf(`slot v : Lst(Int) = 1\n${TAIL}`)).toEqual(["E0117"]);
   });
 });
 

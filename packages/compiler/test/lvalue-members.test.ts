@@ -372,8 +372,6 @@ describe("an index step into a receiver with no places", () => {
     expect(textAt(src, defined(errs[0], "an E0602").pos)).toBe(body.slice(body.indexOf("[")));
   });
 
-  // The name is E0117 where it is written; the initializer may add a mismatch, so only the
-  // absence of E0602 is asserted.
   it.each([
     ["a name that resolves to nothing", `slot u : Mystery = 0`, `u[0] := 1`],
     [
@@ -382,9 +380,7 @@ describe("an index step into a receiver with no places", () => {
       `d["k"] := 1`,
     ],
   ])("stays silent on a receiver whose type is not known: %s", (_what, decls, body) => {
-    const codes = codesOf(withBody(decls, body));
-    expect(codes).toContain("E0117");
-    expect(codes).not.toContain("E0602");
+    expect(codesOf(withBody(decls, body))).toEqual(["E0117"]);
   });
 });
 

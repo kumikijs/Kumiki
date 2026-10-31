@@ -223,10 +223,7 @@ describe("a target E0218 cannot judge is not reported", () => {
 
     it(`${form} form: a type that names nothing is undecided, and E0117 says why`, () => {
       const src = FORMS[form]("q").replace("fn one(", "slot q : Lst(Int) = []\nfn one(");
-      const codes = checkSource(src).map((d) => d.code);
-      // The slot's initializer draws its own E0201 against the undefined type.
-      expect(codes).toContain("E0117");
-      expect(codes).not.toContain("E0218");
+      expect(checkSource(src).map((d) => d.code)).toEqual(["E0117"]);
     });
 
     it(`${form} form: a call with the wrong arity is E0213 alone`, () => {
