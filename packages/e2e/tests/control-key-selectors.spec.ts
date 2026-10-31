@@ -1,21 +1,7 @@
-import { readFileSync } from "node:fs";
-import { runOnPage } from "@kumikijs/e2e";
-import { feature } from "@kumikijs/examples";
-import { expect, type Page, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { useFeatureLog } from "./helpers/feature-log.ts";
 
-const source = readFileSync(feature("109-control-key-focus-blur-selectors"), "utf8");
-
-const log = (page: Page): Promise<string> =>
-  page.evaluate(() =>
-    String((window as unknown as { __kumikiApp: { live: { log: unknown } } }).__kumikiApp.live.log),
-  );
-
-test.beforeEach(async ({ page }) => {
-  const report = await runOnPage(page, source, {
-    steps: [{ label: "mounted", expect: { noErrors: true, state: { log: "" } } }],
-  });
-  expect(report.ok, JSON.stringify(report.steps)).toBe(true);
-});
+const log = useFeatureLog("109-control-key-focus-blur-selectors");
 
 test("Enter on a link runs its ui.key reducer, then the link still navigates", async ({ page }) => {
   await page.locator("#home").focus();

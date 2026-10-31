@@ -1,5 +1,5 @@
 import type { Episode, EpisodeLogger } from "../episode.ts";
-import type { BindSegment } from "./path.ts";
+import type { BindSegment, PathSegment } from "./path.ts";
 import type { RefinementRejection, SlotMeta } from "./refinement.ts";
 
 export type SsrSnapshot = Record<string, unknown>;
@@ -135,7 +135,13 @@ export type TileNode = (
       max?: number;
       step?: number;
     }
-  | { kind: "error"; field: string; props?: TileProps }
+  | {
+      kind: "error";
+      field: string;
+      /** Empty, or absent, for the whole slot. */
+      path?: PathSegment[];
+      props?: TileProps;
+    }
   | { kind: "route-outlet"; children: TileNode[]; props?: TileProps }
   | {
       kind: "details";
@@ -389,6 +395,9 @@ export type OptionOf<T> = { _tag: "Some"; _0: T } | { _tag: "None" };
 export const someOf = <T>(value: T): OptionOf<T> => ({ _tag: "Some", _0: value });
 
 export const NONE: OptionOf<never> = { _tag: "None" };
+
+/** `HttpError` as `.err` receives it. */
+export type HttpError = { status: number; message: string; body: OptionOf<string> };
 
 export type ParsedRoute = {
   path: string;
