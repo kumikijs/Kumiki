@@ -531,7 +531,7 @@ const argumentUsesIn = perTable((env): ReadonlyMap<string, readonly ArgumentUse[
  * least once inside a larger argument (`Node(G(List(T)))`). Comparing any other generics reaches
  * finitely many pairs as written, which `pairs` ends.
  */
-const nestingGenericsIn = perTable((env): ReadonlySet<string> => {
+export const nestingGenericsIn = perTable((env): ReadonlySet<string> => {
   const generics = [...env.types.values()].filter((d) => d.params.length > 0);
   // One node for each parameter of each generic, numbered on from the generic's first.
   const first = new Map<string, number>();
