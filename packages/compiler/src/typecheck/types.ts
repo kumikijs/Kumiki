@@ -335,7 +335,7 @@ export function reservedTypeName(def: TypeDef): KumikiError | null {
  */
 export function reachesBrokenDefinition(t: TypeExpr, sym: SymbolTable): boolean {
   const reached = new Map<string, TypeDef>();
-  const todo: { t: TypeExpr; params: ReadonlySet<string> }[] = [{ t, params: EMPTY_SCOPE }];
+  const todo: { t: TypeExpr; params: ReadonlySet<string> }[] = [{ t, params: EMPTY_SCOPE.params }];
   for (let at = todo.pop(); at !== undefined; at = todo.pop()) {
     const { t: cur, params } = at;
     const inside = (parts: readonly TypeExpr[]) => {
