@@ -144,9 +144,9 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
       `error() names no field, so it has no failure to show: ${ROOT_TAIL} ${SEE}`,
     ],
     [
-      "a field in the props block",
-      `tile App = error() {field: draft.get.title}`,
-      `error() {field: …} is not read: field is a named argument — write error(field=…) ${SEE}`,
+      "a text literal in the props block, which is read as field= is",
+      `tile App = error() {field: "nope"}`,
+      `error(field=…) cannot show the failure of the text literal "nope": a literal is a value, not a slot. ${ROOT_TAIL} ${SEE}`,
     ],
   ])("reports %s, and nothing else", (_label, tile, message) => {
     expect(diagnosticsOf(tile)).toEqual([E0230(message)]);
@@ -194,6 +194,10 @@ describe("a slot, or a path into one, is accepted", () => {
     expect(codesOf(program(`tile App = error(field=${field})`))).toEqual([]);
   });
 
+  it("accepts a path in the props block", () => {
+    expect(codesOf(program(`tile App = error() {field: draft.get.title}`))).toEqual([]);
+  });
+
   it("accepts a path beside a bound control in a form", () => {
     const tile = `tile App = form(input(bind=form.email), error(field=form.email))`;
     expect(codesOf(program(tile))).toEqual([]);
@@ -223,6 +227,13 @@ describe("a path another code reports is not E0230 as well", () => {
 });
 
 describe("the error node names its slot and the path into it", () => {
+  const errorNode = async (tile: string) => {
+    const app = await loadApp<{ routes: { tile: () => TileNode }[] }>(
+      program(`tile App = ${tile}`),
+    );
+    return app.routes[0]?.tile() as Extract<TileNode, { kind: "error" }>;
+  };
+
   it.each<[string, string, unknown[]]>([
     ["form", "form", []],
     ["rows[1].email", "rows", [{ at: 1 }, "email"]],
@@ -231,9 +242,20 @@ describe("the error node names its slot and the path into it", () => {
     ["n[-1]", "n", [{ at: -1 }]],
     ["b[true]", "b", [{ at: true }]],
   ])("lowers %s to the slot %s and the path %j", async (field, slot, path) => {
-    const src = program(`tile App = error(field=${field})`);
-    const app = await loadApp<{ routes: { tile: () => TileNode }[] }>(src);
-    const node = app.routes[0]?.tile() as Extract<TileNode, { kind: "error" }>;
+    const node = await errorNode(`error(field=${field})`);
+    expect([node.field, node.path]).toEqual([slot, path]);
+  });
+
+  it.each<[string, string, string, unknown[]]>([
+    ["the props block", `error() {field: rows[1].email}`, "rows", [{ at: 1 }, "email"]],
+    [
+      "the props block over the argument",
+      `error(field=form) {field: draft.get.title}`,
+      "draft",
+      [{ get: true }, "title"],
+    ],
+  ])("reads the path from %s", async (_label, tile, slot, path) => {
+    const node = await errorNode(tile);
     expect([node.field, node.path]).toEqual([slot, path]);
   });
 });

@@ -312,16 +312,15 @@ export function checkErrorField(
   const refuse = (message: string, pos: Pos): void => {
     errors.push({ code: "E0230", kind: "error-field-not-path", message, pos });
   };
-  const inBlock = t.props.find((p) => p.name === "field");
-  if (inBlock) {
-    refuse(
-      `error() {field: …} is not read: field is a named argument — write error(field=…) ${see}`,
-      inBlock.pos,
-    );
-  }
-  const arg = t.args.find((a) => a.name === "field");
-  if (!arg) {
-    if (!inBlock) {
+  const rootProblem = (named: string, is: string, fix?: string): string =>
+    `error(field=…) cannot show the failure of ${named}: ${is}. field= names a slot, or a path into one${fix ? ` — ${fix}` : ""} ${see}`;
+  const written = writtenProp(t, "field");
+  if (!written) {
+    const arg = t.args.find((a) => a.name === "field");
+    if (arg && isTileExpr(arg.value)) {
+      const kind = arg.value.kind === "TileFor" ? "for" : "when";
+      refuse(rootProblem(`a "${kind}"`, "it is a tile, not a slot"), arg.value.pos);
+    } else {
       refuse(
         `error() names no field, so it has no failure to show: field= names a slot, or a path into one ${see}`,
         t.pos,
@@ -329,18 +328,11 @@ export function checkErrorField(
     }
     return;
   }
-  const rootProblem = (named: string, is: string, fix?: string): string =>
-    `error(field=…) cannot show the failure of ${named}: ${is}. field= names a slot, or a path into one${fix ? ` — ${fix}` : ""} ${see}`;
-  if (isTileExpr(arg.value)) {
-    const kind = arg.value.kind === "TileFor" ? "for" : "when";
-    refuse(rootProblem(`a "${kind}"`, "it is a tile, not a slot"), arg.value.pos);
-    return;
-  }
   const reported = (pos: Pos): boolean =>
     errors.some(
       (e) => e.severity !== "warning" && e.pos.line === pos.line && e.pos.col === pos.col,
     );
-  const field = errorField(arg.value);
+  const field = errorField(written.value);
   const { root } = field;
   const notASlot = errorFieldRootProblem(root, sym, ctx);
   if (notASlot) {
