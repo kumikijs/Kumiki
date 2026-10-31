@@ -1,0 +1,20 @@
+{
+  "steps": [
+    {
+      "label": "Time and Duration share one unit, the millisecond",
+      "do": { "click": "#measure" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "second": true,
+          "gapMs": 1000,
+          "epochPlus": 1000,
+          "ctors": [1, 1000, 60000, 3600000, 86400000],
+          "parsed": { "_tag": "Some", "_0": 500 },
+          "nowSince": true
+        },
+        "domIncludes": ["one second apart: true", "gap: 1000 ms"]
+      }
+    }
+  ]
+}

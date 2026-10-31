@@ -1,0 +1,41 @@
+# Feature (stdlib.md): `Time` and `Duration` count milliseconds.
+#
+#   Time     : milliseconds since the Unix epoch
+#   Duration : nominal Int (milliseconds)
+#
+# One unit holds on both sides, so a program can mix them: two instants a
+# second apart are `Duration.s(1)` apart, `to-ms` reads the number as it is,
+# and `Duration.parse` reads its text as a count of milliseconds. `now` is on
+# the same clock: the time since 2020 is more than a year of `Duration.d` and
+# less than a century of it.
+
+slot second     : Bool             = false
+slot gapMs      : Int              = 0
+slot epochPlus  : Int              = 0
+slot ctors      : List(Int)        = []
+slot parsed     : Option(Duration) = None
+slot nowSince   : Bool             = false
+
+reducer measure on=ui.click(Measure)
+    do= let t0 = Time.parse("2026-08-14T09:00:00Z").get
+        let t1 = Time.parse("2026-08-14T09:00:01Z").get
+        let since = now.diff(Time.parse("2020-01-01T00:00:00Z").get)
+        second    := t1.diff(t0) == Duration.s(1)
+        gapMs     := t1.diff(t0).to-ms
+        epochPlus := Time.parse("1970-01-01T00:00:00Z").get.plus(Duration.s(1)).to-ms
+        ctors     := [Duration.ms(1).to-ms, Duration.s(1).to-ms, Duration.m(1).to-ms,
+                      Duration.h(1).to-ms, Duration.d(1).to-ms]
+        parsed    := Duration.parse("500")
+        nowSince  := since > Duration.d(365) && since < Duration.d(36500)
+
+tile Measure = button(text="measure", id="measure")
+
+tile App = column(
+  Measure,
+  text("one second apart: " + second.show),
+  text("gap: " + gapMs.show + " ms"))
+
+app TimeDurationUnit
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []
