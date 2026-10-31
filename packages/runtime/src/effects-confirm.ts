@@ -1,4 +1,4 @@
-import type { AppShape, BuiltinInstaller, HoldLeave } from "./core.ts";
+import type { AppShape, BuiltinEffects, BuiltinInstaller, HoldLeave } from "./core.ts";
 
 type ConfirmInput = {
   title?: string;
@@ -13,7 +13,8 @@ type AppWithHooks = AppShape & {
 };
 
 export const installConfirm: BuiltinInstaller = (app) => {
-  app.effects.confirm = {
+  const effects: BuiltinEffects = app.effects;
+  effects.confirm = {
     name: "confirm",
     cap: "notification.show",
     // Not `overridableInvoke`: a provider's `EffectResult` cannot dispatch

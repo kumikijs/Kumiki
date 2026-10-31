@@ -1,6 +1,7 @@
 import { newId, readEnv } from "./env.ts";
 import {
   type AppShape,
+  type BuiltinEffects,
   type CapabilityProvider,
   type CapabilityRegistry,
   type EffectResult,
@@ -282,7 +283,8 @@ export function overridableInvoke(
 }
 
 export function installLogEffect(app: AppShape): void {
-  app.effects.log = {
+  const effects: BuiltinEffects = app.effects;
+  effects.log = {
     name: "log",
     cap: "log.write",
     invoke: overridableInvoke("log.write", async (input) => {

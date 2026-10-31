@@ -1,0 +1,18 @@
+{
+  "effects": { "fetchLog": [{ "outcome": "ok", "value": "3 entries" }] },
+  "steps": [
+    {
+      "label": "nothing emitted yet",
+      "expect": { "noErrors": true, "state": { "body": "none", "logged": 0, "toasted": 0 } }
+    },
+    {
+      "label": "the program's own effect answers, and the standard log and toast each run once",
+      "do": { "click": "#load" },
+      "expect": {
+        "noErrors": true,
+        "state": { "body": "3 entries", "logged": 1, "toasted": 1 },
+        "domIncludes": ["3 entries", "logged 1", "toasted 1"]
+      }
+    }
+  ]
+}
