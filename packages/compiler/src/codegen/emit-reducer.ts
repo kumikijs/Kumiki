@@ -87,6 +87,7 @@ export function collectEmits(stmts: Statement[]): string[] {
       case "Str":
       case "Bool":
       case "Unit":
+      case "Null":
       case "Ref":
       case "Wildcard":
       case "TokenRef":
