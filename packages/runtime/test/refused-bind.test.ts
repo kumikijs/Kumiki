@@ -1,8 +1,8 @@
 import type { AppShape, MountedApp, TileNode } from "@kumikijs/runtime";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
-import { noteBindWrite, refusedBindControls, refusedBindShown } from "../src/core.ts";
 import { forgetMovedRefusals } from "../src/core/binding.ts";
+import { noteBindWrite, refusedBindControls, refusedBindShown } from "../src/core.ts";
 import { bareApp } from "./helpers/app.ts";
 import { freshRoot } from "./helpers/dom.ts";
 
