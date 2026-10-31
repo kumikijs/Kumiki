@@ -1,0 +1,21 @@
+{
+  "steps": [
+    {
+      "label": "the program's Email record and its Bag over the built-in List render",
+      "expect": {
+        "noErrors": true,
+        "state": { "picked": { "_tag": "None" } },
+        "domIncludes": ["contact: ada@example.com", "numbers: 3", "picked: 0", "seen: 0"]
+      }
+    },
+    {
+      "label": "clicking pick writes the built-in Option and Map",
+      "do": { "click": "#pick" },
+      "expect": {
+        "noErrors": true,
+        "state": { "picked": { "_tag": "Some", "_0": 3 }, "counts": { "seen": 1 } },
+        "domIncludes": ["picked: 3", "seen: 1"]
+      }
+    }
+  ]
+}

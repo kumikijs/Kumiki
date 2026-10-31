@@ -23,7 +23,7 @@ import {
   refinementBaseProblem,
   refinementProblem,
 } from "../refinements.ts";
-import { isReservedTypeName } from "../stdlib-types.ts";
+import { type ReservedTypeReason, reservedTypeReason } from "../stdlib-types.ts";
 import type { KumikiError, SymbolTable } from "./context.ts";
 
 export function resolveType(
@@ -305,21 +305,29 @@ function checkTypeArity(
 
 const EMPTY_SCOPE: ReadonlySet<string> = new Set();
 
+const RESERVED_TYPE_MEANING: Readonly<Record<ReservedTypeReason, string>> = {
+  primitive: "the primitive type",
+  constructor: "the built-in type constructor",
+  "runtime-supplied": "the standard library's",
+};
+
 export function checkTypeDef(def: TypeDef, sym: SymbolTable, errors: KumikiError[]): void {
   resolveType(def.body, sym, errors, new Set(def.params));
 }
 
 /**
- * A program's own definition under a name the standard library keeps (E0231). It is reported from
- * the program's definitions, not from {@link checkTypeDef}, which also judges the standard library's
- * own entries when a type reaches them.
+ * A program's own definition under a name that already means a primitive, a built-in constructor or
+ * a standard library type (E0231). It is reported from the program's definitions, not from
+ * {@link checkTypeDef}, which also judges the standard library's own entries when a type reaches
+ * them.
  */
 export function reservedTypeName(def: TypeDef): KumikiError | null {
-  if (!isReservedTypeName(def.name)) return null;
+  const reason = reservedTypeReason(def.name);
+  if (reason === undefined) return null;
   return {
     code: "E0231",
     kind: "reserved-type-name",
-    message: `Type "${def.name}" collides with the standard library's ${def.name}; uses of it never see this type`,
+    message: `Type "${def.name}" collides with ${RESERVED_TYPE_MEANING[reason]} ${def.name}; uses of it never see this type`,
     pos: def.pos,
   };
 }

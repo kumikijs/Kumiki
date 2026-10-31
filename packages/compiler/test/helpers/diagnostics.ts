@@ -22,9 +22,9 @@ export const errorCodesOf = (src: string): string[] => errorsOf(src).map((e) => 
 export const locatedSummariesOf = (src: string): string[] =>
   checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
-/** E0231's message for a program's own definition of the standard library's `name`. */
-export const reservedTypeNameMessage = (name: string): string =>
-  `Type "${name}" collides with the standard library's ${name}; uses of it never see this type`;
+/** E0231's message for a program's own definition of `name`, which already means `meaning`. */
+export const reservedTypeNameMessage = (name: string, meaning = "the standard library's"): string =>
+  `Type "${name}" collides with ${meaning} ${name}; uses of it never see this type`;
 
 /** Each diagnostic as `"<code> <message>"`. */
 export const summariesOf = (src: string): string[] =>
