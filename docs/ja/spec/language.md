@@ -534,7 +534,7 @@ editor := editor.map($1.copy(body="Body"))
 
 この名前は予約語ではなくディスパッチされる: `get` という名前のフィールドを持つレコードに対しては、`rec.get.title := v` はそのフィールドへの書き込みになる。左辺と右辺は `.get` を同じ規則（レコード自身のフィールドが優先、それ以外は unwrap）で解決する。
 
-`bind=` が `.get` を経由する場合、それは書き込みであると同時に **読み取り** でもあるため、値が空のときは panic する: `draft = None` の状態で `input(bind=draft.get.title)` は初回レンダーで失敗し、アプリはマウントしない。他の `.get` 読み取りと同様に、Option の `match` を通して到達させ、アームの中でも slot のパスを bind すること：`| Some(_) -> input(bind=draft.get.title)`。アームが束縛する名前は値であって場所ではないので、`| Some(d) -> input(bind=d.title)` は [E0229](./errors.md#e0229-bind-target-not-slot) になる。
+`bind=` が `.get` を経由する場合、それは書き込みであると同時に **読み取り** でもあるため、値が空のときは panic する: `draft = None` の状態で `input(bind=draft.get.title)` は初回レンダーで失敗し、アプリはマウントしない。他の `.get` 読み取りと同様に、Option の `match` を通して到達させ、アームの中でも slot のパスを bind すること：`| Some(_) -> input(bind=draft.get.title)`。アームが束縛する名前は値であって場所ではないので、`| Some(d) -> input(bind=d.title)` は [E0229](./errors.md#e0229-bind-target-not-slot) になる。インデックスを通るステップも同じく読み取りである：`i` が `rows` のどの要素も指さない間、`input(bind=rows[i].title)` は読み出し `rows[i].title` と同じく描画を panic させる（[フォーム §5.1](./forms.md#_5-1-個別入力の双方向束縛)）。
 
 **`.copy(field=value, ...)`**: record の immutable update を行うショートカット。method 呼び出しに見えるが、内部的には named-arg を集めて `recordCopy(rec, {field: value, ...})` に展開される。複数 field を 1 度に更新できる：
 

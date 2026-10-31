@@ -10,12 +10,11 @@ import {
 import { bindTarget } from "../bind-target.ts";
 import { errorField, fieldSegment } from "../error-field.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "../input-bind.ts";
-import { checkAgainst, indexStep, unwrappedType } from "./against.ts";
+import { checkAgainst, checkIndexIsPlace, indexStep, unwrappedType } from "./against.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { pushMismatch } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
 import { classifyMember, receiverName } from "./members.ts";
-import { checkIndexIsPlace } from "./reducer.ts";
 
 const BIND_CONTROLS = new Set([
   "input",
@@ -38,7 +37,7 @@ export function checkBindTargetSteps(
   if (!bind || isTileExpr(bind.value)) return;
   for (const step of bindTarget(bind.value).steps) {
     if (step.kind === "Index") {
-      checkIndexIsPlace(inferType(step.base, sym, ctx), step.index, "bind", step.pos, sym, errors);
+      checkIndexIsPlace(indexStep(inferType(step.base, sym, ctx), sym), step, "bind", errors);
     }
     if (step.kind !== "MethodCall") continue;
     const hint =
@@ -106,7 +105,7 @@ function bindRootNotASlot(root: Expr, sym: SymbolTable, ctx: Ctx): RootReport | 
             return notASlot(
               named,
               "it is the variable of a for",
-              "To edit a row, show it with value= and update the list from a reducer",
+              "To edit a row, bind it through the slot by a Map key or an index the page holds (bind=rows[i].title), or show it with value= and update the list from a reducer",
             );
           case "input":
             return notASlot(

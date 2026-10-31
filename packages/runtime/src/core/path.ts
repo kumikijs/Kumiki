@@ -24,7 +24,7 @@ function sameSegment(own: PathSegment | undefined, step: PathSegment): boolean {
   if (typeof step !== "object" || step === null) return own === step;
   if (typeof own !== "object" || own === null) return false;
   if (isUnwrapSegment(step)) return isUnwrapSegment(own);
-  return isIndexSegment(step) && isIndexSegment(own) && own.at === step.at;
+  return isIndexSegment(step) && isIndexSegment(own) && entryKey(own.at) === entryKey(step.at);
 }
 
 export function entryKey(x: unknown): string {

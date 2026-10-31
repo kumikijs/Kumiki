@@ -1,6 +1,7 @@
-import { BUILTIN_TILES, codegen, lex, parse } from "@kumikijs/compiler";
+import { BUILTIN_TILES } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { codesOf, pointedErrorsOf, summariesOf } from "./helpers/diagnostics.ts";
+import { loweredOf } from "./helpers/module.ts";
 import { withApp } from "./helpers/programs.ts";
 
 const HEAD = `type Size = Small | Large
@@ -17,9 +18,18 @@ tile B = button(text="b")
 `;
 
 const program = (defs: string) => withApp(`${HEAD}${defs}`);
-const diagnostics = (defs: string) => checkSource(program(defs));
-const lowered = (defs: string): string =>
-  codegen(parse(lex(program(defs))), { runtimeSpecifier: "./runtime.js" }).js;
+const lowered = (defs: string): string => loweredOf(program(defs));
+
+const BINDING_CONTROLS = [
+  "check",
+  "editable",
+  "input",
+  "radio",
+  "select",
+  "slider",
+  "switch",
+  "textarea",
+];
 
 describe("a bind target that steps through an index", () => {
   // Found from the lowering rather than from a list: a builtin that lowers
@@ -31,9 +41,11 @@ describe("a bind target that steps through an index", () => {
     .sort();
 
   it("is lowered into the bind of every control that binds", () => {
-    expect(binding.length).toBeGreaterThan(0);
+    expect(binding).toEqual(BINDING_CONTROLS);
     const through = binding.filter((name) =>
-      lowered(`tile App = column(${name}(bind=m["k"], value="v"))`).includes(`bind: "m"`),
+      lowered(`tile App = column(${name}(bind=m["k"], value="v"))`).includes(
+        `bind: "m", bindPath: [{ at: "k" }]`,
+      ),
     );
     expect(through).toEqual(binding);
   });
@@ -49,7 +61,8 @@ tile App = column(B)`);
 
   it("checks clean on every control, from a slot index, a literal, and a for's key", () => {
     expect(
-      diagnostics(`tile App = column(
+      summariesOf(
+        program(`tile App = column(
   input(bind=rows[0].title), input(bind=rows[i].qty, type="number"), textarea(bind=rows[i].title),
   check(bind=rows[i].done), switch(bind=rows[i].done),
   radio(group="g", bind=rows[i].size, value=Large),
@@ -57,46 +70,47 @@ tile App = column(B)`);
   slider(bind=rows[i].qty, min=0, max=9), editable("x", bind=rows[i].title),
   input(bind=m["k"]), input(bind=mt["k"].title), input(bind=draft.get.title),
   for k in mt.keys input(bind=mt[k].title))`),
+      ),
     ).toEqual([]);
   });
 });
 
 describe("what the checker asks of an index step in a bind target", () => {
-  it("is what it asks of the step on the left of :=, for a Set: E0602 at the step", () => {
-    const [bound] = diagnostics(`tile App = column(input(bind=s["a"]))`);
-    const [assigned] = diagnostics(`reducer r on=ui.click(B) do= s["a"] := true
-tile App = column(B)`);
-    expect(bound).toMatchObject({
-      code: "E0602",
-      kind: "unassignable-member",
-      pos: { line: 12, col: 30 },
-    });
-    expect(bound?.message).toBe(
-      `Cannot bind through an index into "Set(Text)": a Set has members, not places — use .add / .remove / .toggle`,
-    );
-    expect(bound?.message.replace("bind", "assign")).toBe(assigned?.message);
-  });
-
-  it("is what it asks of the step on the left of :=, for a record: E0602 naming the field step", () => {
-    const [bound] = diagnostics(`tile App = column(input(bind=draft.get["title"]))`);
-    const [assigned] = diagnostics(`reducer r on=ui.click(B) do= draft.get["title"] := "x"
-tile App = column(B)`);
-    expect(bound).toMatchObject({ code: "E0602", kind: "unassignable-member" });
-    expect(bound?.message).toBe(
-      `Cannot bind through an index into "D": an index names a place only in a Map or a List — write the field step ".title"`,
-    );
-    expect(bound?.message.replace("bind", "assign")).toBe(assigned?.message);
+  it.each([
+    [
+      "a Set: E0602 at the step",
+      `s["a"]`,
+      `"Set(Text)": a Set has members, not places — use .add / .remove / .toggle`,
+      "true",
+    ],
+    [
+      "a record: E0602 naming the field step",
+      `draft.get["title"]`,
+      `"D": an index names a place only in a Map or a List — write the field step ".title"`,
+      `"x"`,
+    ],
+  ])("is what it asks of the step on the left of :=, for %s", (_label, target, why, value) => {
+    const message = `Cannot bind through an index into ${why}`;
+    expect(pointedErrorsOf(program(`tile App = column(input(bind=${target}))`))).toEqual([
+      { code: "E0602", message, text: `${target}))` },
+    ]);
+    expect(
+      summariesOf(
+        program(`reducer r on=ui.click(B) do= ${target} := ${value}
+tile App = column(B)`),
+      ),
+    ).toEqual([`E0602 ${message.replace("bind", "assign")}`]);
   });
 
   it("is reported on every control that binds", () => {
-    const positions = diagnostics(
-      `tile App = column(textarea(bind=s["a"]), select(bind=s["a"], options=[]))`,
-    )
-      .filter((d) => d.code === "E0602")
-      .map((d) => d.pos);
-    expect(positions).toEqual([
-      { line: 12, col: 33 },
-      { line: 12, col: 54 },
+    const message = `Cannot bind through an index into "Set(Text)": a Set has members, not places — use .add / .remove / .toggle`;
+    expect(
+      pointedErrorsOf(
+        program(`tile App = column(textarea(bind=s["a"]), select(bind=s["a"], options=[]))`),
+      ),
+    ).toEqual([
+      { code: "E0602", message, text: `s["a"]), select(bind=s["a"], options=[]))` },
+      { code: "E0602", message, text: `s["a"], options=[]))` },
     ]);
   });
 

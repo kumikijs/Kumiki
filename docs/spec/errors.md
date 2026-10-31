@@ -1047,7 +1047,7 @@ slot todos : List(Todo) = [{text: "milk"}]
 tile Rows = column(for t in todos input(bind=t.text))
 ```
 
-**Fix**: Bind the slot itself, or a path into it. A text literal that spells a slot's name is that slot written with quotes: `bind=title`. Where a local of that name hides the slot, the unquoted name is the local, so the message gives the general fix instead. To edit one row of a list, bind it through the list by its key or index — `for k in todos.keys input(bind=todos[k].text)` — or show the row with `value=`, carry its key in its props, and update the list from a reducer on the row's event ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)):
+**Fix**: Bind the slot itself, or a path into it. A text literal that spells a slot's name is that slot written with quotes: `bind=title`. Where a local of that name hides the slot, the unquoted name is the local, so the message gives the general fix instead. To edit one row, bind it through the slot — a `Map` entry by its key (`for k in todos.keys input(bind=todos[k].text)` on a `Map(Text, Todo)`), a `List` element by an index the page holds (`input(bind=todos[i].text)`) — or show the row with `value=`, carry its key in its props, and update the list from a reducer on the row's event ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)):
 
 ```kumiki fragment
 type Todo = {text: Text}
@@ -1269,9 +1269,10 @@ A **`bind=` target** is written through the same way — it is the place the con
 
 Without this check the bind was dropped whole: `input(bind=d.get().title)` passed `check` and `build` and rendered an input bound to nothing. The unwrap step is `.get`, in a bind as on the left of `:=` — where `d.get().title := v` does not parse, since a path step is an identifier ([Language §1.6.1](./language.md#_1-6-1-syntax)).
 
-An index step of a bind target names the place it names on the left of `:=` — a `List` element, a `Map` entry — so an index into anything that is neither a `Map` nor a `List` is E0602 there too, at the index. The messages are the two above, with `bind` for `assign`:
+An index step of a bind target names the place it names on the left of `:=` — a `List` element, a `Map` entry — so an index into anything that is neither a `Map` nor a `List` is E0602 there too, at the index. The messages are the two index messages above, with `bind` for `assign`:
 
 > `Cannot bind through an index into "<T>": a Set has members, not places — use .add / .remove / .toggle`
+> `Cannot bind through an index into "<T>": an index names a place only in a Map or a List`
 
 **Fix**: For a member, write the value the member would have derived — `name := "some text"` rather than `name.length := 9` — or, if the receiver is a record, use a field that exists. For a Set, change membership instead of indexing: `tags := tags.add(x)`, or `.remove(x)` / `.toggle(x)` in its place ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)). For an index into anything else, write the step that names a place: a record's field as `r.a := v`, an `Option` / `Result` payload through `.get` (`o.get := v`, which writes nothing on a `None` or an `Err`), and any other value whole (`n := v`). To write an `Option` / `Result` value whatever it holds, replace it whole: `o := Some(v)`, `res := Ok(v)`.
 

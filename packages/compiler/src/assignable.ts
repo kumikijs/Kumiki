@@ -198,7 +198,7 @@ export function recordFieldType(
   return rec.fields.find((f) => f.name === name)?.type ?? null;
 }
 
-/** `null` for a `Set`, which has members and no places. */
+/** The place an index into the unaliased `base` names — a List's element, a Map's value — or `null` (a Set has members, not places). */
 export function indexPlaceType(base: TypeExpr | null): TypeExpr | null {
   if (base?.kind !== "TypeApp") return null;
   if (base.name === "List") return base.args[0] ?? null;

@@ -404,6 +404,39 @@ export function indexStep(raw: TypeExpr | null, sym: SymbolTable): IndexStep {
   return { kind: "no-place", raw, base };
 }
 
+/** An index step a write goes through, on the left of `:=` or in a `bind=` target. */
+export function checkIndexIsPlace(
+  step: IndexStep,
+  at: { index: Expr; pos: Pos },
+  verb: "assign" | "bind",
+  errors: KumikiError[],
+): void {
+  if (step.kind !== "no-place") return;
+  errors.push({
+    code: "E0602",
+    kind: "unassignable-member",
+    message: noPlaceMessage(step, at.index, verb),
+    pos: at.pos,
+  });
+}
+
+function noPlaceMessage(
+  step: IndexStep & { kind: "no-place" },
+  index: Expr,
+  verb: "assign" | "bind",
+): string {
+  const { raw, base } = step;
+  const into = `Cannot ${verb} through an index into "${typeToString(raw)}"`;
+  if (base.kind === "TypeApp" && base.name === "Set") {
+    return `${into}: a Set has members, not places — use .add / .remove / .toggle`;
+  }
+  const field =
+    base.kind === "TypeRecord" && index.kind === "Str" && recordFieldType(base, index.value)
+      ? ` — write the field step ".${index.value}"`
+      : "";
+  return `${into}: an index names a place only in a Map or a List${field}`;
+}
+
 /** A type name that resolves to nothing is E0117 where it is written, and judges no value. */
 function namesNothing(t: TypeExpr, sym: SymbolTable): boolean {
   return (t.kind === "TypeApp" || t.kind === "TypeRef") && !isKnownTypeName(t.name, sym);

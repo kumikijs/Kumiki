@@ -1025,7 +1025,7 @@ slot todos : List(Todo) = [{text: "milk"}]
 tile Rows = column(for t in todos input(bind=t.text))
 ```
 
-**修正**：slot そのもの、またはその中へのパスを bind する。slot の名前を綴ったテキストリテラルは、その slot を引用符付きで書いたものである：`bind=title` と書く。その名前のローカルが slot を隠している位置では、引用符を外した名前はそのローカルを指すので、メッセージは一般的な修正を示す。リストの 1 行を編集するには、リストを通してそのキーかインデックスで bind する — `for k in todos.keys input(bind=todos[k].text)` — か、行を `value=` で表示し、props にキーを持たせ、行のイベントに対する reducer でリストを更新する（[フォーム §5.1](./forms.md#_5-1-個別入力の双方向束縛)）：
+**修正**：slot そのもの、またはその中へのパスを bind する。slot の名前を綴ったテキストリテラルは、その slot を引用符付きで書いたものである：`bind=title` と書く。その名前のローカルが slot を隠している位置では、引用符を外した名前はそのローカルを指すので、メッセージは一般的な修正を示す。1 行を編集するには、slot を通して bind する — `Map` のエントリはそのキーで（`Map(Text, Todo)` に対する `for k in todos.keys input(bind=todos[k].text)`）、`List` の要素はページが保持するインデックスで（`input(bind=todos[i].text)`）— か、行を `value=` で表示し、props にキーを持たせ、行のイベントに対する reducer でリストを更新する（[フォーム §5.1](./forms.md#_5-1-個別入力の双方向束縛)）：
 
 ```kumiki fragment
 type Todo = {text: Text}
@@ -1247,9 +1247,10 @@ lvalue のステップがレシーバ内のどの場所も指していない：�
 
 この検査が無いと bind は丸ごと落とされていた：`input(bind=d.get().title)` は `check` も `build` も通り、何にも束縛されていない input が描画された。アンラップのステップは、`:=` の左辺と同じく bind でも `.get` である — `:=` の左辺では、パスのステップは識別子なので `d.get().title := v` は構文として読めない（[言語 §1.6.1](./language.md#_1-6-1-構文)）。
 
-bind の対象のインデックスのステップは、`:=` の左辺で指すのと同じ場所 — `List` の要素、`Map` のエントリ — を指すので、`Map` でも `List` でもないものへのインデックスはここでもそのインデックスの位置で E0602 になる。メッセージは上の二つの `assign` を `bind` にしたものである：
+bind の対象のインデックスのステップは、`:=` の左辺で指すのと同じ場所 — `List` の要素、`Map` のエントリ — を指すので、`Map` でも `List` でもないものへのインデックスはここでもそのインデックスの位置で E0602 になる。メッセージは上のインデックスについての二つの `assign` を `bind` にしたものである：
 
 > `Cannot bind through an index into "<T>": a Set has members, not places — use .add / .remove / .toggle`
+> `Cannot bind through an index into "<T>": an index names a place only in a Map or a List`
 
 **対処**：メンバーなら、そのメンバーが導出するはずだった値を直接書く（`name.length := 9` ではなく `name := "some text"`）。レシーバがレコードなら、実在するフィールドを使う。Set なら、インデックスではなく所属を変える：`tags := tags.add(x)`、あるいはその位置に `.remove(x)` / `.toggle(x)`（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。それ以外へのインデックスなら、場所を指すステップで書く：レコードのフィールドは `r.a := v`、`Option` / `Result` のペイロードは `.get` を通して（`o.get := v`。`None` や `Err` には何も書き込まない）、それ以外の値は全体を置き換える（`n := v`）。中身にかかわらず `Option` / `Result` の値を書くには、全体を置き換える：`o := Some(v)`、`res := Ok(v)`。
 

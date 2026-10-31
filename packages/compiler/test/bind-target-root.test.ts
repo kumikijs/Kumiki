@@ -46,7 +46,7 @@ tile App = column(
         "E0229",
         "bind-target-not-slot",
         { line: 6, col: 29 },
-        `input(bind=…) cannot write to "t": it is the variable of a for, not a slot — ${tail}. To edit a row, show it with value= and update the list from a reducer ${see}`,
+        `input(bind=…) cannot write to "t": it is the variable of a for, not a slot — ${tail}. To edit a row, bind it through the slot by a Map key or an index the page holds (bind=rows[i].title), or show it with value= and update the list from a reducer ${see}`,
       ],
       [
         "E0229",

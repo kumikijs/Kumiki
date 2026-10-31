@@ -126,7 +126,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0402](./errors.md#e0402-motion-invalid-timing) | `motion-invalid-timing` | tile | style |
 | [E0403](./errors.md#e0403-motion-malformed) | `motion-malformed` | tile | style |
 | [E0601](./errors.md#e0601-duplicate-write) | `duplicate-write` | reducer | core |
-| [E0602](./errors.md#e0602-unassignable-member) | `unassignable-member` | reducer | core |
+| [E0602](./errors.md#e0602-unassignable-member) | `unassignable-member` | reducer / tile | core |
 | [E0701](./errors.md#e0701-a11y-button) | `a11y-button` | tile | lifecycle |
 | [E0702](./errors.md#e0702-a11y-image) | `a11y-image` | tile | lifecycle |
 | [E0703](./errors.md#e0703-a11y-link) | `a11y-link` | tile | lifecycle |
