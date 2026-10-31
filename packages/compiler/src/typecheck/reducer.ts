@@ -146,7 +146,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
 }
 
-// A wrapped control's focused element, and a kind whose renderer never calls the handler, do fire
+// A wrapped kind's focused element, and a kind whose renderer never calls the handler, do fire
 // the event; "no descendant fires it" would be untrue of them. No row records a kind that fires
 // unheard under key, focus or blur, so the two reasons never both apply.
 function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet<string>): string {
@@ -169,7 +169,8 @@ function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
   const kinds = g.kinds.join(" / ");
   return g.bubbles
     ? `a ${kinds} takes no "${ev}" listener on the <${g.wrapper}> around its <${g.focused}>, ` +
-        `since one there would also hear every "${ev}" from the tiles inside it`
+        `since a control in its panel takes the subscription instead — ` +
+        `write ${g.handler}= on the ${kinds} to hear a "${ev}" on its <${g.focused}>`
     : `the runtime listens for "${ev}" on a ${kinds}'s <${g.wrapper}>, ` +
         `and the "${ev}" its <${g.focused}> fires does not bubble to the <${g.wrapper}>`;
 }

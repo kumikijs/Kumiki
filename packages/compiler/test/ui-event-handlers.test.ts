@@ -288,6 +288,7 @@ app A
     { kind: "link", tile: 'link(to="/", text="home")', evs: ALL },
     { kind: "select", tile: "select(bind=size, options=sizes())", evs: ALL },
     { kind: "video", tile: 'video(src="/a.mp4", controls=true)', evs: ALL },
+    { kind: "video without controls", tile: 'video(src="/a.mp4")', evs: ALL },
     { kind: "check", tile: "check(value=done)", evs: ["key"] },
     { kind: "radio", tile: 'radio(group="g", selected=done)', evs: ["key"] },
     { kind: "switch", tile: "switch(value=done)", evs: ["key"] },
@@ -347,24 +348,20 @@ app A
     expect(loweredOf(source(ev, tile))).not.toContain(`${HANDLER[ev]}: _h("hit")`);
   });
 
-  it("lifts ui.key on a details onto the input in its panel, and onto nothing else", () => {
-    // A listener on the <details> as well as the input's own would run the
-    // reducer twice per key, since the input's keydown bubbles there.
-    const lifted = (tile: string): number =>
-      loweredOf(source("key", tile)).split(`onKeyDown: _h("hit")`).length - 1;
-    const details = 'details(summary="Question", input(bind=note))';
+  const lifted = (tile: string): number =>
+    loweredOf(source("key", tile)).split(`onKeyDown: _h("hit")`).length - 1;
+
+  // A listener on the <details> as well as the control's own would run the
+  // reducer twice per key, since the control's keydown bubbles there. A check
+  // is a wrapped kind too, whose <label> does hear the key.
+  it.each([
+    ["input", "input(bind=note)"],
+    ["check", "check(value=done)"],
+  ])("lifts ui.key on a details onto the %s in its panel, and onto nothing else", (_, inner) => {
+    const details = `details(summary="Question", ${inner})`;
     expect(codesOf(source("key", details))).toEqual([]);
     expect(lifted(details)).toBeGreaterThan(0);
-    expect(lifted(details)).toBe(lifted("box(input(bind=note))"));
-    expect(checkSource(source("key", 'details(summary="Q", text(note))'))).toEqual([
-      expect.objectContaining({
-        code: "W0212",
-        message: expect.stringContaining(
-          `a details takes no "key" listener on the <details> around its <summary>, ` +
-            `since one there would also hear every "key" from the tiles inside it`,
-        ),
-      }),
-    ]);
+    expect(lifted(details)).toBe(lifted(`box(${inner})`));
   });
 
   it("leaves ui.change on an editable alone, which is the rule rather than the same gap", () => {

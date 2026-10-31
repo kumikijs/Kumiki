@@ -75,7 +75,7 @@
       }
     },
     {
-      "label": "a key in the panel's input runs ui.key(Faq) once, then bubbles to the details' onKeyDown",
+      "label": "a key in the panel's input runs ui.key(Faq) once, then bubbles to the details's onKeyDown",
       "do": {
         "key": "#answer",
         "value": "a"
