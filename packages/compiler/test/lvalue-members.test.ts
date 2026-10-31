@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
 import { checkSource, codesOf, pointedErrorsOf, textAt } from "./helpers/diagnostics.ts";
 import { compileOrFail, loweredOf } from "./helpers/module.ts";
-import { withApp } from "./helpers/programs.ts";
+import { withApp, withRoot } from "./helpers/programs.ts";
 
 /** The reducer body under test, wrapped in the smallest program that parses. */
 const withBody = (decls: string, body: string): string =>
@@ -154,14 +154,40 @@ describe("the write side answers the read side's question too", () => {
   });
 });
 
+// However the Set is reached, the step into it is the same step, on either side of `:=`, and both
+// messages name the receiver's type as the program writes it.
+const SET_REACHED: [how: string, decls: string, step: string, written: string][] = [
+  [
+    "a record field",
+    `type Doc = { tags: Set(Text) }\nslot doc : Doc = { tags: [] }`,
+    `doc.tags["a"]`,
+    "Set(Text)",
+  ],
+  ["an alias", `type Tags = Set(Text)\nslot tags : Tags = []`, `tags["a"]`, "Tags"],
+  ["a nominal type", `type Tags = nominal Set(Text)\nslot tags : Tags = []`, `tags["a"]`, "Tags"],
+  ["an element of a List", `slot sets : List(Set(Int)) = []`, `sets[0][1]`, "Set(Int)"],
+  ["a value of a Map", `slot byKey : Map(Text, Set(Int)) = {}`, `byKey["a"][1]`, "Set(Int)"],
+  ["the payload of an Option", `slot maybe : Option(Set(Int)) = None`, `maybe.get[1]`, "Set(Int)"],
+];
+
+const E0602_SET = (written: string): string =>
+  `Cannot assign through an index into "${written}": a Set has members, not places — use .add / .remove / .toggle`;
+const E0232 = (written: string): string =>
+  `Cannot read through an index into "${written}": a Set has members, not places — use .has`;
+
+/** A tile that shows `expr`, the smallest program that reads it. */
+const shown = (decls: string, expr: string): string =>
+  withRoot(`text("v: " + ${expr}.show)`, decls);
+
+/** The source text from the key of the last index in `step` to the end of its line in `shown`. */
+const fromLastKey = (step: string): string => `${step.slice(step.lastIndexOf("[") + 1)}.show))`;
+
 describe("an index step into a Set", () => {
   it("is E0602, naming the Set and the members that change it", () => {
     const errs = checkSource(withBody(`slot tags : Set(Int) = []`, `tags[7] := 8`));
     const e = errs.find((x) => x.code === "E0602");
     expect(e?.kind).toBe("unassignable-member");
-    expect(e?.message).toBe(
-      `Cannot assign through an index into "Set(Int)": a Set has members, not places — use .add / .remove / .toggle`,
-    );
+    expect(e?.message).toBe(E0602_SET("Set(Int)"));
   });
 
   it("is reported once, with no type mismatch on the right-hand side behind it", () => {
@@ -169,35 +195,89 @@ describe("an index step into a Set", () => {
     expect(errs.map((x) => x.code)).toEqual(["E0602"]);
   });
 
-  // However the Set is reached, the step into it is the same step, and the message names the
-  // Set's type as the program writes it.
+  // The right-hand side is not checked past a step that names no place, so any value will do.
+  it.each(SET_REACHED)("is E0602 where the Set is %s", (_how, decls, step, written) => {
+    const errs = checkSource(withBody(decls, `${step} := 1`));
+    expect(errs.map((e) => [e.code, e.message])).toEqual([["E0602", E0602_SET(written)]]);
+  });
+});
+
+describe("an index read into a Set", () => {
+  it("is E0232, naming the Set and pointing at .has", () => {
+    const errs = checkSource(shown(`slot s : Set(Int) = [5]`, `s[5]`));
+    expect(errs.map((x) => [x.code, x.kind, x.message])).toEqual([
+      ["E0232", "index-into-set", E0232("Set(Int)")],
+    ]);
+  });
+
+  // The key says which index it is when the Set is reached through another.
+  it.each(SET_REACHED)("is E0232 at the key where the Set is %s", (_how, decls, step, written) => {
+    expect(pointedErrorsOf(shown(decls, step))).toEqual([
+      { code: "E0232", message: E0232(written), text: fromLastKey(step) },
+    ]);
+  });
+
   it.each([
-    [
-      "a record field",
-      `type Doc = { tags: Set(Text) }\nslot doc : Doc = { tags: [] }`,
-      `doc.tags["a"] := "b"`,
-      "Set(Text)",
-    ],
-    ["an alias", `type Tags = Set(Text)\nslot tags : Tags = []`, `tags["a"] := "b"`, "Tags"],
-    [
-      "a nominal type",
-      `type Tags = nominal Set(Text)\nslot tags : Tags = []`,
-      `tags["a"] := "b"`,
-      "Tags",
-    ],
-    ["an element of a List", `slot sets : List(Set(Int)) = []`, `sets[0][1] := 2`, "Set(Int)"],
-    ["a value of a Map", `slot byKey : Map(Text, Set(Int)) = {}`, `byKey["a"][1] := 2`, "Set(Int)"],
-    [
-      "the payload of an Option",
-      `slot maybe : Option(Set(Int)) = None`,
-      `maybe.get[1] := 2`,
-      "Set(Int)",
-    ],
-  ])("is E0602 where the Set is %s", (_how, decls, body, name) => {
-    const errs = checkSource(withBody(decls, body));
-    expect(errs.map((e) => e.code)).toEqual(["E0602"]);
-    expect(errs[0]?.message).toContain(`into "${name}": a Set has members`);
-    expect(errs[0]?.message).toContain(".add");
+    ["a Text", `slot t : Text = ""`, `t := s[5]`],
+    ["a Bool", `slot b : Bool = false`, `b := s[5]`],
+    ["an if condition", `slot n : Int = 0`, `if s[5] then n := 1`],
+  ])("is reported once where %s is expected", (_how, decl, body) => {
+    expect(codesOf(withBody(`slot s : Set(Int) = [5]\n${decl}`, body))).toEqual(["E0232"]);
+  });
+
+  it("is reported once as a fn body checked against its declared result", () => {
+    const src = withApp(`fn f(s: Set(Int)) -> Bool = s[5]\ntile App = column(text(f([5]).show))`);
+    expect(codesOf(src)).toEqual(["E0232"]);
+  });
+
+  it("leaves the step after it unjudged", () => {
+    expect(codesOf(shown(`slot s : Set(Int) = [5]`, `s[5].foo`))).toEqual(["E0232"]);
+  });
+
+  // A bound control reads its target before it writes one.
+  it.each([
+    ["an input", `input(bind=tags["a"])`],
+    ["a check", `check(bind=tags["a"])`],
+  ])("is E0232 at the target of %s", (_how, control) => {
+    const src = withApp(`slot tags : Set(Text) = []\ntile App = column(${control})`);
+    expect(codesOf(src)).toEqual(["E0232"]);
+  });
+
+  // Reads into these have no places either. A record read through a literal key has its field's
+  // type, the others none; that they pass unreported is tracked apart.
+  it.each([
+    ["an Int", `slot n : Int = 5`, `n[0]`],
+    ["a record", `type R = { a: Int }\nslot r : R = { a: 1 }`, `r["a"]`],
+    ["an Option", `slot o : Option(Int) = Some(1)`, `o[0]`],
+    ["a Tuple", `slot p : Tuple(Int, Int) = (1, 2)`, `p[0]`],
+  ])("is not reported for %s", (_what, decls, expr) => {
+    expect(codesOf(shown(decls, expr))).not.toContain("E0232");
+  });
+
+  it("stays silent on a receiver whose type name resolves to nothing", () => {
+    const codes = codesOf(shown(`slot s : Sett(Int) = []`, `s[1]`));
+    expect(codes).toContain("E0117");
+    expect(codes).not.toContain("E0232");
+  });
+});
+
+describe("a membership read and the other index reads stay legal", () => {
+  it.each([
+    ["Set.has", `slot s : Set(Int) = [5]`, `s.has(5)`],
+    ["Set.has through .get", `slot maybe : Option(Set(Int)) = None`, `maybe.get.has(1)`],
+    ["a List index", `slot xs : List(Int) = [1]`, `xs[0]`],
+    ["a Map index", `slot m : Map(Text, Int) = {"a": 1}`, `m["a"]`],
+    ["a Map keyed by a Set", `slot s : Set(Int) = []\nslot m : Map(Set(Int), Int) = {}`, `m[s]`],
+  ])("accepts %s", (_how, decls, expr) => {
+    expect(checkSource(shown(decls, expr))).toEqual([]);
+  });
+
+  // `{}` is the empty Map and the empty Set alike, so a fold it starts has an
+  // accumulator of no known type, and a false error there is worse than silence.
+  it.each([
+    ["the accumulator of a fold from {}", `slot xs : List(Int) = [1]`, `xs.fold({}, $1[$2])`],
+  ])("says nothing about an index into %s", (_how, decls, expr) => {
+    expect(checkSource(shown(decls, expr))).toEqual([]);
   });
 });
 

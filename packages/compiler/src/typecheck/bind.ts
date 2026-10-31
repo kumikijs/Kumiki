@@ -10,7 +10,7 @@ import {
 import { bindTarget } from "../bind-target.ts";
 import { errorField, fieldSegment } from "../error-field.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "../input-bind.ts";
-import { checkAgainst, indexStep, unwrappedType } from "./against.ts";
+import { checkAgainst, checkIndexIsPlace, indexStep, unwrappedType } from "./against.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { pushMismatch } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
@@ -29,11 +29,16 @@ const BIND_CONTROLS = new Set([
 
 export function checkBindTargetSteps(
   t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
   errors: KumikiError[],
+  ctx: Ctx,
 ): void {
   const bind = t.args.find((a) => a.name === "bind");
   if (!bind || isTileExpr(bind.value)) return;
   for (const step of bindTarget(bind.value).steps) {
+    if (step.kind === "Index") {
+      checkIndexIsPlace(indexStep(inferType(step.base, sym, ctx), sym), step, "bind", errors);
+    }
     if (step.kind !== "MethodCall") continue;
     const hint =
       step.method === "get" && step.args.length === 0
@@ -84,7 +89,7 @@ type RootReport = { named: string; is: string; fix: string; see: string };
 
 const notASlot = (named: string, is: string, fix: string): RootReport => ({
   named,
-  is: `${is}, not a slot — a bind writes back to a slot or a field path into one`,
+  is: `${is}, not a slot — a bind writes back to a slot or a path into one`,
   fix,
   see: "forms.md",
 });
@@ -100,7 +105,7 @@ function bindRootNotASlot(root: Expr, sym: SymbolTable, ctx: Ctx): RootReport | 
             return notASlot(
               named,
               "it is the variable of a for",
-              "To edit a row, show it with value= and update the list from a reducer",
+              "To edit a row, bind it through the slot by a Map key or an index the page holds (bind=rows[i].title), or show it with value= and update the list from a reducer",
             );
           case "input":
             return notASlot(
@@ -305,7 +310,7 @@ export function checkInputBindType(
 
 /**
  * Run after the field has been checked as a value, so what that read already
- * reported (E0103, E0127, E0108, E0213, an E0201 on a key) is not reported again.
+ * reported (E0103, E0127, E0108, E0213, an E0201 or E0232 at a key) is not reported again.
  */
 export function checkErrorField(
   t: TileExpr & { kind: "TileCall" },
@@ -368,6 +373,7 @@ export function checkErrorField(
         );
         return;
       case "Index": {
+        if (reported(step.index.pos)) return;
         if (fieldSegment(step) === null) {
           refuse(
             `error(field=…) cannot step through an index that is not a literal: a path names one element or entry by a literal key, such as [0] or ["k"] ${see}`,

@@ -1,14 +1,18 @@
-import { recordFieldType, typeToString, unaliasType } from "../assignable.ts";
-import type { AppDef, Expr, Lvalue, ReducerDef, Statement, TypeExpr, UiEventKind } from "../ast.ts";
+import { unaliasType } from "../assignable.ts";
+import type { AppDef, Lvalue, ReducerDef, Statement, TypeExpr, UiEventKind } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { refType } from "../stdlib-types.ts";
-import { firesUnheardIn, labelWrappedUnreached, UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
+import {
+  firesUnheardIn,
+  UI_EVENT_TILE_KINDS,
+  type WrappedUnreached,
+  wrappedUnreached,
+} from "../ui-lifts.ts";
 import {
   checkAgainst,
   checkEmitTarget,
-  type IndexStep,
-  indexStep,
+  checkIndexStep,
   lvalueType,
   unwrappedType,
 } from "./against.ts";
@@ -141,9 +145,9 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
 }
 
-// A label-wrapped control's <input>, and a kind whose renderer never calls the handler, do fire
+// A wrapped kind's focused element, and a kind whose renderer never calls the handler, do fire
 // the event; "no descendant fires it" would be untrue of them. No row records a kind that fires
-// unheard under focus or blur, so the two reasons never both apply.
+// unheard under key, focus or blur, so the two reasons never both apply.
 function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet<string>): string {
   const unheard = firesUnheardIn(ev, kinds);
   if (unheard.length > 0) {
@@ -153,14 +157,21 @@ function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet
     );
     return `"${ev}" never reaches a reducer in tile "${tile}": ${clauses.join("; ")}`;
   }
-  const unreached = labelWrappedUnreached(ev, kinds);
+  const unreached = wrappedUnreached(ev, kinds).map((g) => wrappedClause(ev, g));
   if (unreached.length > 0) {
-    return (
-      `"${ev}" never reaches a listener in tile "${tile}": the runtime listens for "${ev}" on a ` +
-      `${unreached.join(" / ")}'s <label>, and the "${ev}" its <input> fires does not bubble to the <label>`
-    );
+    return `"${ev}" never reaches a listener in tile "${tile}": ${unreached.join("; ")}`;
   }
   return `tile "${tile}" has no descendant that fires "${ev}"`;
+}
+
+function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
+  const kinds = g.kinds.join(" / ");
+  return g.bubbles
+    ? `a ${kinds} takes no "${ev}" listener on the <${g.wrapper}> around its <${g.focused}>, ` +
+        `since a control in its panel takes the subscription instead — ` +
+        `write ${g.handler}= on the ${kinds} to hear a "${ev}" on its <${g.focused}>`
+    : `the runtime listens for "${ev}" on a ${kinds}'s <${g.wrapper}>, ` +
+        `and the "${ev}" its <${g.focused}> fires does not bubble to the <${g.wrapper}>`;
 }
 
 function declaredRoutePatterns(
@@ -352,7 +363,7 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
   checkLvalue(lv.base, sym, errors, ctx);
   if (lv.kind === "LIndex") {
     checkExpr(lv.index, sym, errors, ctx);
-    checkIndexLvalue(lv, sym, errors, ctx);
+    checkIndexStep(lvalueType(lv.base, sym), lv.index, "write", lv.pos, sym, errors, ctx);
   } else {
     const raw = lvalueType(lv.base, sym);
     const base = unaliasType(raw, sym);
@@ -361,36 +372,6 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
       checkMemberLvalue(lv, raw, base, sym, errors);
     }
   }
-}
-
-function checkIndexLvalue(
-  lv: Lvalue & { kind: "LIndex" },
-  sym: SymbolTable,
-  errors: KumikiError[],
-  ctx: Ctx,
-): void {
-  const step = indexStep(lvalueType(lv.base, sym), sym);
-  if (step.kind === "place" && step.key) checkAgainst(lv.index, step.key, sym, errors, ctx);
-  if (step.kind !== "no-place") return;
-  errors.push({
-    code: "E0602",
-    kind: "unassignable-member",
-    message: noPlaceMessage(step, lv.index),
-    pos: lv.pos,
-  });
-}
-
-function noPlaceMessage(step: IndexStep & { kind: "no-place" }, index: Expr): string {
-  const { raw, base } = step;
-  const into = `Cannot assign through an index into "${typeToString(raw)}"`;
-  if (base.kind === "TypeApp" && base.name === "Set") {
-    return `${into}: a Set has members, not places — use .add / .remove / .toggle`;
-  }
-  const field =
-    base.kind === "TypeRecord" && index.kind === "Str" && recordFieldType(base, index.value)
-      ? ` — write the field step ".${index.value}"`
-      : "";
-  return `${into}: an index names a place only in a Map or a List${field}`;
 }
 
 function checkMemberLvalue(
