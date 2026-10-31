@@ -1,5 +1,5 @@
 import type { Expr } from "./ast.ts";
-import { type BindSegment, isUnwrapStep, UNWRAP_SEGMENT } from "./codegen/path-segment.ts";
+import { isUnwrapStep, type PathStep, UNWRAP_SEGMENT } from "./codegen/path-segment.ts";
 
 export type BindStep = Expr & { kind: "FieldAccess" | "Index" | "MethodCall" };
 
@@ -10,8 +10,8 @@ export type BindStep = Expr & { kind: "FieldAccess" | "Index" | "MethodCall" };
 export type BindTarget = {
   root: Expr;
   steps: BindStep[];
-  /** `null` when a step is an index or a call, which the lowering does not write through. */
-  path: BindSegment[] | null;
+  /** `null` when a step is a call, which names no place. */
+  path: PathStep[] | null;
 };
 
 export function bindTarget(value: Expr): BindTarget {
@@ -21,10 +21,11 @@ export function bindTarget(value: Expr): BindTarget {
     steps.unshift(cur);
     cur = cur.kind === "MethodCall" ? cur.receiver : cur.base;
   }
-  const path: BindSegment[] = [];
+  const path: PathStep[] = [];
   for (const step of steps) {
-    if (step.kind !== "FieldAccess") return { root: cur, steps, path: null };
-    path.push(isUnwrapStep(step.field, step.accessKind) ? UNWRAP_SEGMENT : step.field);
+    if (step.kind === "MethodCall") return { root: cur, steps, path: null };
+    if (step.kind === "Index") path.push({ at: step.index });
+    else path.push(isUnwrapStep(step.field, step.accessKind) ? UNWRAP_SEGMENT : step.field);
   }
   return { root: cur, steps, path };
 }
