@@ -3,6 +3,7 @@ import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
 import { bindTarget } from "../bind-target.ts";
 import { BUILTIN_TILES, contentArg } from "../builtins.ts";
+import { errorField } from "../error-field.ts";
 import { TIME_INPUT_PATTERNS } from "../input-bind.ts";
 import type { ParseReading } from "../parse-reading.ts";
 import {
@@ -577,8 +578,12 @@ function tileCallJs(
       }
       case "error": {
         const fieldExpr = prop("field");
-        const fieldName = fieldExpr?.kind === "Ref" ? fieldExpr.name : "";
-        return `({ kind: "error", field: ${JSON.stringify(fieldName)}, props: ${propsObj} })`;
+        const field = fieldExpr ? errorField(fieldExpr) : null;
+        // Only a program lowered without `check` gets here with no path, since E0230 refuses it;
+        // a field that names no slot renders nothing.
+        const [slot, path] =
+          field?.root.kind === "Ref" && field.path ? [field.root.name, field.path] : ["", []];
+        return `({ kind: "error", field: ${JSON.stringify(slot)}, path: ${JSON.stringify(path)}, props: ${propsObj} })`;
       }
       case "route-outlet":
         return `({ kind: "route-outlet", children: [], props: ${propsObj} })`;

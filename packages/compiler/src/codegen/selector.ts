@@ -16,6 +16,9 @@ function isNotPropData(tile: string, name: string, forEl = false): boolean {
   if (forEl && name === "style") return true;
   // The control's own `bind` field carries the lvalue; as data it would read the slot for nothing.
   if (name === "bind") return true;
+  // A read of an `error` tile's `field` can panic (`.get` on a `None`, an index
+  // past a List's end) where the tile itself renders nothing.
+  if (tile === "error" && name === "field") return true;
   return false;
 }
 
