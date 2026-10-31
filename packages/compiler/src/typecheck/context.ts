@@ -39,6 +39,13 @@ export type SymbolTable = {
   themes: Set<string>;
   iconDomain: Set<string>;
   elementIds: Set<string>;
+  // The program's own tags come first, so a did-you-mean tie goes to one of them.
+  constructorTags: ReadonlySet<string>;
+  qualifiers: ReadonlySet<string>;
+  // A declared type that judged a variant reports it naming that type, so the
+  // undef-variant for the same variant is dropped: one mistake, one diagnostic.
+  judgedVariants: WeakSet<Expr>;
+  undefinedVariants: Map<KumikiError, Expr>;
   /** The result of each `fn` declared without `->`, read off its body once per check. */
   fnResults: Map<string, TypeExpr | null>;
   /** The `fn`s that can reach themselves through the `fn`s they call: those E0006 reports. */

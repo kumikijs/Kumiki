@@ -9,7 +9,7 @@ import {
 } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { isReservedTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
-import { unionsByTag } from "./symbols.ts";
+import { constructorTags, qualifierCandidates, unionsByTag } from "./symbols.ts";
 import { checkApp } from "./typecheck/app.ts";
 import type { KumikiError, SymbolTable } from "./typecheck/context.ts";
 import { checkEffect } from "./typecheck/effect.ts";
@@ -98,6 +98,10 @@ function checkAll(
     themes: new Set(),
     iconDomain,
     elementIds: new Set(),
+    constructorTags: new Set(constructorTags(program)),
+    qualifiers: new Set(qualifierCandidates(program)),
+    judgedVariants: new WeakSet(),
+    undefinedVariants: new Map(),
     fnResults: new Map(),
     fnLoops: new Set(),
     unionsByTag: unionsByTag(program.defs),
@@ -173,7 +177,10 @@ function checkAll(
   checkCycles(program, sym, index, errors);
   checkDuplicateNames(program, errors);
 
-  return errors;
+  return errors.filter((d) => {
+    const variant = sym.undefinedVariants.get(d);
+    return variant === undefined || !sym.judgedVariants.has(variant);
+  });
 }
 
 /** A definition declared twice (`E0007`), and a name written twice (`E0008`). */
