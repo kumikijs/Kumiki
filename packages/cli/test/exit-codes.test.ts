@@ -253,10 +253,7 @@ describe("kumiki test", () => {
     // The lines a reducer-test prints for a reducer that panics, with the
     // snapshot as what was expected — and nothing under them, so the panic
     // reads as the tile's and not as a throw in the test's body.
-    const { stdout, code } = runCli([
-      "test",
-      write("test-render-panic.kumiki", WITH_RENDER_PANIC),
-    ]);
+    const { stdout, code } = runCli(["test", write("test-render-panic.kumiki", WITH_RENDER_PANIC)]);
     expect(stdout).toMatch(
       new RegExp(
         [
