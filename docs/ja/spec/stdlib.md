@@ -70,14 +70,14 @@ let id = emit fetchQuote()
 | レシーバ | パラメータ | メンバー |
 |---|---|---|
 | `Map(K, V)` | キー `K` | `has` / `get` / `get-or` / `insert` / `remove` / `update` |
-| | 値 `V` | `insert`、およびエントリの新しい値を返す `update` の式（名前で渡した `fn` は宣言された戻り値型を返す） |
+| | 値 `V` | `insert`、およびエントリの新しい値を返す `update` の式（名前で渡した `fn` はその呼び出しと同じ型 — `->` の型、`->` が無ければ本体の型 — を返す） |
 | | `other`（`Map(K, V)`） | `merge` |
 | `Set(T)` | 要素 `T` | `has` / `add` / `remove` / `toggle` |
 | | `other`（`Set(T)`） | `union` / `intersect` / `diff` |
 | `List(T)` | 要素 `T` | `push` / `prepend` / `contains` |
 | | `other`（`List(T)`） | `concat` |
 
-引数はその型の場所へ書き込まれる値と同じようにその型と照合されるので、合わなければ引数の位置で [E0201](./errors.md#e0201-type-mismatch) になる：`List(Int)` に対する `xs.push("3")` は `xs := ["3"]` と同じく `"3"` で報告され、`Map(Text, Int)` に対する `m.insert(1, 0)` は `1` で報告される。同じ規則は slot が受け入れるものを受け入れる — 要素が `Float` の位置への `Int`、`Option(T)` の位置への `None`、キーが `nominal Text` と宣言された位置への `Text`。それ以外のパラメータはレシーバが型を与えるものではない：`update` 以外のフラグメント、`slice` / `chunk` の数値、`join` の区切り、`fold` の初期アキュムレータ、そして独自の要素型を持つ `List(U)` である `zip` の `other`。`get-or` の `default` は呼び出しが返す型と、`List.get` の添字は `xs[i]` の添字と同じく `Int` と照合される（[E0201](./errors.md#e0201-type-mismatch)）。型検査器がレシーバの型を決定できない場所では、どの引数もパラメータの型と照合されない（各引数の式そのものは検査される）。そうした場所は init が `{}` である `fold` のアキュムレータ `$1`、`->` のない `fn` の結果、そして型検査器が結果の型を推論しないメンバーの結果 — `List.map` / `fold` / `zip`、`Map.map`、`Option.map` / `Result.map` — である。したがって `List(Int)` に対する `xs.map($1 * 2).push("w")` は `check` を通る。これはチェッカーが解決できる範囲の欠落であって、プログラムが頼ってよい規則ではない。
+引数はその型の場所へ書き込まれる値と同じようにその型と照合されるので、合わなければ引数の位置で [E0201](./errors.md#e0201-type-mismatch) になる：`List(Int)` に対する `xs.push("3")` は `xs := ["3"]` と同じく `"3"` で報告され、`Map(Text, Int)` に対する `m.insert(1, 0)` は `1` で報告される。同じ規則は slot が受け入れるものを受け入れる — 要素が `Float` の位置への `Int`、`Option(T)` の位置への `None`、キーが `nominal Text` と宣言された位置への `Text`。それ以外のパラメータはレシーバが型を与えるものではない：`update` 以外のフラグメント、`slice` / `chunk` の数値、`join` の区切り、`fold` の初期アキュムレータ、そして独自の要素型を持つ `List(U)` である `zip` の `other`。`get-or` の `default` は呼び出しが返す型と、`List.get` の添字は `xs[i]` の添字と同じく `Int` と照合される（[E0201](./errors.md#e0201-type-mismatch)）。型検査器がレシーバの型を決定できない場所では、どの引数もパラメータの型と照合されない（各引数の式そのものは検査される）。そうした場所は init が `{}` である `fold` のアキュムレータ `$1`、`->` を持たず本体の型も決まらない `fn` の結果、そして型検査器が結果の型を推論しないメンバーの結果 — `List.map` / `fold` / `zip`、`Map.map`、`Option.map` / `Result.map` — である。したがって `List(Int)` に対する `xs.map($1 * 2).push("w")` は `check` を通る。これはチェッカーが解決できる範囲の欠落であって、プログラムが頼ってよい規則ではない。
 
 ### 2.2.1 Map(K, V)
 
@@ -146,7 +146,7 @@ to-list                     : List(T)
 
 **値ごとに一つのキー**。エントリを書き込み・探し・取り除くすべてのメンバー — `add` / `remove` / `toggle` / `has`、`get` / `get-or` / `insert` / `remove` / `update`、インデックス読み取り `m[k]`、インデックス書き込み `m[k] := v` — はキーを同じ方法で保存し検索する。したがって二つのキーが一つのエントリになるのは、それらが `==` で等しいときに限る（[language §1.9.4](./language.md#_1-9-4-演算子の型)）。`picked.add(Red).has(Blue)` は `false` であり、`votes[Red] := 1` と `votes.insert(Green, 1)` は二つのエントリを書き、`Map(Int, V)` に対する `m.remove(1)` は `1` のエントリを取り除く。
 
-何を変換するかは、受信側がどこから来たものであっても、その型から決まる：slot、`let`、レコードのフィールド、`fn` の引数、フラグメントが受け取る `$1` / `$2`（`List` や `Option` の要素、`.entries` のタプルや `Map.filter` / `Map.map` のキーと値、`Map.update` の値、init の型をもつ `fold` のアキュムレータ）、そして property テストの invariant が `run-reducer` を通して読む状態（[テスト §8.3](./testing.md#_8-3-property-tests)）。型検査器が受信側の型を決定できない場合 — `{}` から始める `fold` のアキュムレータ `$1`、`->` のない `fn` の結果 — キーは文字列のままである。これは型検査器が解決できる範囲の欠落であり、プログラムが依存してよい規則ではない：それらの型が決定できるようになるにつれて閉じる。
+何を変換するかは、受信側がどこから来たものであっても、その型から決まる：slot、`let`、レコードのフィールド、`fn` の引数、`fn` の呼び出し（その `->` が宣言する型、`->` が無ければ本体の型 — [言語 §1.8.2](./language.md#_1-8-2-構文)）、フラグメントが受け取る `$1` / `$2`（`List` や `Option` の要素、`.entries` のタプルや `Map.filter` / `Map.map` のキーと値、`Map.update` の値、init の型をもつ `fold` のアキュムレータ）、そして property テストの invariant が `run-reducer` を通して読む状態（[テスト §8.3](./testing.md#_8-3-property-tests)）。型検査器が受信側の型を決定できない場合 — `{}` から始める `fold` のアキュムレータ `$1`、`->` を持たず本体の型も決まらない `fn` の呼び出し — キーは文字列のままである。これは型検査器が解決できる範囲の欠落であり、プログラムが依存してよい規則ではない：それらの型が決定できるようになるにつれて閉じる。
 
 **`Object.prototype` のメンバーと同じ綴りのキーも普通のキーである**。そうしたキー — `constructor` / `toString` / `valueOf` / `hasOwnProperty` / `__proto__` など — も、ほかのキーと同じく書き込まれてはじめて保持される：空の `Map(Text, Int)` では `has("constructor")` は `false`、`get("constructor")` は `None`、`get-or("constructor", 0)` は `0` であり、空の `Set(Text)` への `toggle("toString")` はそれを加える。書き込まれたそのエントリはどのメンバーからも読み戻せ、別のキーの `remove`、`intersect`、`diff`、`filter`、`map` はほかのエントリと同じくそれを残す。
 
@@ -201,7 +201,7 @@ fn norm() -> List(Todo) = todos.reverse       # 同上
 
 **`fold(init, expr)` のラムダ引数**は、アキュムレータ `$1` と要素 `$2` であり、要素は丸ごと渡される——`Tuple(A, B)` である要素も分解されない。`$1` は init の型を、`$2` は要素の型をもつ（[言語 §1.8.6](./language.md#_1-8-6-部分適用と高階関数)）：`nums.fold("", $1 + $2.show)` のアキュムレータは `Text` であり、`nums.fold(0, f)` は `f` の第 1 パラメータを `Int` と照合する。型検査器が型を決められない init——空の Map でも空の Set でもある `{}`——からは、`$1` は型をもたない。したがって Set への fold は `{}` か型の決まった Set から始める：`[]` は `List` なので、`xs.fold([], $1.add($2))` は [E0108](./errors.md#e0108-undef-member) であり、アキュムレータのパラメータが `Set(Int)` である `fn` をそこに渡すと [E0201](./errors.md#e0201-type-mismatch) になる。式断片の結果はアキュムレータの型と照合されないので、`$1` が init の型をもつのは最初の 1 回だけである：`xs.fold(0, $1.show)` は通り、2 回目には `Text` を渡す。
 
-**`sort-by(expr)` はキーを `<` が 2 値を並べる順で並べる**（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）。数値と `Time` は数値として、`Text` は `<` が 2 つの `Text` を比べる順で並べる。キーが等しい要素は元の順を保つ。順序を持たないキー（record、variant、`Bool`、`Option`、コンテナ）は、同じ 2 値の `a < b` と同じく [E0201](./errors.md#e0201-type-mismatch)。キーは名前で渡した `fn`（`xs.sort-by(keyOf)`）でもよく、その宣言された戻り値型がキーの型になる。
+**`sort-by(expr)` はキーを `<` が 2 値を並べる順で並べる**（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）。数値と `Time` は数値として、`Text` は `<` が 2 つの `Text` を比べる順で並べる。キーが等しい要素は元の順を保つ。順序を持たないキー（record、variant、`Bool`、`Option`、コンテナ）は、同じ 2 値の `a < b` と同じく [E0201](./errors.md#e0201-type-mismatch)。キーは名前で渡した `fn`（`xs.sort-by(keyOf)`）でもよく、その呼び出しが返す型 — `->` が宣言する型、`->` が無ければ本体の型（[言語 §1.8.2](./language.md#_1-8-2-構文)）— がキーの型になる。
 
 - **`Text` の順序は UTF-16 コード単位の順**で、ロケールの照合順ではない：`"Z" < "a"`、`"B" < "a"` であり、かなや漢字は辞書（読み）順ではなくコードポイント順に並ぶ。
 - **キーは実行時の値として並べる。** 数値や `Time` と宣言されたフィールドでも、値が `Text` として届いたもの（たとえば宣言された型へ変換されない HTTP の JSON 本文）は `Text` として並ぶ：`"10"` が `"9"` より前になる。
@@ -368,6 +368,8 @@ Bytes.from-text(text)       : Bytes        ; UTF-8 エンコード
 Bytes.from-base64(text)     : Bytes        ; 標準 base64 デコード
 Bytes.from-bytes(list)      : Bytes        ; List(Int) から（各値は下位 8bit にマスク）
 ```
+
+`b.show`（すべての値が持つ `show`、[§2.2.7](#_2-2-7-int-float)）は、バイト列を `=` パディング付きの**標準 base64** で表したテキスト、つまり `Bytes.from-base64` がデコードするテキストである。したがって UTF-8 でないバイト列や空の `Bytes` も含め、すべての `Bytes` について `Bytes.from-base64(b.show) == b` が成り立つ。`Bytes.from-text("hi").show` は `"aGk="`、`Bytes.from-bytes([255, 0, 128]).show` は `"/wCA"` であり、空の `Bytes` は `""` と表示される。`show` を通して値を描画するものはすべて `Bytes` をこの形で描画する：`Bytes.show(b)`、片側が `Text` の `+` と `fmt`（[§2.4.5](#_2-4-5-文字列フォーマット)）、タイルのテキスト。`Bytes.parse` は `show` の逆ではない。テキストを UTF-8 として読む（[§2.4.3](#_2-4-3-型変換)）ので、表示した `Bytes` は `Bytes.from-base64` で読み戻す。
 
 ---
 
@@ -587,6 +589,8 @@ TypeName.show(value)       : Text         ; 値の文字列表現
 
 読み方は `Bool` と同じく厳密である: `Int.parse(" 12 ")` や `Int.parse("0x10")` は `Some(12)` / `Some(16)` ではなく `None` になる。空白があり得るならテキストを先に trim する。
 
+`Bytes` では `parse` は `show` の逆ではない。`b.show` は base64（[§2.2.10](#_2-2-10-bytes)）で、`Bytes.parse` は UTF-8 として読むので、`Bytes.parse(b.show)` が `Some(b)` になることはない。その base64 テキストのバイト列の `Some` であり、`show` が `""` である空の `Bytes` では `None` になる。`Bytes` の `show` の逆は `Bytes.from-base64` であり、`Bytes.from-base64(b.show)` は `b` である。
+
 読んだ値はその後 `T` が持つすべての `where` refinement（[言語 §1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）に照らされ、どれかを満たさない値は `None` になる: `type Cents = nominal Int where positive` なら `Cents.parse("-5")` は `None` である。したがって `parse` は自身の型が拒否する値を決して生成しない — `Option(Cents)` は slot 書き込みのガードを通らないので、その検査ができるのは parse の時点だけである。
 
 引数は `Text` であり、それ以外は [E0201](./errors.md#e0201-type-mismatch) になる。
@@ -609,7 +613,7 @@ random()                   : Float        ; 0 <= x < 1
 fmt(template, ...args)     : Text         ; "Hello {0}, you have {1}"
 ```
 
-**プレースホルダ**は `{`・10進数字1文字以上・`}` である。各プレースホルダは、その番号の引数——`{0}` はテンプレートの次の第1引数——で置き換えられる。描画は `+` と同じ（その `show`、[§2.2.7](#_2-2-7-int-float)：バリアントはタグ、null 相当は空文字、record やコレクションはそのリテラル、それ以外はその文字列表現）で、`fmt("{0}-{1}", "a", "b")` は `"a-b"` になる。同じ番号を繰り返してよく、番号の並び順も自由である：`fmt("{1} {0} {1}", "a", "b")` は `"b a b"` になる。置換はテンプレートを左から右へ1回走査するだけである：置き換えた値の*中*に現れた `{0}` はテキストであり、もう一度埋める対象にはならない。
+**プレースホルダ**は `{`・10進数字1文字以上・`}` である。各プレースホルダは、その番号の引数——`{0}` はテンプレートの次の第1引数——で置き換えられる。描画は `+` と同じ（その `show`、[§2.2.7](#_2-2-7-int-float)：バリアントはタグ、null 相当は空文字、record やコレクションはそのリテラル、`Bytes` はその base64（[§2.2.10](#_2-2-10-bytes)）、それ以外はその文字列表現）で、`fmt("{0}-{1}", "a", "b")` は `"a-b"` になる。同じ番号を繰り返してよく、番号の並び順も自由である：`fmt("{1} {0} {1}", "a", "b")` は `"b a b"` になる。置換はテンプレートを左から右へ1回走査するだけである：置き換えた値の*中*に現れた `{0}` はテキストであり、もう一度埋める対象にはならない。
 
 数字は10進の番号としてまとめて読むので、先頭の 0 は桁としてのみ意味を持つ：`{01}` は番号 1 である。
 
@@ -697,7 +701,9 @@ panic(message)             : never        ; プログラムを停止（reducer �
 
 引数が何を省略しているかは、書かれた場所で読まれる：`if` や `match` の各分岐と `let` の本体は、それぞれ自分が省略したフィールドで判定され、既定値のあるフィールドを型として持たないレコード型の値（`slot target : {path: Text}` に対する `emit navigate(target)`）は、同じ形のリテラルと同様に通る。effect 呼び出しが書かれるどの位置でも引数は同じように照合される —— `emit`、`app.init` の要素、テストの `expect.effects` の引数（[テスト §8.2](./testing.md#_8-2-reducer-テスト)）。
 
-これらの省略は標準 effect だけのものである。宣言された effect の `in=` レコードは、`Option(T)` のものも含めて全フィールドを要求する —— 他のレコードリテラルと同じである。標準 effect と同名の宣言があれば、プログラムが dispatch するのはその宣言なので、照合されるのもその `in=` である。
+これらの省略は標準 effect だけのものである。宣言された effect の `in=` レコードは、`Option(T)` のものも含めて全フィールドを要求する —— 他のレコードリテラルと同じである。
+
+以下の名前はランタイムのものである。ランタイムはアプリのマウント時に各標準 effect をそれ自身の名前で登録し、プログラムがその名前でコンパイルしたものを上書きする。そのためプログラムはこれらの名前で `effect` を宣言できない（[E0234](./errors.md#e0234-reserved-effect-name)）。プログラム自身の effect には別の名前を付け、標準 effect はそれ自身の名前で emit する。
 
 → 詳細仕様は [HTTP / Storage](./http.md)。
 

@@ -357,7 +357,12 @@ export const _stdlibCore = {
   },
   show(v: unknown, shape?: ShowShape): string {
     if (v === null || v === undefined) return "";
-    if (typeof v !== "object" || v instanceof Uint8Array) return String(v);
+    if (v instanceof Uint8Array) {
+      let bin = "";
+      for (const byte of v) bin += String.fromCharCode(byte);
+      return btoa(bin);
+    }
+    if (typeof v !== "object") return String(v);
     // A descriptor's tag, then its slots; what a slot holds depends on the tag.
     const d: readonly unknown[] = Array.isArray(shape) ? shape : [];
     const tag = d[0];

@@ -37,6 +37,39 @@ describe("Bytes constructors", () => {
   });
 });
 
+describe("show on Bytes", () => {
+  const { show, eq, bytesFromBase64, bytesFromText, bytesFromBytes } = _stdlibCore;
+
+  it.each([
+    [[0x68, 0x69], "aGk="],
+    [[0x61, 0x62, 0x63], "YWJj"],
+    [[0x41], "QQ=="],
+    [[0xff, 0x00, 0x80], "/wCA"],
+    [[0xfb, 0xff], "+/8="],
+    [[], ""],
+  ])("renders %j as padded standard base64 %j", (bytes, expected) => {
+    expect(show(bytesFromBytes(bytes))).toBe(expected);
+  });
+
+  it.each([
+    ["no bytes", new Uint8Array()],
+    ["bytes that are not UTF-8", bytesFromBytes([0xff, 0xfe, 0x00])],
+    ["UTF-8 bytes", bytesFromText("あ")],
+    ["every byte value", Uint8Array.from({ length: 256 }, (_, i) => i)],
+    // Spread into one `String.fromCharCode` call, this many bytes overflow V8's stack.
+    ["a large buffer", Uint8Array.from({ length: 1 << 18 }, (_, i) => (i * 7) & 0xff)],
+  ])("is read back by Bytes.from-base64 for %s", (_, b) => {
+    expect(eq(bytesFromBase64(show(b)), b)).toBe(true);
+  });
+
+  it("is what `+` and `fmt` render a Bytes as", () => {
+    const b = bytesFromText("hi");
+    expect(_stdlibCore.add("b=", b)).toBe("b=aGk=");
+    expect(_stdlibCore.add(b, "!")).toBe("aGk=!");
+    expect(_stdlibCore.fmt("b={0}", b)).toBe("b=aGk=");
+  });
+});
+
 describe("fmt", () => {
   it("replaces each {n} with the argument at that index", () => {
     expect(_stdlibCore.fmt("{0}-{1}", "a", "b")).toBe("a-b");
@@ -55,7 +88,17 @@ describe("fmt", () => {
   });
 
   it("agrees with `+` on every value", () => {
-    for (const v of [{ _tag: "None" }, { _tag: "Some", _0: 1 }, null, undefined, true, 1.5, "s"]) {
+    const values = [
+      { _tag: "None" },
+      { _tag: "Some", _0: 1 },
+      null,
+      undefined,
+      true,
+      1.5,
+      "s",
+      new Uint8Array([0x68, 0x69]),
+    ];
+    for (const v of values) {
       expect(_stdlibCore.fmt("{0}", v)).toBe(_stdlibCore.add("", v));
     }
   });
