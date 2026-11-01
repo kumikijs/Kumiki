@@ -1,5 +1,5 @@
 import type { Episode, EpisodeLogger } from "../episode.ts";
-import type { BindSegment } from "./path.ts";
+import type { BindSegment, PathSegment } from "./path.ts";
 import type { RefinementRejection, SlotMeta } from "./refinement.ts";
 
 export type SsrSnapshot = Record<string, unknown>;
@@ -135,7 +135,13 @@ export type TileNode = (
       max?: number;
       step?: number;
     }
-  | { kind: "error"; field: string; props?: TileProps }
+  | {
+      kind: "error";
+      field: string;
+      /** Empty, or absent, for the whole slot. */
+      path?: PathSegment[];
+      props?: TileProps;
+    }
   | { kind: "route-outlet"; children: TileNode[]; props?: TileProps }
   | {
       kind: "details";
@@ -273,6 +279,25 @@ export type DiagnosticSite = {
   tile?: string | undefined;
 };
 
+/**
+ * The standard effects' names. The compiler keys its table of standard effects by this union and
+ * refuses an `effect` declared under one: the installer writes over it at mount.
+ */
+export type BuiltinEffectName =
+  | "navigate"
+  | "navigate-replace"
+  | "navigate-back"
+  | "scroll-to"
+  | "toast"
+  | "confirm"
+  | "log";
+
+/**
+ * What an installer writes `app.effects` through, so it can register a standard effect only under
+ * its own name.
+ */
+export type BuiltinEffects = { [N in BuiltinEffectName]?: EffectSpec & { name: N } };
+
 /** Mount-internal navigation handles handed to builtin-effect installers. */
 export type NavContext = {
   navigate: (path: string, replace: boolean) => void;
@@ -297,7 +322,7 @@ export type RoutingImpl = {
   href(route: ParsedRoute): string;
   /** For an in-page jump, what brings the hash's element into view once the page has rendered; `undefined` for any other move. */
   jump(from: ParsedRoute, to: ParsedRoute, root: Node): (() => void) | undefined;
-  /** Register navigate / navigate-replace / navigate-back on `app.effects`. */
+  /** Register navigate / navigate-replace / navigate-back / scroll-to on `app.effects`. */
   installNavEffects(app: AppShape, nav: NavContext): void;
 };
 

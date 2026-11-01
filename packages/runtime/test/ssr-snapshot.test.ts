@@ -1,7 +1,15 @@
-import type { AppShape, TileNode } from "@kumikijs/runtime";
-import { _stdlibCore, KumikiPanic, renderToString, routing } from "@kumikijs/runtime";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AppShape, MountedApp, TileNode } from "@kumikijs/runtime";
+import {
+  createEpisodeLogger,
+  hydrate,
+  KumikiPanic,
+  renderToString,
+  routing,
+} from "@kumikijs/runtime";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
+import { boundaryAround } from "./helpers/app.ts";
 import { captureConsole } from "./helpers/console.ts";
+import { freshRoot } from "./helpers/dom.ts";
 import { GUEST, type User, userApp, userProvider } from "./helpers/ssr-user-app.ts";
 import { tick } from "./helpers/time.ts";
 
@@ -252,21 +260,35 @@ describe("a boundary fallback served by renderToString", () => {
   /** `makeSsrApp` with a root that panics once `loadUser` has landed, caught the way codegen lowers `error-boundary`. */
   const withBoundary = (): AppShape => {
     const app = makeSsrApp();
-    app.root = (): TileNode => {
-      try {
+    app.root = (): TileNode =>
+      boundaryAround("Profile", () => {
         const user = app.live?.user as User;
         if (user.id !== "guest") throw new KumikiPanic(`no avatar for ${user.name}`);
         return { kind: "text", text: "guest" };
-      } catch (e) {
-        const info = _stdlibCore.boundaryPanic(e, "Profile") as {
-          "episode-id": { _tag: string; _0?: string };
-        };
-        const ep = info["episode-id"];
-        return { kind: "text", text: `fallback episode: ${ep._tag === "Some" ? ep._0 : "(none)"}` };
-      }
-    };
+      });
     return app;
   };
+
+  /** `withBoundary` rendered on the server, then hydrated over the HTML it served by a client with a logger. */
+  async function hydratedOverServed() {
+    const app = withBoundary();
+    let n = 0;
+    const rendered = await renderToString(app, {
+      providers: { "http.get": userProvider() },
+      idGen: () => `ep_${++n}`,
+    });
+    // A fresh client starts from the snapshot, not from what the server pass left behind.
+    delete app.live;
+    const target = freshRoot();
+    onTestFinished(() => target.remove());
+    target.innerHTML = rendered.html;
+    const served = target.textContent;
+    let m = 0;
+    const logger = createEpisodeLogger({ idGen: () => `client_${++m}` });
+    const handle = hydrate(app, target, rendered, { episodeLogger: logger });
+    onTestFinished(() => handle.dispose());
+    return { app: app as MountedApp, target, served, boot: rendered.bootstrapEpisode, logger };
+  }
 
   it("names the bootstrap episode, which records the panic as handled after the init chain", async () => {
     let n = 0;
@@ -293,5 +315,24 @@ describe("a boundary fallback served by renderToString", () => {
     });
     expect(boot.status).toBe("panic");
     expect(result.snapshot.bootstrap).toBe(boot);
+  });
+
+  it("is the fallback hydration rebuilds, still naming the bootstrap, which gains no second step", async () => {
+    const { target, served, boot, logger } = await hydratedOverServed();
+    expect(served).toBe(`fallback episode: ${boot.id}`);
+    expect(target.textContent).toBe(served);
+    expect(logger.list()[0]?.id).toBe(boot.id);
+    expect(logger.list()[0]?.steps.filter((s) => s.kind === "panic")).toHaveLength(1);
+  });
+
+  it("gives way, after hydration, to a fallback naming the episode open around the render", async () => {
+    const { app, target, logger } = await hydratedOverServed();
+    app._dispatch("inc", {});
+    const click = logger.list().at(-1);
+    expect(click?.trigger.kind).toBe("ui.click");
+    expect(click?.steps.filter((s) => s.kind === "panic")).toMatchObject([
+      { location: "Profile", category: "tile-render", handled: true },
+    ]);
+    expect(target.textContent).toBe(`fallback episode: ${click?.id}`);
   });
 });

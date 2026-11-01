@@ -57,6 +57,14 @@ describe("kumiki test", () => {
     expect(stdout).toContain("9/9 passed");
   });
 
+  it("runs a reducer-test whose given and expect name a variant called Time", SPAWN, () => {
+    const { stdout, code } = runCli(["test", feature("228-primitive-named-variants")]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("PASS  by-time-sets-the-time-variant");
+    expect(stdout).toContain("PASS  by-size-leaves-the-time-variant");
+    expect(stdout).toContain("2/2 passed");
+  });
+
   it("filters by a name prefix", SPAWN, () => {
     const { stdout } = runCli(["test", TESTS, "inc-i*"]);
     expect(stdout).toContain("PASS  inc-increments");

@@ -1,8 +1,18 @@
 import { readFileSync } from "node:fs";
-import type { AppDef, ReducerDef, SlotDef, Statement, TileDef, TypeDef } from "@kumikijs/compiler";
+import type {
+  AppDef,
+  Def,
+  ReducerDef,
+  SlotDef,
+  Statement,
+  TileDef,
+  TypeDef,
+  TypeExpr,
+} from "@kumikijs/compiler";
 import { lex, parse } from "@kumikijs/compiler";
 import { app } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
+import { PRIM_TYPES } from "../src/parser/types.ts";
 import { tileCall, uiEvent } from "./helpers/ast.ts";
 import { defined } from "./helpers/defined.ts";
 
@@ -381,5 +391,120 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
     const slot = program.defs.find((d) => d.kind === "SlotDef") as SlotDef;
     expect(slot.type).toMatchObject({ kind: "TypePrim", name: "EffectId" });
     expect(slot.init).toMatchObject({ kind: "Call", callee: "EffectId.none" });
+  });
+});
+
+describe("a union alternative", () => {
+  const defOf = (src: string): Def => defined(parse(lex(src)).defs[0], "a def");
+  const typeBody = (src: string) => (defOf(src) as TypeDef).body;
+  const PRIMITIVES = [...PRIM_TYPES];
+
+  it.each(PRIMITIVES)("named %s is a nullary variant, first or after another", (p) => {
+    expect(typeBody(`type V = ${p} | Name | Size`)).toEqual({
+      kind: "TypeUnion",
+      variants: [
+        { name: p, payloads: [], pos: { line: 1, col: 10 } },
+        { name: "Name", payloads: [], pos: { line: 1, col: 13 + p.length } },
+        { name: "Size", payloads: [], pos: { line: 1, col: 20 + p.length } },
+      ],
+      pos: { line: 1, col: 10 },
+    });
+    expect(typeBody(`type V = Name | ${p} | Size`)).toMatchObject({
+      kind: "TypeUnion",
+      variants: [
+        { name: "Name", payloads: [] },
+        { name: p, payloads: [] },
+        { name: "Size", payloads: [] },
+      ],
+    });
+    expect(typeBody(`type V = Name | Size | ${p}`)).toMatchObject({
+      kind: "TypeUnion",
+      variants: [{ name: "Name" }, { name: "Size" }, { name: p, payloads: [] }],
+    });
+  });
+
+  it("is a variant in a union whose every alternative is a primitive's name", () => {
+    expect(typeBody(`type P = Int | Text`)).toMatchObject({
+      kind: "TypeUnion",
+      variants: [
+        { name: "Int", payloads: [] },
+        { name: "Text", payloads: [] },
+      ],
+    });
+  });
+
+  it("a primitive's name read as a type stays the primitive", () => {
+    expect(typeBody(`type T = Time`)).toMatchObject({ kind: "TypePrim", name: "Time" });
+    expect(typeBody(`type V = Blank | Text(Text)`)).toMatchObject({
+      kind: "TypeUnion",
+      variants: [
+        { name: "Blank", payloads: [] },
+        { name: "Text", payloads: [{ kind: "TypePrim", name: "Text" }] },
+      ],
+    });
+    expect(typeBody(`type R = {t: Time, xs: List(Text)}`)).toMatchObject({
+      kind: "TypeRecord",
+      fields: [
+        { name: "t", type: { kind: "TypePrim", name: "Time" } },
+        { name: "xs", type: { kind: "TypeApp", name: "List", args: [{ kind: "TypePrim" }] } },
+      ],
+    });
+  });
+
+  const pick = <K extends Def["kind"]>(d: Def, kind: K): Extract<Def, { kind: K }> => {
+    expect(d.kind).toBe(kind);
+    return d as Extract<Def, { kind: K }>;
+  };
+  const arg = (t: TypeExpr): TypeExpr =>
+    t.kind === "TypeApp" ? defined(t.args[0], "a type argument") : t;
+  const field = (t: TypeExpr): TypeExpr =>
+    t.kind === "TypeRecord" ? defined(t.fields[0], "a field").type : t;
+  const POSITIONS: [string, (t: string) => string, (d: Def) => TypeExpr][] = [
+    ["a slot's type", (t) => `slot s : ${t} = Other`, (d) => pick(d, "SlotDef").type],
+    [
+      "a fn parameter",
+      (t) => `fn f(x: ${t}) -> Int = 1`,
+      (d) => defined(pick(d, "FnDef").params[0], "a parameter").type,
+    ],
+    [
+      "a fn result",
+      (t) => `fn f(x: Int) -> ${t} = Other`,
+      (d) => defined(pick(d, "FnDef").ret, "a result"),
+    ],
+    ["a record field", (t) => `type R = {t: ${t}}`, (d) => field(pick(d, "TypeDef").body)],
+    ["a type argument", (t) => `slot s : Option(${t}) = None`, (d) => arg(pick(d, "SlotDef").type)],
+    [
+      "an effect's in=",
+      (t) =>
+        `effect e cap=log.write in=${t} out=Result(Unit, Text) map-request={level: "info", message: "m"}`,
+      (d) => pick(d, "EffectDef").inType,
+    ],
+  ];
+
+  it.each(POSITIONS)("is a variant in a union written as %s", (_, write, typeAt) => {
+    expect(typeAt(defOf(write("Time | Other")))).toMatchObject({
+      kind: "TypeUnion",
+      variants: [
+        { name: "Time", payloads: [] },
+        { name: "Other", payloads: [] },
+      ],
+    });
+  });
+
+  it.each(POSITIONS)("stays the primitive written alone as %s", (_, write, typeAt) => {
+    expect(typeAt(defOf(write("Time")))).toMatchObject({ kind: "TypePrim", name: "Time" });
+  });
+
+  it.each([
+    ["a record", `type V = A | {x: Int}`, 14, /not a record/],
+    ["a record, first", `type V = {x: Int} | A`, 10, /not a record/],
+    ["a nominal type", `type V = A | nominal Int`, 14, /not a `nominal` type/],
+    ["a refinement", `type V = A | B where nonempty`, 14, /not a refinement/],
+  ])("is refused as %s, saying what the alternative is", (_label, src, col, why) => {
+    expect(() => parse(lex(src))).toThrow(
+      /Unsupported variant form: a variant is a name, optionally with a payload/,
+    );
+    expect(() => parse(lex(src))).toThrow(why);
+    expect(() => parse(lex(src))).toThrow(new RegExp(`at 1:${col}:`));
   });
 });

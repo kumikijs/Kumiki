@@ -1,6 +1,6 @@
 import type { EnvRead, EpisodeLogger } from "../episode.ts";
 import { applyAppMeta } from "./app-meta.ts";
-import { forgetRefusedBindsWithin, submitHeldBy } from "./binding.ts";
+import { forgetMovedRefusals, forgetRefusedBindsWithin, submitHeldBy } from "./binding.ts";
 import {
   installLogEffect,
   makeCapabilityRegistry,
@@ -26,7 +26,9 @@ import { reconcileTree } from "./reconcile.ts";
 import { makeReconcileDiag } from "./reconcile-diag.ts";
 import { computeSlotDiffs, reportRejectedBatch, slotAccepts } from "./refinement.ts";
 import {
+  fromLogger,
   type RenderPanic,
+  type RenderPanicSink,
   recordRenderPanic,
   registerAppRoot,
   unregisterAppRoot,
@@ -170,7 +172,10 @@ export function mountCore(
   });
   const ownView = newView(target, options.hydrate === true);
   const views: MountView[] = [ownView];
-  const renderBracket = <T>(fn: () => T): T => withRenderingApp(app, fn, renderPanic);
+  const boundaryPanics: RenderPanicSink = (e, site) =>
+    recordRenderPanic(episode, e, site, true).episodeId;
+  const renderBracket = <T>(fn: () => T, panics = boundaryPanics): T =>
+    withRenderingApp(app, fn, panics);
   const attach = (into: HTMLElement): MountHandle => {
     const view = newView(into, false);
     views.push(view);
@@ -186,7 +191,7 @@ export function mountCore(
   const anonTimers: ReturnType<typeof setInterval>[] = [];
   let prevMountedTiles = new Set<string>();
   let inRouteErrorHandlers = false;
-  const render = (): void => {
+  const render = (panics = boundaryPanics): void => {
     if (disposed || inRouteErrorHandlers) return;
     renderBracket(() => {
       const touched: string[] = [];
@@ -199,7 +204,9 @@ export function mountCore(
       }
       lastRenderTouched = touched;
       syncMountedTiles(tree);
-    });
+    }, panics);
+    // Once more without them, so no message still names a value no control shows.
+    if (forgetMovedRefusals(app)) render(panics);
   };
   const placeRoot = (view: MountView, dom: HTMLElement): void => {
     if (view.root) view.target.replaceChild(dom, view.root);
@@ -245,7 +252,7 @@ export function mountCore(
           touched = rec.touched;
         } catch (reconcileErr) {
           reportPanic("reconcile", reconcileErr);
-          renderPanic(reconcileErr, "reconcile");
+          recordRenderPanic(episode, reconcileErr, "reconcile");
           dom = fullRender(renderedTree);
           target.replaceChild(dom, view.root);
         }
@@ -255,7 +262,7 @@ export function mountCore(
       }
     } catch (e) {
       reportPanic("render", e);
-      if (!fireRouteError(renderPanic(e, "render"))) {
+      if (!fireRouteError(recordRenderPanic(episode, e, "render"))) {
         dom = renderPanicFallback(e);
         panicked = true;
       } else {
@@ -264,7 +271,7 @@ export function mountCore(
           dom = fullRender(renderedTree);
         } catch (e2) {
           reportPanic("render", e2);
-          renderPanic(e2, "render");
+          recordRenderPanic(episode, e2, "render");
           renderedTree = null;
           dom = renderPanicFallback(e2);
           panicked = true;
@@ -352,28 +359,7 @@ export function mountCore(
     return true;
   }
 
-  // A host logger written against an older `EpisodeLogger` can record a step and
-  // answer no id, so fall back to the open episode as `fireAppError` does.
-  function renderPanic(e: unknown, site: string, handled?: boolean): RenderPanic {
-    const { rec, episodeId } = recordRenderPanic(episode, e, site, handled);
-    return { rec, episodeId: episodeId ?? safeEpisodeId() };
-  }
-
   let inPanicHandler = false;
-
-  let warnedEpisodeSeam = false;
-
-  function safeEpisodeId(): string | undefined {
-    try {
-      return episode?.currentId();
-    } catch (e) {
-      if (!warnedEpisodeSeam) {
-        warnedEpisodeSeam = true;
-        console.warn(`kumiki: episode logger has no currentId(); episode-id will be None`, e);
-      }
-      return undefined;
-    }
-  }
 
   function handleLivePanic(
     location: string,
@@ -400,7 +386,7 @@ export function mountCore(
       (h) => h.event.kind === "lifecycle" && h.event.name === "app.error",
     );
     if (handlers.length === 0) return;
-    const info = userPanicInfo(rec, location, episodeId ?? safeEpisodeId());
+    const info = userPanicInfo(rec, location, episodeId ?? fromLogger(() => episode?.currentId()));
     inPanicHandler = true;
     try {
       for (const h of handlers) applyReducer(h, { $event: info });
@@ -523,7 +509,7 @@ export function mountCore(
     }
   }
 
-  installLogEffect(app);
+  installLogEffect(app.effects);
   const navigation = createNavigation({
     app,
     slots: slotValues,
@@ -572,13 +558,18 @@ export function mountCore(
   seams._holdLeave = navigation.holdLeave;
   seams._submitHeldBy = submitHeldBy;
 
+  let lastPanics: RenderPanicSink | undefined;
   if (options.hydrate) {
-    if (!options.bootstrapEpisode) {
+    const bootstrap = options.bootstrapEpisode;
+    if (!bootstrap) {
       throw new Error(
         "mountCore: `hydrate: true` requires `bootstrapEpisode`. Fall back to a fresh `mount` if the snapshot is missing or version-mismatched.",
       );
     }
-    episode?.ingestBootstrap(options.bootstrapEpisode);
+    episode?.ingestBootstrap(bootstrap);
+    // No episode is open around the render that ends the mount. A fallback it rebuilds over the
+    // served one names the bootstrap, which already holds that panic's step, so it records none.
+    lastPanics = () => bootstrap.id;
   } else {
     for (const emit of app.init) dispatcher.dispatch(emit);
   }
@@ -596,7 +587,7 @@ export function mountCore(
     fireRouteEvent("enter", initial, () => slotValues.route === initial);
   }
 
-  render();
+  render(lastPanics);
   mountedShapes.set(app, { attach });
   function disposeView(view: MountView): void {
     const at = views.indexOf(view);
