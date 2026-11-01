@@ -1,6 +1,6 @@
 import type { EffectResult } from "./core.ts";
 import { type Decode, decodeRefusal } from "./effects-decode.ts";
-import { _stdlibCore, bytesToBase64 } from "./stdlib.ts";
+import { _stdlibCore } from "./stdlib.ts";
 
 type Backend = "localStorage" | "sessionStorage";
 
@@ -24,8 +24,8 @@ function isUntagged(v: unknown): boolean {
 }
 
 function tagOf(v: unknown): unknown {
-  // `untag` reads back only padded standard base64 (`BASE64`), which is what this writes.
-  if (v instanceof Uint8Array) return { $bytes: bytesToBase64(v) };
+  // `untag` reads back only padded standard base64 (`BASE64`), which is what `Bytes.show` writes.
+  if (v instanceof Uint8Array) return { $bytes: _stdlibCore.show(v) };
   if (isUntagged(v)) return { $float: Object.is(v, -0) ? "-0" : String(v) };
   return v;
 }
