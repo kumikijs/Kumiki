@@ -576,7 +576,7 @@ As in [§2.4.1](#_2-4-1-id-generation), `TypeName` is a type that takes no argum
 
 The readings are exact, like `Bool`'s: `Int.parse(" 12 ")` and `Int.parse("0x10")` are `None`, not `Some(12)` and `Some(16)`. Trim the text first when blanks are expected.
 
-For `Bytes`, `parse` is not the inverse of `show`. `b.show` is base64 ([§2.2.10](#_2-2-10-bytes)) and `Bytes.parse` reads UTF-8, so `Bytes.parse(b.show)` is `Some` of the bytes of that base64 text, not `Some(b)`. The inverse of a `Bytes`'s `show` is `Bytes.from-base64`: `Bytes.from-base64(b.show)` is `b`.
+For `Bytes`, `parse` is not the inverse of `show`. `b.show` is base64 ([§2.2.10](#_2-2-10-bytes)) and `Bytes.parse` reads UTF-8, so `Bytes.parse(b.show)` is never `Some(b)`: it is `Some` of the bytes of that base64 text, and `None` for the empty `Bytes`, whose `show` is `""`. The inverse of a `Bytes`'s `show` is `Bytes.from-base64`: `Bytes.from-base64(b.show)` is `b`.
 
 The value read is then held to every `where` refinement `T` carries ([Language §1.3.3](./language.md#_1-3-3-registered-refinement-predicates)), and a value that fails one is `None`: with `type Cents = nominal Int where positive`, `Cents.parse("-5")` is `None`. So `parse` never produces a value its own type refuses — an `Option(Cents)` never passes through a slot-write guard, so the parse is the only place that check can happen.
 

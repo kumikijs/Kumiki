@@ -124,6 +124,13 @@ function isCalendarDate(y: number, m: number, d: number): boolean {
   return m >= 1 && m <= 12 && d >= 1 && d <= days;
 }
 
+/** A `Bytes` as padded standard base64: how `show` renders it and how storage keeps it. */
+export function bytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  for (const byte of bytes) bin += String.fromCharCode(byte);
+  return btoa(bin);
+}
+
 export const _stdlibCore = {
   entryKey,
   slotWrite(
@@ -348,11 +355,7 @@ export const _stdlibCore = {
       const obj = v as { _tag: string };
       return obj._tag;
     }
-    if (v instanceof Uint8Array) {
-      let bin = "";
-      for (const byte of v) bin += String.fromCharCode(byte);
-      return btoa(bin);
-    }
+    if (v instanceof Uint8Array) return bytesToBase64(v);
     return String(v);
   },
   fmt(template: unknown, ...args: unknown[]): string {

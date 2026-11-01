@@ -1,8 +1,8 @@
 ---
-"@kumikijs/runtime": patch
+"@kumikijs/runtime": minor
 ---
 
-`Bytes.show` is the bytes' base64, which `Bytes.from-base64` reads back
+A `Bytes` shows as its base64 (in `.show`, `+`, `fmt` and a tile's text), which `Bytes.from-base64` reads back
 
 `.show` on a `Bytes` fell through to JavaScript's `String`, which writes a
 `Uint8Array` as its decimal byte values joined with commas:
@@ -19,8 +19,9 @@ and a tile's text all render through `show`, so they all change with it. A
 `Bytes` inside a `List` or a record is rendered by the container, which does not
 call `show` on its elements, so `[b].show` is unchanged.
 
-`Bytes.parse` still reads UTF-8, so it is not `show`'s inverse. stdlib.md
-§2.2.10 and §2.4.3 say so and name `Bytes.from-base64` as the inverse.
+`Bytes.parse` still reads UTF-8, so it is not `show`'s inverse. stdlib.md's
+Bytes and type-conversion sections say so and name `Bytes.from-base64` as the
+inverse.
 
 **Migration.** A program that showed a `Bytes` and relied on the comma-joined
 decimal text gets base64 instead. To keep a list of byte values, keep the

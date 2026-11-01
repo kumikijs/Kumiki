@@ -14,21 +14,28 @@
 # `Bytes.parse(hi.show)` is the four bytes of "aGk=", not the two of "hi".
 # Read a shown `Bytes` back with `Bytes.from-base64`.
 
-slot hi  : Bytes = Bytes.from-text("hi")
-slot raw : Bytes = Bytes.from-bytes([255, 0, 128])
+slot hi   : Bytes = Bytes.from-text("hi")
+slot raw  : Bytes = Bytes.from-bytes([255, 0, 128])
+slot none : Bytes = Bytes.from-bytes([])
 
-slot shown     : Text = ""
-slot joined    : Text = ""
-slot formatted : Text = ""
-slot round     : Bool = false
-slot parsed    : Bool = true
+slot shown          : Text = ""
+slot joined         : Text = ""
+slot formatted      : Text = ""
+slot round          : Bool = false
+slot empty          : Text = "?"
+slot empty-round    : Bool = false
+slot parsed         : Bool = true
+slot parsed-as-text : Bool = false
 
 reducer show-them on=ui.click(ShowBtn)
-    do= shown     := raw.show
-        joined    := "hi=" + hi
-        formatted := fmt("raw={0}", raw)
-        round     := Bytes.from-base64(raw.show) == raw
-        parsed    := Bytes.parse(hi.show) == Some(hi)
+    do= shown          := raw.show
+        joined         := "hi=" + hi
+        formatted      := fmt("raw={0}", raw)
+        round          := Bytes.from-base64(raw.show) == raw
+        empty          := none.show
+        empty-round    := Bytes.from-base64(none.show) == none
+        parsed         := Bytes.parse(hi.show) == Some(hi)
+        parsed-as-text := Bytes.parse(hi.show) == Some(Bytes.from-text("aGk="))
 
 tile ShowBtn = button(text="show") {id: "show"}
 

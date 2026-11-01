@@ -575,7 +575,7 @@ TypeName.show(value)       : Text         ; 値の文字列表現
 
 読み方は `Bool` と同じく厳密である: `Int.parse(" 12 ")` や `Int.parse("0x10")` は `Some(12)` / `Some(16)` ではなく `None` になる。空白があり得るならテキストを先に trim する。
 
-`Bytes` では `parse` は `show` の逆ではない。`b.show` は base64（[§2.2.10](#_2-2-10-bytes)）で、`Bytes.parse` は UTF-8 として読むので、`Bytes.parse(b.show)` は `Some(b)` ではなく、その base64 テキストのバイト列の `Some` になる。`Bytes` の `show` の逆は `Bytes.from-base64` であり、`Bytes.from-base64(b.show)` は `b` である。
+`Bytes` では `parse` は `show` の逆ではない。`b.show` は base64（[§2.2.10](#_2-2-10-bytes)）で、`Bytes.parse` は UTF-8 として読むので、`Bytes.parse(b.show)` が `Some(b)` になることはない。その base64 テキストのバイト列の `Some` であり、`show` が `""` である空の `Bytes` では `None` になる。`Bytes` の `show` の逆は `Bytes.from-base64` であり、`Bytes.from-base64(b.show)` は `b` である。
 
 読んだ値はその後 `T` が持つすべての `where` refinement（[言語 §1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）に照らされ、どれかを満たさない値は `None` になる: `type Cents = nominal Int where positive` なら `Cents.parse("-5")` は `None` である。したがって `parse` は自身の型が拒否する値を決して生成しない — `Option(Cents)` は slot 書き込みのガードを通らないので、その検査ができるのは parse の時点だけである。
 

@@ -8,8 +8,10 @@
       }
     },
     {
-      "label": "show, + and fmt agree, and from-base64 reads show back",
-      "do": { "click": "#show" },
+      "label": "show, + and fmt agree, from-base64 reads show back, and parse reads the base64 text",
+      "do": {
+        "click": "#show"
+      },
       "expect": {
         "noErrors": true,
         "state": {
@@ -17,7 +19,10 @@
           "joined": "hi=aGk=",
           "formatted": "raw=/wCA",
           "round": true,
-          "parsed": false
+          "empty": "",
+          "empty-round": true,
+          "parsed": false,
+          "parsed-as-text": true
         },
         "domIncludes": ["shown=/wCA"]
       }
