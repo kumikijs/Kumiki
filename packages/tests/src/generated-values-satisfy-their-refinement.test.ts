@@ -131,7 +131,7 @@ describe("a generated value passes every refinement stacked on its type", () => 
 
 // Besides the generated values above, the runtime makes up fresh ids, and the compiler's `uuid`
 // predicate accepts them too.
-describe("a fresh id passes the check a uuid-refined slot applies", () => {
+describe("a fresh id passes the check a uuid refinement applies", () => {
   it("mints ids the uuid predicate accepts", () => {
     const accepts = predicate("uuid");
     for (let i = 0; i < 200; i++) {
