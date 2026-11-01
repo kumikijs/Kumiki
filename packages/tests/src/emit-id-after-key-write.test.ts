@@ -105,3 +105,29 @@ describe("`emit cancel(id)` aborts the request `id := emit …` started", () => 
     );
   });
 });
+
+// The two keys differ only inside a structured value, and each request's id carries its own.
+describe("`emit cancel(id)` leaves running a request whose structured key is not `==`", () => {
+  it.each([
+    ["a record key", "policy=latest-per-key({k: $1, at: noteKey})"],
+    ["a List key of records", "policy=latest-per-key([{k: $1}])"],
+    ["an Option key", "policy=latest-per-key(Some($1))"],
+  ])("%s", { timeout: 30_000 }, async (_label, policy) => {
+    double = stubFetch(holdEach());
+    const { calls } = double;
+    const app = await loadSource(cancelApp(policy, [`lastId := emit load("a")`, `emit load("b")`]));
+    await withMounted(app, async (root) => {
+      clickContaining(root, "Go");
+      await tick(30);
+      expect(calls.map((c) => [c.url, c.init.signal?.aborted])).toEqual([
+        ["/api/a", false],
+        ["/api/b", false],
+      ]);
+
+      clickContaining(root, "Stop");
+      await tick(30);
+      expect(calls.map((c) => c.init.signal?.aborted)).toEqual([true, false]);
+      expect(root.textContent).toContain("aborted");
+    });
+  });
+});

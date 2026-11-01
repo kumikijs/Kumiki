@@ -1,8 +1,10 @@
 import {
   batchRejections,
   type EmitSpec,
+  isPanic,
   type ReducerSpec,
   type RefinementRejection,
+  rejectedBatchText,
   reportRejectedBatch,
   standInValue,
 } from "./core.ts";
@@ -30,19 +32,26 @@ import { serializeTileNode, tileStructEqual } from "./testkit/tile-match.ts";
 import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard.ts";
 
 // `before` must be the whole table `resetLive` built: that is what puts a slot the test neither
-// seeds nor writes in the answer. `runReducerTest` and `runReducerStep` share it so the two agree.
+// seeds nor writes in the answer. `runReducerTest` and `runReducerStep` share it so the two agree
+// on a batch that commits; a `run-reducer` step fails its trial on a rejected one instead.
 function settleBatch(
-  reducer: string,
   before: Record<string, unknown>,
   result: Partial<ReturnType<ReducerSpec["apply"]>> | null | undefined,
   slotMetas: Record<string, SlotMetaLike>,
-): { slots: Record<string, unknown>; emits: EmitSpec[] } {
+): { rejected: RefinementRejection[] } | { slots: Record<string, unknown>; emits: EmitSpec[] } {
   const rejected = batchRejections(result, slotMetas);
-  if (rejected.length > 0) {
-    reportRejectedBatch(reducer, rejected);
-    return { slots: { ...before }, emits: [] };
-  }
+  if (rejected.length > 0) return { rejected };
   return { slots: { ...before, ...(result?.slots ?? {}) }, emits: result?.emits ?? [] };
+}
+
+/** A `run-reducer` step whose batch a refinement rejected: its batch did not commit, so the trial fails. */
+class RejectedStep extends Error {}
+
+/** Why a trial that threw failed, with a panic told apart from any other error. */
+function thrownReason(e: unknown): string {
+  if (e instanceof RejectedStep) return e.message;
+  const message = e instanceof Error ? e.message : String(e);
+  return isPanic(e) ? `panicked: ${message}` : `threw: ${message}`;
 }
 
 export const _stdlibTest = {
@@ -75,8 +84,13 @@ export const _stdlibTest = {
     this.resetLive(app.live, app.slots, state?.slots ?? {});
     const r = app.reducers.find((x) => x.name === name);
     if (!r) throw new Error(`reducer "${name}" not found`);
-    const res = r.apply(app.live, { $el: event, $event: event });
-    return { slots: settleBatch(name, app.live, res, app.slots).slots };
+    const settled = settleBatch(
+      app.live,
+      r.apply(app.live, { $el: event, $event: event }),
+      app.slots,
+    );
+    if ("rejected" in settled) throw new RejectedStep(rejectedBatchText(name, settled.rejected));
+    return { slots: settled.slots };
   },
   runPropertyTest(input: {
     name: string;
@@ -90,24 +104,25 @@ export const _stdlibTest = {
     const count = input.count ?? 100;
     const doShrink = input.shrink ?? true;
     const rng = _rng(input.seed ?? _hashStr(name));
-    // `fails` is true when the invariant does NOT hold (a throw counts as a fail).
-    const fails = (b: Record<string, unknown>): boolean => {
+    const failure = (b: Record<string, unknown>): { reason?: string } | undefined => {
       try {
-        return trial(b) !== true;
-      } catch {
-        return true;
+        return trial(b) === true ? undefined : {};
+      } catch (e) {
+        return { reason: thrownReason(e) };
       }
     };
+    const fails = (b: Record<string, unknown>): boolean => failure(b) !== undefined;
     for (let i = 0; i < count; i++) {
       const binds: Record<string, unknown> = {};
       for (const k of Object.keys(vars)) binds[k] = genValue(vars[k] as GenDesc, rng);
       if (fails(binds)) {
         const minimal = doShrink ? shrinkCounterexample(vars, fails, binds) : binds;
+        const reason = failure(minimal)?.reason;
         return {
           name,
           pass: false,
           expected: "invariant holds for all generated inputs",
-          actual: `counterexample (case ${i + 1}/${count}): ${_jsonStr(minimal)}`,
+          actual: `counterexample (case ${i + 1}/${count}): ${_jsonStr(minimal)}${reason ? ` — ${reason}` : ""}`,
           diffAt: "(property)",
           cases: i + 1,
         };
@@ -151,8 +166,12 @@ export const _stdlibTest = {
   }): TestResult {
     const { name, target, givenSlots, slotMetas, result, panic, expect } = input;
     // No `?? {}` fallback: a caller that forgets `slotMetas` must throw here, not silently lose every refinement check and pass a batch the app refuses.
-    const after = settleBatch(target, givenSlots, result, slotMetas);
-    return compareReducerExpect(name, after.slots, after.emits, panic, expect);
+    const settled = settleBatch(givenSlots, result, slotMetas);
+    if (!("rejected" in settled)) {
+      return compareReducerExpect(name, settled.slots, settled.emits, panic, expect);
+    }
+    reportRejectedBatch(target, settled.rejected);
+    return compareReducerExpect(name, { ...givenSlots }, [], panic, expect);
   },
   runReducerTestFlow(input: {
     name: string;

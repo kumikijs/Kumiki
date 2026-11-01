@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkSource } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 import { withApp } from "./helpers/programs.ts";
 
 describe("undefined tile in ui.* selector (E0211)", () => {
@@ -280,6 +280,221 @@ describe("W0212 ui-event-tile-mismatch", () => {
   });
 });
 
+describe("W0212 gives the reason that holds when the element fires the event", () => {
+  const w0212 = (ev: string, tiles: string) => {
+    const src = `
+      type Size = S | M
+      fn sizes() -> List({label: Text, value: Size})
+         = [{label: "Small", value: S}, {label: "Medium", value: M}]
+      slot size : Size = S
+      slot done : Bool = false
+      slot note : Text = ""
+      slot hits : Int = 0
+      reducer r on=ui.${ev}(D) do= hits := hits + 1
+      ${tiles}
+      tile App = column(D)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const found = checkSource(src).filter((e) => e.code === "W0212");
+    expect(found).toHaveLength(1);
+    return found[0]!.message;
+  };
+
+  describe("on a label-wrapped control, says the event does not bubble to the label", () => {
+    it("names the <input>, the event and the <label> for ui.focus on a check", () => {
+      expect(w0212("focus", "tile D = check(value=done)")).toBe(
+        `Reducer "r" subscribes to ui.focus(D) but "focus" never reaches a listener in tile "D": ` +
+          `the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires ` +
+          `does not bubble to the <label> ` +
+          `(DOM-allowed: input, textarea, button, select, slider, editable, link, video; observed in body: check). ` +
+          `The handler is silently dropped.`,
+      );
+    });
+
+    const LABEL_WRAPPED = [
+      ["check", "check(value=done)"],
+      ["radio", 'radio(group="g", selected=done)'],
+      ["switch", "switch(value=done)"],
+    ] as const;
+    it.each(
+      LABEL_WRAPPED.flatMap(([kind, tile]) => ["focus", "blur"].map((ev) => ({ kind, tile, ev }))),
+    )("gives that reason for ui.$ev on $kind", ({ kind, tile, ev }) => {
+      const message = w0212(ev, `tile D = ${tile}`);
+      expect(message).toContain(
+        `the runtime listens for "${ev}" on a ${kind}'s <label>, and the "${ev}" its <input> fires does not bubble to the <label>`,
+      );
+      expect(message).not.toContain("has no descendant");
+    });
+
+    it("gives it when the control is reached through another tile", () => {
+      const message = w0212("focus", "tile Inner = check(value=done)\ntile D = box(Inner)");
+      expect(message).toContain(`the runtime listens for "focus" on a check's <label>`);
+      expect(message).toContain("observed in body: box, check");
+    });
+
+    it("names every label-wrapped kind in the body, beside kinds that fire nothing", () => {
+      const message = w0212(
+        "blur",
+        'tile D = row(check(value=done), switch(value=done), text("x"))',
+      );
+      expect(message).toContain(
+        `the runtime listens for "blur" on a check / switch's <label>, and the "blur" its <input> fires`,
+      );
+    });
+
+    it("keeps 'no descendant fires it' for an event the control does not fire at all", () => {
+      expect(w0212("submit", "tile D = check(value=done)")).toBe(
+        `Reducer "r" subscribes to ui.submit(D) but tile "D" has no descendant that fires "submit" ` +
+          `(DOM-allowed: form; observed in body: check). The handler is silently dropped.`,
+      );
+    });
+
+    it("keeps 'no descendant fires it' for a tile with nothing focusable in it", () => {
+      expect(w0212("focus", 'tile D = box(text("hi"))')).toContain(
+        `but tile "D" has no descendant that fires "focus" (`,
+      );
+    });
+  });
+
+  describe("on a details, says what keeps the event from a listener", () => {
+    const FAQ = 'tile D = details(summary="Question", text("answer"))';
+
+    it.each([
+      "focus",
+      "blur",
+    ])("names the <summary>, the event and the <details> for ui.%s", (ev) => {
+      const message = w0212(ev, FAQ);
+      expect(message).toContain(
+        `"${ev}" never reaches a listener in tile "D": ` +
+          `the runtime listens for "${ev}" on a details's <details>, ` +
+          `and the "${ev}" its <summary> fires does not bubble to the <details> (`,
+      );
+      expect(message).not.toContain("has no descendant");
+    });
+
+    it("says a control in its panel takes ui.key, and how to hear a key on its summary", () => {
+      expect(w0212("key", FAQ)).toBe(
+        `Reducer "r" subscribes to ui.key(D) but "key" never reaches a listener in tile "D": ` +
+          `a details takes no "key" listener on the <details> around its <summary>, ` +
+          `since a control in its panel takes the subscription instead — ` +
+          `write onKeyDown= on the details to hear a "key" on its <summary> ` +
+          `(DOM-allowed: input, textarea, button, select, slider, editable, link, video, check, radio, switch; ` +
+          `observed in body: details, text). ` +
+          `The handler is silently dropped.`,
+      );
+    });
+
+    it("gives it when the details is reached through a container and another tile", () => {
+      const message = w0212(
+        "focus",
+        'tile Inner = details(summary="Question", text("answer"))\ntile D = box(Inner)',
+      );
+      expect(message).toContain(`the runtime listens for "focus" on a details's <details>`);
+      expect(message).toContain("observed in body: box, details, text");
+    });
+
+    it("gives the label's reason and the summary's, one clause each, for a body holding both", () => {
+      expect(
+        w0212("blur", 'tile D = row(check(value=done), details(summary="Q", text("a")))'),
+      ).toContain(
+        `"blur" never reaches a listener in tile "D": ` +
+          `the runtime listens for "blur" on a check's <label>, and the "blur" its <input> fires does not bubble to the <label>; ` +
+          `the runtime listens for "blur" on a details's <details>, and the "blur" its <summary> fires does not bubble to the <details> (`,
+      );
+    });
+  });
+
+  describe("on a video, reports none of key / focus / blur", () => {
+    it.each([
+      "key",
+      "focus",
+      "blur",
+    ])("says nothing about ui.%s on a video whose controls a slot decides", (ev) => {
+      const src = `
+        slot done : Bool = false
+        slot hits : Int = 0
+        reducer r on=ui.${ev}(V) do= hits := hits + 1
+        tile V = video(src="/a.mp4", controls=done)
+        tile App = column(V, text(hits.show))
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      expect(codesOf(src)).toEqual([]);
+    });
+  });
+
+  describe("on a kind whose renderer does not pass the event on, says what it does instead", () => {
+    it("says a link listens for click only to navigate", () => {
+      expect(w0212("click", 'tile D = link(to="/", text="home")')).toBe(
+        `Reducer "r" subscribes to ui.click(D) but "click" never reaches a reducer in tile "D": ` +
+          `a link fires "click", and its renderer listens for it only to navigate, never calling onClick ` +
+          `(DOM-allowed: button, check, switch, radio; observed in body: link). ` +
+          `The handler is silently dropped.`,
+      );
+    });
+
+    it("says a slider listens for input only to write its bind", () => {
+      expect(w0212("input", "tile D = slider(bind=hits, min=0, max=10)")).toBe(
+        `Reducer "r" subscribes to ui.input(D) but "input" never reaches a reducer in tile "D": ` +
+          `a slider fires "input", and its renderer listens for it only to write the bind, ` +
+          `never calling onInput ` +
+          `(DOM-allowed: input, textarea, editable; observed in body: slider). ` +
+          `The handler is silently dropped.`,
+      );
+    });
+
+    it.each([
+      ["check", "check(value=done)"],
+      ["radio", 'radio(group="g", selected=done)'],
+      ["switch", "switch(value=done)"],
+      ["select", "select(bind=size, options=sizes())"],
+    ])("says a %s listens for change, not input", (kind, tile) => {
+      const message = w0212("input", `tile D = ${tile}`);
+      expect(message).toContain(
+        `"input" never reaches a reducer in tile "D": a ${kind} fires "input", ` +
+          `and its renderer listens for "change" instead, never calling onInput (`,
+      );
+      expect(message).not.toContain("has no descendant");
+    });
+
+    it("names together the kinds that share a reason, and gives each reason once", () => {
+      const message = w0212(
+        "input",
+        'tile D = row(select(bind=size, options=sizes()), slider(bind=hits, min=0, max=10), check(value=done), text("x"))',
+      );
+      expect(message).toContain(
+        `"input" never reaches a reducer in tile "D": ` +
+          `a check / select fires "input", and its renderer listens for "change" instead, never calling onInput; ` +
+          `a slider fires "input", and its renderer listens for it only to write the bind, never calling onInput (`,
+      );
+    });
+
+    it("gives it through a container and a referenced tile", () => {
+      const message = w0212("click", 'tile Inner = link(to="/", text="home")\ntile D = box(Inner)');
+      expect(message).toContain(
+        `a link fires "click", and its renderer listens for it only to navigate`,
+      );
+      expect(message).toContain("observed in body: box, link");
+    });
+
+    it.each([
+      ["change", "tile D = editable(bind=note)", "editable"],
+      ["input", 'tile D = button(text="b")', "button"],
+    ])("keeps 'no descendant fires it' for ui.%s on `%s`", (ev, tiles, kind) => {
+      const message = w0212(ev, tiles);
+      expect(message).toContain(`but tile "D" has no descendant that fires "${ev}" (`);
+      expect(message).toContain(`observed in body: ${kind})`);
+    });
+  });
+
+  // The <span> does fire click; this pins the wording that is still untrue of it, so that the
+  // change which gives a text its own reason changes this test on purpose.
+  it("still says no descendant fires click for a text, although its <span> fires it", () => {
+    const message = w0212("click", 'tile D = text("hi")');
+    expect(message).toContain(`but tile "D" has no descendant that fires "click" (`);
+    expect(message).toContain("observed in body: text)");
+  });
+});
+
 describe("selector id mismatch (E0212, strictSelectorId)", () => {
   const checkStrict = (src: string) => checkSource(src, { strictSelectorId: true });
 
@@ -298,6 +513,20 @@ describe("selector id mismatch (E0212, strictSelectorId)", () => {
     expect(e?.message).toContain("NewForm#nw");
     expect(e?.message).toContain('"new"');
     expect(e?.message).toContain("can never match");
+  });
+
+  // A video is in the key, focus and blur rows, so its id is one the subscription can match.
+  it.each(["key", "focus", "blur"])("counts a video's id for ui.%s", (ev) => {
+    const src = (id: string) => `
+      slot x : Int = 0
+      reducer add on=ui.${ev}(Player#${id}) do= x := x + 1
+      tile Player = column(video(src="/a.mp4", controls=true) {id: "clip"}, text("x"))
+      tile App = column(Player)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    const mismatch = checkStrict(src("nope")).find((d) => d.code === "E0212");
+    expect(mismatch?.message).toContain('has id "clip"');
+    expect(checkStrict(src("clip")).some((d) => d.code === "E0212")).toBe(false);
   });
 
   it("does NOT emit E0212 by default (default-off)", () => {

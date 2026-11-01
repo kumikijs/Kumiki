@@ -204,33 +204,53 @@ export function arithmeticHint(name: string, sym: SymbolTable, ctx: Ctx): string
   return ` — "-" continues an identifier, so this is one name. Write "${head} - ${tail}" with spaces for subtraction.`;
 }
 
-// A tile `for`'s variable and a `match` arm's pattern stand for one element, one case, so the read
-// moves in; a statement body's name can be declared before it, a `let … in` value bound higher.
-const ENDED_SCOPE_WORDS: Record<EndedScope, { scope: string; repair: string }> = {
+// A `let n = 0` before the statement would not do: the body's own `n` only shadows it.
+const BRANCH_WORDS = {
   if: {
-    scope: 'an "if" branch',
-    repair: 'declare it before the "if", or move the read into the branch',
-  },
-  for: {
-    scope: 'a "for" body',
-    repair: 'declare it before the "for", or move the read into the body',
+    part: "branch",
+    ended: 'an "if" branch',
+    sibling: 'the other branch of this "if"',
+    declare: (name: string) =>
+      `declare it once before the "if" with an "if" expression (let ${name} = if c then … else …)`,
   },
   match: {
-    scope: "a match arm",
-    repair: 'declare it before the "match", or move the read into the arm',
+    part: "arm",
+    ended: "a match arm",
+    sibling: "another arm of this match",
+    declare: () => 'declare it once before the "match" with a match expression',
   },
-  "let-in": {
-    scope: 'the body of a "let … in"',
-    repair: "move the read into that body, or bind it where both reads see it",
-  },
-  "for-expr": { scope: `a tile's "for" body`, repair: "move the read into the body" },
-  "match-expr": { scope: 'an arm of a "match" expression', repair: "move the read into the arm" },
 };
 
+const NO_VALUE_OUT = "and a name carries no value out of a loop";
+
+function endedScopeWords(name: string, { kind, sibling }: EndedScope, ctx: Ctx): string {
+  switch (kind) {
+    case "for":
+      return `in a "for" loop, ${NO_VALUE_OUT}: move the read into the loop's body, or write the value to a slot there`;
+    case "for-expr":
+      return `in a tile's "for", ${NO_VALUE_OUT}: move the read into the loop's body`;
+    case "let-in": {
+      // Only a reducer has `let` statements to bind it with.
+      const bind =
+        ctx.kind === "reducer"
+          ? 'with a "let" statement where both reads see it'
+          : "once where both reads see it";
+      return `by a "let … in", whose body ended before this read: move the read into that body, or bind it ${bind}`;
+    }
+    case "match-expr":
+      return 'in an arm of a "match" expression, which ended before this read: move the read into that arm';
+    default: {
+      const w = BRANCH_WORDS[kind];
+      const where = sibling ? w.sibling : `${w.ended}, which ended before this read`;
+      const into = sibling ? `the ${w.part} that declares it` : `that ${w.part}`;
+      return `in ${where}: ${w.declare(name)}, or move the read into ${into}`;
+    }
+  }
+}
+
 /** Unlike `arithmeticHint`, kept when a close name is in scope: that the name ended is known. */
-export function endedScopeHint(kind: EndedScope): string {
-  const { scope, repair } = ENDED_SCOPE_WORDS[kind];
-  return ` — it is scoped to ${scope}, which ends with it: ${repair} (see docs/spec/language.md)`;
+export function endedScopeHint(name: string, ended: EndedScope, ctx: Ctx): string {
+  return ` — it was declared ${endedScopeWords(name, ended, ctx)} (see docs/spec/language.md)`;
 }
 
 function hasCloseName(name: string, sym: SymbolTable, ctx: Ctx): boolean {

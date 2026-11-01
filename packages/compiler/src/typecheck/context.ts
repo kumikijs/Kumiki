@@ -19,17 +19,26 @@ export type KumikiError = {
   pos: Pos;
   severity?: "error" | "warning";
   unrendered?: "positional" | "text-prop" | "text-shadowed";
-  /** E0103 only: the scope that declared the name and ended before this read. */
-  endedScope?: EndedScope;
+  /**
+   * E0103 only: the kind of nested scope that declared the name and ended before this read;
+   * `kumiki fix` reads it to skip the rename.
+   */
+  endedScope?: NestedScopeKind;
   /** E0218 only: the member whose append alone makes the target a List; `kumiki fix` reads it. */
   accessor?: "keys" | "to-list";
 };
 
+/** The nested statement bodies of a reducer, each a scope of its own. */
+export type StatementScope = "if" | "for" | "match";
+
 /**
- * A reducer's nested statement bodies (`if`, `for`, `match`), and the expressions that bind a name
- * for their own body: `let … in`, a tile's `for`, an arm of a `match` expression.
+ * A reducer's nested statement bodies, and the expressions that bind a name for their own body:
+ * `let … in`, a tile's `for`, an arm of a `match` expression.
  */
-export type EndedScope = "if" | "for" | "match" | "let-in" | "for-expr" | "match-expr";
+export type NestedScopeKind = StatementScope | "let-in" | "for-expr" | "match-expr";
+
+/** The scope a name ended with; `sibling` while a later branch or arm of its statement is checked. */
+export type EndedScope = { kind: NestedScopeKind; sibling: boolean };
 
 export type SymbolTable = {
   types: Map<string, TypeDef>;
@@ -47,16 +56,27 @@ export type SymbolTable = {
   themes: Set<string>;
   iconDomain: Set<string>;
   elementIds: Set<string>;
+  /** The result of each `fn` declared without `->`, read off its body once per check. */
+  fnResults: Map<string, TypeExpr | null>;
+  /** The `fn`s that can reach themselves through the `fn`s they call: those E0006 reports. */
+  fnLoops: ReadonlySet<string>;
   /** The program's own unions, by each tag they declare: `unionsByTag`. */
   unionsByTag: ReadonlyMap<string, readonly TypeExpr[]>;
   app?: AppDef;
 };
+
+export type LocalBinder = "input" | "for";
 
 export type Ctx = {
   kind: "slot-init" | "tile" | "reducer" | "fn" | "app-init" | "test";
   localBinds: Set<string>;
   capsAvailable?: Set<string>; // for reducer context
   localTypes: Map<string, TypeExpr>;
+  /**
+   * What bound each local a tile reads: its input, or a `for`. Any other local has no entry, and
+   * outside a tile it stays empty. E0229 reads it to say what a bind target's root is.
+   */
+  localBinders: Map<string, LocalBinder>;
   runReducerScope?: boolean;
   wildcardsReportedElsewhere?: boolean;
   /** `prefetch`: bound only when a link's prefetch fires the reducer, and `{}` on its own trigger. */
@@ -71,21 +91,37 @@ export type Ctx = {
   oneValueFragment?: { method: string; hides: boolean };
 };
 
-export function bindLocal(ctx: Ctx, name: string, type: TypeExpr | null): void {
+export function bindLocal(
+  ctx: Ctx,
+  name: string,
+  type: TypeExpr | null,
+  binder?: LocalBinder,
+): void {
   ctx.localBinds.add(name);
   if (type) ctx.localTypes.set(name, type);
   else ctx.localTypes.delete(name);
+  if (binder) ctx.localBinders.set(name, binder);
+  else ctx.localBinders.delete(name);
 }
 
 /** A copy of `ctx` whose bindings can be extended without touching the parent. */
-export function innerScope(ctx: Ctx): Ctx {
-  return { ...ctx, localBinds: new Set(ctx.localBinds), localTypes: new Map(ctx.localTypes) };
+export function innerScope<C extends Ctx>(ctx: C): C {
+  return {
+    ...ctx,
+    localBinds: new Set(ctx.localBinds),
+    localTypes: new Map(ctx.localTypes),
+    localBinders: new Map(ctx.localBinders),
+  };
 }
 
-/** End `inner`, a scope of the kind `kind` opened in `ctx`: its names go out of scope with it. */
-export function endScope(kind: EndedScope, inner: Ctx, ctx: Ctx): void {
+/**
+ * End `inner`, an expression's scope of the kind `kind` opened in `ctx`: its names end with it. A
+ * statement body around it does not take them over as it does a nested statement's, because a read
+ * moved into that body would still be after the expression.
+ */
+export function endScope(kind: NestedScopeKind, inner: Ctx, ctx: Ctx): void {
   for (const name of inner.localBinds) {
-    if (!ctx.localBinds.has(name)) ctx.endedScopes.set(name, kind);
+    if (!ctx.localBinds.has(name)) ctx.endedScopes.set(name, { kind, sibling: false });
   }
 }
 
@@ -96,6 +132,7 @@ export function pureScope(binds: readonly { name: string; type: TypeExpr }[]): C
     routeBind: "no-payload",
     endedScopes: new Map(),
     localTypes: new Map(),
+    localBinders: new Map(),
   };
   for (const b of binds) bindLocal(ctx, b.name, b.type);
   return ctx;
