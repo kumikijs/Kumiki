@@ -55,7 +55,7 @@ The only operations defined on `EffectId` are equality (`==`, `!=`), storage in 
 | `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — see [Routing §3.2](./routing.md#_3-2-current-route-state) |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
-| `File` | `{name: Text, size: Int, type: Text}` — what a file input reports about one picked file: its name, its size in bytes, and its MIME type (`""` when the browser does not know it). The file's bytes are not a field: a browser reads them only asynchronously, so the record the `change` event delivers cannot hold them. They are sent to a server as a `FileV` part of a `Multipart` body ([HTTP §6.1.3](./http.md#_6-1-3-the-httpbody-type), [Forms §5.10](./forms.md#_5-10-file-upload)) |
+| `File` | `{name: Text, size: Int, type: Text}` — what a file input reports about one picked file: its name, its size in bytes, and its MIME type (`""` when the browser does not know it). The file's bytes are not a field: a browser reads them only asynchronously, so the record the `change` event delivers cannot hold them. They are sent to a server as a `FileV` part of a `Multipart` body ([HTTP §6.1.3](./http.md#_6-1-3-the-httpbody-type), [Forms §5.10](./forms.md#_5-10-file-upload)). The record also holds `_file`, the runtime's handle on the picked file, which has no fields to show, so a `File`'s `show` ([§2.2.7](#_2-2-7-int-float)) is `{name: "a.txt", size: 3, type: "text/plain", _file: {}}` |
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — the payload of `app.error` and of an `error-boundary` tile's `in=` ([Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)) |
 | `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — the payload of `route.error(<pattern>)`: a `PanicInfo`'s fields and the `pattern` the reducer names |
 
@@ -278,6 +278,20 @@ These are the arithmetic Kumiki has. There is no `math` namespace: a qualifier i
 An argument outside a function's domain produces what the platform produces — `(-1.0).sqrt` is `NaN`, `(0.0).log` is `-Infinity` — and `.show` renders those as `"NaN"` and `"-Infinity"`. Non-finite `Float` values — what these functions give outside their domain, and what `/` gives for a zero divisor (`1.0 / 0.0` is `Infinity`; [language §1.9.4](./language.md#_1-9-4-operator-types)) — are numbers like any other: `sort` puts `-Infinity` before every finite value, `Infinity` after, and `NaN` after every other element ([§2.2.3](#_2-2-3-list-t)). Kumiki has no separate not-a-number type, and the `Int` above is the type, not a promise about the value: `(-1.0).sqrt.floor` is typed `Int` and is `NaN`. A refinement (`where between(…)`) is how a slot refuses one.
 
 `x.show` is the **common-to-all-types** stringification method. Int / Float / Bool / variant / nominal all return `.show : Text`. Kumiki has no name called `to-text`. On an `EffectId`, an opaque handle whose text is the runtime's to choose, `.show` is [E0204](./errors.md#e0204-effect-id-misuse) ([§2.1.1.1](#_2-1-1-1-effectid)).
+
+It is also the one text form a value is put into text with: `+` with a `Text` ([§2.4.5](#_2-4-5-string-formatting)), `fmt`, `TypeName.show(v)` ([§2.4.3](#_2-4-3-type-conversion)) and a tile's text all render a value as its `show`. A nullish is the empty string, a variant its tag, a number, a `Bool` and a `Text` their text. A record and a collection are written as the literal a program writes one with:
+
+| Value | `show` |
+|---|---|
+| a record | `{name: "ada", age: 3}` — each field as `name: value`, in the order the record holds them |
+| `List(T)` | `[1, 2]` |
+| `Tuple(T1, …, Tn)` | `(1, "a")` |
+| `Map(K, V)` | `{"a": 1}` — each entry as `key: value`, in the order `keys` answers them |
+| `Set(T)` | `[1, 2]` — its members, in the order `to-list` answers them, as a Set literal lists them ([§2.2.2](#_2-2-2-set-t)) |
+
+Each part of one is written by the same rule, with one difference: a `Text` inside a record or a collection is quoted, escaped as JSON escapes a string (`["a", "say \"hi\""]`), where a `Text` on its own is its text. A variant inside one is its tag (`[Some, None]`, `{role: Admin}`), and an empty List or Set is `[]`, an empty Map `{}`. A Map key and a Set member are the values `keys` / `to-list` hand back: `{3: "c"}` for a `Map(Int, Text)`, <code v-pre>{{x: 0, y: 0}: "o"}</code> for a `Map(Pt, Text)`. `Bytes` is its base64 (`aGk=`, [§2.2.10](#_2-2-10-bytes)), and a `Time` or a `Duration` the number of milliseconds it holds ([§2.2.9](#_2-2-9-duration)), on their own and inside a structure alike.
+
+At run time a Map is an object like a record, a Set an object of its members, and a Tuple an array like a List, so it is the **type** that decides which of them a value is written as. The checker hands `show` that type wherever it shows an expression whose type has a Map, a Set or a Tuple in it, through aliases, generics and a type that contains itself. Where the checker cannot decide the type — the accumulator `$1` of a `fold` from `{}`, the result of a `fn` with no `->` whose body's type it cannot decide, and the part of a generic type below its first repeat under an argument no smaller than its own (`type N(T) = {v: T, kids: List(N(List(T)))}`) — a Map is written as a record of its stored keys, a Set as a record of `true`s and a Tuple as a List, and a Map with a `_tag` key reads as a variant, written as that key's value. That is a gap in what the checker resolves, not a rule a program may rely on.
 
 ### 2.2.8 Time
 
@@ -602,7 +616,7 @@ The rest of the arithmetic is [§2.2.7](#_2-2-7-int-float), as methods on the nu
 fmt(template, ...args)     : Text         ; "Hello {0}, you have {1}"
 ```
 
-A **placeholder** is `{`, one or more decimal digits, `}`. Each one is replaced by the argument at that index — `{0}` is the first argument after the template — rendered the way `+` renders it (the `show` equivalent named below: a variant is its tag, a nullish is the empty string, a `Bytes` is its base64 ([§2.2.10](#_2-2-10-bytes)), anything else is its text form), so `fmt("{0}-{1}", "a", "b")` is `"a-b"`. An index may repeat, and the indices may appear in any order: `fmt("{1} {0} {1}", "a", "b")` is `"b a b"`. Substitution is a single left-to-right pass over the template: a `{0}` that appears *inside* a substituted value is text, not a placeholder to fill again.
+A **placeholder** is `{`, one or more decimal digits, `}`. Each one is replaced by the argument at that index — `{0}` is the first argument after the template — rendered the way `+` renders it (its `show`, [§2.2.7](#_2-2-7-int-float): a variant is its tag, a nullish is the empty string, a record or a collection is its literal, a `Bytes` is its base64 ([§2.2.10](#_2-2-10-bytes)), anything else is its text form), so `fmt("{0}-{1}", "a", "b")` is `"a-b"`. An index may repeat, and the indices may appear in any order: `fmt("{1} {0} {1}", "a", "b")` is `"b a b"`. Substitution is a single left-to-right pass over the template: a `{0}` that appears *inside* a substituted value is text, not a placeholder to fill again.
 
 The digits are read as one decimal index, so a leading zero is significant only as a digit: `{01}` is index 1.
 
@@ -616,7 +630,7 @@ Neither of the first two stops a program, and neither is silent where it can be 
 
 The call is counted ([E0213](./errors.md#e0213-call-arity-mismatch)) against the signature above — the template is all that is required, because a template with no placeholders takes no arguments.
 
-When you concatenate `Text` with another type using `+`, the equivalent of `show` is called automatically.
+When you concatenate `Text` with another type using `+`, the equivalent of `show` is called automatically ([§2.2.7](#_2-2-7-int-float)): `"p: " + {name: "ada"}` is `p: {name: "ada"}`.
 
 ### 2.4.6 Debugging Aids
 
