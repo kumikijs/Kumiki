@@ -33,6 +33,7 @@ import {
   checkExpr,
   checkIterationTarget,
   elementTypeOf,
+  noteShown,
   refuseRenderedEffectId,
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
@@ -449,6 +450,8 @@ function checkTileCall(
       continue;
     }
     checkExpr(v, sym, errors, ctx);
+    // Only codegen knows which of a builtin's arguments it renders as text.
+    if (BUILTIN_TILES.has(t.name)) noteShown(v, sym, ctx);
     if (arg.name !== undefined) checkBuiltinProp(t.name, arg.name, v, sym, errors, ctx);
   }
   for (const prop of t.props) {
@@ -487,6 +490,7 @@ function checkTileCall(
       checkAgainst(prop.value, PREFETCH_ARGS_TYPE, sym, errors, ctx);
     } else {
       checkExpr(prop.value, sym, errors, ctx);
+      if (prop.name === "key" || BUILTIN_TILES.has(t.name)) noteShown(prop.value, sym, ctx);
       checkBuiltinProp(t.name, prop.name, prop.value, sym, errors, ctx);
     }
   }

@@ -243,7 +243,8 @@ describe("an index read into a Set", () => {
     expect(codesOf(src)).toEqual(["E0232"]);
   });
 
-  // Reads into these have no places either, and no type; that they pass silently is tracked apart.
+  // Reads into these have no places either. A record read through a literal key has its field's
+  // type, the others none; that they pass unreported is tracked apart.
   it.each([
     ["an Int", `slot n : Int = 5`, `n[0]`],
     ["a record", `type R = { a: Int }\nslot r : R = { a: 1 }`, `r["a"]`],
@@ -372,8 +373,6 @@ describe("an index step into a receiver with no places", () => {
     expect(textAt(src, defined(errs[0], "an E0602").pos)).toBe(body.slice(body.indexOf("[")));
   });
 
-  // The name is E0117 where it is written; the initializer may add a mismatch, so only the
-  // absence of E0602 is asserted.
   it.each([
     ["a name that resolves to nothing", `slot u : Mystery = 0`, `u[0] := 1`],
     [
@@ -382,9 +381,7 @@ describe("an index step into a receiver with no places", () => {
       `d["k"] := 1`,
     ],
   ])("stays silent on a receiver whose type is not known: %s", (_what, decls, body) => {
-    const codes = codesOf(withBody(decls, body));
-    expect(codes).toContain("E0117");
-    expect(codes).not.toContain("E0602");
+    expect(codesOf(withBody(decls, body))).toEqual(["E0117"]);
   });
 });
 
