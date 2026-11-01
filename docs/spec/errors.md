@@ -423,7 +423,9 @@ A type name resolves to nothing: it names no `type` definition, no [standard-lib
 
 An unresolved name is *opaque*, and an opaque type accepts every value — so before this check `slot v : NoSuchType = 1` was accepted, and so was every subsequent use of `v`. One misspelling turned off value checking for everything downstream of it.
 
-Type parameters are in scope inside the body of the definition that declares them, and only there: `type Box(T) = {v: T}` is fine, `type Box(T) = {v: U}` is not. No other declaration site (`slot`, `fn`, `effect`, `tile in=`) has type parameters, so an unresolved name at one of those is always an error.
+The name is the one mistake, so E0117 is the one report of it: past it the name is opaque, and neither a value written against it nor a use of that value is an [E0201](#e0201-type-mismatch) against a type that does not exist. An **application** of the name is opaque the same way — `slot y : Foo(Int) = 1` is E0117 alone, with no E0201 on the `1` — and so is an application of a misspelt constructor such as `Lst(Int)`, wherever the application is written: a record field, a `List(…)`, an alias, a `nominal`, a `where`. An application of a standard-library constructor (`List(Int)`, `Option(Text)`) or of a program's own generic (`G(Int)` for a `type G(T) = …`) is a type, and a value is checked against its arguments as usual.
+
+Type parameters are in scope inside the body of the definition that declares them, and only there: `type Box(T) = {v: T}` is fine, `type Box(T) = {v: U}` is not. A parameter written with arguments (`T(Int)`) is in scope too, and is [E0210](#e0210-type-arity-mismatch) rather than this. No other declaration site (`slot`, `fn`, `effect`, `tile in=`) has type parameters, so an unresolved name at one of those is always an error.
 
 A **call's qualifier** is a type name too. `T.fresh()`, `T.parse(t)` and `T.show(v)` are lowered on any capitalised `T` — codegen matches the shape by regex — so a qualifier that names no type is lowered anyway unless it is refused here. `parse` reads its text by the base the qualifier resolves to ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)), and a name that resolves to no type has no base to read by. When `parse` branched on the qualifier's name instead, a misspelling did not fail, it changed which branch ran: `Itn.parse("12")` answered `Some("12")`, which an `Int` slot then held and every later sum concatenated. `fresh` and `show` discard the qualifier, so a misspelling there produces the same value — and the name is reported because a qualifier that resolves to no type is wrong on its own terms, which makes this check deliberately stricter than the lowering for those two. The qualifier resolves against the same namespace as any other type name, primitives included, and must be spelled as one: a name with a hyphen is not a qualifier, and a call written with one is [E0116](#e0116-undef-call) rather than this. A qualifier that resolves to a type **constructor** — `List`, or a `type Box(T)` — names a type and is not one; that is [E0124](#e0124-type-constructor-qualifier).
 
@@ -597,6 +599,7 @@ A value does not have the type its position requires.
 > `Operator "<op>" cannot compare <type> with <type>`
 > `Condition of "<form>" must be Bool but got <type>`
 > `Expected <declared> but got variant "<name>"`
+> `Expected <declared> but got {}, an empty Map, Set or record`
 > `Tile "<name>" expects a value of type <type> but got a tile`
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
@@ -614,7 +617,7 @@ The parser gives the bare name, the argument-less call and the empty brace form 
 
 So what this error reports is a value that is no name: a literal, a call (`onClick=box(text("z"))`), or a capitalised name carrying arguments or props (`onClick=Some(1)`, `onClick=Card {x: 1}`). A bare name that names no reducer is [E0102](#e0102-undef-reducer) instead, whatever its capitalisation — including a tile written there, because the handler position resolves in one namespace and the tile layer is not it.
 
-The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), the index of a `List`, an `Int` in `xs[i]`, `xs[i] := v` and `xs.get(i)` alike ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics), [stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, a builtin tile's prop that [stdlib §2.3.11](./stdlib.md#_2-3-11-prop-types) gives a type — `modal(open=…)`, `select(options=…)` — written on the builtin's own call, as a named argument or in the `{…}` block, the fallback of `.get-or`, an argument of a `Map` / `Set` / `List` member whose parameter is the receiver's key, value or element type or another container of its type (`xs.push(x)`, `m.insert(k, v)`, `s.add(x)`, `xs.concat(ys)`; [stdlib §2.2](./stdlib.md#_2-2-collection-methods)), `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose declared return type is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
+The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), the index of a `List`, an `Int` in `xs[i]`, `xs[i] := v` and `xs.get(i)` alike ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics), [stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, a builtin tile's prop that [stdlib §2.3.11](./stdlib.md#_2-3-11-prop-types) gives a type — `modal(open=…)`, `select(options=…)` — written on the builtin's own call, as a named argument or in the `{…}` block, the fallback of `.get-or`, an argument of a `Map` / `Set` / `List` member whose parameter is the receiver's key, value or element type or another container of its type (`xs.push(x)`, `m.insert(k, v)`, `s.add(x)`, `xs.concat(ys)`; [stdlib §2.2](./stdlib.md#_2-2-collection-methods)), `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose result is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
 
 An index `[k]` is checked against the type its receiver takes as an index, in a read as in a write: an `Int` on a `List`, and the key type `K` on a `Map(K, V)` ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)). With `TodoId` and `PostId` both declared `nominal Text`, `notes[postId]` on a `Map(TodoId, Text)` reports `Expected TodoId but got PostId` at the index, in a read and in `notes[postId] := v` alike, and so does `todos[postId].done := v` on a `Map(TodoId, Todo)`.
 
@@ -629,6 +632,10 @@ Assignability is structural, with one implicit conversion — `Int` flows into a
 A `Tuple`'s length is part of its type ([stdlib §2.1.2](./stdlib.md#_2-1-2-generic-types)): `Tuple(Int, Text)` and `Tuple(Int, Text, Int)` refuse each other in both directions, at any depth — inside a `List`, `Map`, `Option`, record or another tuple alike. A tuple pattern matches only a value of its own length ([E0207](#e0207-pat-arity-mismatch)), so a pair in a triple's place would fall through every three-item arm. A tuple literal of another length is reported once, at the literal — `Expected Tuple(Int, Text, Int) but got a tuple of 2 item(s)` — and one of the right length is checked item by item.
 
 `()` is a value like any other: it is the one value of `Unit` ([stdlib §2.1](./stdlib.md#_2-1-built-in-types)), so it is accepted where `Unit` is declared and is this error against any other declared type (an `emit` argument reports E0202, and `emit e(())` on an `in=Unit` effect is E0213, since that effect takes no argument). `Card(())` against `tile Card in={label: Text}` reports `Expected {label: Text} but got Unit` at the `()`: `()` runs as `null`, which a tile reading `$1.label` cannot use.
+
+`{}` is three values at once — the empty `Map`, the empty `Set` and the empty record — so it is accepted where a `Map` or a `Set` is declared. Against a record type it is a record literal that names no field, so each field the type requires is [E0214](#e0214-missing-record-field) at the `{}`, as in any record literal. It is this error against every other type the checker can read: `slot n : Int = {}` reports `Expected Int but got {}, an empty Map, Set or record` at the `{}`, and so does a `{}` written in an `if` branch, a list item or a record field that the declared type reaches.
+
+A call to a `fn` has the type its `->` declares, or without one the type of its body ([Language §1.8.2](./language.md#_1-8-2-syntax)): with `fn greeting() = "hello"`, `slot n : Int = greeting()` is this error. A `fn` without `->` whose body's type the checker cannot decide, and every `fn` without `->` on a loop of calls ([E0006](#e0006-fn-cycle)), have no result type, and nothing is checked against what a call to them returns; the call's arguments are still checked against the parameters. A record read through a literal key, `cfg["label"]`, has the type of the field the key names, as `cfg.label` does; a key computed at runtime names no one field, and the read is not checked.
 
 `nominal` is the exception, and the one rule in this code that reports where *every* value of the actual type is a valid value of the declared one: `1.5` is not an `Int` and `{a, b}` is not an `{a: Int}`, but every `Yen` is a perfectly good `Cents`. A nominal type is identified by the name it is declared under ([§1.3.5](./language.md#_1-3-5-type-canonicalization)), so two declarations over one base reject each other — `Cents := Yen`, `postId := userId`. A type carrying no nominal name of its own still meets any nominal declared over it in both directions, which is what leaves `slot c : Cents = 1` and `c := c + 1` legal; a nominal declared over another nominal goes one way, toward the one it was declared as.
 
@@ -648,6 +655,7 @@ An `emit` argument does not match the effect's declared `in=` type. A standard e
 
 > `Expected <in-type> but got <actual>`
 > `Expected <in-type> but got variant "<name>"`
+> `Expected <in-type> but got {}, an empty Map, Set or record`
 > `emit "<effect>" expects an EffectId argument`
 
 The `EffectId` case keeps its own wording because its fix is different in kind. It is the shape of a mis-wired cancellation: `emit stopSearch(searchId)` where `searchId : EffectId` is correct, `emit stopSearch(42)` or `emit stopSearch("id")` is not. Codegen would pass the non-`EffectId` value through and the cancel path would silently no-op, indistinguishable from a successful cancel.
@@ -753,12 +761,15 @@ A `match` arm names a variant tag that is not declared by the scrutinee's union 
 A type-level application `T(...)` of a user-declared generic type passes a different number of type arguments than the declaration's parameters. Without this check, downstream type-param substitution would silently produce a short map and leave unresolved `TypeRef`s in payloads, which would then turn pattern checking into a no-op — exactly the silent-failure shape this error band is meant to catch.
 
 > `Type "<name>" expects <m> type argument(s) but got <n>`
+> `Type parameter "<param>" of "<type>" takes no type arguments, but is written "<application>"`
+
+A type parameter takes none. It names a type — the one its generic is applied to — not a type constructor, so inside `type H(T) = …` it is written bare: `T(Int)`, `T(Int, Text)` and `T()` are each reported here, at the application, wherever in the body it is written — a record field, a `List(…)`, a variant payload, a `nominal`, a `where`. The parameter shadows a top-level type of the same name ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 5), so `List(Int)` in the body of `type H(List) = …` is this too. This is the one report: past it the application is opaque, as an application of an undefined name is under [E0117](#e0117-undef-type), and a value written against `H(Text)` is not an [E0201](#e0201-type-mismatch) for it.
 
 `Tuple` takes any number of arguments, but at least one: a bare `Tuple` names no type.
 
 > `Type "Tuple" expects type arguments but got none`
 
-**Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list.
+**Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list. Write a type parameter bare (`T`), or apply a generic to it (`List(T)`) where a container of it was meant.
 
 ### E0211 `undef-tile-in-selector`
 
@@ -952,7 +963,7 @@ The type is named as the program writes it, so an alias reads as its name (`Box`
 
 A `Map` holds two lists and they bind different things: `for k in m.keys` binds the key, `for v in m.values` binds the value. The message names `.keys` first because that is the form [§1.7.2](./language.md#_1-7-2-invariants) inv. 5 lists, and `kumiki fix` proposes that one — check which the loop body actually wanted. For a `Map` or a `Set` the diagnostic's `accessor` field names the member `kumiki fix` appends (`keys` / `to-list`); no other target carries it. `.get-or([])` iterates nothing for a `None` or an `Err`; a `match` is the form that does something else there.
 
-Fires for both forms of the loop — inside a tile and inside a reducer's `do=` block. A target whose type cannot be determined is not reported: a `fn` result with no `->`, an untyped reducer payload, a type parameter, or a type that names nothing ([E0117](#e0117-undef-type)). Nor is a target that already has an error reported at it — a call with the wrong arity, a name that resolves to nothing: that is one mistake, reported once. An error inside the target, such as a misspelt argument in `idx(rws)`, leaves the target's type decided, and E0218 is reported beside it.
+Fires for both forms of the loop — inside a tile and inside a reducer's `do=` block. A target whose type cannot be determined is not reported: the result of a `fn` with no `->` whose body's type is not decided, an untyped reducer payload, a type parameter, or a type that names nothing ([E0117](#e0117-undef-type)). Nor is a target that already has an error reported at it — a call with the wrong arity, a name that resolves to nothing: that is one mistake, reported once. An error inside the target, such as a misspelt argument in `idx(rws)`, leaves the target's type decided, and E0218 is reported beside it.
 
 **Fix**: Iterate `m.keys` for a `Map` and `s.to-list` for a `Set` — `kumiki fix` proposes the suffix. Unwrap an `Option` or a `Result` first: `xs.get-or([])` when its `None` / `Err` should iterate nothing, otherwise `match xs with | Some(ys) -> for y in ys … | None -> …`. Iterate `t.split(sep)` for a `Text`. For any other type, iterate the List the program meant — a field of the record, say.
 
@@ -1100,6 +1111,26 @@ The read has no type, so the one mistake is reported once: a position that expec
 
 **Fix**: Ask for membership — `tags.has(x)` is a `Bool`. A `check` shows it with `value=tags.has(x)`, and a reducer on its click writes `tags := tags.toggle(x)` ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)). For a value stored under a key, declare a `Map(K, V)` instead. In `error(field=…)`, name the Set slot itself, `error(field=tags)`, for the failure of the Set.
 
+### E0233 `policy-key-type`
+
+A `policy=latest-per-key(<key>)` key has a type whose values the key does not tell apart by `==` ([Language §1.5.2](./language.md#_1-5-2-semantics)).
+
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Float, and NaN is one key though NaN == NaN is false (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it holds a Float, and inside it NaN, Infinity and -Infinity are one key (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it holds a File, and two Files with the same name, size and type are one key, while == holds only of a File and itself (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Set, whose == depends on how it was built (see docs/spec/language.md)`
+
+The dispatcher runs each request under its key and aborts an in-flight request when another starts under the same one ([HTTP §6.4](./http.md#_6-4-cancellation)). The key is written the way a Map key is stored ([Stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)), which makes two keys one key exactly when they are `==` but for two types — and, whatever its declared type, not for a non-finite number. A key that is one key for two values `==` calls different aborts a request for no reason the program can see:
+
+- a `Float`: `NaN` is one key, yet `NaN == NaN` is `false`; and inside a record, a tuple, a `List`, a `Map`'s value or a variant, `NaN`, `Infinity` and `-Infinity` are all one key
+- a `File`: two Files with the same name, size and type are one key, while `==` holds only of a File and itself
+
+A `Set`'s key is its `==`, which itself depends on how the Set was built ([Language §1.9.4](./language.md#_1-9-4-operator-types)), so a Set key aborts requests by a rule the program cannot rely on, and is reported too.
+
+The message says `it is` when the key's type is one of them, and `it holds` when it holds one in a record field, a variant payload, a container element or a `Map`'s value, through any alias, generic or `nominal`: `type Spot = {lat: Float, lng: Float}` keyed by `$1` is reported, and so are a `List(Set(Text))` and a `Box(Box(Float))` for a `type Box(A) = {v: A}`. A `Map`'s own keys are stored the same way, so `==` on two Maps agrees with their key, and a `Map(Float, Text)` is not reported. A key whose type the checker cannot decide is not reported, and neither is an `Int`, though one can hold a non-finite number (`n % 0`, an overflowing `pow`, a `.round` of a non-finite Float) and is then keyed as a Float is.
+
+**Fix**: Key on a value of another type — a field of the input that identifies the request (`latest-per-key($1.id)`), a Float's `.show`, a File's `{name: $1.name, size: $1.size}`, or a record of such fields (`latest-per-key({user: $1.user, page: $1.page})`).
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 A handler prop is written on a tile whose renderer never reads it — `row(text("card"), onClick=open)`, `card(...) {onChange: r}`. Only the tiles that own the matching DOM event wire these: `onClick` on `button` / `check` / `radio` / `switch`, `onChange` on the input tiles, `onInput` on the input tiles and `editable`, `onSubmit` on `form`, `onClose` on the overlay tiles. Everything else drops the handler with no trace, so the reducer is dead code.
@@ -1183,6 +1214,20 @@ The other domain types the standard library declares — `Url`, `Email`, `Uuid`,
 Only a declaration is refused. Writing a reserved name is how a program uses the standard library's type — an annotation, a tile's `in=`, a record field, an alias (`type Crash = PanicInfo`), a refinement over it (`type Short = Duration where between(0, 1000)`). A type parameter of that spelling is scoped to its definition ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 5); a variant tag, a slot, a `fn` or a tile spelled the same way is in another namespace; and a type whose name merely starts or ends with one (`PanicInfoView`, `AppRoute`) is a name of its own.
 
 **Fix**: Rename the program's type — `type AppPanic = {…}` — along with every use that meant it.
+
+### E0234 `reserved-effect-name`
+
+An `effect` is declared under the name of a [standard effect](./stdlib.md#_2-6-standard-effects) — `navigate`, `navigate-replace`, `navigate-back`, `scroll-to`, `toast`, `confirm` or `log`. Reported at the declaration, once per declaration.
+
+> `Effect "<name>" collides with the built-in effect <name>; emits of it never run this effect`
+
+The runtime registers each standard effect under its own name when the app mounts, over the record the program's declaration compiled to — its capability, its request and its `policy` alike. A declared `effect log cap=http.get …` would never make its request: `emit log("x")` runs the built-in `log`, which needs `log.write` and writes to the console. The declared `policy` goes with the rest of the record: the `EffectId` the emit returns is minted under the built-in's default policy, so a `latest-per-key` cancellation the program declared never happens.
+
+Every use of the name is still checked against the declaration — an `emit`'s argument against its `in=`, a `.ok` bind against its `out=`, the capability against its `cap=` — because those are the uses the program wrote for it. So a program whose uses were all written for the declaration gets this one report. A use written for the built-in is held to the declaration and is reported beside it (an `E0202` on an `emit` with the built-in's record).
+
+Only an `effect` declaration is refused. Emitting a standard effect needs no declaration. A reducer, a slot or a `fn` spelled the same way is in another namespace, and an effect whose name merely starts or ends with one (`logger`, `toasts`, `navigate2`) is a name of its own.
+
+**Fix**: Rename the effect together with every `emit`, `app.init` entry and `on=<name>.ok` / `.err` reducer that meant it — `kumiki rename <file> effect.log logRequest` rewrites them all — and emit the standard effect under its own name where the built-in is what was meant. `kumiki rename` rewrites every use, whichever effect it was written for, so an `emit` written for the built-in keeps its `E0202` under the new name and the rename is refused; such a program is renamed by hand, leaving that `emit` as it is. A declaration that restates a standard effect (`effect navigate cap=nav.push in={path: Text, …}`) is deleted instead, since the standard effect needs none. Delete its line directly: `kumiki remove` counts the emits as references to the declaration and refuses.
 
 ## E03xx — Capabilities and Purity
 
@@ -1544,7 +1589,7 @@ The base is the other half of the same rule. Every predicate tests one shape of 
 
 `one-of` lowers to a strict membership test, so each literal has to be a value of the base: `Text where one-of(1, 2)` lists choices no text equals, and a `Bool`, a record or a union has no literal at all. A list with one wrong literal among right ones is reported too — that choice can never be taken.
 
-The base is read through the chain the refinement is written on — an alias, a `nominal`, an earlier `where` — so `type Handle = nominal Text` under `where positive` is reported and a `nominal Int` under `where between(0, 9)` is not. A record, a union or a container is not a base either family tests, and neither is an opaque type such as `EffectId`: whatever represents it at runtime, a program has no value of it the predicate is a question about.
+The base is read through the chain the refinement is written on — an alias, a `nominal`, an earlier `where` — so `type Handle = nominal Text` under `where positive` is reported and a `nominal Int` under `where between(0, 9)` is not. A record, a union or a container is not a base either family tests, and neither is an abstract handle type such as `EffectId`: whatever represents it at runtime, a program has no value of it the predicate is a question about.
 
 A type parameter says nothing about the base on its own, so the definition `type NonEmpty(T) = T where nonempty` is not reported. Its **application** is: the arguments are substituted into the body — through nested applications, record fields and union payloads — and a refinement they put over a base it cannot test is reported at the application, `NonEmpty(Int)` in `slot n : NonEmpty(Int)` or in `type N = NonEmpty(Int)`, and `W(Text)` for `type W(T) = nominal T where positive`. A problem the definition has whatever its arguments are is reported once, at the definition. A problem the arguments bring is reported at the application once for each refinement and base it is put over, however many paths through the body reach that refinement: `type D1(T) = D0(D0(D0(T)))` over `type D0(T) = T where nonempty` gives `D1(Int)` one E0804, not three, while `type P(T) = {a: T where nonempty, b: T where nonempty}` gives `P(Int)` two, one for each refinement.
 

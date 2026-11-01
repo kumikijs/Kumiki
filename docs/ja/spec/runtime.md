@@ -367,7 +367,8 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
    - **ループ**: レンダをまたいで安定し、ソース上のループごとに異なる識別子。
    - **出現回数**: この要素までに同じ表示値を持つ要素がいくつあるか（最初の
      `7` は 1、2 つ目は 2）。
-   - **表示値** `_s.show(<loopVar>)`。
+   - **表示値** `_s.show(<loopVar>)`。ただし、その中のレコード・Map・Set は
+     深さによらず何も書かない（後述）。
 
    *参考（非規範）:* 実装はループを、それが書かれたタイル定義の名前と、その定義の
    ループのうちソース順で何番目か（`App_0`、`App_1`、…）で名付ける。したがって
@@ -395,13 +396,17 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
    - 繰り返される値より前への挿入や削除は、その値の後の出現の番号を振り直す
      ため、等しい値の要素どうしが入れ替わることがあり、そのための移動が隣の
      行を巻き込むこともある。
-   - 要素の型について `show` が単射でないとき、暗黙 key は**位置に退化する**。
-     レコードはどれも同じ表示（`[object Object]`）になり、ヴァリアントはタグ
-     だけを表示するので `Done(1)` と `Done(2)` は同じ表示値を持つ。このとき
-     出現回数は要素の位置そのものであり、並べ替え・挿入・削除は行を移動せず
-     その場でパッチする。上述の保証（最小の移動、`<input>` のフォーカスと
-     キャレット、開いた `<select>`、IME composition）はそのようなリストには
-     成り立たない。並べ替えるレコードのリストには明示 key `{key: t.id}` を書く。
+   - 表示値を共有する要素どうしは出現回数だけで区別されるので、すべての要素が
+     同じ表示になるとき、暗黙 key は**位置に退化する**。レコード・Map・Set は
+     深さによらず表示値に何も加えないので、レコードはどれも同じ表示になる。
+     ヴァリアントはタグだけを表示するので `Done(1)` と `Done(2)` も同じ表示に
+     なる。したがってレコードをその場で編集してもその行の key は変わらず、行の
+     DOM 要素も残る。レコードが要素そのものでも、`.entries` のペアのように
+     要素の中にあっても同じであり、後者ではペアのキーが行どうしを区別する。
+     key が位置そのものであるとき、並べ替え・挿入・削除は行を移動せずその場で
+     パッチする。上述の保証（最小の移動、`<input>` のフォーカスとキャレット、
+     開いた `<select>`、IME composition）はそのようなリストには成り立たない。
+     並べ替えるレコードのリストには明示 key `{key: t.id}` を書く。
 
    明示 key が常に優先。ネストした `for` は内側のループの key で上書きされ、
    `for i in inner` 配下のタイルは外側の `for o in outer` の影響を受けず `i` で
@@ -795,7 +800,12 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 - `name`: 本体が throw した reducer（throw が reducer 由来のとき）。`location` は散文であり、replay には鍵が要る。`render` / `hydrate` の panic では無い。
 - `env-reads`: その本体が throw する前に読んだ値。`reducer` step と同じ形である。throw した reducer は `reducer` step を**残さない**ので、この 2 つが無ければ、ユーザがバグ報告に添える episode — つまりクラッシュしたもの — こそが replay で再現できないものになる：環境を読み直し、別の分岐を通り、最後まで完走してしまう。
 
-**遅延 policy effect の帰属。** `policy=debounce(d)` で emit された effect は、トリガとなった reducer の episode が一旦閉じた *後* に `setTimeout` が満了する。そのため dispatcher は `effect-start` step (とその episode トークン) を *launch 時* ではなく *dispatch 時* に確保し、満了後の `effect-end` および `.ok` / `.err` reducer 連鎖が元 episode 上に着地するようにする — 因果連鎖は一本に保たれる。`debounce` timer が発火前に置換された場合、元 episode に `effect-cancel` step (`targetId = <effect-name>`) を残し、その episode は `effect-end` なしで `status="completed"` として commit する。`policy=throttle(d)` は先頭呼び出しを同期 `launch` するため (通常の同期パスで `effect-start` が attach される)、window 内の後続 dispatch は黙って抑制される — 元 reducer の `emits` には抑制された effect 名が残るが、続く `effect-start` は出ない。
+**遅延 policy effect の帰属。** `policy=debounce(d)` と `policy=queue` で emit された effect は、トリガとなった reducer の episode が一旦閉じた *後* に launch する：`debounce` は `setTimeout` が満了したとき、`queue` は先に並ぶエントリが終わったときである。そのため dispatcher は `effect-start` step (とその episode トークン) を *launch 時* ではなく *dispatch 時* に確保し、遅れて届く `effect-end` および `.ok` / `.err` reducer 連鎖が元 episode 上に着地するようにする — 因果連鎖は一本に保たれる。確保された launch が実行前に捨てられると、その episode には `effect-end` の代わりに `effect-cancel` step が残る。いつそうなるかは下の **cancel の帰属** が述べる。`policy=throttle(d)` は先頭呼び出しを同期 `launch` するため (通常の同期パスで `effect-start` が attach される)、window 内の後続 dispatch は黙って抑制される — 元 reducer の `emits` には抑制された effect 名が残るが、続く `effect-start` は出ない。
+
+**cancel の帰属。** `effect-cancel` step は何かが解放されたことを記録するもので、書かれる場所は 2 つある：
+
+- `http.cancel` の emit（[http.md §6.4](./http.md#_6-4-cancellation)）がその id の指すものを解放した場合、それを emit した episode に `{"kind": "effect-cancel", "targetId": <EffectId>}` を記録する。解放とは次の 3 つのいずれかである：進行中のリクエストを abort した、まだ待機中の `queue` エントリを取り除いた、まだ保留中の `debounce` タイマーをクリアした。リクエストは launch から結果が届くまで進行中であり、`retry` の試行間の待ちもこれに含まれる。その結果が走らせる reducer はその後に来るので、それらがその id に emit する cancel は、もう終わったリクエストに当たる。`targetId` は cancel が名指した id であり、その id が吸収によって別のリクエストに届いた場合も変わらない：policy が捨てた emit の id への cancel はそれを吸収したリクエストを abort し、step は捨てられた emit の id を名指す。abort されたリクエスト自身の id は step のどこにも現れない。何も解放しなかった cancel は step を**記録しない**：どのリクエストも走っていない id、既に完了したリクエストの id、`EffectId.none`、policy が捨てた emit の id（それを吸収したリクエストが既に終わった後）、そしてウィンドウがまだ開いている完了済みの `throttle` リクエストの id — ウィンドウマーカーは保留中の launch ではなく、cancel はそれを残す。cancel effect が emit されたことは reducer step の `emits` が名前で示すが、名指した id はそこに記録されない。そのため何も解放しなかった cancel の後、ログはそれがどの id を名指したかを語らず、誤った id、遅すぎた cancel、一度も捕まえなかった id は同じに見える。`effect-cancel` step は cancel が効いたことの記録であり、何も解放しなかった cancel のログが解放したと主張することはない。abort されたリクエストの `.err`（`message: "aborted"`）は、そのリクエストを開始した episode に着地する。
+- 確保された後、実行前に捨てられた launch は、その `effect-start` を確保した episode に `{"kind": "effect-cancel", "targetId": <effect-name>}` を記録し、その episode を確定させる：後続の emit に置き換えられた、または cancel でクリアされた `debounce` タイマー、cancel が取り除いた `queue` エントリ、アンマウント時にまだ保留中の launch、capability check が拒否した遅延 launch（[§10.4.2](#_10-4-2-capability-check)）がこれにあたる。したがってタイマーをクリアする、または `queue` エントリを取り除く cancel は両方の step を書く：launch を確保した episode に 1 つ、cancel を emit した episode に 1 つである（1 つの reducer が両方を行ったときは同じ episode）。
 
 ### 10.5.2 episode store
 

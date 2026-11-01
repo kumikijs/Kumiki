@@ -20,7 +20,8 @@ slot post : PostId            = "p"
 slot s    : Set(Text)         = []
 slot b    : Bool              = false
 slot n    : Int               = 0
-fn toText(x: Int) -> Text = x.show`;
+fn toText(x: Int) -> Text = x.show
+fn shown(x: Int) = x.show`;
 
 /** The errors of a reducer that runs `stmt`, each with the source text it is reported at. */
 const write = (stmt: string) =>
@@ -68,6 +69,12 @@ reducer go on=ui.click(Btn) do=
       "Map.update's value, a fn named",
       `m := m.update("k", toText)`,
       "toText)",
+      "Expected Int but got Text",
+    ],
+    [
+      "Map.update's value, a fn with no -> named",
+      `m := m.update("k", shown)`,
+      "shown)",
       "Expected Int but got Text",
     ],
     ["Map.merge", "m := m.merge(mi)", "mi)", "Expected Map(Text, Int) but got Map(Int, Text)"],
@@ -184,18 +191,29 @@ reducer go on=ui.click(Btn) do= sets := sets.map($1.add("x"))`),
     ).toEqual([{ code: "E0201", message: "Expected Int but got Text", text: '"x"))' }]);
   });
 
-  it("reads no argument against a receiver whose type, or element type, is undecided", () => {
+  it("reads no argument against a receiver whose element type is undecided", () => {
     // From `[]`, `fold`'s accumulator `$1` is a List whose element type is not decided, so `push`
-    // reads its argument against nothing; `mk` has no `->`, though its body is a `List(Int)`.
+    // reads its argument against nothing.
     expect(
       summariesOf(
         app(`slot nums  : List(Int)  = [1]
 slot texts : List(Text) = []
-fn mk() = [1]
 reducer go on=ui.click(Btn) do=
-    texts := nums.fold([], $1.push($2.show)).concat(mk().push("z"))`),
+    texts := nums.fold([], $1.push($2.show))`),
       ),
     ).toEqual([]);
+  });
+
+  it("reads an argument against the result of a fn with no `->`, which is its body's type", () => {
+    // `mk` has no `->`, so it returns its body's type, a `List(Int)`.
+    expect(
+      pointedErrorsOf(
+        app(`slot texts : List(Text) = []
+fn mk() = [1]
+reducer go on=ui.click(Btn) do=
+    texts := mk().push("z").map($1.show)`),
+      ),
+    ).toEqual([{ code: "E0201", message: "Expected Int but got Text", text: '"z").map($1.show)' }]);
   });
 
   it("leaves a call whose count selects no reading on its receiver to the arity report", () => {

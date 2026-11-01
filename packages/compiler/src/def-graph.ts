@@ -179,6 +179,62 @@ function walkTileBody(t: TileExpr, out: TileEdge[], root: boolean): void {
   }
 }
 
+/**
+ * Every node that can reach itself: each node of a strongly connected component of more than one
+ * node, and each node with an edge to itself. Unlike `findCycles`, which reports each loop once,
+ * this names every node on one, however the walk first reached it.
+ */
+export function nodesOnCycles(
+  nodes: Iterable<string>,
+  edgesOf: (node: string) => readonly GraphEdge[],
+): Set<string> {
+  const on = new Set<string>();
+  const order = new Map<string, number>();
+  const low = new Map<string, number>();
+  const stack: string[] = [];
+  const stacked = new Set<string>();
+  const lowOf = (node: string): number => low.get(node) ?? 0;
+
+  for (const root of nodes) {
+    if (order.has(root)) continue;
+    const frames: { node: string; edges: readonly GraphEdge[]; next: number }[] = [];
+    const enter = (node: string): void => {
+      order.set(node, order.size);
+      low.set(node, order.size - 1);
+      stack.push(node);
+      stacked.add(node);
+      frames.push({ node, edges: edgesOf(node), next: 0 });
+    };
+    enter(root);
+    while (frames.length > 0) {
+      const frame = frames[frames.length - 1];
+      if (!frame) break;
+      const edge = frame.edges[frame.next];
+      if (edge) {
+        frame.next += 1;
+        if (edge.to === frame.node) on.add(frame.node);
+        else if (!order.has(edge.to)) enter(edge.to);
+        else if (stacked.has(edge.to)) {
+          low.set(frame.node, Math.min(lowOf(frame.node), order.get(edge.to) ?? 0));
+        }
+        continue;
+      }
+      frames.pop();
+      const parent = frames[frames.length - 1];
+      if (parent) low.set(parent.node, Math.min(lowOf(parent.node), lowOf(frame.node)));
+      if (lowOf(frame.node) !== order.get(frame.node)) continue;
+      const component: string[] = [];
+      for (let top = stack.pop(); top !== undefined; top = stack.pop()) {
+        stacked.delete(top);
+        component.push(top);
+        if (top === frame.node) break;
+      }
+      if (component.length > 1) for (const node of component) on.add(node);
+    }
+  }
+  return on;
+}
+
 export function findCycles(
   nodes: Iterable<string>,
   edgesOf: (node: string) => readonly GraphEdge[],
