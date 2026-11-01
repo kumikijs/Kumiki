@@ -183,17 +183,18 @@ reducer clear on=ui.click(Btn) do= name := ""    # 拒否される — 許され
 ### 10.3.4 DOM レンダリングの不変条件
 
 - **null/undefined 子ノードは skip される**。`when(false, X)` のような偽分岐は `null` を子に渡すが、`renderTile` はそれを無視して兄弟だけを描画する
-- **`column` / `row` / `card` / `box` / `panel` / `stack` / `region` / `scroll` / `fieldset`** はすべて `<div>` ベースのコンテナ。`stack` は `column` 相当（vertical stack）
+- **`column` / `row` / `card` / `box` / `panel` / `stack` / `region` / `scroll`** はすべて `<div>` ベースのコンテナ。`stack` は `column` 相当（vertical stack）
+- **`fieldset`** は `<fieldset>` である。ブラウザが与える枠線・パディング・マージン・最小幅は `0` にリセットされ、`<div>` のコンテナと同じように配置される。それらを設定する prop があればそちらが勝つ。空でない `legend` を持つ `fieldset` はそれを `<legend>` として子の前に置き、支援技術にはそれがグループの名前になる
 - **`grid`** は `display: grid` + `cols` prop で `grid-template-columns: repeat(N, 1fr)` （数値）または直接 CSS 値（文字列）
 - **`divider`** は `<hr>` 単独要素（children なし）
 - **timer reducer** は `setInterval` で発火、app の `dispose` 時に `clearInterval` で停止
 
 ### 10.3.5 input/textarea/select の bind path
 
-`bind=draft.title` のように **nested lvalue path** に bind できる。ランタイムは：
-- 表示: `_live[root][...path]` を辿って初期値を読む
+`bind=draft.title` や `bind=rows[i].title` のように **nested lvalue path** に bind できる（[フォーム §5.1](./forms.md#_5-1-個別入力の双方向束縛)）。ランタイムは：
+- 表示: `_live[root][...path]` を辿って初期値を読む。インデックスのステップは読み出し `rows[i]` と同じく読み、そのキーは描画のたびに評価する
 - 変更: 入力イベントで `_setPath` を使い root slot を immutable に更新
-- focus 復元: `data-kumiki-bind` 属性に full path 文字列 (`"draft.title"`) を入れて識別
+- focus 復元: `data-kumiki-bind` 属性に full path 文字列 (`"draft.title"`、`"rows[0].title"` — インデックスのステップは指すキーで綴る) を入れて識別
 
 ### 10.3.6 動的 theme switching
 
@@ -241,7 +242,7 @@ pass は動かす必要のある子だけを配置するので（[§10.3.10](#_1
 再レンダリング後も入力中の input/textarea の focus とカーソル位置を維持する:
 - `bind=` がある要素: `data-kumiki-bind` 属性（nested path は full path 文字列）で再特定
 - `id=` がある要素: id で再特定
-- どちらもない（`value=` のみの検索ボックス等）: **DOM child-index path** で位置ベースに再特定
+- どちらもない（`value=` のみの検索ボックス等）: pass がその要素を view に残していればその要素自体。pass が作り直した要素だけを **DOM child-index path** で位置ベースに再特定する。そのため、タイルでない要素（`fieldset` の `<legend>` など）がコントロールの前に現れたり消えたりしても、focus が兄弟に移らない
 - `<select>` も snapshot 対象に含まれるので、reorder / bailout パスでもピッカーへの focus は復元される（open dropdown の状態は復元不能で、それは [§10.3.11](#_10-3-11-要素同一性を保った-reconciliation-190) の patch パス側の保証）
 
 ### 10.3.10 安定タイル identity
@@ -798,7 +799,12 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 - `name`: 本体が throw した reducer（throw が reducer 由来のとき）。`location` は散文であり、replay には鍵が要る。`render` / `hydrate` の panic では無い。
 - `env-reads`: その本体が throw する前に読んだ値。`reducer` step と同じ形である。throw した reducer は `reducer` step を**残さない**ので、この 2 つが無ければ、ユーザがバグ報告に添える episode — つまりクラッシュしたもの — こそが replay で再現できないものになる：環境を読み直し、別の分岐を通り、最後まで完走してしまう。
 
-**遅延 policy effect の帰属。** `policy=debounce(d)` で emit された effect は、トリガとなった reducer の episode が一旦閉じた *後* に `setTimeout` が満了する。そのため dispatcher は `effect-start` step (とその episode トークン) を *launch 時* ではなく *dispatch 時* に確保し、満了後の `effect-end` および `.ok` / `.err` reducer 連鎖が元 episode 上に着地するようにする — 因果連鎖は一本に保たれる。`debounce` timer が発火前に置換された場合、元 episode に `effect-cancel` step (`targetId = <effect-name>`) を残し、その episode は `effect-end` なしで `status="completed"` として commit する。`policy=throttle(d)` は先頭呼び出しを同期 `launch` するため (通常の同期パスで `effect-start` が attach される)、window 内の後続 dispatch は黙って抑制される — 元 reducer の `emits` には抑制された effect 名が残るが、続く `effect-start` は出ない。
+**遅延 policy effect の帰属。** `policy=debounce(d)` と `policy=queue` で emit された effect は、トリガとなった reducer の episode が一旦閉じた *後* に launch する：`debounce` は `setTimeout` が満了したとき、`queue` は先に並ぶエントリが終わったときである。そのため dispatcher は `effect-start` step (とその episode トークン) を *launch 時* ではなく *dispatch 時* に確保し、遅れて届く `effect-end` および `.ok` / `.err` reducer 連鎖が元 episode 上に着地するようにする — 因果連鎖は一本に保たれる。確保された launch が実行前に捨てられると、その episode には `effect-end` の代わりに `effect-cancel` step が残る。いつそうなるかは下の **cancel の帰属** が述べる。`policy=throttle(d)` は先頭呼び出しを同期 `launch` するため (通常の同期パスで `effect-start` が attach される)、window 内の後続 dispatch は黙って抑制される — 元 reducer の `emits` には抑制された effect 名が残るが、続く `effect-start` は出ない。
+
+**cancel の帰属。** `effect-cancel` step は何かが解放されたことを記録するもので、書かれる場所は 2 つある：
+
+- `http.cancel` の emit（[http.md §6.4](./http.md#_6-4-cancellation)）がその id の指すものを解放した場合、それを emit した episode に `{"kind": "effect-cancel", "targetId": <EffectId>}` を記録する。解放とは次の 3 つのいずれかである：進行中のリクエストを abort した、まだ待機中の `queue` エントリを取り除いた、まだ保留中の `debounce` タイマーをクリアした。リクエストは launch から結果が届くまで進行中であり、`retry` の試行間の待ちもこれに含まれる。その結果が走らせる reducer はその後に来るので、それらがその id に emit する cancel は、もう終わったリクエストに当たる。`targetId` は cancel が名指した id であり、その id が吸収によって別のリクエストに届いた場合も変わらない：policy が捨てた emit の id への cancel はそれを吸収したリクエストを abort し、step は捨てられた emit の id を名指す。abort されたリクエスト自身の id は step のどこにも現れない。何も解放しなかった cancel は step を**記録しない**：どのリクエストも走っていない id、既に完了したリクエストの id、`EffectId.none`、policy が捨てた emit の id（それを吸収したリクエストが既に終わった後）、そしてウィンドウがまだ開いている完了済みの `throttle` リクエストの id — ウィンドウマーカーは保留中の launch ではなく、cancel はそれを残す。cancel effect が emit されたことは reducer step の `emits` が名前で示すが、名指した id はそこに記録されない。そのため何も解放しなかった cancel の後、ログはそれがどの id を名指したかを語らず、誤った id、遅すぎた cancel、一度も捕まえなかった id は同じに見える。`effect-cancel` step は cancel が効いたことの記録であり、何も解放しなかった cancel のログが解放したと主張することはない。abort されたリクエストの `.err`（`message: "aborted"`）は、そのリクエストを開始した episode に着地する。
+- 確保された後、実行前に捨てられた launch は、その `effect-start` を確保した episode に `{"kind": "effect-cancel", "targetId": <effect-name>}` を記録し、その episode を確定させる：後続の emit に置き換えられた、または cancel でクリアされた `debounce` タイマー、cancel が取り除いた `queue` エントリ、アンマウント時にまだ保留中の launch、capability check が拒否した遅延 launch（[§10.4.2](#_10-4-2-capability-check)）がこれにあたる。したがってタイマーをクリアする、または `queue` エントリを取り除く cancel は両方の step を書く：launch を確保した episode に 1 つ、cancel を emit した episode に 1 つである（1 つの reducer が両方を行ったときは同じ episode）。
 
 ### 10.5.2 episode store
 
@@ -821,6 +827,8 @@ kumiki replay --until-step 5                # 途中まで
 - **入口の reducer は、記録時に受け取った payload で走る。** episode の `trigger.payload` はライブの runtime が最初の reducer に渡した payload そのもの — UI イベントなら `{$el, $event}`、effect の結果なら `{$1, $2}` — であり、replay はそれを加工せずに渡す。したがって `$el.idx` や `$event.value` はライブと同じ値を読む。payload を持たない trigger の最初の reducer が `.ok` / `.err` reducer である場合 — reducer ではなく SSR パスが開く `ssr.hydrate` の bootstrap episode — その reducer は、それより前に記録された同じ effect・同じ結果の `effect-end` のうち最後のものの上で走ったので、その値が reducer の `$1` になる。その記録済みの結果は消費され、同じ effect の `from-log` mock はその次から続く。
   - ログにそのような step がない場合 — 切り詰められた、あるいは手で編集されたログ — reducer は `$1` なしで走り、それは**推測せずに報告される**：episode のトレース行に `(no recorded result for <reducer>)` が付き、実行の最後に `entry results missing:` の要約が出るので、その後の panic が reducer のバグに見えることはない。
   - replay は episode ごとに入口の reducer を 1 つしか持たないので、SSR パスが複数の `app.init` effect を走らせた bootstrap は、最初の入口 reducer の連鎖しか replay されない。そのようなログに対する `slots-equal: from-log` の `episode-test` は panic ではなく slot の不一致で失敗し、2 つの `init` の連鎖が同じ effect を emit すると、入口が進めた `from-log` カーソルが再 emit にもう一方の連鎖の結果を渡しうる。この失敗は静かである：値は欠落ではなく交差する。
+- **入口の reducer がプログラムにない episode は replay されず、それは実行の失敗になる。** 入口の reducer とは、episode の最初の `reducer` step、または本体が throw した reducer を名指す `panic` step である（[§10.5.1](#_10-5-1-structure-of-an-episode)）。ログはその reducer が走ったときの名前を保持するので、改名や削除の後ではプログラムがその名前の reducer を宣言していないことがあり、そのとき replay にはその episode を走らせる手段がない。replay されない episode は panic も未処理のエラーも起こさないので、見過ごさずに報告する：その episode のトレース行の末尾に `(not replayed: <reason>)` が付き、`N episode(s) replayed` の数から除かれ、終了コードは `1` になる。実行の最後には stderr に `not replayed:` の行が 1 行だけ出て、そのような episode をそれぞれ `<episode-id>: <reason>` として挙げ、複数あれば `; ` でつなぐ。replay はその後の episode へ進む。`N episode(s) replayed` の数は replay が到達した episode だけを数えるので、`--until-step` で止まった episode より後のものも含まない。`<reason>` は `no reducer named "<name>"` であり、どの reducer も名指さない scenario の `{dispatch}` step が失敗するときの文言（[testing.md §8.10](./testing.md#_8-10-the-three-layers-of-tooling-verification)）と同じで、近い名前があるときに付く `— did you mean "<declared>"?` まで同じである。`name` のない入口の `reducer` step — 手で編集されたログにしか現れない — も replay されず、その `<reason>` は `reducer step <n> has no name` である（`<n>` は episode の step を 1 から数える）。読み飛ばしはしない。読み飛ばせば、それを持つ bootstrap は入口の reducer がまったくない episode（下記）として replay され、クリーンになってしまう。そのような episode に対する `episode-test` は、`expect` が何を挙げていても失敗する（[testing.md §8.6](./testing.md#_8-6-episode-replay)）。
+  - 入口の reducer が**まったくない** episode — `reducer` step も、reducer を名指す `panic` step もない — は、`ssr.hydrate` の bootstrap ならクリーンに replay され、それ以外なら `no reducer step` を理由に replay されない。ライブの runtime は SSR の bootstrap（`ssr.hydrate`、[§10.5.1](#_10-5-1-structure-of-an-episode)）を除くすべての episode を reducer の dispatch で開き、その reducer を `reducer` step か名前付きの `panic` step として記録するので、そのような episode として記録されるのは、`app.init` の結果がどの reducer にも届かなかった bootstrap — `init = []`、あるいは何も処理しない init effect — だけである。replay は reducer を再実行し、`app.init` の emit は決して再実行せず、slot を書くのは reducer だけなので、何も走らせないことがその episode の再現になる。それを失敗にすれば、そのような bootstrap を含むすべてのログが失敗する。それ以外の入口の step を持たない episode は切り詰められた、あるいは手で編集されたログから来たものであり、何も走らせなければすべての検査がその上で成り立ってしまう。そのような bootstrap が記録した capability の拒否 — `name` のない `panic` step — は再現されない。replay はどの episode についても capability を検査しない。
 - **環境の読みはログから答える。環境からではない。** reducer 本体を走らせる前に、replay はその reducer の記録済み `env-reads`（[§10.5.1](#_10-5-1-structure-of-an-episode)）を据える。以後 `now` / `random()` / `<T>.fresh()` / `prefers-dark()` は、時計・乱数源・ID 生成器・OS の設定を読み直すのではなく、記録時に返したのと同じ値を返す。`EffectId` が ID 生成器から来る `emit` 式も、記録時に返した id を返す。したがって環境を読んだ reducer の episode を replay すると、記録された `slot-diffs` が毎回そのまま再現される。
   - 読みと記録済みの答えは **kind で** 対応付け、同じ kind の中では記録順に返す。あるビルトインの余分な読みが、別のビルトインの答えをずらすことはない。
   - 対応する答えが尽きた読み — 古いログ、あるいは記録時より多く読んだ本体 — は、replay を失敗させるのではなくライブの値にフォールバックする。その読みだけが replay に再現できないものなので、推測ではなく**報告される**：その step のトレース行に `(env: N read live)` が付き、実行の最後に `environment reads:` の要約が出る。同じ行が、replay 側の本体が使わなかった記録済みの答え（`N recorded unused`）と、ログが持っていた不正な要素（`N malformed`）も報告する。3 つとも無い step は何も言わない。
@@ -835,8 +843,8 @@ kumiki replay --until-step 5                # 途中まで
 ### 10.6.1 SSR
 
 - HTML 生成は **server-side** で初期 route の tile を 1 回描画
-  - 初期 route とは、要求されたパスが**行き着く先**である：静的リダイレクト（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）は、トップレベルのものも、マッチした親の `sub-routes` 内のものも、`mount` と同じ解決で先に処理され、その行き先が描画される。描画中の tile が読む `route` も、スナップショットの `route` も、ブートストラップエピソードの `trigger.target`（[§10.5.1](#_10-5-1-structure-of-an-episode)）も、行き先を指す。
-  - 要求されたパスはクエリとハッシュを含んでよい（リクエストの URL をそのまま渡してよい）。クライアントのルーターがロケーションを読むのと同じ方法で分割され、pathname は**書かれたとおりに**照合される：`//foo` や `/a/../b` は正規化されない。ブラウザの `location.pathname` がそれらを保つためであり、サーバーはクライアントと同じ場所に行き着かなければならない。
+  - 初期 route とは、要求されたパスが**行き着く先**である：静的リダイレクト（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）は、トップレベルのものも、マッチした親の `sub-routes` 内のものも、`renderToString` がルーティングモジュールを渡されたときは `mount` と同じ解決で先に処理され（行き先がさらにリダイレクトされるなら連鎖の終わりまでたどる）、行き着いたパスが描画される。ルーティングモジュールがなければ、パターンが書かれたとおりのパスであるリダイレクトだけが（やはり連鎖をたどって）適用されるので、パラメータ・ワイルドカード・`sub-routes` のリダイレクトは適用されない。描画中の tile が読む `route` も、スナップショットの `route` も、ブートストラップエピソードの `trigger.target`（[§10.5.1](#_10-5-1-structure-of-an-episode)）も、そのパスを指す。
+  - 要求されたパスはクエリとハッシュを含んでよい（リクエストの URL をそのまま渡してよい）。サーバーがクライアントと同じ場所に行き着くよう、ブラウザの `location` がその URL を保持するのと同じ形で保持される：`/a/../b` は `/b` になり、空白や ASCII 以外の文字はパーセントエンコードされ（`/ja/概要` は `/ja/%E6%A6%82%E8%A6%81`）、`//foo` はそれ自体のパスのままである。そのうえで、クライアントのルーターがロケーションを読むのと同じ方法で分割される。各リダイレクトの宛先は、クライアントと同じく、そのリダイレクト元のパスに対して解決される（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）。
 - slot 初期値は `app.init` で emit した effect の結果を含めても良い（hydration 時に再実行しない）
 - **配信される HTML は、クライアントが塗るのと同じインラインスタイルを持つ**：tile の要素と、その kind 自身のレイアウト（`column` の flex 軸、`card` のボックス寸法、`grid` のトラック）、および prop が対応付けるプロパティ（`gap` / `align` / `justify` / `pad` / `max-w` / `bg` / `radius` / `style`、テキスト tile では `color` / `size` / `weight` / `strike`）。これが無いと初期描画ではすべてのコンテナがブロックとして並び、hydration が終わった瞬間にページがリフローする — SSR が取り除くはずのレイアウトシフトそのものである。
   - **レスポンシブ**値（`{base, sm, md, …}`）は `base` に畳まれる：ブレークポイントはビューポートについての問いであり、サーバにビューポートは無い。
@@ -1022,7 +1030,7 @@ again.env.live;                                 // その一覧では答えら�
 | 機能 | 保証 |
 |---|---|
 | `Map`, `Set`, `List` | 純粋（in-place mutation なし） |
-| `Option`, `Result` | パターンマッチ網羅検査 |
+| `Option`, `Result` | 値としての `match` の網羅検査（[E0227](./errors.md#e0227-non-exhaustive-match)）。どの arm にも一致しない値は panic になる |
 | `now`, `random()` | 式が書ける場所ならどこでも呼べる。**reducer 本体の中で**読んだ値は、その episode の step に `env-reads` として記録される（[§10.5.1](#_10-5-1-structure-of-an-episode)）ため、replay は新しい値を引かずに同じ値を再現する。それ以外の場所（tile の式、描画）での読みは記録されず、それらを replay するものも無い |
 | `*.fresh()` | UUIDv7 を生成。`now` / `random()` と同じ reducer 本体スコープで `env-reads` として記録されるため、replay した episode は実行が実際に刻んだ ID を刻む |
 | `panic(message)` | episode を `panic` 状態にして slot をロールバック |

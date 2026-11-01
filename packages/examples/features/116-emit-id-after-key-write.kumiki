@@ -27,7 +27,7 @@ reducer onErr    on=load.err($err, _)   do= status := if $err.message == "aborte
 
 tile OpenBtn   = button(text="Open b", onClick=open)       {id: "open"}
 tile CancelBtn = button(text="Cancel", onClick=onCancel) {id: "cancel"}
-tile App = column(OpenBtn, CancelBtn, text(lastId.show), text(status)) {pad: "lg", gap: "md"}
+tile App = column(OpenBtn, CancelBtn, text(status)) {pad: "lg", gap: "md"}
 
 app EmitIdAfterKeyWrite
     caps   = [http.get, http.cancel]

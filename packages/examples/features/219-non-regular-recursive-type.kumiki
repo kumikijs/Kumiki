@@ -1,0 +1,42 @@
+# Feature (language.md): a generic whose recursive occurrence
+# wraps its own argument.
+#
+#   type Nest(T) = Flat(T) | Deeper(Nest(List(T)))
+#
+# Each `Deeper` holds the next level in one more `List`: a `Nest(Int)` is an
+# Int, or a level holding a list of ints, or a level holding a level holding a
+# list of lists of ints, and so on. It reaches a union before it reaches
+# itself, so it is a legal recursive type, and comparing two types built from
+# it terminates. Two applications of one generic compare their arguments —
+# `Nest(Int)` against `Nest(Int)` is `Int` against `Int` — where unfolding the
+# definition would write a new pair at every level: `Nest(List(Int))`, then
+# `Nest(List(List(Int)))`. So `fn same`'s body, its call's result and the write
+# into `nest` all check.
+
+type Nest(T) = Flat(T) | Deeper(Nest(List(T)))
+
+slot nest   : Nest(Int) = Flat(7)
+slot picked : Nest(Int) = Deeper(Deeper(Flat([[1, 2], [3]])))
+
+fn same(n: Nest(Int)) -> Nest(Int) = n
+
+# One level per `match`: a `fn` that followed every level would call itself,
+# which is E0006.
+fn describe(n: Nest(Int)) -> Text
+   = match n with
+       | Flat(x)   -> "flat " + x.show
+       | Deeper(m) -> match m with
+           | Flat(xs)  -> "one level down, " + xs.length.show + " ints"
+           | Deeper(k) -> match k with
+               | Flat(xss) -> "two levels down, " + xss.length.show + " lists"
+               | Deeper(_) -> "three or more levels down"
+
+reducer pick on=ui.click(PickBtn) do= nest := same(picked)
+
+tile PickBtn = button(text="pick") {id: "pick"}
+tile App = column(text(describe(nest)), PickBtn)
+
+app NonRegularRecursiveType
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
