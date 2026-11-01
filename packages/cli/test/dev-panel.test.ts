@@ -187,20 +187,36 @@ describe("the panic overlay opens for a panic nothing handled", () => {
     quiet.mockRestore();
   });
 
-  /** Compile `source`, mount it with a logger wired to the panel, as `kumiki dev`'s client does, and click `#go`. */
-  async function clickGo(source: string): Promise<void> {
+  /** Compile `source` and mount it with a logger wired to the panel, as `kumiki dev`'s client does; the answer clicks `#go`. */
+  async function mountWithPanel(source: string): Promise<() => void> {
     const app = await buildAndLoad(seed(`${source}\n${APP_A}`), "app");
     let panel: ReturnType<typeof installDevPanel> | undefined;
     const logger = createEpisodeLogger({ onEpisode: () => panel?.push() });
     panel = installDevPanel({ logger, getApp: () => app });
     mount(app, document.getElementById("app") as HTMLElement, { episodeLogger: logger });
-    (document.getElementById("go") as HTMLElement).click();
+    return () => (document.getElementById("go") as HTMLElement).click();
   }
 
-  it("stays closed for a panic a boundary caught after a reducer that wrote no slot", async () => {
-    await clickGo(`
+  const clickGo = async (source: string): Promise<void> => (await mountWithPanel(source))();
+
+  it.each([
+    {
+      name: "a reducer that wrote no slot",
+      slot: "slot count : Int = 0",
+      reducer: "reducer noop on=ui.click(Go) do= if count > 100 then count := 0",
+    },
+    {
+      name: "a reducer that wrote only a volatile slot",
+      slot: `slot draft : Text volatile = ""`,
+      reducer: `reducer noop on=ui.click(Go) do= draft := draft + "x"`,
+    },
+  ])("stays closed, click after click, for a panic a boundary caught after $name", async ({
+    slot,
+    reducer,
+  }) => {
+    const go = await mountWithPanel(`
 slot secret : Option(Text) = None
-slot count  : Int          = 0
+${slot}
 
 tile Risky
     error-boundary = Fallback
@@ -214,9 +230,12 @@ tile Go = button(text="go", onClick=noop) {id: "go"}
 
 tile App = column(Risky, Go)
 
-reducer noop on=ui.click(Go) do= if count > 100 then count := 0`);
+${reducer}`);
+    for (const click of [1, 2, 3]) {
+      go();
+      expect(document.querySelector(".kdp-overlay"), `after click ${click}`).toBeNull();
+    }
     expect(document.getElementById("app")?.textContent).toContain("recovered: get called on None");
-    expect(document.querySelector(".kdp-overlay")).toBeNull();
 
     (document.querySelector(".kdp-episode-head") as HTMLElement).click();
     const steps = Array.from(document.querySelectorAll(".kdp-step"), (li) => li.textContent);
