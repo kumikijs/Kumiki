@@ -387,6 +387,28 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
 - A `latest-per-key` key is evaluated where the `emit` runs, so a slot it reads
   sees the reducer body's writes up to that statement and none after it
   ([http.md §6.4](./http.md#_6-4-cancellation))
+- A `latest-per-key` key names the request it runs: an emit whose key is `==`
+  ([§1.9.4](#_1-9-4-operator-types)) to an in-flight request's aborts that
+  request, and one whose key is not leaves it running. The key is written the
+  way a Map key is stored ([stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)), which
+  tells values apart by `==` for every type but two — and, whatever its
+  declared type, not for a non-finite number. A key of one of them, or of a
+  type holding one in a field, a payload, an element or a `Map`'s value, is
+  [E0233](./errors.md#e0233-policy-key-type) at the key:
+  - a `Float`: `NaN` is one key and is not `==` to itself, and inside a
+    record, tuple, `List`, `Map` value or variant `NaN`, `Infinity` and
+    `-Infinity` are one key
+  - a `File`: two Files with the same name, size and type are one key, while
+    `==` holds only of a File and itself
+- A `Set`'s key is its `==`, which itself depends on how the Set was built, so
+  a key that is or holds a `Set` is E0233 too
+- Every other type is a key: a `Text`, `Int`, `Bool`, `Time`, `Bytes`,
+  `EffectId` or `Unit`, a `nominal` or refinement over one, and a record,
+  tuple, `List`, `Map`, `Option`, `Result` or union built from them —
+  `latest-per-key({user: $1.user, page: $1.page})` runs one request per user
+  and page. A `Map`'s own keys are stored the same way, so a `Map(Float, V)`
+  is a key when its values are. A `Float` is keyed through `.show`, and a
+  `File` through `{name: $1.name, size: $1.size}`
 
 ### 1.5.3 Examples
 
