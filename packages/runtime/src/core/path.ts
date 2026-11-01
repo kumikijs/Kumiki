@@ -3,7 +3,7 @@ import { KumikiPanic } from "./panic.ts";
 export type PathSegment = string | number | { get: true } | { at: unknown };
 
 /** The segments a `bind=` path can hold — what `TileNode.bindPath` carries. */
-export type BindSegment = Extract<PathSegment, string | { get: true }>;
+export type BindSegment = Extract<PathSegment, string | { get: true } | { at: unknown }>;
 
 function isUnwrapSegment(seg: PathSegment): seg is { get: true } {
   return typeof seg === "object" && seg !== null && (seg as { get?: unknown }).get === true;
@@ -24,7 +24,7 @@ function sameSegment(own: PathSegment | undefined, step: PathSegment): boolean {
   if (typeof step !== "object" || step === null) return own === step;
   if (typeof own !== "object" || own === null) return false;
   if (isUnwrapSegment(step)) return isUnwrapSegment(own);
-  return isIndexSegment(step) && isIndexSegment(own) && own.at === step.at;
+  return isIndexSegment(step) && isIndexSegment(own) && entryKey(own.at) === entryKey(step.at);
 }
 
 export function entryKey(x: unknown): string {
@@ -95,7 +95,15 @@ export function isEntryOf(m: unknown, key: unknown): boolean {
   return m !== null && typeof m === "object" && Object.hasOwn(m, entryKey(key));
 }
 
-export function bindLabel(bind: string, path?: readonly BindSegment[]): string {
-  if (!path || path.length === 0) return bind;
-  return [bind, ...path.map((seg) => (typeof seg === "string" ? seg : "get"))].join(".");
+export function bindLabel(bind: string, path: readonly BindSegment[] = []): string {
+  let label = bind;
+  for (const seg of path) {
+    label +=
+      typeof seg === "string"
+        ? `.${seg}`
+        : isIndexSegment(seg)
+          ? `[${JSON.stringify(seg.at)}]`
+          : ".get";
+  }
+  return label;
 }

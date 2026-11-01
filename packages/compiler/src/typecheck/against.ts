@@ -27,6 +27,7 @@ export function checkAgainst(
   ctx: Ctx,
   code: MismatchCode = "E0201",
   omittable?: Omittable,
+  domain?: LiteralDomain,
 ): void {
   if (declared === null) return;
   if (declared === REDUCER_REF) {
@@ -72,6 +73,22 @@ export function checkAgainst(
     }
     return;
   }
+  if (e.kind === "MapLit" && e.entries.length === 0) {
+    // `{}` is the empty Map, Set and record at once, so the declared type decides. Against a
+    // record type it is a record literal that names none of its fields.
+    if (d.kind === "TypeRecord") {
+      const none = { kind: "RecordLit" as const, fields: [], pos: e.pos };
+      checkRecordLit(none, d, sym, errors, ctx, code, omittable);
+    } else if (refusesEmptyBraces(d)) {
+      pushMismatch(
+        errors,
+        code,
+        `Expected ${typeToString(declared)} but got {}, an empty Map, Set or record`,
+        e.pos,
+      );
+    }
+    return;
+  }
   if (d.kind === "TypeApp" && e.kind === "MapLit") {
     if (d.name === "Set") return;
     if (d.name === "Map") {
@@ -91,20 +108,21 @@ export function checkAgainst(
     return;
   }
   if (e.kind === "IfExpr") {
-    checkAgainst(e.consequent, declared, sym, errors, ctx, code, omittable);
-    checkAgainst(e.alternate, declared, sym, errors, ctx, code, omittable);
+    checkAgainst(e.consequent, declared, sym, errors, ctx, code, omittable, domain);
+    checkAgainst(e.alternate, declared, sym, errors, ctx, code, omittable, domain);
     return;
   }
   if (e.kind === "LetIn") {
     // The body is the value that lands here, read with the name bound.
-    checkAgainst(e.body, declared, sym, errors, letInScope(e, sym, ctx), code, omittable);
+    const scope = letInScope(e, sym, ctx);
+    checkAgainst(e.body, declared, sym, errors, scope, code, omittable, domain);
     return;
   }
   if (e.kind === "MatchExpr") {
     const scrutType = matchedType(inferType(e.scrutinee, sym, ctx), e.arms, sym);
     for (const arm of e.arms) {
       const scope = armScope(arm, scrutType, sym, ctx);
-      checkAgainst(arm.body, declared, sym, errors, scope, code, omittable);
+      checkAgainst(arm.body, declared, sym, errors, scope, code, omittable, domain);
     }
     return;
   }
@@ -128,8 +146,22 @@ export function checkAgainst(
   const actual = inferType(e, sym, ctx);
   if (actual === null || !isKnown(actual, sym)) return;
   const want = omittable ? withoutOmitted(d, actual, sym, omittable) : declared;
-  if (!assignable(actual, want ?? declared, sym)) mismatch(e, actual);
+  if (!assignable(actual, want ?? declared, sym)) {
+    mismatch(e, actual);
+    return;
+  }
+  const outside = domain?.(e);
+  if (outside) pushMismatch(errors, code, outside, e.pos);
 }
+
+/**
+ * A value domain a site puts on its literals: the message for a literal it
+ * cannot take, or `null`. Asked of each leaf that the value, an `if` branch, a
+ * `match` arm or a `let … in` body yields, once its type is found right, so a
+ * literal is reported once; never of the items of a list, tuple, map or record.
+ * Every such leaf reaches it, so one that is not a literal answers `null`.
+ */
+export type LiteralDomain = (e: Expr) => string | null;
 
 function withoutOmitted(
   d: TypeExpr,
@@ -418,15 +450,11 @@ export function checkIndexStep(
   if (step.kind === "place" && step.key) checkAgainst(index, step.key, sym, errors, ctx);
   if (step.kind !== "no-place") return;
   if (side === "write") {
-    errors.push({
-      code: "E0602",
-      kind: "unassignable-member",
-      message: noPlaceMessage(step, index),
-      pos,
-    });
+    checkIndexIsPlace(step, { index, pos }, "assign", errors);
     return;
   }
-  // Every other receiver with no places reads with no type and no report yet.
+  // A record read through a literal key has its field's type (`inferType`); no other receiver
+  // with no places has a type to read, and none of them is reported yet.
   if (!isSet(step.base)) return;
   errors.push({
     code: "E0232",
@@ -436,13 +464,35 @@ export function checkIndexStep(
   });
 }
 
+/** An index step a write goes through, on the left of `:=` or in a `bind=` target. */
+export function checkIndexIsPlace(
+  step: IndexStep,
+  at: { index: Expr; pos: Pos },
+  verb: "assign" | "bind",
+  errors: KumikiError[],
+): void {
+  if (step.kind !== "no-place") return;
+  // A bound control reads its target before it writes it, and that read is E0232 on a Set.
+  if (verb === "bind" && isSet(step.base)) return;
+  errors.push({
+    code: "E0602",
+    kind: "unassignable-member",
+    message: noPlaceMessage(step, at.index, verb),
+    pos: at.pos,
+  });
+}
+
 function isSet(base: TypeExpr): boolean {
   return base.kind === "TypeApp" && base.name === "Set";
 }
 
-function noPlaceMessage(step: IndexStep & { kind: "no-place" }, index: Expr): string {
+function noPlaceMessage(
+  step: IndexStep & { kind: "no-place" },
+  index: Expr,
+  verb: "assign" | "bind",
+): string {
   const { raw, base } = step;
-  const into = `Cannot assign through an index into "${typeToString(raw)}"`;
+  const into = `Cannot ${verb} through an index into "${typeToString(raw)}"`;
   if (isSet(base)) return `${into}: a Set has members, not places — use .add / .remove / .toggle`;
   const field =
     base.kind === "TypeRecord" && index.kind === "Str" && recordFieldType(base, index.value)
@@ -526,3 +576,18 @@ export function effectInput(
     omittable: (f) => builtinFieldOmittable(builtin, f),
   };
 }
+
+// A name that resolves to nothing is not read here: E0117 reports the name, not the value.
+function refusesEmptyBraces(d: TypeExpr): boolean {
+  switch (d.kind) {
+    case "TypePrim":
+    case "TypeUnion":
+      return true;
+    case "TypeApp":
+      return REFUSES_EMPTY_BRACES.has(d.name);
+    default:
+      return false;
+  }
+}
+
+const REFUSES_EMPTY_BRACES: ReadonlySet<string> = new Set(["List", "Option", "Result", "Tuple"]);
