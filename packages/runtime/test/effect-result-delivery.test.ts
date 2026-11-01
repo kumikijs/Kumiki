@@ -245,6 +245,28 @@ describe("an invoke that throws", () => {
   });
 });
 
+describe("an invoke that returns no result", () => {
+  let root: HTMLElement;
+  beforeEach(() => {
+    root = freshRoot();
+    captureConsole("error");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    root.remove();
+  });
+
+  it("delivers one .err, as a throwing invoke does", async () => {
+    const answerNothing = (async () => undefined) as unknown as () => Promise<EffectResult>;
+    const { app, seen } = deliveryApp({ answer: answerNothing });
+    mount(app, root);
+    (app as MountedApp)._dispatch("start", {});
+    await settled(seen);
+    expect(seen.err).toHaveLength(1);
+    expect(seen.ok).toEqual([]);
+  });
+});
+
 /** The one episode in `eps` holding an `effect-end` for `effect`. */
 function episodeWithEnd(eps: Episode[], effect: string): Episode {
   const found = eps.filter((e) =>
