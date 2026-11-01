@@ -14,7 +14,7 @@ export type TestResult = {
   cases?: number;
   /** Wall-clock milliseconds the test took (filled in by the runner). */
   ms?: number;
-  /** The message a test's body threw; set only when it threw. */
+  /** What a test's body threw, as `kumiki test` prints it; set only when it threw. */
   error?: string;
 };
 

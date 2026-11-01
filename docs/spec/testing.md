@@ -459,7 +459,7 @@ FAIL  counter-display
   diff at:  [0].text  "Count: 5" -> "Count: 0"
 ```
 
-A test whose body throws is a `FAIL` of that test alone, with what it threw on an `error:` line under it; the file's other tests still run and report.
+A test whose body throws is a `FAIL` of that test alone, with what it threw on an `error:` line under it; the file's other tests still run and report. A panic is shown by its message, or as `KumikiPanic` when it has none. Anything else keeps its kind — `TypeError: …` — since it points at the compiler or the runtime rather than at the program, and a thrown value that is not an error is shown as JSON.
 
 A file that does not compile runs no test. The runner names the file by its resolved (absolute) path and prints each diagnostic as `kumiki check` does, warnings before errors — `<code> <kind> at <line>:<col>: <message>` — adding the `test` a diagnostic sits inside:
 

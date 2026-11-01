@@ -9,6 +9,7 @@ import {
   createEpisodeLogger,
   describeDiagnostic,
   type EpisodeLogger,
+  isPanic,
   runScenario,
   type Scenario,
   type ScenarioReport,
@@ -321,12 +322,18 @@ export async function runTestsSource(
   });
 }
 
-function runOne(t: TestRunner): TestResult {
+export function runOne(t: TestRunner): TestResult {
   try {
     return t.run();
   } catch (e) {
-    return { name: t.name, pass: false, error: e instanceof Error ? e.message : String(e) };
+    return { name: t.name, pass: false, error: thrownText(e) };
   }
+}
+
+/** A panic is the program failing; anything else points at the harness, so it keeps its kind. */
+function thrownText(e: unknown): string {
+  if (!(e instanceof Error)) return leafStr(e);
+  return isPanic(e) && e.message !== "" ? e.message : String(e);
 }
 
 export async function testFile(path: string, capabilities: string[] = []): Promise<TestResult[]> {
