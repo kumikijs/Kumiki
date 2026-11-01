@@ -174,13 +174,11 @@ export function mountCore(
   const views: MountView[] = [ownView];
   const boundaryPanics: RenderPanicSink = (e, site) =>
     recordRenderPanic(episode, e, site).episodeId;
-  const renderBracket = <T>(fn: () => T, panics = boundaryPanics): T =>
-    withRenderingApp(app, fn, panics);
   const attach = (into: HTMLElement): MountHandle => {
     const view = newView(into, false);
     views.push(view);
     registerAppRoot(into, app);
-    renderBracket(() => {
+    withRenderingApp(app, boundaryPanics, () => {
       withRenderingView(view.target, () => renderPass(view));
     });
     return { dispose: () => disposeView(view), episodes: () => episode?.list() ?? [] };
@@ -193,7 +191,7 @@ export function mountCore(
   let inRouteErrorHandlers = false;
   const render = (panics = boundaryPanics): void => {
     if (disposed || inRouteErrorHandlers) return;
-    renderBracket(() => {
+    withRenderingApp(app, panics, () => {
       const touched: string[] = [];
       let tree: TileNode | null = null;
       for (let i = 0; i < views.length; i++) {
@@ -204,7 +202,7 @@ export function mountCore(
       }
       lastRenderTouched = touched;
       syncMountedTiles(tree);
-    }, panics);
+    });
     // Once more without them, so no message still names a value no control shows.
     if (forgetMovedRefusals(app)) render(panics);
   };
