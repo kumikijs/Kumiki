@@ -1194,6 +1194,20 @@ bind していないコントロールが選択状態を読む引数 — `check`
 
 **修正**：プログラムの型を改名する — `type AppPanic = {…}` — とともに、その型を意図していた使用箇所もすべて改める。
 
+### E0234 `reserved-effect-name`
+
+[標準 effect](./stdlib.md#_2-6-標準-effect) — `navigate`・`navigate-replace`・`navigate-back`・`scroll-to`・`toast`・`confirm`・`log` — の名前で `effect` を宣言している。宣言の位置で、宣言ごとに 1 件報告する。
+
+> `Effect "<name>" collides with the built-in effect <name>; emits of it never run this effect`
+
+ランタイムはアプリのマウント時に各標準 effect をそれ自身の名前で登録し、プログラムの宣言からコンパイルされたレコードを上書きする — ケイパビリティもリクエストも `policy` もまとめて。宣言された `effect log cap=http.get …` はリクエストを一度も送らない：`emit log("x")` が実行するのは組み込みの `log` であり、それは `log.write` を必要とし、コンソールに書き出す。宣言した `policy` もレコードごと失われる：emit が返す `EffectId` は組み込みの既定 policy で発行されるので、プログラムが宣言した `latest-per-key` による cancel は起きない。
+
+名前の使用はすべて、引き続き宣言に対して検査される — `emit` の引数はその `in=` に、`.ok` の bind はその `out=` に、ケイパビリティはその `cap=` に。それらはプログラムがその宣言のために書いた使用だからである。したがって使用がすべて宣言のために書かれたプログラムでは、報告はこの 1 件である。組み込みのために書かれた使用も宣言に対して検査され、この報告と並んで報告される（組み込みのレコードを渡す `emit` の `E0202`）。
+
+拒否されるのは `effect` 宣言だけである。標準 effect を emit するのに宣言は要らない。同じ綴りの reducer・slot・`fn` は別のネームスペースにあり、名前がこれらで始まる、あるいは終わるだけの effect（`logger`・`toasts`・`navigate2`）はそれ自身の名前である。
+
+**修正**：effect を、それを意図していたすべての `emit`・`app.init` のエントリ・`on=<name>.ok` / `.err` の reducer とともに改名する — `kumiki rename <file> effect.log logRequest` がそれらをすべて書き換える。組み込みを意図していた箇所では、標準 effect をそれ自身の名前で emit する。`kumiki rename` はどの effect のために書かれたかを問わずすべての使用を書き換えるので、組み込みのために書かれた `emit` は新しい名前のもとでも `E0202` が残り、改名は拒否される。そのようなプログラムは手で改名し、その `emit` はそのまま残す。標準 effect を書き写しただけの宣言（`effect navigate cap=nav.push in={path: Text, …}`）は改名せずに削除する。標準 effect に宣言は要らないからである。削除はその行を直接消して行う：`kumiki remove` は emit を宣言への参照と数えて拒否する。
+
 ## E03xx — ケイパビリティと純粋性
 
 ### E0301 `missing-capability`

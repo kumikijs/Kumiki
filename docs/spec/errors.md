@@ -1216,6 +1216,20 @@ Only a declaration is refused. Writing a reserved name is how a program uses the
 
 **Fix**: Rename the program's type — `type AppPanic = {…}` — along with every use that meant it.
 
+### E0234 `reserved-effect-name`
+
+An `effect` is declared under the name of a [standard effect](./stdlib.md#_2-6-standard-effects) — `navigate`, `navigate-replace`, `navigate-back`, `scroll-to`, `toast`, `confirm` or `log`. Reported at the declaration, once per declaration.
+
+> `Effect "<name>" collides with the built-in effect <name>; emits of it never run this effect`
+
+The runtime registers each standard effect under its own name when the app mounts, over the record the program's declaration compiled to — its capability, its request and its `policy` alike. A declared `effect log cap=http.get …` would never make its request: `emit log("x")` runs the built-in `log`, which needs `log.write` and writes to the console. The declared `policy` goes with the rest of the record: the `EffectId` the emit returns is minted under the built-in's default policy, so a `latest-per-key` cancellation the program declared never happens.
+
+Every use of the name is still checked against the declaration — an `emit`'s argument against its `in=`, a `.ok` bind against its `out=`, the capability against its `cap=` — because those are the uses the program wrote for it. So a program whose uses were all written for the declaration gets this one report. A use written for the built-in is held to the declaration and is reported beside it (an `E0202` on an `emit` with the built-in's record).
+
+Only an `effect` declaration is refused. Emitting a standard effect needs no declaration. A reducer, a slot or a `fn` spelled the same way is in another namespace, and an effect whose name merely starts or ends with one (`logger`, `toasts`, `navigate2`) is a name of its own.
+
+**Fix**: Rename the effect together with every `emit`, `app.init` entry and `on=<name>.ok` / `.err` reducer that meant it — `kumiki rename <file> effect.log logRequest` rewrites them all — and emit the standard effect under its own name where the built-in is what was meant. `kumiki rename` rewrites every use, whichever effect it was written for, so an `emit` written for the built-in keeps its `E0202` under the new name and the rename is refused; such a program is renamed by hand, leaving that `emit` as it is. A declaration that restates a standard effect (`effect navigate cap=nav.push in={path: Text, …}`) is deleted instead, since the standard effect needs none. Delete its line directly: `kumiki remove` counts the emits as references to the declaration and refuses.
+
 ## E03xx — Capabilities and Purity
 
 ### E0301 `missing-capability`
