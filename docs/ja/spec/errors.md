@@ -46,7 +46,7 @@ type KumikiError = {
 |---|---|---|
 | `E0001` | あり | app 自身の `routes` に `"/404" -> NotFound` を追加する（tile の `sub-routes` には追加しない）。`NotFound` tile は、プログラムがまだ定義していなければ挿入する。app に `routes` 節がないとき、および `/404` がリダイレクトのときはパッチを出さない：E0001 はリダイレクトを数えず、`/404` をもう 1 つ書けば `E0008` になる。 |
 | `E0102` | あり | 既知の reducer 名に対する近傍名の提案（Levenshtein ≤ 2 または ≤ 25%）。 |
-| `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。名前を宣言した `if` の枝・`for` の本体・match arm の後でその名前を読んでいる場合（診断の `endedScope` が設定されている）はパッチを出さない：読み出しは綴りの誤りではなくスコープ外であり、名前を置き換えた読み出しは型検査を通って別の値を読む。宣言と読み出しのどちらを動かすかはユーザの意図である。 |
+| `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。reducer が、その reducer の `if` の枝・`for` の本体・match arm で宣言された名前をその本体の後で読んでいる場合（診断の `endedScope` が設定されている）はパッチを出さない：読み出しは綴りの誤りではなくスコープ外であり、名前を置き換えた読み出しは型検査を通って別の値を読むことがある。宣言と読み出しのどちらを動かすかはユーザの意図である。 |
 | `E0104` | あり | 宣言済みの `effect` 名と、プログラムが宣言しない[標準 effect](./stdlib.md#_2-6-標準-effect) に対する近傍名の提案（スコープ限定 — 名前の近い tile や slot は候補にならない）。 |
 | `E0105` | あり | 既知の tile 名に対する近傍名の提案。 |
 | `E0106` | あり | `on=timer(d, name=N)` から収集したタイマー名に対する近傍名の提案（スコープ限定 — トップレベル定義は候補にならない）。 |
@@ -245,9 +245,15 @@ reducer 名がどの `reducer` 定義も指していない。名指す箇所は 
 
 `let` は書かれたスコープに宣言され（[言語 §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)）、`if` の各枝・`for` の本体・match の各 arm はそれぞれ独立したスコープである。したがって `if` の一方の枝で宣言した名前は、もう一方の枝でも `if` の後のどの文でも未定義であり、`for` の本体や match arm で宣言した名前もその後では未定義である。条件で値を選ぶなら、`if` の前で `if` 式を使って一度だけ宣言する — `let n = if c then "a" else "b"` — か、読み出しを枝の中へ移す。
 
-同じ reducer の中でそれより前に、そうした本体の中で名前が宣言されていた場合 — 本体の中の `let`、`for` の束縛、match arm のパターン — メッセージはその本体を名指し、診断の `endedScope` フィールドがその種類を `if`・`for`・`match` で示す。
+同じ reducer の中でそれより前に、そうした本体の中で名前が宣言されていた場合 — 本体の中の `let`、`for` の束縛、match arm のパターン — 診断の `endedScope` フィールドがその本体の種類を `if`・`for`・`match` で示し、メッセージはその種類に合った直し方を示す。複数の本体がその名前を宣言していた場合、メッセージは最後に終わった本体を名指す。入れ子の本体なら、読み出しより前に終わったもののうち最も外側の本体である。名前はループの外へ値を持ち出せないので、`for` の後の読み出しはその本体の中へ移すか、本体の中で値を slot に書き込む：
 
-> `Reference to undefined name "idx" — it is scoped to a "for" body, which ends with it: declare it before the "for", or move the read into the body (see docs/spec/language.md)`
+> `Reference to undefined name "idx" — it was declared in a "for" loop, and a name carries no value out of a loop: move the read into the loop's body, or write the value to a slot there (see docs/spec/language.md)`
+
+`if` や match の後では、その前で `if` 式または match 式を使って名前を一度だけ宣言するか、読み出しをその枝・arm の中へ移す。前に `let n = 0` と書いても直らない：本体の中の `n` はそれを隠すだけである。
+
+> `Reference to undefined name "n" — it was declared in an "if" branch, which ended before this read: declare it once before the "if" with an "if" expression (let n = if c then … else …), or move the read into that branch (see docs/spec/language.md)`
+
+同じ `if` のもう一方の枝や、同じ match の後続の arm での読み出しは、すでに枝・arm の中にあるので、メッセージは名前を宣言している側を指す：`if` なら `it was declared in the other branch of this "if"` … `the branch that declares it`、match なら `another arm of this match` … `the arm that declares it` となる。
 
 スコープ内に近い名前がいくらあっても本体は名指される：読み出しは綴りの誤りではなくスコープ外なので、`kumiki fix` は名前の置き換えを提案しない。`for idx in xs` の後の `idx` の読み出しを slot `id` に置き換えると、型検査を通ってその slot を読んでしまう。
 

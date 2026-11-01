@@ -6,11 +6,11 @@
 Say when an E0103 is a read after its scope ended, and stop `kumiki fix` renaming it
 
 A name declared in an `if` branch, a `for` body or a match arm ends with it
-(language.md §1.6.7), so a read after it is E0103. `kumiki fix` read every
+(docs/spec/language.md), so a read after it is E0103. `kumiki fix` read every
 E0103 as a misspelling and replaced the name with the closest top-level
 definition. For a scope violation that is the one repair that cannot be right:
-the renamed read type-checks, so `--apply` counted it as resolved and wrote it,
-and the program then read a different value. Short loop variables are within
+a renamed read can type-check, and then `--apply` counted it as resolved, wrote
+it, and the program read a different value. Short loop variables are within
 reach of most slots:
 
 ```kumiki
@@ -32,18 +32,20 @@ applied 1 fix(es) — file now clean
 
 and the file read `total := id`.
 
-After, the checker says which body the name ended with, and the diagnostic
-carries it as `endedScope` (`if`, `for` or `match`):
+After, the checker names the kind of body the name was declared in and gives
+the repair for that kind, and the diagnostic carries the kind as `endedScope`
+(`if`, `for` or `match`):
 
 ```
 $ kumiki check app.kumiki
-E0103 undef-ref at 8:18: Reference to undefined name "idx" — it is scoped to a "for" body, which ends with it: declare it before the "for", or move the read into the body (see docs/spec/language.md)
+E0103 undef-ref at 8:18: Reference to undefined name "idx" — it was declared in a "for" loop, and a name carries no value out of a loop: move the read into the loop's body, or write the value to a slot there (see docs/spec/language.md)
 $ kumiki fix app.kumiki --apply
 (no auto-patches available)
 ```
 
 and the file is left as written. `fix` proposes no rename for such a read,
-whatever is close to it — the skip reason is `e0103-read-after-scope-ended` —
-and a genuine misspelling is repaired as before, the same file included. The
-hint is given for names a reducer's nested statement bodies declared; a
-misspelling keeps its message unchanged.
+whatever is close to it, and a genuine misspelling is repaired as before, the
+same file included; a dry run that has other patches to show lists the read
+with the reason `e0103-read-after-scope-ended`. The hint is given for a read,
+later in the same reducer, of a name one of its `if` / `for` / `match`
+statement bodies declared; any other undefined name keeps its message.
