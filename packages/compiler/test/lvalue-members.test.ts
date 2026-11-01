@@ -243,7 +243,8 @@ describe("an index read into a Set", () => {
     expect(codesOf(src)).toEqual(["E0232"]);
   });
 
-  // Reads into these have no places either, and no type; that they pass silently is tracked apart.
+  // Reads into these have no places either. A record read through a literal key has its field's
+  // type, the others none; that they pass unreported is tracked apart.
   it.each([
     ["an Int", `slot n : Int = 5`, `n[0]`],
     ["a record", `type R = { a: Int }\nslot r : R = { a: 1 }`, `r["a"]`],

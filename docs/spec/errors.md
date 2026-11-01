@@ -597,11 +597,13 @@ A value does not have the type its position requires.
 > `Operator "<op>" cannot compare <type> with <type>`
 > `Condition of "<form>" must be Bool but got <type>`
 > `Expected <declared> but got variant "<name>"`
+> `Expected <declared> but got {}, an empty Map, Set or record`
 > `Tile "<name>" expects a value of type <type> but got a tile`
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
 > `link prefetch must be a reducer name`
 > `credentials "<mode>" is not one of omit / same-origin / include; a browser refuses the request`
+> `timeout <n> is not a number of milliseconds from 1 to 2147483647; every request is aborted before it can answer`
 > `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md)`
 > `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is <type>`
 
@@ -613,13 +615,13 @@ The parser gives the bare name, the argument-less call and the empty brace form 
 
 So what this error reports is a value that is no name: a literal, a call (`onClick=box(text("z"))`), or a capitalised name carrying arguments or props (`onClick=Some(1)`, `onClick=Card {x: 1}`). A bare name that names no reducer is [E0102](#e0102-undef-reducer) instead, whatever its capitalisation — including a tile written there, because the handler position resolves in one namespace and the tile layer is not it.
 
-The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), the index of a `List`, an `Int` in `xs[i]`, `xs[i] := v` and `xs.get(i)` alike ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics), [stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, a builtin tile's prop that [stdlib §2.3.11](./stdlib.md#_2-3-11-prop-types) gives a type — `modal(open=…)`, `select(options=…)` — written on the builtin's own call, as a named argument or in the `{…}` block, the fallback of `.get-or`, an argument of a `Map` / `Set` / `List` member whose parameter is the receiver's key, value or element type or another container of its type (`xs.push(x)`, `m.insert(k, v)`, `s.add(x)`, `xs.concat(ys)`; [stdlib §2.2](./stdlib.md#_2-2-collection-methods)), `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose declared return type is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
+The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), the index of a `List`, an `Int` in `xs[i]`, `xs[i] := v` and `xs.get(i)` alike ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics), [stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, a builtin tile's prop that [stdlib §2.3.11](./stdlib.md#_2-3-11-prop-types) gives a type — `modal(open=…)`, `select(options=…)` — written on the builtin's own call, as a named argument or in the `{…}` block, the fallback of `.get-or`, an argument of a `Map` / `Set` / `List` member whose parameter is the receiver's key, value or element type or another container of its type (`xs.push(x)`, `m.insert(k, v)`, `s.add(x)`, `xs.concat(ys)`; [stdlib §2.2](./stdlib.md#_2-2-collection-methods)), `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose result is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
 
 An index `[k]` is checked against the type its receiver takes as an index, in a read as in a write: an `Int` on a `List`, and the key type `K` on a `Map(K, V)` ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)). With `TodoId` and `PostId` both declared `nominal Text`, `notes[postId]` on a `Map(TodoId, Text)` reports `Expected TodoId but got PostId` at the index, in a read and in `notes[postId] := v` alike, and so does `todos[postId].done := v` on a `Map(TodoId, Todo)`.
 
 Against a declared type, a value written as an `if`, a `match` or a `let … in` is checked, and reported, at what it evaluates to: each branch, each arm, the `let`'s body ([Language §1.9](./language.md#_1-9-expression-language)). An operator's operand is the exception: it is reported at the operator expression or at the operand as a whole, so `n := 1 + (let m = t in m)` is reported at `1 + …`, not at `m`.
 
-One message in this code is not about a type. A `credentials` literal that names no Fetch mode has exactly the type its position requires — a `Text` — and is wrong only in its value: the three modes are a value-domain constraint on that field, reported under this code because the mistake is the same one at the same place, a value the position cannot take.
+Two messages in this code are not about a type. A `credentials` literal that names no Fetch mode has exactly the type its position requires — a `Text` — and is wrong only in its value, and so is a `timeout` literal outside 1 to 2147483647, which is an `Int`: the three modes and the milliseconds a timer can hold are value-domain constraints on those fields, reported under this code because the mistake is the same one at the same place, a value the position cannot take. Both are checked after the type, on every literal that reaches the field, where it is written ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)).
 
 A `.get-or` fallback is checked against what the call answers, not against the receiver: it is the value the call produces on the empty case, so it carries the result type. That result comes out of the receiver's type argument — `Option(T)` and `Result(T, E)` answer `T`, `Map(K, V)` answers `V` — which is why `opt := opt.get-or(None)` on an `Option(S)` slot is reported twice: once at the fallback, which is not an `S`, and once at the assignment, because an `S` is not an `Option(S)`. Which of the two readings a call takes is decided by its argument count ([Runtime §10.3.7](./runtime.md#_10-3-7-polymorphic-collection-methods)), so a count that does not fit its receiver is not resolved here and is checked against nothing. It is still lowered — to the reading its count names, on the receiver it was given — which is a defect of its own rather than a silence.
 
@@ -628,6 +630,10 @@ Assignability is structural, with one implicit conversion — `Int` flows into a
 A `Tuple`'s length is part of its type ([stdlib §2.1.2](./stdlib.md#_2-1-2-generic-types)): `Tuple(Int, Text)` and `Tuple(Int, Text, Int)` refuse each other in both directions, at any depth — inside a `List`, `Map`, `Option`, record or another tuple alike. A tuple pattern matches only a value of its own length ([E0207](#e0207-pat-arity-mismatch)), so a pair in a triple's place would fall through every three-item arm. A tuple literal of another length is reported once, at the literal — `Expected Tuple(Int, Text, Int) but got a tuple of 2 item(s)` — and one of the right length is checked item by item.
 
 `()` is a value like any other: it is the one value of `Unit` ([stdlib §2.1](./stdlib.md#_2-1-built-in-types)), so it is accepted where `Unit` is declared and is this error against any other declared type (an `emit` argument reports E0202, and `emit e(())` on an `in=Unit` effect is E0213, since that effect takes no argument). `Card(())` against `tile Card in={label: Text}` reports `Expected {label: Text} but got Unit` at the `()`: `()` runs as `null`, which a tile reading `$1.label` cannot use.
+
+`{}` is three values at once — the empty `Map`, the empty `Set` and the empty record — so it is accepted where a `Map` or a `Set` is declared. Against a record type it is a record literal that names no field, so each field the type requires is [E0214](#e0214-missing-record-field) at the `{}`, as in any record literal. It is this error against every other type the checker can read: `slot n : Int = {}` reports `Expected Int but got {}, an empty Map, Set or record` at the `{}`, and so does a `{}` written in an `if` branch, a list item or a record field that the declared type reaches.
+
+A call to a `fn` has the type its `->` declares, or without one the type of its body ([Language §1.8.2](./language.md#_1-8-2-syntax)): with `fn greeting() = "hello"`, `slot n : Int = greeting()` is this error. A `fn` without `->` whose body's type the checker cannot decide, and every `fn` without `->` on a loop of calls ([E0006](#e0006-fn-cycle)), have no result type, and nothing is checked against what a call to them returns; the call's arguments are still checked against the parameters. A record read through a literal key, `cfg["label"]`, has the type of the field the key names, as `cfg.label` does; a key computed at runtime names no one field, and the read is not checked.
 
 `nominal` is the exception, and the one rule in this code that reports where *every* value of the actual type is a valid value of the declared one: `1.5` is not an `Int` and `{a, b}` is not an `{a: Int}`, but every `Yen` is a perfectly good `Cents`. A nominal type is identified by the name it is declared under ([§1.3.5](./language.md#_1-3-5-type-canonicalization)), so two declarations over one base reject each other — `Cents := Yen`, `postId := userId`. A type carrying no nominal name of its own still meets any nominal declared over it in both directions, which is what leaves `slot c : Cents = 1` and `c := c + 1` legal; a nominal declared over another nominal goes one way, toward the one it was declared as.
 
@@ -647,6 +653,7 @@ An `emit` argument does not match the effect's declared `in=` type. A standard e
 
 > `Expected <in-type> but got <actual>`
 > `Expected <in-type> but got variant "<name>"`
+> `Expected <in-type> but got {}, an empty Map, Set or record`
 > `emit "<effect>" expects an EffectId argument`
 
 The `EffectId` case keeps its own wording because its fix is different in kind. It is the shape of a mis-wired cancellation: `emit stopSearch(searchId)` where `searchId : EffectId` is correct, `emit stopSearch(42)` or `emit stopSearch("id")` is not. Codegen would pass the non-`EffectId` value through and the cancel path would silently no-op, indistinguishable from a successful cancel.
@@ -957,7 +964,7 @@ The type is named as the program writes it, so an alias reads as its name (`Box`
 
 A `Map` holds two lists and they bind different things: `for k in m.keys` binds the key, `for v in m.values` binds the value. The message names `.keys` first because that is the form [§1.7.2](./language.md#_1-7-2-invariants) inv. 5 lists, and `kumiki fix` proposes that one — check which the loop body actually wanted. For a `Map` or a `Set` the diagnostic's `accessor` field names the member `kumiki fix` appends (`keys` / `to-list`); no other target carries it. `.get-or([])` iterates nothing for a `None` or an `Err`; a `match` is the form that does something else there.
 
-Fires for both forms of the loop — inside a tile and inside a reducer's `do=` block. A target whose type cannot be determined is not reported: a `fn` result with no `->`, an untyped reducer payload, a type parameter, or a type that names nothing ([E0117](#e0117-undef-type)). Nor is a target that already has an error reported at it — a call with the wrong arity, a name that resolves to nothing: that is one mistake, reported once. An error inside the target, such as a misspelt argument in `idx(rws)`, leaves the target's type decided, and E0218 is reported beside it.
+Fires for both forms of the loop — inside a tile and inside a reducer's `do=` block. A target whose type cannot be determined is not reported: the result of a `fn` with no `->` whose body's type is not decided, an untyped reducer payload, a type parameter, or a type that names nothing ([E0117](#e0117-undef-type)). Nor is a target that already has an error reported at it — a call with the wrong arity, a name that resolves to nothing: that is one mistake, reported once. An error inside the target, such as a misspelt argument in `idx(rws)`, leaves the target's type decided, and E0218 is reported beside it.
 
 **Fix**: Iterate `m.keys` for a `Map` and `s.to-list` for a `Set` — `kumiki fix` proposes the suffix. Unwrap an `Option` or a `Result` first: `xs.get-or([])` when its `None` / `Err` should iterate nothing, otherwise `match xs with | Some(ys) -> for y in ys … | None -> …`. Iterate `t.split(sep)` for a `Text`. For any other type, iterate the List the program meant — a field of the record, say.
 
@@ -1044,12 +1051,12 @@ The runtime fires a route lifecycle event for each pattern the route being shown
 
 The root of a `bind=` target is not a slot where the target is written ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)).
 
-> `<tile>(bind=…) cannot write to "<name>": it is <what>, not a slot — a bind writes back to a slot or a field path into one. <fix> (see docs/spec/forms.md)`
+> `<tile>(bind=…) cannot write to "<name>": it is <what>, not a slot — a bind writes back to a slot or a path into one. <fix> (see docs/spec/forms.md)`
 > `<tile>(bind=…) cannot write to the literal <v>: a literal is a value, not a slot — … (see docs/spec/forms.md)`
 > `<tile>(bind=…) cannot write to this expression: it computes a value, not a slot — … (see docs/spec/forms.md)`
 > `<tile>(bind=…) cannot write to "route": it is the route slot, which only navigation writes. Move it with link(to=…) or emit navigate(…) (see docs/spec/routing.md)`
 
-A control writes back to the slot its target's root names, through the field path below the root. A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are locals, with no slot behind them. Without this check the lowering writes the control's edits into the live slot table under the local's name, as a slot of its own that nothing reads: the field takes every edit, and the list the row came from, or the slot the caller passed, never changes. A literal or any other expression names no place, and the bind is dropped. Nothing else reports that the root is not a slot — the program checks, builds, mounts, and survives every edit.
+A control writes back to the slot its target's root names, through the path below the root. A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are locals, with no slot behind them. Without this check the lowering writes the control's edits into the live slot table under the local's name, as a slot of its own that nothing reads: the field takes every edit, and the list the row came from, or the slot the caller passed, never changes. A literal or any other expression names no place, and the bind is dropped. Nothing else reports that the root is not a slot — the program checks, builds, mounts, and survives every edit.
 
 `<what>` is what the checker knows the root to be: `the variable of a for`, `this tile's input` (`$1` in a tile that declares `in=`), or `a local name` for any other local (a `match` binding). A text literal is named `the text literal "<v>"`. `route` is a slot, but the runtime manages it ([Routing §3.2](./routing.md#_3-2-current-route-state)) and only navigation moves it, so its message names it as the route slot and sends the edit to `link(to=…)` or `navigate` instead. A local named like a slot hides the slot, as it does for any read, so `for title in titles input(bind=title)` is reported beside a slot `title`. The controls asked are the ones that write back from a bind: `input`, `textarea`, `select`, `slider`, `check`, `switch`, `radio` and `editable`.
 
@@ -1061,7 +1068,7 @@ slot todos : List(Todo) = [{text: "milk"}]
 tile Rows = column(for t in todos input(bind=t.text))
 ```
 
-**Fix**: Bind the slot itself, or a field path into it. A text literal that spells a slot's name is that slot written with quotes: `bind=title`. Where a local of that name hides the slot, the unquoted name is the local, so the message gives the general fix instead. To edit one row of a list, show the row with `value=`, carry its key in its props, and update the list from a reducer on the row's event ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)):
+**Fix**: Bind the slot itself, or a path into it. A text literal that spells a slot's name is that slot written with quotes: `bind=title`. Where a local of that name hides the slot, the unquoted name is the local, so the message gives the general fix instead. To edit one row, bind it through the slot — a `Map` entry by its key (`for k in todos.keys input(bind=todos[k].text)` on a `Map(Text, Todo)`), a `List` element by an index the page holds (`input(bind=todos[i].text)`) — or show the row with `value=`, carry its key in its props, and update the list from a reducer on the row's event ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)):
 
 ```kumiki fragment
 type Todo = {text: Text}
@@ -1105,6 +1112,26 @@ An index names a place — an entry of a `Map`, a position of a `List` ([Languag
 The read has no type, so the one mistake is reported once: a position that expects a type — `n := tags[x]`, `if tags[x] then …`, a `fn` body against its `->` — and a step after it, such as `tags[x].foo`, add nothing beside it. A `bind=` target shows the value at the target before it writes one, so `input(bind=tags[x])` and `check(bind=tags[x])` are this code too. So is the field of an `error` tile: `error(field=tags[x])` is read as a value first, and the step is E0232 rather than [E0230](#e0230-error-field-not-path). A receiver whose type cannot be decided — such as the accumulator `$1` of a `fold` from `{}` — is not reported.
 
 **Fix**: Ask for membership — `tags.has(x)` is a `Bool`. A `check` shows it with `value=tags.has(x)`, and a reducer on its click writes `tags := tags.toggle(x)` ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)). For a value stored under a key, declare a `Map(K, V)` instead. In `error(field=…)`, name the Set slot itself, `error(field=tags)`, for the failure of the Set.
+
+### E0233 `policy-key-type`
+
+A `policy=latest-per-key(<key>)` key has a type whose values the key does not tell apart by `==` ([Language §1.5.2](./language.md#_1-5-2-semantics)).
+
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Float, and NaN is one key though NaN == NaN is false (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it holds a Float, and inside it NaN, Infinity and -Infinity are one key (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it holds a File, and two Files with the same name, size and type are one key, while == holds only of a File and itself (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Set, whose == depends on how it was built (see docs/spec/language.md)`
+
+The dispatcher runs each request under its key and aborts an in-flight request when another starts under the same one ([HTTP §6.4](./http.md#_6-4-cancellation)). The key is written the way a Map key is stored ([Stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)), which makes two keys one key exactly when they are `==` but for two types — and, whatever its declared type, not for a non-finite number. A key that is one key for two values `==` calls different aborts a request for no reason the program can see:
+
+- a `Float`: `NaN` is one key, yet `NaN == NaN` is `false`; and inside a record, a tuple, a `List`, a `Map`'s value or a variant, `NaN`, `Infinity` and `-Infinity` are all one key
+- a `File`: two Files with the same name, size and type are one key, while `==` holds only of a File and itself
+
+A `Set`'s key is its `==`, which itself depends on how the Set was built ([Language §1.9.4](./language.md#_1-9-4-operator-types)), so a Set key aborts requests by a rule the program cannot rely on, and is reported too.
+
+The message says `it is` when the key's type is one of them, and `it holds` when it holds one in a record field, a variant payload, a container element or a `Map`'s value, through any alias, generic or `nominal`: `type Spot = {lat: Float, lng: Float}` keyed by `$1` is reported, and so are a `List(Set(Text))` and a `Box(Box(Float))` for a `type Box(A) = {v: A}`. A `Map`'s own keys are stored the same way, so `==` on two Maps agrees with their key, and a `Map(Float, Text)` is not reported. A key whose type the checker cannot decide is not reported, and neither is an `Int`, though one can hold a non-finite number (`n % 0`, an overflowing `pow`, a `.round` of a non-finite Float) and is then keyed as a Float is.
+
+**Fix**: Key on a value of another type — a field of the input that identifies the request (`latest-per-key($1.id)`), a Float's `.show`, a File's `{name: $1.name, size: $1.size}`, or a record of such fields (`latest-per-key({user: $1.user, page: $1.page})`).
 
 ### W0213 `handler-on-inert-tile` (warning)
 
@@ -1344,6 +1371,12 @@ A **`bind=` target** is written through the same way — it is the place the con
 > `Cannot bind through ".get()": a bind target is a path, and a call is not a step of one — the unwrap step is written ".get"`
 
 Without this check the bind was dropped whole: `input(bind=d.get().title)` passed `check` and `build` and rendered an input bound to nothing. The unwrap step is `.get`, in a bind as on the left of `:=` — where `d.get().title := v` does not parse, since a path step is an identifier ([Language §1.6.1](./language.md#_1-6-1-syntax)).
+
+An index step of a bind target names the place it names on the left of `:=` — a `List` element, a `Map` entry — so an index into a record, a scalar, an `Option`, a `Result`, a `Tuple` or a union is E0602 there too, at the index. The message is the second index message above, with `bind` for `assign`:
+
+> `Cannot bind through an index into "<T>": an index names a place only in a Map or a List`
+
+An index into a `Set` is [E0232](#e0232-index-into-set) there instead: the control shows its target before it writes one, and that read is reported once.
 
 **Fix**: For a member, write the value the member would have derived — `name := "some text"` rather than `name.length := 9` — or, if the receiver is a record, use a field that exists. For a Set, change membership instead of indexing: `tags := tags.add(x)`, or `.remove(x)` / `.toggle(x)` in its place ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)). For an index into anything else, write the step that names a place: a record's field as `r.a := v`, an `Option` / `Result` payload through `.get` (`o.get := v`, which writes nothing on a `None` or an `Err`), and any other value whole (`n := v`). To write an `Option` / `Result` value whatever it holds, replace it whole: `o := Some(v)`, `res := Ok(v)`.
 
