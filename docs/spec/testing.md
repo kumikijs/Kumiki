@@ -76,12 +76,10 @@ seed of the wrong type runs the reducer from a state the app can never be in,
 and an expectation of one asserts a state it can never reach: on
 `slot count : Int`, `given.slots: {count: "5"}` makes `count + 1` the text
 `"51"`, which `expect.slots: {count: "51"}` agrees with. A value whose type the
-checker does not infer is not yet held to the slot's: an empty `{}` written for
-a type that is not a collection, or the result of a `.map` / `.fold` / `.zip` /
-`.flat-map`, checks `ok` whatever the slot's type, in a test as in an
-initializer (`slot at : Text = {}` does). That is a known gap, not a rule
-([#514](https://github.com/kumikijs/Kumiki/issues/514),
-[#959](https://github.com/kumikijs/Kumiki/issues/959)). A wildcard in a
+checker does not infer is not yet held to the slot's: the result of a `.map` /
+`.fold` / `.zip` / `.flat-map` checks `ok` whatever the slot's type, in a test as
+in an initializer. That is a known gap, not a rule
+([#959](https://github.com/kumikijs/Kumiki/issues/959)). A wildcard in a
 `reducer-test` `expect` ([§8.2.2](#_8-2-2-wildcards)) has no type, so it is not
 held to the slot's. The `route` slot is the runtime's, of the standard
 `Route`; a seed of it names only the fields it needs, and a wildcard may stand
