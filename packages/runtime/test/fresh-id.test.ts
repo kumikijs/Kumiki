@@ -20,12 +20,16 @@ async function freshStdlib() {
   return (await import("../src/stdlib.ts"))._stdlibCore;
 }
 
-/** A `getRandomValues` that fills every byte it is handed with `byte`. */
-const constantBytes = (byte: number) =>
+/** A `getRandomValues` that sets byte `i` of what it is handed to `fill(i)`. */
+const bytesFrom = (fill: (i: number) => number) =>
   vi.fn(<T extends ArrayBufferView>(a: T): T => {
-    new Uint8Array(a.buffer, a.byteOffset, a.byteLength).fill(byte);
+    const bytes = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+    for (let i = 0; i < bytes.length; i++) bytes[i] = fill(i);
     return a;
   });
+
+/** A `getRandomValues` that fills every byte it is handed with `byte`. */
+const constantBytes = (byte: number) => bytesFrom(() => byte);
 
 /** Every id after the first sorts after the one before it. */
 function expectMintOrder(ids: string[]): void {
@@ -55,20 +59,17 @@ describe("<T>.fresh() mints a UUIDv7", () => {
     expect(stampOf(id)).toBe(T0);
   });
 
-  it("lays out timestamp, version, counter, variant and random bits as RFC 9562 does", async () => {
-    vi.stubGlobal("crypto", { getRandomValues: constantBytes(0xff) });
-    const s = await freshStdlib();
-    // The counter starts from random bits with its top bit clear, so a run of
-    // ids in one millisecond has room to count up before it rolls over.
-    expect(s.freshId()).toBe("01a12088-d200-77ff-bfff-ffffffffffff");
-  });
-
-  it("takes the random bits from getRandomValues, and never asks randomUUID", async () => {
+  it.each<[string, (i: number) => number, string]>([
+    ["distinct random bytes", (i) => 0x11 * (i + 1), "01a12088-d200-71aa-9122-334455667788"],
+    // The counter's top bit stays clear, so a millisecond can count up before it rolls over.
+    ["random bytes all 0xff", () => 0xff, "01a12088-d200-77ff-bfff-ffffffffffff"],
+    ["random bytes all 0x5a", () => 0x5a, "01a12088-d200-725a-9a5a-5a5a5a5a5a5a"],
+  ])("lays out %s as RFC 9562 does, and never asks randomUUID", async (_, fill, expected) => {
     const randomUUID = vi.fn(() => "00000000-0000-4000-8000-000000000000");
-    const getRandomValues = constantBytes(0x5a);
+    const getRandomValues = bytesFrom(fill);
     vi.stubGlobal("crypto", { randomUUID, getRandomValues });
     const s = await freshStdlib();
-    expect(s.freshId()).toBe("01a12088-d200-725a-9a5a-5a5a5a5a5a5a");
+    expect(s.freshId()).toBe(expected);
     expect(getRandomValues).toHaveBeenCalledOnce();
     expect(randomUUID).not.toHaveBeenCalled();
   });
@@ -79,29 +80,26 @@ describe("<T>.fresh() mints a UUIDv7", () => {
     ["a crypto with only randomUUID", { randomUUID: () => "00000000-0000-4000-8000-000000000000" }],
   ])("falls back to Math.random on %s", async (_, crypto) => {
     vi.stubGlobal("crypto", crypto);
-    const random = vi.spyOn(Math, "random");
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
     const s = await freshStdlib();
-    const ids = Array.from({ length: 50 }, () => s.freshId());
-    for (const id of ids) expect(id).toMatch(UUID_V7);
-    expect(new Set(ids).size).toBe(50);
-    expectMintOrder(ids);
-    expect(random).toHaveBeenCalled();
+    expect(s.freshId()).toBe("01a12088-d200-7080-8080-808080808080");
   });
 });
 
 describe("ids one runtime mints sort in the order they were minted", () => {
   it("within one millisecond, past the point the counter rolls over", async () => {
-    // Constant random bits seed the counter at its highest start, 0x7ff, so it
-    // rolls over after 2049 ids and the order rests on the counter alone.
+    // Every random bit set seeds the counter at its highest start, 0x7ff, so a millisecond holds
+    // the fewest ids it can, 2,049, before a rolled-over counter moves the timestamp on.
     vi.stubGlobal("crypto", { getRandomValues: constantBytes(0xff) });
     const s = await freshStdlib();
     const ids = Array.from({ length: 5000 }, () => s.freshId());
     for (const id of ids) expect(id).toMatch(UUID_V7);
     expectMintOrder(ids);
-    expect(stampOf(ids[0] as string)).toBe(T0);
-    // A rolled-over counter moves the timestamp on rather than wrapping.
-    expect(stampOf(ids[2049] as string)).toBe(T0 + 1);
-    expect(stampOf(ids[4999] as string)).toBe(T0 + 2);
+    expect(ids[0], "the seed").toBe("01a12088-d200-77ff-bfff-ffffffffffff");
+    expect(ids[1], "the next count").toBe("01a12088-d200-7800-bfff-ffffffffffff");
+    expect(ids[2048], "the last count").toBe("01a12088-d200-7fff-bfff-ffffffffffff");
+    expect(ids[2049], "the rollover").toBe("01a12088-d201-77ff-bfff-ffffffffffff");
+    expect(stampOf(ids[4999] as string), "the second rollover").toBe(T0 + 2);
   });
 
   it("within one millisecond, with the platform's random bits", async () => {
