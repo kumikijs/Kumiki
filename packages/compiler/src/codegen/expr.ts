@@ -93,7 +93,9 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
     case "BinOp": {
       const l = jsOfExpr(e.lhs, ctx);
       const r = jsOfExpr(e.rhs, ctx);
-      if (e.op === "+") return `_s.add(${l}, ${r})`;
+      if (e.op === "+") {
+        return `_s.add(${shownOperandJs(l, e.lhs, ctx.gen)}, ${shownOperandJs(r, e.rhs, ctx.gen)})`;
+      }
       if (e.op === "&") return `(${l} && ${r})`;
       if (e.op === "|") return `(${l} || ${r})`;
       if (e.op === "==") return `_s.eq(${l}, ${r})`;
@@ -115,7 +117,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (e.field === "entries") return `_s.mapEntries(${baseJs}${keyKindArg(e.keyKind)})`;
       if (e.field === "size") return `_s.mapSize(${baseJs})`;
       if (e.field === "to-ms" || e.field === "ms") return `(${baseJs})`;
-      if (e.field === "show") return `_s.show(${baseJs})`;
+      if (e.field === "show") return showJs(baseJs, e.base, ctx.gen);
       if (e.field === "length") return `((${baseJs}) ?? "").length`;
       if (e.field === "is-empty") return `_s.isEmpty(${baseJs})`;
       if (e.field === "lower") return `(String((${baseJs}) ?? "")).toLowerCase()`;
@@ -159,7 +161,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (/^[A-Z][A-Za-z0-9_]*\.fresh$/.test(cn)) return `_s.freshId()`;
       if (/^[A-Z][A-Za-z0-9_]*\.parse$/.test(cn)) return parseJs(cn, e.args, e.pos, ctx);
       if (/^[A-Z][A-Za-z0-9_]*\.show$/.test(cn)) {
-        return `_s.show(${requiredArg(cn, e.args, e.pos, ctx)})`;
+        return showJs(requiredArg(cn, e.args, e.pos, ctx), e.args[0], ctx.gen);
       }
       // Duration constructors → milliseconds (Time is stored as a raw ms number).
       if (cn === "Duration.ms") return `(${requiredArg(cn, e.args, e.pos, ctx)})`;
@@ -186,7 +188,8 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "fmt") {
         const template = requiredArg(cn, e.args, e.pos, ctx);
         const rest = e.args.slice(1).map((a) => jsOfExpr(a, ctx));
-        return `_s.fmt(${[template, ...rest].join(", ")})`;
+        const shown = [template, ...rest].map((js, i) => shownOperandJs(js, e.args[i], ctx.gen));
+        return `_s.fmt(${shown.join(", ")})`;
       }
       if (cn === "panic") return `_s.panic(${requiredArg(cn, e.args, e.pos, ctx)})`;
       if (cn === "prefers-dark") return `_s.prefersDark()`;
@@ -436,6 +439,17 @@ function keyKindArg(kind: KeyKind | undefined): string {
   return kind ? `, ${JSON.stringify(kind)}` : "";
 }
 
+/** `js` as the text it shows, by the shape the checker recorded where `e` is shown. */
+export function showJs(js: string, e: Expr | undefined, gen: GenCtx): string {
+  const shape = e?.showShape;
+  return shape ? `_s.show(${js}, ${gen.showShapes.nameOf(shape)})` : `_s.show(${js})`;
+}
+
+// Passed through unshown when there is no shape, since a number `+` reads the operand as a number.
+function shownOperandJs(js: string, e: Expr | undefined, gen: GenCtx): string {
+  return e?.showShape ? showJs(js, e, gen) : js;
+}
+
 function fragmentFnCall(method: string, index: number, a: Expr, ctx: EvalCtx): Expr | null {
   if (fragmentArgument(method)?.index !== index || a.kind !== "Ref") return null;
   if (ctx.localBinds.has(a.name) || ctx.gen.slots.some((s) => s.name === a.name)) return null;
@@ -510,7 +524,7 @@ export function methodCallJs(
     case "fold":
       return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, (${p1}, ${p2}) => ${jsOfExpr(args[1]!, two)})`;
     case "show":
-      return `_s.show(${recvJs})`;
+      return showJs(recvJs, recv, ctx.gen);
     case "is-some":
       return `_s.variantIs(${recvJs}, "Some")`;
     case "is-none":

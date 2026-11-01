@@ -27,6 +27,7 @@ import { coverageJs, genTest } from "./codegen/emit-test.ts";
 import { bindReaderDecls, genRouteTile, genTile } from "./codegen/emit-tile.ts";
 import { analyzeRuntimeUsage, emitImportHeader } from "./codegen/imports.ts";
 import { nestedRefinements } from "./codegen/nested-refinements.ts";
+import { showShapes } from "./codegen/show-shapes.ts";
 import { STDLIB_TYPES } from "./stdlib-types.ts";
 
 export type CodegenOptions = {
@@ -83,13 +84,14 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     usedIcons: new Set(),
     refinements: nestedRefinements({ types }),
     usedReaders: new Set(),
+    showShapes: showShapes(),
   };
 
   const lines: string[] = [];
 
   lines.push("function createApp() {");
   lines.push(HANDLER_MEMO_PREAMBLE);
-  // The bound-input readers go here once the body below has said which it uses.
+  // The bound-input readers and the shown shapes go here once the body below has said which it uses.
   const readersAt = lines.length;
 
   for (const fn of fns) {
@@ -250,7 +252,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push("");
 
   // After the refinements splice above, which sits at a larger index.
-  lines.splice(readersAt, 0, ...bindReaderDecls(ctx.usedReaders));
+  lines.splice(readersAt, 0, ...bindReaderDecls(ctx.usedReaders), ...ctx.showShapes.decls);
 
   const usage = analyzeRuntimeUsage(
     app,
