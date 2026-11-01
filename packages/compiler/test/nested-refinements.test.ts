@@ -519,6 +519,17 @@ describe("a gate asked about a path with an index step", () => {
     expect(at("byId", byId, [{ at: 7 }])).toBeUndefined();
   });
 
+  it("enters the Map entry a record key names, matching the key by value", () => {
+    // `cellAt : Map({x: Int, y: Int}, Short)` in the fixture above.
+    const cellAt = { '{"x":0,"y":1}': "abcd", '{"x":1,"y":0}': "ok" };
+    expect(at("cellAt", cellAt, [{ at: { y: 1, x: 0 } }])).toEqual({
+      kind: "len-lt",
+      args: [4],
+      path: [{ entry: { x: 0, y: 1 } }],
+    });
+    expect(at("cellAt", cellAt, [{ at: { x: 1, y: 0 } }])).toBeUndefined();
+  });
+
   it("checks a Set member whole whatever the index, as no index names one", () => {
     expect(at("nums", [-1], [{ at: 0 }])?.path).toEqual([{ member: -1 }]);
   });

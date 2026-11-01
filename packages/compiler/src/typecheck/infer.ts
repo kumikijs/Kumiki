@@ -15,6 +15,7 @@ import { FILE_FIELDS, type PrimName, refType } from "../stdlib-types.ts";
 import { getOrResultType, indexStep, unwrappedType } from "./against.ts";
 import { type Ctx, isBuiltinCall, type SymbolTable } from "./context.ts";
 import { binOpResult, letInScope } from "./expr.ts";
+import { fnResultType } from "./fn.ts";
 import { memberReceivers } from "./members.ts";
 import { armScope, matchedType } from "./patterns.ts";
 import { RESERVED_SLOT_NAMES } from "./slot.ts";
@@ -350,7 +351,11 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
     }
     case "Index": {
       const step = indexStep(inferType(e.base, sym, ctx), sym);
-      return step.kind === "place" ? step.type : null;
+      if (step.kind === "place") return step.type;
+      if (step.kind === "no-place" && step.base.kind === "TypeRecord" && e.index.kind === "Str") {
+        return recordFieldType(step.base, e.index.value);
+      }
+      return null;
     }
     case "MethodCall": {
       if (e.method === "copy") return inferType(e.receiver, sym, ctx);
@@ -451,7 +456,7 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
       if (qualifier === "Duration") return { kind: "TypeRef", name: "Duration", pos: e.pos };
       if (qualifier === "Bytes") return prim("Bytes", e.pos);
       if (qualifier !== null && member === "fresh") return freshResultType(qualifier, e.pos, sym);
-      return sym.fns.get(e.callee)?.ret ?? null;
+      return fnResultType(e.callee, sym);
     }
     default:
       return null;
