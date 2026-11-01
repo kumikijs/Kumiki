@@ -153,6 +153,8 @@ A `Handle` is longer than 3 characters **and** shorter than 7. The predicates ar
 
 A value that fails is reported against the **first predicate it fails**, taking them **in the order the chain is read, from the base outward**. Inside one type expression that is the order they are written; across names it is the order the declarations lead through — `Short`'s `len-lt(7)` comes before `Handle`'s own `len-gt(3)` because `Short` is what `Handle` is declared over, wherever in the file either definition sits. That is the predicate the rejection names when a write discards a reducer's batch ([batching](./runtime.md#a-batch-commits-all-or-nothing)) and the one whose message the `error` tile renders ([Error Display](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)).
 
+A `type-param` names a type, not a type constructor, so it takes no type arguments: `T(Int)` in the body of `type H(T) = …` is [E0210](./errors.md#e0210-type-arity-mismatch). A parameter shadows a top-level name of the same spelling ([§1.3.6](#_1-3-6-invariants), inv. 5), so `List(Int)` in the body of `type H(List) = …` is the same mistake.
+
 ### 1.3.2 Built-in Generic Types
 
 ```
@@ -387,6 +389,33 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
 - A `latest-per-key` key is evaluated where the `emit` runs, so a slot it reads
   sees the reducer body's writes up to that statement and none after it
   ([http.md §6.4](./http.md#_6-4-cancellation))
+- A `latest-per-key` key names the request it runs: an emit whose key is `==`
+  ([§1.9.4](#_1-9-4-operator-types)) to an in-flight request's aborts that
+  request, and one whose key is not leaves it running. The key is written the
+  way a Map key is stored ([stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)), which
+  tells values apart by `==` for every type but two — and, whatever its
+  declared type, not for a non-finite number. A key of one of them, or of a
+  type holding one in a field, a payload, an element or a `Map`'s value, is
+  [E0233](./errors.md#e0233-policy-key-type) at the key:
+  - a `Float`: `NaN` is one key and is not `==` to itself, and inside a
+    record, tuple, `List`, `Map` value or variant `NaN`, `Infinity` and
+    `-Infinity` are one key
+  - a `File`: two Files with the same name, size and type are one key, while
+    `==` holds only of a File and itself
+- A `Set`'s key is its `==`, which itself depends on how the Set was built, so
+  a key that is or holds a `Set` is E0233 too
+- Every other type is a key: a `Text`, `Int`, `Bool`, `Time`, `Bytes`,
+  `EffectId` or `Unit`, a `nominal` or refinement over one, and a record,
+  tuple, `List`, `Map`, `Option`, `Result` or union built from them —
+  `latest-per-key({user: $1.user, page: $1.page})` runs one request per user
+  and page. A `Map`'s own keys are stored the same way, so a `Map(Float, V)`
+  is a key when its values are. A `Float` is keyed through `.show`, and a
+  `File` through `{name: $1.name, size: $1.size}`
+- An effect may not take the name of a [standard effect](./stdlib.md#_2-6-standard-effects)
+  (`navigate`, `navigate-replace`, `navigate-back`, `scroll-to`, `toast`,
+  `confirm`, `log`): the runtime registers each of those under its own name at
+  mount, so a declaration under one would never run
+  ([E0234](./errors.md#e0234-reserved-effect-name))
 
 ### 1.5.3 Examples
 

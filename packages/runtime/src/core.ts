@@ -99,6 +99,8 @@ export { isPlainDataBag } from "./core/tile-equality.ts";
 export {
   type AppShape,
   type BindReader,
+  type BuiltinEffectName,
+  type BuiltinEffects,
   type BuiltinInstaller,
   type CapabilityProvider,
   type CapabilityRegistry,

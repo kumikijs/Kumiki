@@ -525,7 +525,7 @@ export function mountCore(
     }
   }
 
-  installLogEffect(app);
+  installLogEffect(app.effects);
   const navigation = createNavigation({
     app,
     slots: slotValues,
