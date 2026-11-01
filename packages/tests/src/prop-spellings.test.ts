@@ -15,6 +15,8 @@ function sourceOf(tile: string): string {
       "slot flag : Bool = true",
       'slot at : Time = Time.parse("2026-01-01").get-or(now)',
       "slot n : Float = 3.0",
+      'slot m : Map(Text, Int) = {"a": 1}',
+      'slot tup : Tuple(Int, Text) = (1, "a")',
       `tile Probe = column(${tile})`,
     ].join("\n"),
     "Probe",
@@ -365,6 +367,50 @@ describe("when a call writes both spellings, the block's value is read", () => {
     claim(viaArg);
     claim(viaBoth);
     expect(viaBoth.outerHTML).toBe(viaArg.outerHTML);
+  });
+});
+
+describe("a Map or a Tuple a block prop shows is written by its type, as its argument is", () => {
+  const MAP = '{"a": 1}';
+  const TUPLE = '(1, "a")';
+  const shown: Row[] = [
+    {
+      name: "tooltip text",
+      arg: 'tooltip(text("m"), text=m)',
+      block: 'tooltip(text("m")) {text: m}',
+      claim: (root) => expect(find(root, tile("tooltip")).getAttribute("title")).toBe(MAP),
+    },
+    {
+      name: "modal title",
+      arg: 'modal(text("m"), title=tup)',
+      block: 'modal(text("m")) {title: tup}',
+      claim: (root) => expect(find(root, tile("modal")).getAttribute("aria-label")).toBe(TUPLE),
+    },
+    {
+      name: "details summary",
+      arg: 'details(text("d"), summary=m)',
+      block: 'details(text("d")) {summary: m}',
+      claim: (root) => expect(find(root, "summary").textContent).toBe(MAP),
+    },
+    {
+      name: "input value",
+      arg: "input(value=tup)",
+      block: "input() {value: tup}",
+      claim: (root) => expect(find<HTMLInputElement>(root, "input").value).toBe(TUPLE),
+    },
+    {
+      name: "code lang",
+      arg: 'code("x", lang=m)',
+      block: 'code("x") {lang: m}',
+      claim: (root) => expect(find(root, "code").dataset.lang).toBe(MAP),
+    },
+  ];
+  it.each(onEachPath(shown))("$name, $path", async ({ arg, block, claim, path }) => {
+    const viaArg = await rendered(arg, path);
+    const viaBlock = await rendered(block, path);
+    claim(viaArg);
+    claim(viaBlock);
+    expect(viaBlock.outerHTML).toBe(viaArg.outerHTML);
   });
 });
 
