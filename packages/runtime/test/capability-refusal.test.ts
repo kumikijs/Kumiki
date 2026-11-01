@@ -291,7 +291,7 @@ function emitOnStart(emits: EmitSpec[]): ReturnType<typeof makeApp> {
   return made;
 }
 
-/** Names a plain object inherits from `Object.prototype`, none of them an own key of `app.effects`. */
+/** Names every plain object inherits, none of them an own key of `app.effects`. */
 const INHERITED = ["toString", "constructor", "__proto__"];
 
 describe("an emit naming no effect is reported to the app (live)", () => {
@@ -570,7 +570,7 @@ describe("an emit naming no effect is reported to the log (SSR)", () => {
     expect(errors).toEqual([TYPO_LINE]);
   });
 
-  it("adds no second line and no app.error when the client hydrates the panic bootstrap", async () => {
+  it("adds no second line and no app.error when the client hydrates it", async () => {
     const { app, seen } = makeApp(["storage.write"]);
     app.init = [TYPO];
     const rendered = await renderToString(app);
