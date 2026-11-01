@@ -279,103 +279,148 @@ describe("the checker scopes each `if` branch as codegen does", () => {
     const src = program("app.start", 'if flag then { let n = "inner" } else { seen := n }');
     expect(diagnostics(src)).toEqual([{ code: "E0103", name: "n", at: "n }" }]);
   });
+});
 
-  it("still counts a slot written in both branches as written after the `if` (E0601)", () => {
-    const src = program(
-      "app.start",
+describe("a nested body's writes count as the reducer's (E0601)", () => {
+  const BOTH_ARMS =
+    "match Some(1) with\n          | Some(v) -> { total := v }\n          | None    -> { total := 0 }";
+
+  it.each([
+    [
+      "both branches of an `if`",
       'if flag then { seen := "a" } else { seen := "b" }\n        seen := "c"',
-    );
-    expect(codesOf(src)).toEqual(["E0601"]);
+    ],
+    ["a `for` body", "for x in [1] { total := x }\n        total := 2"],
+    ["both arms of a match", `${BOTH_ARMS}\n        total := 2`],
+  ])("counts a slot written in %s as written after it", (_where, body) => {
+    expect(codesOf(program("app.start", body))).toEqual(["E0601"]);
   });
 
-  it("still lets each branch write the slot the other one writes", () => {
-    const src = program("app.start", 'if flag then { seen := "a" } else { seen := "b" }');
-    expect(codesOf(src)).toEqual([]);
+  it.each([
+    ["each branch of an `if`", 'if flag then { seen := "a" } else { seen := "b" }'],
+    ["each arm of a match", BOTH_ARMS],
+  ])("lets %s write the slot another one writes", (_where, body) => {
+    expect(codesOf(program("app.start", body))).toEqual([]);
   });
 });
 
 describe("an E0103 for a name a nested body declared names the body", () => {
-  // A rename to a close name type-checks and reads another value, so the diagnostic says which
+  // A rename to a close name can type-check and read another value, so the diagnostic says which
   // body ended the name: in `endedScope` for `kumiki fix`, in the message for the author.
   const undefinedNames = (source: string) =>
     checkSource(source)
       .filter((e) => e.code === "E0103")
-      .map((e) => ({ endedScope: e.endedScope, message: e.message }));
-  const HINTS: Record<string, string> = {
-    if: 'it is scoped to an "if" branch, which ends with it: declare it before the "if", or move the read into the branch',
-    for: 'it is scoped to a "for" body, which ends with it: declare it before the "for", or move the read into the body',
-    match:
-      'it is scoped to a match arm, which ends with it: declare it before the "match", or move the read into the arm',
-  };
-  const hinted = (name: string, scope: string) => ({
-    endedScope: scope,
-    message: `Reference to undefined name "${name}" — ${HINTS[scope]} (see docs/spec/language.md)`,
-  });
+      .map((e) => ({
+        name: /"([^"]+)"/.exec(e.message)?.[1],
+        endedScope: e.endedScope,
+        message: e.message,
+      }));
+  // A phrase of the repair each hint gives, enough to tell the hints apart.
+  const REPAIR = {
+    for: "a name carries no value out of a loop",
+    if: "move the read into that branch",
+    match: "move the read into that arm",
+    "if sibling": "move the read into the branch that declares it",
+    "match sibling": "move the read into the arm that declares it",
+  } as const;
 
-  it.each([
+  it.each<{ reads: string; body: string; name: string; hint: keyof typeof REPAIR }>([
     {
       reads: "a loop variable after the loop",
       body: "for idx in [1] { () }\n        total := idx",
       name: "idx",
-      scope: "for",
+      hint: "for",
     },
     {
       reads: "a `let` a `for` body declared",
       body: "for x in [1] { let n = x }\n        total := n",
       name: "n",
-      scope: "for",
+      hint: "for",
+    },
+    {
+      reads: "a loop variable read as a receiver",
+      body: "for idx in [1] { () }\n        seen := idx.show",
+      name: "idx",
+      hint: "for",
     },
     {
       reads: "a `let` after the `if`",
       body: "if flag then { let n = 1 } else { () }\n        total := n",
       name: "n",
-      scope: "if",
+      hint: "if",
     },
     {
       reads: "a `let` the `else` branch declared",
       body: "if flag then { () } else { let n = 1 }\n        total := n",
       name: "n",
-      scope: "if",
+      hint: "if",
     },
     {
-      reads: "a `let` in the other branch",
+      reads: "a `let` the `then` branch declared, in the `else` branch",
       body: "if flag then { let n = 1 } else { total := n }",
       name: "n",
-      scope: "if",
+      hint: "if sibling",
     },
     {
       reads: "a pattern variable after the match",
       body: "match Some(1) with\n          | Some(v) -> { () }\n          | None    -> { () }\n        total := v",
       name: "v",
-      scope: "match",
+      hint: "match",
     },
     {
       reads: "a `let` a catch-all arm declared",
       body: "match Some(1) with\n          | Some(v) -> { () }\n          | _       -> { let n = 2 }\n        total := n",
       name: "n",
-      scope: "match",
+      hint: "match",
     },
     {
-      reads: "a `let` of a nested body, naming the innermost one",
+      reads: "a pattern variable in a later arm",
+      body: "match Some(1) with\n          | Some(v) -> { () }\n          | None    -> { total := v }",
+      name: "v",
+      hint: "match sibling",
+    },
+    {
+      reads: "a `let` of an `if` in a `for` body, after the `for`",
       body: "for x in [1] {\n          if flag then { let n = x } else { () }\n        }\n        total := n",
       name: "n",
-      scope: "if",
+      hint: "for",
+    },
+    {
+      reads: "a `let` of an `if` in a `for` body, after the `if` in that body",
+      body: "for x in [1] {\n          if flag then { let n = x } else { () }\n          total := n\n        }",
+      name: "n",
+      hint: "if",
+    },
+    {
+      reads: "a pattern variable of a match in an `if` branch, after the `if`",
+      body: "if flag then {\n          match Some(1) with\n            | Some(v) -> { () }\n            | None    -> { () }\n        } else { () }\n        total := v",
+      name: "v",
+      hint: "if",
     },
     {
       reads: "a name a body nested in a branch declared, later in that branch",
       body: "if flag then {\n          for i in [1] { () }\n          total := i\n        } else { () }",
       name: "i",
-      scope: "for",
+      hint: "for",
     },
     {
-      // `seed` is one edit from the slot `seen`, the case the arithmetic hint stands down for.
+      reads: "a name two bodies declared, by the later one",
+      body: "for idx in [1] { () }\n        if flag then { let idx = 2 } else { total := idx }",
+      name: "idx",
+      hint: "if sibling",
+    },
+    {
+      // `seed` is one edit from the slot `seen`: a close name in scope silences the arithmetic
+      // hint, not this one.
       reads: "a name one edit from a name in scope",
       body: 'for seed in ["a"] { () }\n        seen := seed',
       name: "seed",
-      scope: "for",
+      hint: "for",
     },
-  ])("names the body for $reads", ({ body, name, scope }) => {
-    expect(undefinedNames(program("app.start", body))).toEqual([hinted(name, scope)]);
+  ])("names the body for $reads", ({ body, name, hint }) => {
+    expect(undefinedNames(program("app.start", body))).toEqual([
+      { name, endedScope: hint.split(" ")[0], message: expect.stringContaining(REPAIR[hint]) },
+    ]);
   });
 
   it.each([
@@ -392,9 +437,15 @@ describe("an E0103 for a name a nested body declared names the body", () => {
       ),
       name: "idx",
     },
+    {
+      // No body has ended yet when the `then` branch is checked.
+      case: "a read in the branch before the one that declares the name",
+      source: program("app.start", "if flag then { total := n } else { let n = 1 }"),
+      name: "n",
+    },
   ])("keeps the plain message for $case", ({ source, name }) => {
     expect(undefinedNames(source)).toEqual([
-      { endedScope: undefined, message: `Reference to undefined name "${name}"` },
+      { name, endedScope: undefined, message: `Reference to undefined name "${name}"` },
     ]);
   });
 

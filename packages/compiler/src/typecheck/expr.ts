@@ -263,14 +263,14 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         });
         return;
       }
-      const endedScope = ctx.endedScopes?.get(e.name);
-      if (endedScope !== undefined) {
+      const ended = ctx.endedScopes?.get(e.name);
+      if (ended !== undefined) {
         errors.push({
           code: "E0103",
           kind: "undef-ref",
-          message: `Reference to undefined name "${e.name}"${endedScopeHint(endedScope)}`,
+          message: `Reference to undefined name "${e.name}"${endedScopeHint(e.name, ended)}`,
           pos: e.pos,
-          endedScope,
+          endedScope: ended.kind,
         });
         return;
       }

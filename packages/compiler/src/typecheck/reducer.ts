@@ -15,6 +15,7 @@ import {
 import {
   bindLocal,
   type Ctx,
+  type EndedScope,
   innerScope,
   type KumikiError,
   type StatementScope,
@@ -27,14 +28,22 @@ import { classifyMember, receiverName, undefMemberError } from "./members.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
 import { bindsRoute, namedByHandler, subscribedKinds, subscriptionIds } from "./tile-collect.ts";
 
+/** The scope a reducer's statements are checked in. */
+type ReducerCtx = Ctx & {
+  endedScopes: Map<string, EndedScope>;
+  /** The names a statement nested in the body being checked ended: they end with the body too. */
+  endedInBody: Set<string>;
+};
+
 export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
-  const ctx: Ctx = {
+  const ctx: ReducerCtx = {
     kind: "reducer",
     localBinds: new Set(),
     localTypes: new Map(),
     capsAvailable: new Set(sym.app?.caps ?? []),
     routeBind: routeBindOf(r, sym),
     endedScopes: new Map(),
+    endedInBody: new Set(),
   };
   if (r.on.kind === "EffectEvent") {
     const boundAt = new Map<string, number>();
@@ -166,43 +175,33 @@ function checkStmt(
   s: Statement,
   sym: SymbolTable,
   errors: KumikiError[],
-  ctx: Ctx,
+  ctx: ReducerCtx,
   writtenRoots: Set<string>,
 ): void {
   if (s.kind === "ForStmt") {
     checkIterationTarget(s.iter, sym, errors, ctx);
-    const bodyWrites = new Set<string>(writtenRoots);
-    checkBody("for", s.body, sym, errors, ctx, bodyWrites, (inner) =>
-      bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx)),
-    );
-    for (const r of bodyWrites) writtenRoots.add(r);
+    const bind = (inner: Ctx) => bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx));
+    checkBodies("for", [{ stmts: s.body, bind }], sym, errors, ctx, writtenRoots);
     return;
   }
   if (s.kind === "IfStmt") {
     checkExpr(s.cond, sym, errors, ctx);
     checkCondition(s.cond, inferType(s.cond, sym, ctx), sym, errors, '"if"');
-    const thenWrites = new Set<string>(writtenRoots);
-    checkBody("if", s.consequent, sym, errors, ctx, thenWrites);
-    const elseWrites = new Set<string>(writtenRoots);
-    checkBody("if", s.alternate, sym, errors, ctx, elseWrites);
-    for (const r of thenWrites) writtenRoots.add(r);
-    for (const r of elseWrites) writtenRoots.add(r);
+    const branches = [{ stmts: s.consequent }, { stmts: s.alternate }];
+    checkBodies("if", branches, sym, errors, ctx, writtenRoots);
     return;
   }
   if (s.kind === "MatchStmt") {
     checkExpr(s.scrutinee, sym, errors, ctx);
     const scrutType = matchedType(inferType(s.scrutinee, sym, ctx), s.arms, sym);
-    // Arms are mutually exclusive — each starts fresh from the parent set.
-    const armSets: Set<string>[] = [];
-    for (const arm of s.arms) {
-      checkPatternBindsAreDistinct(arm.pattern, errors);
-      const armWrites = new Set<string>(writtenRoots);
-      checkBody("match", arm.body, sym, errors, ctx, armWrites, (inner) =>
-        checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner),
-      );
-      armSets.push(armWrites);
-    }
-    for (const set of armSets) for (const r of set) writtenRoots.add(r);
+    const arms = s.arms.map((arm) => ({
+      stmts: arm.body,
+      bind: (inner: Ctx) => {
+        checkPatternBindsAreDistinct(arm.pattern, errors);
+        checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
+      },
+    }));
+    checkBodies("match", arms, sym, errors, ctx, writtenRoots);
     return;
   }
   if (s.kind === "NoopStmt") return;
@@ -274,22 +273,41 @@ function checkStmt(
   checkAgainst(s.rhs, lvalueType(s.lvalue, sym), sym, errors, ctx);
 }
 
-/** Names the body declared that `ctx` does not bind end with it; `endedScopes` records them. */
-function checkBody(
+/**
+ * The bodies of one `if`, `for` or `match`, checked in order. They are mutually exclusive, so
+ * each starts from the slots written before the statement.
+ *
+ * A name the body declares and `ctx` does not bind ends with the body, as does a name a statement
+ * nested in it ended; `ctx.endedScopes` records it under `kind`. A read of it in a later body of
+ * the same statement is in a sibling of the body that declared it.
+ */
+function checkBodies(
   kind: StatementScope,
-  body: Statement[],
+  bodies: readonly { stmts: Statement[]; bind?: (inner: Ctx) => void }[],
   sym: SymbolTable,
   errors: KumikiError[],
-  ctx: Ctx,
+  ctx: ReducerCtx,
   writtenRoots: Set<string>,
-  bind?: (inner: Ctx) => void,
 ): void {
-  const inner = innerScope(ctx);
-  bind?.(inner);
-  for (const st of body) checkStmt(st, sym, errors, inner, writtenRoots);
-  for (const name of inner.localBinds) {
-    if (!ctx.localBinds.has(name)) ctx.endedScopes?.set(name, kind);
+  const ended = new Set<string>();
+  const writes: Set<string>[] = [];
+  for (const { stmts, bind } of bodies) {
+    const inner: ReducerCtx = { ...innerScope(ctx), endedInBody: new Set() };
+    const bodyWrites = new Set(writtenRoots);
+    bind?.(inner);
+    for (const st of stmts) checkStmt(st, sym, errors, inner, bodyWrites);
+    for (const name of [...inner.localBinds, ...inner.endedInBody]) {
+      if (ctx.localBinds.has(name)) continue;
+      ctx.endedScopes.set(name, { kind, sibling: true });
+      ended.add(name);
+    }
+    writes.push(bodyWrites);
   }
+  for (const name of ended) {
+    ctx.endedScopes.set(name, { kind, sibling: false });
+    ctx.endedInBody.add(name);
+  }
+  for (const set of writes) for (const r of set) writtenRoots.add(r);
 }
 
 function lvalueShape(lv: Lvalue): string {

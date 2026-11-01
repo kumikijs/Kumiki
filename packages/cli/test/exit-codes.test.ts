@@ -179,9 +179,7 @@ app Demo
     const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
     expect(readFileSync(file, "utf8")).toBe(OUT_OF_SCOPE);
     expect(stdout).toBe("(no auto-patches available)\n");
-    expect(stderr).toContain(
-      'E0103 Reference to undefined name "idx" — it is scoped to a "for" body',
-    );
+    expect(stderr).toContain('E0103 Reference to undefined name "idx" — ');
     expect(code).toBe(1);
   });
 
