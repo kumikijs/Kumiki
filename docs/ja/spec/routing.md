@@ -65,7 +65,7 @@ app M caps=[] routes={"/" -> Panel, "/404" -> Panel} init=[]
 slot route : Route = Route.empty       # ランタイムが管理
 ```
 
-`Route` 型は[標準ライブラリ](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)：
+`Route` 型は[標準ライブラリ](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)が提供し、プログラムは名指すだけで宣言はしない（[E0231](./errors.md#e0231-reserved-type-name)）：
 
 ```kumiki fragment
 type Route = {
@@ -118,7 +118,7 @@ reducer save  on=ui.click(SaveBtn)
                   emit navigate({path: "/todos", params: {}})
 ```
 
-ビルトイン effect:
+ビルトイン effect — そのシグネチャ。プログラムはこれらを宣言せずに emit する（[E0234](./errors.md#e0234-reserved-effect-name)）:
 
 ```kumiki fragment
 effect navigate         cap=nav.push     in={path: Text, params: Map(Text, Text)}    out=Unit

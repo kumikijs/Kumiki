@@ -59,6 +59,8 @@ The only operations defined on `EffectId` are equality (`==`, `!=`), storage in 
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — the payload of `app.error` and of an `error-boundary` tile's `in=` ([Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)) |
 | `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — the payload of `route.error(<pattern>)`: a `PanicInfo`'s fields and the `pattern` the reducer names |
 
+A program uses these names without declaring them. `PanicInfo`, `RouteErrorInfo`, `Route`, `HttpError`, `HttpStatus`, `Duration` and `FormValue` are **reserved**: the runtime or the standard library builds or reads their values, so a `type` declared under one of them is [E0231](./errors.md#e0231-reserved-type-name) and the name keeps the definition above. `Url`, `Email`, `Uuid` and `FormData` name types only a program builds values of; a program may declare its own type under one of them, and its uses of the name then mean that type ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 6). `File` is a primitive rather than a declared type, and is in neither group.
+
 ---
 
 ## 2.2 Collection Methods
@@ -68,14 +70,14 @@ The only operations defined on `EffectId` are equality (`==`, `!=`), storage in 
 | Receiver | Parameter | Members |
 |---|---|---|
 | `Map(K, V)` | the key, `K` | `has` / `get` / `get-or` / `insert` / `remove` / `update` |
-| | the value, `V` | `insert`, and the expression of `update`, which answers the entry's new value; a `fn` passed there by name answers its declared return type |
+| | the value, `V` | `insert`, and the expression of `update`, which answers the entry's new value; a `fn` passed there by name answers what a call to it does — its `->`, or without one its body's type |
 | | `other`, a `Map(K, V)` | `merge` |
 | `Set(T)` | the element, `T` | `has` / `add` / `remove` / `toggle` |
 | | `other`, a `Set(T)` | `union` / `intersect` / `diff` |
 | `List(T)` | the element, `T` | `push` / `prepend` / `contains` |
 | | `other`, a `List(T)` | `concat` |
 
-An argument is checked against that type the way a value written to a place of the type is, so a mismatch is [E0201](./errors.md#e0201-type-mismatch) at the argument: `xs.push("3")` on a `List(Int)` is reported at `"3"`, as `xs := ["3"]` is, and `m.insert(1, 0)` on a `Map(Text, Int)` at the `1`. The same rule admits what a slot admits — an `Int` where a `Float` is the element, `None` where an `Option(T)` is, a `Text` where the key is declared `nominal Text`. The other parameters are not the receiver's to type: a fragment other than `update`'s, the index of `List.get`, the numbers of `slice` / `chunk`, the separator of `join`, the initial accumulator of `fold`, and the `other` of `zip`, a `List(U)` of an element type of its own; the `default` of `get-or` is checked against what the call answers ([E0201](./errors.md#e0201-type-mismatch)). Where the checker cannot decide the receiver's type, no argument is read against a parameter type, though each argument's own expression is still checked. That is the accumulator `$1` of a `fold` from `{}`, a `fn` result with no `->`, and the result of a member whose answer the checker does not infer: `List.map` / `fold` / `zip`, `Map.map`, and `Option.map` / `Result.map`. So `xs.map($1 * 2).push("w")` on a `List(Int)` passes `check`. That is a gap in what the checker resolves, not a rule a program may rely on.
+An argument is checked against that type the way a value written to a place of the type is, so a mismatch is [E0201](./errors.md#e0201-type-mismatch) at the argument: `xs.push("3")` on a `List(Int)` is reported at `"3"`, as `xs := ["3"]` is, and `m.insert(1, 0)` on a `Map(Text, Int)` at the `1`. The same rule admits what a slot admits — an `Int` where a `Float` is the element, `None` where an `Option(T)` is, a `Text` where the key is declared `nominal Text`. The other parameters are not the receiver's to type: a fragment other than `update`'s, the numbers of `slice` / `chunk`, the separator of `join`, the initial accumulator of `fold`, and the `other` of `zip`, a `List(U)` of an element type of its own; the `default` of `get-or` is checked against what the call answers, and the index of `List.get` against `Int`, as `xs[i]`'s is ([E0201](./errors.md#e0201-type-mismatch)). Where the checker cannot decide the receiver's type, no argument is read against a parameter type, though each argument's own expression is still checked. That is the accumulator `$1` of a `fold` from `{}`, the result of a `fn` with no `->` whose body's type is not decided, and the result of a member whose answer the checker does not infer: `List.map` / `fold` / `zip`, `Map.map`, and `Option.map` / `Result.map`. So `xs.map($1 * 2).push("w")` on a `List(Int)` passes `check`. That is a gap in what the checker resolves, not a rule a program may rely on.
 
 ### 2.2.1 Map(K, V)
 
@@ -144,7 +146,7 @@ Where the checker cannot decide the receiver's type, neither rule applies: the a
 
 **One key per value.** Every member that writes, finds or removes an entry — `add` / `remove` / `toggle` / `has`, `get` / `get-or` / `insert` / `remove` / `update`, the index read `m[k]` and the index write `m[k] := v` — stores and looks up a key the same way, so two keys are one entry exactly when they are equal by `==` ([language §1.9.4](./language.md#_1-9-4-operator-types)). `picked.add(Red).has(Blue)` is `false`; `votes[Red] := 1` and `votes.insert(Green, 1)` write two entries; `m.remove(1)` on a `Map(Int, V)` removes the entry at `1`.
 
-What is converted is decided from the receiver's type, wherever the receiver comes from: a slot, a `let`, a record field, a `fn` parameter, the `$1` / `$2` a fragment is handed (the element of a `List` or an `Option`, the key and value of a `.entries` tuple or of `Map.filter` / `Map.map`, the value of `Map.update`, the accumulator of `fold`, typed as its init), and the state a property-test invariant reads through `run-reducer` ([Testing §8.3](./testing.md#_8-3-property-tests)). Where the checker cannot decide the receiver's type the keys stay strings — the accumulator `$1` of a `fold` from `{}`, a `fn` result with no `->`. That is a gap in what the checker resolves, not a rule a program may rely on: it closes as those types become decidable.
+What is converted is decided from the receiver's type, wherever the receiver comes from: a slot, a `let`, a record field, a `fn` parameter, a call to a `fn` (the type its `->` declares, or without one its body's — [Language §1.8.2](./language.md#_1-8-2-syntax)), the `$1` / `$2` a fragment is handed (the element of a `List` or an `Option`, the key and value of a `.entries` tuple or of `Map.filter` / `Map.map`, the value of `Map.update`, the accumulator of `fold`, typed as its init), and the state a property-test invariant reads through `run-reducer` ([Testing §8.3](./testing.md#_8-3-property-tests)). Where the checker cannot decide the receiver's type the keys stay strings — the accumulator `$1` of a `fold` from `{}`, a call to a `fn` with no `->` whose body's type is not decided. That is a gap in what the checker resolves, not a rule a program may rely on: it closes as those types become decidable.
 
 **A key spelled like an `Object.prototype` member is an ordinary key.** Such a key — for example `constructor`, `toString`, `valueOf`, `hasOwnProperty` or `__proto__` — is held only once it is written, as any other key is: on an empty `Map(Text, Int)`, `has("constructor")` is `false`, `get("constructor")` is `None` and `get-or("constructor", 0)` is `0`, and `toggle("toString")` on an empty `Set(Text)` adds it. Once written, such an entry reads back through every member, and `remove` of another key, `intersect`, `diff`, `filter` and `map` keep it as they keep any other.
 
@@ -153,7 +155,7 @@ What is converted is decided from the receiver's type, wherever the receiver com
 ```
 length                      : Int
 is-empty                    : Bool
-get(i)                      : Option(T)
+get(i)                      : Option(T)        ; i is Int
 head                        : Option(T)
 tail                        : List(T)
 last                        : Option(T)
@@ -199,7 +201,7 @@ fn norm() -> List(Todo) = todos.reverse       # same as above
 
 **The lambda arguments of `fold(init, expr)`** are the accumulator, `$1`, and the element, `$2`, which is handed over whole — a `Tuple(A, B)` element is not taken apart. `$1` has the init's type and `$2` the element's ([Language §1.8.6](./language.md#_1-8-6-partial-application-and-higher-order-functions)): in `nums.fold("", $1 + $2.show)` the accumulator is a `Text`, and `nums.fold(0, f)` checks `f`'s first parameter against `Int`. An init whose type the checker cannot decide — `{}`, the empty Map and the empty Set alike — leaves `$1` with no type. A fold into a Set therefore starts from `{}` or a typed Set: `[]` is a `List`, so `xs.fold([], $1.add($2))` is [E0108](./errors.md#e0108-undef-member), and a `fn` there whose accumulator parameter is a `Set(Int)` is [E0201](./errors.md#e0201-type-mismatch). The fragment's result is not checked against the accumulator's type, so `$1` has the init's type on the first step only: `xs.fold(0, $1.show)` passes, and hands the second step a `Text`.
 
-**`sort-by(expr)` orders by the key the way `<` orders two values** ([language §1.9.4](./language.md#_1-9-4-operator-types)): a number or a `Time` numerically, a `Text` as `<` compares two `Text`s. Elements whose keys are equal keep the order they had. A key with no order — a record, a variant, a `Bool`, an `Option`, a container — is [E0201](./errors.md#e0201-type-mismatch), as `a < b` on the same two values would be. The key may also be a `fn` passed by name (`xs.sort-by(keyOf)`); its declared return type is the key's type.
+**`sort-by(expr)` orders by the key the way `<` orders two values** ([language §1.9.4](./language.md#_1-9-4-operator-types)): a number or a `Time` numerically, a `Text` as `<` compares two `Text`s. Elements whose keys are equal keep the order they had. A key with no order — a record, a variant, a `Bool`, an `Option`, a container — is [E0201](./errors.md#e0201-type-mismatch), as `a < b` on the same two values would be. The key may also be a `fn` passed by name (`xs.sort-by(keyOf)`); what a call to it answers is the key's type — the type its `->` declares, or without one its body's ([Language §1.8.2](./language.md#_1-8-2-syntax)).
 
 - **`Text` order is UTF-16 code-unit order**, not a locale's collation: `"Z" < "a"`, `"B" < "a"`, and kana and kanji sort by code point rather than in dictionary (reading) order.
 - **A key is ordered as the value it is at runtime.** A field declared numeric or `Time` whose value arrives as `Text` — for example from an HTTP JSON body, which is not converted to the declared types — is ordered as `Text`: `"10"` before `"9"`.
@@ -709,7 +711,9 @@ The `in=` written with each is held the same way a declared effect's is: an `emi
 
 What an argument leaves out is read where it is written: each branch of an `if` or `match` and the body of a `let` leave out their own fields, and a value whose record type leaves a defaulted field out (`slot target : {path: Text}`, `emit navigate(target)`) passes as the literal would. The argument is held the same way in every position an effect call is written — an `emit`, an `app.init` entry and an `expect.effects` argument ([Testing §8.2](./testing.md#_8-2-reducer-tests)).
 
-These omissions belong to the standard effects alone. A declared effect's `in=` record is held to every field, `Option(T)` ones included, as any record literal is; and a declaration of the same name as a standard effect is the effect a program dispatches, so its `in=` is the one checked.
+These omissions belong to the standard effects alone. A declared effect's `in=` record is held to every field, `Option(T)` ones included, as any record literal is.
+
+The names below are the runtime's. It registers each standard effect under its own name when the app mounts, over anything a program compiled under that name, so a program may not declare an `effect` under one ([E0234](./errors.md#e0234-reserved-effect-name)). An effect of the program's own takes another name, and the standard effect is emitted under its own.
 
 → For the detailed specification, see [HTTP / Storage](./http.md).
 
