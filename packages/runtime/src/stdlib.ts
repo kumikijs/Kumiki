@@ -398,8 +398,10 @@ export const _stdlibCore = {
   },
   boundaryPanic(e: unknown, location: string): Record<string, unknown> {
     if (!isPanic(e)) throw e;
-    const { rec, episodeId } = recordInRenderPass(e, location);
-    return userPanicInfo(rec, rec.location || location, episodeId);
+    // Recorded at the location the fallback shows, so the step and the fallback agree.
+    const at = e.location || location;
+    const { rec, episodeId } = recordInRenderPass(e, at);
+    return userPanicInfo(rec, at, episodeId);
   },
   optionGetOr(opt: unknown, def: unknown): unknown {
     if (opt && typeof opt === "object" && "_tag" in opt) {

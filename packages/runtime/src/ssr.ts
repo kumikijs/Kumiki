@@ -107,7 +107,7 @@ export async function renderToString(
     const html = withRenderingApp(
       app,
       () => renderTileToString(pickRootTile(app, live)),
-      (e, site) => recordRenderPanic(logger, e, site),
+      (e, site) => recordRenderPanic(logger, e, site).episodeId,
     );
     logger.endTrigger();
 
