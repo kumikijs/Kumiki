@@ -488,17 +488,6 @@ export function mountCore(
     }
   }
 
-  /**
-   * What threw past a reducer's body while it ran on `effect`'s result: the dispatch of what it
-   * emitted, the render after it. The request already has its one result, so this is not
-   * another: it is an error of the app, reported as a reducer panic is.
-   */
-  function handleDeliveryThrow(effect: string, e: unknown): void {
-    const location = `effect "${effect}"`;
-    reportPanic(location, e);
-    fireAppError(panicInfo(e, "effect"), location);
-  }
-
   function handleEffectResult(
     effect: string,
     outcome: "ok" | "err",
@@ -507,8 +496,14 @@ export function mountCore(
     token = "",
   ): void {
     const exitScope = episode?.recordEffectEnd(token, effect, outcome, value);
-    // The effect's other reducers still run after one throws, as they do after a panic.
-    const escaped = (e: unknown): void => handleDeliveryThrow(effect, e);
+    // What throws past a reducer's body here (the dispatch of what it emitted, the render after
+    // it) is not another result: the request already has its one. It is an error of the app,
+    // reported as a reducer panic is, and the effect's other reducers still run after it.
+    const location = `effect "${effect}"`;
+    const escaped = (e: unknown): void => {
+      reportPanic(location, e);
+      fireAppError(panicInfo(e, "effect"), location);
+    };
     let matched = 0;
     try {
       for (const r of app.reducers) {
