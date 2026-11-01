@@ -80,7 +80,7 @@ Decoder.Bytes        # バイト列のまま
 Decoder.None         # レスポンス本文を捨てる
 ```
 
-レスポンスの decode は型としてはコンパイル時に検査され、実行時に検査されるのは JSON の構文と、宣言した型が持つ述語。JSON として壊れている 2xx の本文は、レスポンス自身の `status`、`decode failed:` で始まる `message`、`body` にレスポンス本文を持つ `HttpError` になる。レスポンスは届いているので接続エラー（`status: 0`）ではなく、リトライもされない（[6.5](#_6-5-リトライ)）。本文のない 2xx（204 など）には `Decoder.None` が必要で、そうしないとデフォルトの decoder がその status で `decode failed:` を報告する。
+レスポンスの decode は型としてはコンパイル時に検査され、実行時に検査されるのは JSON の構文と、宣言した型が持つ述語。JSON として壊れている 2xx の本文は、レスポンス自身の `status`、`decode failed:` で始まる `message`、`body` にレスポンス本文（`Some(text)`）を持つ `HttpError` になる。レスポンスは届いているので接続エラー（`status: 0`）ではなく、リトライもされない（[6.5](#_6-5-リトライ)）。本文のない 2xx（204 など）には `Decoder.None` が必要で、そうしないとデフォルトの decoder がその status で `decode failed:` を報告する。
 
 decode した値は `T` にも照らして検査される。`T` が持つすべての述語を、それが書かれたすべての位置で検査する。型 `T` の slot への書き込みが受けるのと同じ検査である（[§10.3.3](./runtime.md#_10-3-3-batching)）。拒否された値も同じ `HttpError` になり、`message` は述語と、値がそれを満たさなかった位置を示す（`decode failed: uuid at .id`）。検査するのは述語だけで、`T` が述語を持たない位置は届いたまま受け取る。そのため、構文は通るが宣言した型と形が合わない本文は実行時には検出されない。読み取り capability（`http.*`、`storage.read`、`session.read`、`indexed.read`。[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）に登録したホスト provider は、この検査をリクエストの `decode` として関数で受け取る。parse した値を渡すと、`T` が受け入れれば `undefined` を、拒否すれば満たされなかった述語（`{kind, args, path}`）を返す。述語を持たない `T` では、`decode` は文字列 `"json"` である。
 
@@ -183,7 +183,7 @@ app App
 |---|---|---|
 | `base-url` | 相対 URL のベース — `Text`、または `Text` の上に作られた型（`Url`・`Email`・`Uuid` など） | リクエストごと |
 | `headers` | 全リクエストに付与（`base-url` があるときはその origin へのリクエストだけ — 後述）— リクエスト自身の `headers` と同じ `Map(Text, Text)` | リクエストごと |
-| `timeout` | ミリ秒単位のデフォルトタイムアウト — `Int` に代入可能なもの：`Int`・`Duration`・ユーザ定義の `nominal Int` | リクエストごと |
+| `timeout` | デフォルトタイムアウト。1 から 2147483647 のミリ秒数 — `Int` に代入可能なもの：`Int`・`Duration`・ユーザ定義の `nominal Int` | リクエストごと |
 | `credentials` | fetch の credentials モード（既定値は [§6.9](#_6-9-default-settings)。`base-url` があるときはその origin へのリクエストだけ — 後述）— `omit` / `same-origin` / `include` のいずれかの `Text` | リクエストごと |
 | `on-401` | 401 を受けた reducer（コンパイラが解決する — 未知の名前は [E0102](./errors.md#e0102-undef-reducer)） | コンパイル時に解決 |
 | `on-403` | 403 を受けた reducer（同上） | コンパイル時に解決 |
@@ -229,15 +229,23 @@ reducer 名の 3 つだけは例外で、そもそも値ではない：コンパ
 - `timeout` は `Int` に代入可能なものを取り、ミリ秒として読まれる。`Duration` は
   その 1 つであり（実行時にはミリ秒）、ユーザ定義の `nominal Int` も同様である。
   `Float` は含まれない。`Text` は `setTimeout` に `NaN` として届いて、すべての
-  リクエストを応答前に中断させる。
-- `credentials` は `Text` に代入可能なものを取り、フィールドに届くリテラル —
-  フィールド自身の値、または `if` のリテラルの分岐 — はすべて Fetch の 3 つの
-  モードのいずれかでなければならない。それ以外を指定した init はブラウザが拒否する。
+  リクエストを応答前に中断させる。ミリ秒数はタイマーが保持できるものである：
+  フィールドに届くリテラルはすべて `1` から `2147483647`（2^31 − 1）でなければ
+  ならない。`0` 以下では `setTimeout` が中断をただちに発火させ、それより長い
+  遅延でも — ブラウザは `0` 未満に折り返し、Node は 1 ms に縮める — 同じ結果に
+  なるからである。
+- `credentials` は `Text` に代入可能なものを取り、フィールドに届くリテラルはすべて
+  Fetch の 3 つのモードのいずれかでなければならない。それ以外を指定した init は
+  ブラウザが拒否する。
 
-照合されるのは型であり、`credentials` についてはリテラルも照合される：それ以外の
-方法で計算される値 — slot、呼び出し、連結 — は実行時に決まるので、型の合うものは
-何を保持するかにかかわらず受理される。`timeout: 0` や負の `Int` も `Int` であり、
-受理される。
+照合されるのは型であり、`timeout` と `credentials` についてはリテラルも照合される。
+リテラルがフィールドに届くのは、フィールド自身の値として、または `if` の分岐・
+`match` の arm・`let … in` の本体が生む値としてであり、深さは問わず、書かれた
+位置で報告される。数値の前にマイナスを置いた `-1` もリテラルである。型が先に
+照合されるので、`timeout: -5.5` は `Float` として報告される。それ以外の方法で
+計算される値 — slot、`let` で束縛した名前、`1 - 1` のような算術、
+`Duration.ms(0)` のような呼び出し、連結 — は実行時に決まるので、型の合うものは
+何を保持するかにかかわらず受理される。
 
 ### 6.3.2 401 のグローバル処理
 
@@ -276,7 +284,7 @@ reducer cancelSearch
 
 `emit` が返す id は、その `emit` が開始するリクエストを指し、policy がその emit を捨てた場合は、それを吸収したリクエストを指す。それ以外に何を指すかは effect の policy で決まる：
 
-- **`policy=latest` と `policy=latest-per-key(<expr>)`** は key ごとに 1 つのリクエストを実行し、id はその key のもの `<effect-name>:<key>` である。`latest` では `<key>` は `_`。`latest-per-key` ではその式を **`emit` が実行された地点で 1 回だけ評価した値** である。key が読む slot は、reducer 本体がその文までに書き込んだ値を持ち、同じ本体の後続の書き込みは見えない。dispatcher はリクエストをこの同じ key で実行するため、本体がその後 key の読む slot を書き換えても、id は `emit` が開始したリクエストを指す。同じ key の後続の emit はそのリクエストを abort し、自分のリクエストを同じ id で実行するので、どちらの id で cancel しても実行中のほうが abort される。`app.init` のエントリは reducer 本体の外で emit されるため、その key は dispatch された時点の slot の値で評価される。
+- **`policy=latest` と `policy=latest-per-key(<expr>)`** は key ごとに 1 つのリクエストを実行し、id はその key のもの `<effect-name>:<key>` である。`latest` では `<key>` は `_`。`latest-per-key` ではその式を **`emit` が実行された地点で 1 回だけ評価した値** である。key が読む slot は、reducer 本体がその文までに書き込んだ値を持ち、同じ本体の後続の書き込みは見えない。dispatcher はリクエストをこの同じ key で実行するため、本体がその後 key の読む slot を書き換えても、id は `emit` が開始したリクエストを指す。同じ key の後続の emit はそのリクエストを abort し、自分のリクエストを同じ id で実行するので、どちらの id で cancel しても実行中のほうが abort される。`app.init` のエントリは reducer 本体の外で emit されるため、その key は dispatch された時点の slot の値で評価される。`latest-per-key` の key は Map の key が格納されるのと同じ書き方で書かれる（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）— プリミティブはそのテキスト、レコード・タプル・`List`・`Map`・バリアントは各レコードのフィールドを整列した JSON — ので、2 つの emit が同じ id を持つのはそれらの key が `==` であるときに限られ（宣言された型が何であれ、有限でない数は例外である）、そうならない key の型は [E0233](./errors.md#e0233-policy-key-type) になる（[言語 §1.5.2](./language.md#_1-5-2-意味)）。
 - **それ以外の policy** — 指定なし、`queue`、`debounce`、`throttle`、`once` — では、`emit` 1 回が 1 つのリクエストであり、他のどの emit も返さない固有の id を持つ。同じ effect の 2 回の emit は、1 つの reducer 本体からでも 2 つからでも 2 つの id を返し、一方が開始したリクエストを cancel しても、他方のリクエストはそのままである。id は `<effect-name>#` に、`<T>.fresh()` と同じ生成器（[stdlib §2.4.1](./stdlib.md#_2-4-1-id-生成)）による新しい ID を続けたもので、専用の `effect-id` の読みとして記録される（[runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）ため、replay した reducer 本体は記録時と同じ id を返す。
 
 policy が**捨てた** emit はリクエストを開始せず、その id はそれを吸収したリクエストを指す：`throttle` ではウィンドウ内の emit がウィンドウを開いたリクエストを、`once` では既に見た入力に対する emit がその入力で開始したリクエストを、`debounce` ではタイマー発火前に後続の emit に置き換えられた emit が、その後続の emit の指すものを指す。したがって `lastId := emit work(x)` の後の `emit cancel(lastId)` は、`lastId` がどの emit から来たものであれ、policy が残したリクエストに届く。そのリクエストが完了した後は、完了した id と同じく、捨てられた id も何も指さない。
@@ -285,8 +293,9 @@ policy が**捨てた** emit はリクエストを開始せず、その id は�
 
 ### 6.4.1 挙動
 
-- 未知 / 既完了 `EffectId` への cancel は silent no-op（キャンセルは契約違反ではなく冪等な意図）。
-- キャンセルされた effect の `.err` reducer は `{status: 0, message: "aborted", body: ""}` で起動する。`HttpError` 形が abort と通信失敗の両方を覆う。`policy=latest` / `policy=latest-per-key` による自動キャンセルにも同じ正規化が適用される。`status: 0` は HTTP レスポンスが届かなかったことを表し（タイムアウトと通信失敗も同じ値を返す）、`HttpStatus` はこの値を許す（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）ので、`HttpError` を保持する slot はそれを受け入れる。
+- 未知 / 既完了 `EffectId` への cancel は silent no-op（キャンセルは契約違反ではなく冪等な意図）であり、episode ログに `effect-cancel` step も記録しない（[runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）。
+- キャンセルされた effect の `.err` reducer は `{status: 0, message: "aborted", body: None}` で起動する。`HttpError` 形が abort と通信失敗の両方を覆う。`policy=latest` / `policy=latest-per-key` による自動キャンセルにも同じ正規化が適用される。`status: 0` は HTTP レスポンスが届かなかったことを表し（タイムアウトと通信失敗も同じ値を返す）、`HttpStatus` はこの値を許す（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）ので、`HttpError` を保持する slot はそれを受け入れる。
+- `HttpError` の `body` は `Option(Text)` である。レスポンスが届き、その本文を読めたときは常に本文テキストの `Some` になる。2xx 以外のステータスと、本文を decode できない 2xx（[6.1.4](#_6-1-4-decoder-型)）がこれにあたる。空の本文は `None` ではなく `Some("")` である。`body` が `None` になるのは、レスポンスが届かなかったとき — 中断、キャンセル、タイムアウト、通信失敗、送れないリクエスト本文で、いずれも `status: 0` — と、レスポンスは届いたがその本文を読めなかったときである。後者のエラーは 2xx を含めレスポンス自身の `status` を保つので、2xx はリトライされない（[6.5](#_6-5-リトライ)）。ただし読み取りを止めたのがそのリクエスト自身のキャンセルかタイムアウトなら、ステータスにかかわらず上の `aborted` エラーになる。
 - cancel が作用するのは、その id が指す 1 つのリクエストだけである。同じ effect の他の進行中リクエストは実行を続け、それぞれの `.ok` / `.err` を届ける。
 - `queue` では、cancel はその id が指すエントリにだけ作用する。まだ待機中のエントリはキューから取り除かれ、そのリクエストは発行されず `.err` も起動しない。実行中のエントリは他の進行中リクエストと同じく abort され、キューは次のエントリへ進む。他のエントリはすべて本来どおり実行される。
 - `debounce` タイマーを待っている emit、またはそれが置き換えた emit の id で cancel すると、そのタイマーはクリアされ、まだ発行されていない待機中リクエストは発生せず `.err` も起動しない。タイマーがすでに発火したリクエストはそれ自体が 1 つのリクエストであり、タイマーを待っている後続の emit の id で cancel しても実行を続ける。
@@ -309,7 +318,7 @@ effect loadCritical cap=http.get
 | `linear(N, ms)` | N 回まで、ms 間隔で再試行 |
 | `exponential(N, initial-ms, factor)` | N 回まで、初回 initial-ms、毎回 factor 倍 |
 
-リトライは **5xx と接続エラーのみ**対象。4xx はリトライしない（仕様）。本文が JSON として壊れている 2xx、および decode した値を `T` が拒否した 2xx（[6.1.4](#_6-1-4-decoder-型)）もリトライしない。サーバーはすでにリクエストを受理しているので、リトライは同じ副作用をもう一度起こすだけになる。
+リトライは **5xx と接続エラーのみ**対象。4xx はリトライしない（仕様）。本文を読めなかった 2xx（[6.4.1](#_6-4-1-挙動)）、本文が JSON として壊れている 2xx、および decode した値を `T` が拒否した 2xx（[6.1.4](#_6-1-4-decoder-型)）もリトライしない。サーバーはすでにリクエストを受理しているので、リトライは同じ副作用をもう一度起こすだけになる。
 
 試行と試行の間で待機しているリクエストは、キャンセルされるとその場で待機を終える。キャンセルするのは、`http.cancel`（[6.4](#_6-4-cancellation)）、`policy=latest` のもとでの新しい emit、`policy=latest-per-key` のもとでの同じ key への新しい emit である。その `.err` は直ちに発火し、後から emit されたリクエストが自分の結果を届けるより先に届く。それ以上の試行は行わない。`policy=queue` では、次のエントリが残りの間隔を待たずにすぐ始まる。この err は、`http.*` の effect では [6.4.1](#_6-4-1-挙動) の `aborted` な `HttpError`、err が `Text` の capability（[6.7](#_6-7-storage-effects)）では `Text` の `"aborted"`、それ以外の capability では、例外を投げた invoke が届けるのと同じ形の `{message: "aborted"}`（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）である。アプリのアンマウントも待機を終え、それ以上の試行は行わない。アンマウント後は reducer が走らないので、何も届かない。キャンセルもアンマウントもされないリクエストは各間隔を最後まで待つ。
 

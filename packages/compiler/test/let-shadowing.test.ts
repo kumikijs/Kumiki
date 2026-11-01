@@ -2,8 +2,9 @@ import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { jsBinding } from "../src/codegen/context.ts";
 import { RESERVED_BIND_NAMES } from "../src/reserved-binds.ts";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf, summariesOf } from "./helpers/diagnostics.ts";
 import { LOADABLE, loadReducer } from "./helpers/module.ts";
+import { withButtonApp, withRoot } from "./helpers/programs.ts";
 
 function program(on: string, body: string): string {
   const usesEffect = on.startsWith("ping.");
@@ -317,5 +318,103 @@ describe("a branch's `let` leaves the type of the name after the `if` alone", ()
       'if flag then { let $route = "x"\n                       seen := $route }\n                else { () }\n        after := $route',
     );
     expect(codesOf(src)).toEqual(["E0119"]);
+  });
+});
+
+describe("a bind with no type of its own, over a slot of its name", () => {
+  // `.map` with a fragment answers no type today, and nothing types a trigger's second payload
+  // bind, so each `name` / `key` below is a bind with no type, over the slot `name : Text` /
+  // `key : Text`. Each row reads it into an `Int` slot and a `Text` one: a bind that took the
+  // slot's `Text` is reported at the first, and one that has a type of its own at the second.
+  const SLOTS = `slot n    : Int       = 0
+slot t    : Text      = ""
+slot name : Text      = ""
+slot key  : Text      = ""
+slot xs   : List(Int) = []
+effect e cap=log.write in=Unit out=Result(Unit, Text) map-request={level: "info", message: "m"}`;
+  const summaries = (defs: string) =>
+    summariesOf(withButtonApp(`${SLOTS}\n${defs}`, { caps: "log.write" }));
+  const onClick = (body: string) => `reducer r on=ui.click(B) do= ${body}`;
+
+  it.each([
+    [
+      "a `let … in`",
+      onClick(`n := let name = xs.map($1) in name
+    t := let name = xs.map($1) in name`),
+    ],
+    [
+      "a `let` statement",
+      onClick(`let name = xs.map($1)
+    n := name
+    t := name`),
+    ],
+    [
+      "a `for`",
+      onClick(`for name in xs.map($1) {
+      n := name
+      t := name
+    }`),
+    ],
+    [
+      "a match arm",
+      onClick(`n := match xs.map($1).head with | Some(name) -> name | None -> n
+    t := match xs.map($1).head with | Some(name) -> name | None -> t`),
+    ],
+    [
+      "an effect trigger's second payload",
+      `reducer r on=e.ok(_, key) do= n := key
+    t := key`,
+    ],
+    ["a `for` in a tile", "tile T = column(for name in xs.map($1) text(name.size.show))"],
+  ])("reports nothing when %s binds it", (_, defs) => {
+    expect(summaries(defs)).toEqual([]);
+  });
+
+  it("is no receiver of the slot's type, so a member `Text` lacks is not E0108", () => {
+    expect(summaries(onClick("t := (let name = $event in name).size.show"))).toEqual([]);
+  });
+
+  it.each([
+    [
+      "a `let … in`",
+      onClick(`t := let name = xs.map($1) in name
+    n := name`),
+      "E0201 Expected Int but got Text",
+    ],
+    [
+      "a `for`",
+      onClick(`for name in xs.map($1) {
+      t := name
+    }
+    n := name`),
+      "E0201 Expected Int but got Text",
+    ],
+    [
+      "a tile's `for`",
+      `tile T = column(for name in xs.map($1) text("x"), text(name.size.show))`,
+      'E0108 Type "Text" has no member ".size" — it is a member of Map / Set',
+    ],
+  ])("reads the slot again once %s ends", (_, defs, expected) => {
+    expect(summaries(defs)).toEqual([expected]);
+  });
+});
+
+describe("a `bind=` root that a local shadows", () => {
+  // The lowering writes a bind's root slot whatever shadows it, so the checker refuses a local
+  // root whether or not the local has a type; its type is never what the bind is checked by.
+  it.each([
+    ["input", "no type", "slot draft : List(Int) = []", "draft", "xs.map($1)"],
+    ["input", "a type", "slot draft : List(Int) = []", "draft", "ys"],
+    ["check", "no type", 'slot flag : Text = ""', "flag", "xs.map($1)"],
+    ["check", "a type", 'slot flag : Text = ""', "flag", "bs"],
+    ["editable", "no type", "slot id : EffectId = EffectId.none", "id", "xs.map($1)"],
+    ["editable", "a type", "slot id : EffectId = EffectId.none", "id", "ys"],
+  ])("is E0229 on %s, for a `for` variable with %s", (control, _, slot, name, list) => {
+    const defs = `${slot}
+slot xs : List(Int)  = [1]
+slot ys : List(Text) = ["a"]
+slot bs : List(Bool) = [true]
+tile R = column(for ${name} in ${list} ${control}(bind=${name}))`;
+    expect(codesOf(withRoot("R", defs))).toEqual(["E0229"]);
   });
 });

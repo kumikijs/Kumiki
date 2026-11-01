@@ -67,18 +67,17 @@ describe("the built-in type constructors", () => {
     }
   });
 
+  it("reports Tuple written without arguments, which names no type", () => {
+    expect(codesOf(`slot v : Tuple = 1\n${TAIL}`)).toContain("E0210");
+  });
+
   it("reports a constructor that is not one of them", () => {
     expect(codesOf(`slot v : Lst(Int) = 1\n${TAIL}`)).toContain("E0117");
   });
 });
 
-describe("a program's own definition shadows the standard library's", () => {
-  it("takes the program's Route over the built-in one", () => {
-    expect(codesOf(`type Route = Text\nslot r : Route = "x"\n${TAIL}`)).toEqual([]);
-    expect(codesOf(`type Route = Text\nslot r : Route = 1\n${TAIL}`)).toEqual(["E0201"]);
-  });
-
-  it("checks against the built-in when the program declares nothing", () => {
+describe("a stdlib type named in a program", () => {
+  it("is checked against the built-in definition when the program declares nothing", () => {
     expect(codesOf(`slot r : Route = 1\n${TAIL}`)).toEqual(["E0201"]);
   });
 });
