@@ -3,7 +3,7 @@
 "@kumikijs/runtime": patch
 ---
 
-A program cannot declare an effect under a standard effect's name
+A program cannot declare an effect under a standard effect's name (E0234)
 
 The runtime registers its standard effects — `navigate`, `navigate-replace`,
 `navigate-back`, `scroll-to`, `toast`, `confirm`, `log` — on `app.effects` when
@@ -32,8 +32,8 @@ ok
 
 and clicking the button never made the request. `emit log("x")` ran the
 built-in `log`, which panicked with `capability "log.write" is not declared in
-app.caps`, and the id `lastId` kept named a policy the running effect did not
-have.
+app.caps`, and `lastId` held an id minted under the built-in's default policy,
+not the per-key one the declaration asked for.
 
 After:
 
@@ -43,8 +43,8 @@ E0234 reserved-effect-name at 2:1: Effect "log" collides with the built-in effec
 ```
 
 It is reported once per declaration. The program's uses of the name are still
-checked against the declaration they were written for, so E0234 is the only
-report, and `kumiki rename app.kumiki effect.log logRequest` — which rewrites
+checked against the declaration they were written for, so for this program
+E0234 is the only report, and `kumiki rename app.kumiki effect.log logRequest` — which rewrites
 the declaration, its emits, its `app.init` entries and its `.ok` / `.err`
 reducers — leaves nothing else to fix. `kumiki rename` and `kumiki add` now
 refuse an edit that would put an effect under one of these names.
@@ -53,9 +53,11 @@ Emitting a standard effect needs no declaration and is unchanged, as are
 effects named `logger`, `toasts` or `navigate2`, and a reducer or slot named
 `log` or `toast`. A declaration that restates a standard effect with its own
 signature — `effect navigate cap=nav.push in={path: Text, …}` — is refused
-too, and is deleted rather than renamed.
+too, and is deleted rather than renamed. Delete its line directly:
+`kumiki remove` counts the emits as references to the declaration and refuses.
 
 The list is kept once: the compiler's table of standard effects is keyed by
-the runtime's new `BuiltinEffectName` type, the names its installers register,
-and the installers write `app.effects` through a view that takes no other
-name. A standard effect added on one side only is a type error.
+the runtime's new `BuiltinEffectName` type, so a name added to one and not the
+other is a type error. The installers write `app.effects` through a view keyed
+by the same names, and a test mounts an app to check that what they register is
+that list.

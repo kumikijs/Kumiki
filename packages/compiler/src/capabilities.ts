@@ -70,7 +70,8 @@ export type BuiltinEffect = {
   readonly defaulted?: readonly string[];
 };
 
-// Keyed by the runtime's names, so a standard effect added on one side only is a type error.
+// Keyed by the runtime's `BuiltinEffectName`, so a name added to one and not the other is a type
+// error.
 const BUILTIN_EFFECT_TABLE: { readonly [N in BuiltinEffectName]: BuiltinEffect } = {
   navigate: { cap: "nav.push", inType: navigation, defaulted: ["params", "query"] },
   "navigate-replace": { cap: "nav.replace", inType: navigation, defaulted: ["params", "query"] },

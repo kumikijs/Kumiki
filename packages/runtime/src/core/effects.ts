@@ -282,8 +282,7 @@ export function overridableInvoke(
   };
 }
 
-export function installLogEffect(app: AppShape): void {
-  const effects: BuiltinEffects = app.effects;
+export function installLogEffect(effects: BuiltinEffects): void {
   effects.log = {
     name: "log",
     cap: "log.write",

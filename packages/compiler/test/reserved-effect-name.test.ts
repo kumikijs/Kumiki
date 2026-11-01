@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { BUILTIN_EFFECTS } from "../src/capabilities.ts";
-import { checkSource } from "./helpers/diagnostics.ts";
+import {
+  builtSummariesOf,
+  locatedSummariesOf,
+  reservedEffectNameMessage,
+} from "./helpers/diagnostics.ts";
 
-// Written out rather than read off the table, so the table is checked against the spec's list.
+// Written out rather than read off the table, so a change to the table has to change this copy too.
 const STANDARD = [
   "navigate",
   "navigate-replace",
@@ -22,17 +26,14 @@ tile B = button(text="b", onClick=go)
 app A caps=[http.get] routes={"/" -> B, "/404" -> B} init=[]
 `;
 
-const diagnostics = (src: string) =>
-  checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
-
 describe("an effect declared under a standard effect's name", () => {
   it("the list here is every standard effect the checker knows", () => {
     expect([...BUILTIN_EFFECTS.keys()].sort()).toEqual([...STANDARD].sort());
   });
 
   it.each(STANDARD)("effect %s is E0234 at the declaration, naming the built-in", (name) => {
-    expect(diagnostics(declaring(name))).toEqual([
-      `E0234 1:1 Effect "${name}" collides with the built-in effect ${name}; emits of it never run this effect`,
+    expect(locatedSummariesOf(declaring(name))).toEqual([
+      `E0234 1:1 ${reservedEffectNameMessage(name)}`,
     ]);
   });
 
@@ -41,17 +42,16 @@ describe("an effect declared under a standard effect's name", () => {
       "slot got",
       `effect log cap=http.get in=Text out=Result(Text, HttpError)\nslot got`,
     );
-    expect(diagnostics(twice).map((d) => d.slice(0, 9))).toEqual([
+    expect(locatedSummariesOf(twice).map((d) => d.slice(0, 9))).toEqual([
       "E0234 1:1",
       "E0234 3:1",
       "E0007 3:1",
     ]);
   });
 
-  it("refuses the program whose log never made its request", () => {
-    // The declaration's `policy` and `map-request` are what the runtime drops;
-    // neither changes the report.
-    const src = `slot lastId : EffectId = EffectId.none
+  // The declaration's `policy` and `map-request` are what the runtime drops; neither changes the
+  // report.
+  const lostRequest = `slot lastId : EffectId = EffectId.none
 effect log cap=http.get in=Text out=Result(Text, HttpError)
            policy=latest-per-key($1)
            map-request={url: "/api/" + $1, decode: Decoder.Text}
@@ -60,22 +60,42 @@ tile B = button(text="b", onClick=go)
 tile Home = column(B)
 app M caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]
 `;
-    expect(diagnostics(src)).toEqual([
-      `E0234 2:1 Effect "log" collides with the built-in effect log; emits of it never run this effect`,
+
+  it("refuses the program whose log never made its request", () => {
+    expect(locatedSummariesOf(lostRequest)).toEqual([
+      `E0234 2:1 ${reservedEffectNameMessage("log")}`,
     ]);
   });
 
-  it("checks the program's uses of the name against the declaration they were written for", () => {
-    // `emit toast(…)` with the standard toast's record is held to the declared
-    // `in=Text`, and the capability is the declared `cap=` — so renaming the
-    // declaration with its uses leaves nothing else to fix.
+  it("is an error, so the build stops", () => {
+    expect(builtSummariesOf(lostRequest)).toEqual([`E0234 ${reservedEffectNameMessage("log")}`]);
+  });
+
+  it("holds a use written for the built-in to the declaration (E0202 beside E0234)", () => {
+    // `emit toast(…)` with the standard toast's record is held to the declared `in=Text`, and the
+    // capability is the declared `cap=`.
     const src = `effect toast cap=http.get in=Text out=Result(Text, HttpError)
     map-request={url: "/api/" + $1, decode: Decoder.Text}
 reducer go on=ui.click(B) do= emit toast({kind: "info", text: "hi"})
 tile B = button(text="b", onClick=go)
 app A caps=[http.get] routes={"/" -> B, "/404" -> B} init=[]
 `;
-    expect(diagnostics(src).map((d) => d.slice(0, 5))).toEqual(["E0234", "E0202"]);
+    expect(locatedSummariesOf(src).map((d) => d.slice(0, 5))).toEqual(["E0234", "E0202"]);
+  });
+
+  it("checks a .ok bind against the declaration's out=", () => {
+    const src = `effect log cap=http.get in=Text out=Result(Text, HttpError)
+    map-request={url: "/api/" + $1, decode: Decoder.Text}
+slot n : Int = 0
+reducer go   on=ui.click(B)    do= emit log("x")
+reducer done on=log.ok($r, _) do= n := $r
+tile B = button(text="b", onClick=go)
+app A caps=[http.get] routes={"/" -> B, "/404" -> B} init=[]
+`;
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0234 1:1 ${reservedEffectNameMessage("log")}`,
+      "E0201 5:40 Expected Int but got Text",
+    ]);
   });
 });
 
@@ -88,7 +108,7 @@ describe("what the reservation leaves alone", () => {
     "confirmDelete",
     "scroll",
   ])("an effect named %s is the program's own", (name) => {
-    expect(diagnostics(declaring(name))).toEqual([]);
+    expect(locatedSummariesOf(declaring(name))).toEqual([]);
   });
 
   it.each([
@@ -104,7 +124,7 @@ describe("what the reservation leaves alone", () => {
 tile B = button(text="b", onClick=go)
 app A caps=[${cap}] routes={"/" -> B, "/404" -> B} init=[]
 `;
-    expect(diagnostics(src)).toEqual([]);
+    expect(locatedSummariesOf(src)).toEqual([]);
   });
 
   it("a reducer named log is in the reducer namespace", () => {
@@ -116,7 +136,7 @@ tile C = button(text="c", onClick=go)
 tile H = column(B, C)
 app A caps=[log.write] routes={"/" -> H, "/404" -> H} init=[]
 `;
-    expect(diagnostics(src)).toEqual([]);
+    expect(locatedSummariesOf(src)).toEqual([]);
   });
 
   it("a fn named log is in the fn namespace", () => {
@@ -127,7 +147,7 @@ reducer go on=ui.click(B) do= n := log(n)
 tile B = button(text="b", onClick=go)
 app A caps=[log.write] routes={"/" -> B, "/404" -> B} init=[]
 `;
-    expect(diagnostics(src)).toEqual([]);
+    expect(locatedSummariesOf(src)).toEqual([]);
   });
 
   it("a slot named toast is in the slot namespace", () => {
@@ -136,6 +156,6 @@ reducer go on=ui.click(B) do= emit toast({kind: "info", text: toast})
 tile B = button(text=toast, onClick=go)
 app A caps=[notification.show] routes={"/" -> B, "/404" -> B} init=[]
 `;
-    expect(diagnostics(src)).toEqual([]);
+    expect(locatedSummariesOf(src)).toEqual([]);
   });
 });

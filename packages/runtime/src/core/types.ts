@@ -279,8 +279,10 @@ export type DiagnosticSite = {
   tile?: string | undefined;
 };
 
-// The compiler's `BUILTIN_EFFECTS` is keyed by these names, so it refuses an `effect` declared
-// under one (E0234): the installer writes over that declaration at mount.
+/**
+ * The standard effects' names. The compiler keys its table of standard effects by this union and
+ * refuses an `effect` declared under one: the installer writes over it at mount.
+ */
 export type BuiltinEffectName =
   | "navigate"
   | "navigate-replace"
@@ -290,6 +292,10 @@ export type BuiltinEffectName =
   | "confirm"
   | "log";
 
+/**
+ * What an installer writes `app.effects` through, so it can register a standard effect only under
+ * its own name.
+ */
 export type BuiltinEffects = { [N in BuiltinEffectName]?: EffectSpec & { name: N } };
 
 /** Mount-internal navigation handles handed to builtin-effect installers. */
