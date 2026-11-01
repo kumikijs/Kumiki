@@ -293,7 +293,7 @@ policy が**捨てた** emit はリクエストを開始せず、その id は�
 
 ### 6.4.1 挙動
 
-- 未知 / 既完了 `EffectId` への cancel は silent no-op（キャンセルは契約違反ではなく冪等な意図）。
+- 未知 / 既完了 `EffectId` への cancel は silent no-op（キャンセルは契約違反ではなく冪等な意図）であり、episode ログに `effect-cancel` step も記録しない（[runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）。
 - キャンセルされた effect の `.err` reducer は `{status: 0, message: "aborted", body: None}` で起動する。`HttpError` 形が abort と通信失敗の両方を覆う。`policy=latest` / `policy=latest-per-key` による自動キャンセルにも同じ正規化が適用される。`status: 0` は HTTP レスポンスが届かなかったことを表し（タイムアウトと通信失敗も同じ値を返す）、`HttpStatus` はこの値を許す（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）ので、`HttpError` を保持する slot はそれを受け入れる。
 - `HttpError` の `body` は `Option(Text)` である。レスポンスが届き、その本文を読めたときは常に本文テキストの `Some` になる。2xx 以外のステータスと、本文を decode できない 2xx（[6.1.4](#_6-1-4-decoder-型)）がこれにあたる。空の本文は `None` ではなく `Some("")` である。`body` が `None` になるのは、レスポンスが届かなかったとき — 中断、キャンセル、タイムアウト、通信失敗、送れないリクエスト本文で、いずれも `status: 0` — と、レスポンスは届いたがその本文を読めなかったときである。後者のエラーは 2xx を含めレスポンス自身の `status` を保つので、2xx はリトライされない（[6.5](#_6-5-リトライ)）。ただし読み取りを止めたのがそのリクエスト自身のキャンセルかタイムアウトなら、ステータスにかかわらず上の `aborted` エラーになる。
 - cancel が作用するのは、その id が指す 1 つのリクエストだけである。同じ effect の他の進行中リクエストは実行を続け、それぞれの `.ok` / `.err` を届ける。
