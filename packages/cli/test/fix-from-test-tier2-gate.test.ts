@@ -57,16 +57,14 @@ const DIGIT_IN_NUMBER = [
   ...ADDS_TWO_TEST,
 ];
 
-/** A tile-test whose target reads `items[0]` of an empty list, a panic as it renders. */
+/** `[1][3]` indexes past the end of a one-item list, so this test's body throws. */
 const THROWING_TEST = [
-  "slot items : List(Int) = []",
-  'tile First = heading("First: " + items[0].show)',
-  "test first-shows =",
-  "    tile-test First",
-  "        given  = {slots: {items: []}}",
-  '        expect = heading("First: 1")',
+  "test expect-panics =",
+  "    reducer-test inc",
+  "        given  = {slots: {count: 0}, event: {type: ui.click, target: Btn1}}",
+  "        expect = {slots: {count: [1][3]}, effects: []}",
 ];
-const THROWN = "Index 0 is out of range for a List of length 0";
+const THROWN = "Index 3 is out of range for a List of length 1";
 
 /** A failing reducer-test result on `slots.count`, for calling the planner directly. */
 const failingLeaf = (actual: unknown, expected: unknown): TestResult => ({
@@ -266,7 +264,7 @@ describe("the behavioural write is gated", () => {
     const out = lines.join("\n");
     expect(out).toContain('refused fix for "inc-adds-two" — file left unchanged');
     expect(out).toContain("reason: still-fails");
-    expect(out).toContain("diff at:  slots.count");
+    expect(out).toMatch(/diff at: {2}slots\.count {2}\S+ -> \S+/);
     expect(out).not.toContain("applied fix");
   });
 });
@@ -354,17 +352,24 @@ describe("a test whose body throws", () => {
     vi.spyOn(console, "log").mockImplementation((m: unknown) => void lines.push(String(m)));
     vi.spyOn(console, "error").mockImplementation((m: unknown) => void lines.push(String(m)));
 
-    const outcome = await fixFromTest(file, "first-shows", false);
+    const outcome = await fixFromTest(file, "expect-panics", false);
 
     expect(outcome.status).toBe("no-patch");
-    if (outcome.status === "no-patch") expect(outcome.failingTest?.error).toBe(THROWN);
-    const out = lines.join("\n");
-    expect(out).toContain('(no auto-patch available) for failing test "first-shows":');
-    expect(out).toContain(`  error:    ${THROWN}`);
+    if (outcome.status === "no-patch") {
+      expect(outcome.failingTest?.error).toBe(THROWN);
+      expect(outcome.reason).toBe("test-threw");
+    }
+    expect(lines.join("\n")).toContain(
+      [
+        '(no auto-patch available) for failing test "expect-panics":',
+        `  error:    ${THROWN}`,
+        "  reason: test-threw",
+      ].join("\n"),
+    );
   });
 
   it("does not keep another test in the file from being repaired", async () => {
-    // `first-shows` fails before the patch and after it, so the gate does not
+    // `expect-panics` fails before the patch and after it, so the gate does not
     // count it against the patch.
     const file = seedLines([...DIGIT_IN_IDENTIFIER, ...THROWING_TEST]);
     const outcome = await runFixFromTest(file, "inc-adds-two", true);

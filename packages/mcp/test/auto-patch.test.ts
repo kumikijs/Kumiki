@@ -13,6 +13,7 @@ import {
   FIX_COUNTER_TYPO_WITH_TEST,
   FIX_FAILING_SINGLE,
   FIX_REGRESSION,
+  FIX_TEST_THROWS,
   type ToolResult,
   useWorkdir,
   withClient,
@@ -198,6 +199,21 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
       blocked: { reason: "regressed", regressed: ["B"] },
     });
     expect(readFileSync(file, "utf8")).toBe(original);
+  });
+
+  it("says a test whose body threw has no patch, and not that it passes", async () => {
+    const file = copy(FIX_TEST_THROWS, "test-throws.kumiki");
+    const res = await callOnce("kumiki_auto_patch", { path: file, testName: "expect-panics" });
+    expect(res.isError).toBe(true);
+    expect(outcome(res)).toMatchObject({
+      status: "no-patch",
+      reason: "test-threw",
+      failingTest: {
+        name: "expect-panics",
+        pass: false,
+        error: "Index 3 is out of range for a List of length 1",
+      },
+    });
   });
 
   it("serialises an `introduced` refusal's errors as wire diagnostics", async () => {

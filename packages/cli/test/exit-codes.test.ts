@@ -50,26 +50,15 @@ test inc-works =
         expect = {slots: {count: 1}, effects: []}
 `;
 
-/** `First` reads `items[0]` of an empty list, a panic as it renders, so that test's body throws. */
-const WITH_THROWING_TEST = `slot count : Int = 0
-slot items : List(Int) = []
-reducer inc on=ui.click(IncBtn) do= count := count + 1
-tile IncBtn = button(text="+1", onClick=inc)
-tile First = heading("First: " + items[0].show)
-tile App = column(heading("Count: " + count.show), IncBtn)
-app Demo
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-test first-shows =
-    tile-test First
-        given  = {slots: {items: []}}
-        expect = heading("First: 1")
-test inc-works =
+/** `[1][3]` indexes past the end of a one-item list, so `expect-panics`' body throws. */
+const WITH_THROWING_TEST = WITH_TESTS.replace(
+  "test inc-works =",
+  `test expect-panics =
     reducer-test inc
         given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
-        expect = {slots: {count: 1}, effects: []}
-`;
+        expect = {slots: {count: [1][3]}, effects: []}
+test inc-works =`,
+);
 
 describe("kumiki fix", () => {
   it("exits 1 in dry-run while the errors are still on disk", SPAWN, () => {
@@ -232,7 +221,7 @@ describe("kumiki test", () => {
     // if the run goes on past the throw.
     const { stdout, code } = runCli(["test", write("test-throws.kumiki", WITH_THROWING_TEST)]);
     expect(stdout).toMatch(
-      /^FAIL {2}first-shows \(\d+ms\)\n {2}error: {4}Index 0 is out of range for a List of length 0$/m,
+      /^FAIL {2}expect-panics \(\d+ms\)\n {2}error: {4}Index 3 is out of range for a List of length 1$/m,
     );
     expect(stdout).toMatch(/^PASS {2}inc-works \(\d+ms\)$/m);
     expect(stdout).toContain("1/2 passed");
