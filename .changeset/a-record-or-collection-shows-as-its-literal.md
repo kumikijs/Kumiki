@@ -48,5 +48,7 @@ checker records their shape where they are shown and codegen passes it to
 are read back as their declared type.
 
 A program that compared or displayed a List's text as `1,2` now sees
-`[1, 2]`. A `for` over records, Maps or Sets still keys each row by its
-position, so editing a row in place keeps its element.
+`[1, 2]`. A `for` row's implicit key leaves out every record, Map and Set in
+its element, at any depth, so editing one in place keeps the row's element: a
+`for` over records still keys each row by its position, and a row of a Map's
+`.entries` or of Tuples by the members around the record.

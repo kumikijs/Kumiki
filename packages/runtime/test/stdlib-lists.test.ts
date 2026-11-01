@@ -200,6 +200,31 @@ describe("loopKeys", () => {
       "App_0|1|Some",
     ]);
   });
+
+  describe("a record, Map or Set inside a List or Tuple element adds nothing to its key", () => {
+    const keyOf = (x: unknown) => _stdlibCore.loopKeys([x], "L")[0];
+
+    it.each<[string, unknown, unknown]>([
+      ["a Tuple's record edited in place", [1, { title: "a" }], [1, { title: "b" }]],
+      ["a List's records edited in place", [{ title: "a" }], [{ title: "b" }]],
+      ["a Map or a Set beside a value", [1, { a: 1 }, { "[1]": true }], [1, { a: 2 }, {}]],
+      ["a record inside a nested Tuple", [[1, { title: "a" }]], [[1, { title: "b" }]]],
+    ])("%s keeps its key", (_, before, after) => {
+      expect(keyOf(after)).toBe(keyOf(before));
+    });
+
+    it.each<[string, unknown, unknown]>([
+      ["a Tuple's scalar", [1, { title: "a" }], [2, { title: "a" }]],
+      ["a nested Tuple's scalar", [[1, { title: "a" }]], [[2, { title: "a" }]]],
+      ["a Tuple's variant", [{ _tag: "Some", _0: 1 }, { n: 1 }], [{ _tag: "None" }, { n: 1 }]],
+    ])("%s still tells two elements apart", (_, a, b) => {
+      expect(keyOf(a)).not.toBe(keyOf(b));
+    });
+
+    it("writes the element's other members as they show", () => {
+      expect(keyOf([1, { title: "a" }, "s"])).toBe('L|1|[1, , "s"]');
+    });
+  });
 });
 
 describe("isEmpty's scalar tail", () => {

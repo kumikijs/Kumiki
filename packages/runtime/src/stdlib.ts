@@ -365,19 +365,18 @@ export const _stdlibCore = {
     }
     return (a as number) + (b as number);
   },
-  // A record, Map or Set element adds no shown value, so among those the key is positional:
-  // a row edited in place keeps its key, and its element.
+  // A record, Map or Set adds no shown value, at any depth, so among elements that differ only
+  // there the key is positional: a row edited in place keeps its key, and its element.
   loopKeys(xs: readonly unknown[], loop: string): string[] {
     const seen = new Map<string, number>();
     return xs.map((x) => {
-      const bag = typeof x === "object" && x !== null && isPlainDataBag(x) && !("_tag" in x);
-      const shown = bag ? "" : _stdlibCore.show(x);
+      const shown = _stdlibCore.show(x, 0, true);
       const n = (seen.get(shown) ?? 0) + 1;
       seen.set(shown, n);
       return `${loop}|${n}|${shown}`;
     });
   },
-  show(v: unknown, shape?: ShowShape): string {
+  show(v: unknown, shape?: ShowShape, keyOnly?: boolean): string {
     if (v === null || v === undefined) return "";
     if (v instanceof Uint8Array) {
       let bin = "";
@@ -390,8 +389,9 @@ export const _stdlibCore = {
     const tag = d[0];
     if (!tag && "_tag" in v) return v._tag as string;
     const at = (x: unknown, s?: ShowShape): string =>
-      typeof x === "string" ? JSON.stringify(x) : _stdlibCore.show(x, s);
+      typeof x === "string" ? JSON.stringify(x) : _stdlibCore.show(x, s, keyOnly);
     const list = Array.isArray(v);
+    if (keyOnly && !list && isPlainDataBag(v)) return "";
     const o = v as Record<string, unknown>;
     // A Map's or Set's key kind reads its stored keys back: a Set is the Map of its members to
     // `true`. A Tuple's slots past its tag are all shapes, which its type cannot say by index.

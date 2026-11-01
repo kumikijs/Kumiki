@@ -1,6 +1,6 @@
 import { runScenario, type ScenarioStep } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { withRoot } from "./helpers/dom.ts";
+import { click, mountSource, withRoot } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
 import { failureDetail } from "./helpers/scenario.ts";
 import { withApp } from "./helpers/source.ts";
@@ -129,5 +129,41 @@ tile App = column(text("r: " + r))`);
   it("writes the route slot's Maps as Maps", async () => {
     const text = await pageText(`tile App = column(text("route: " + route))`);
     expect(text).toContain('route: {path: "/", pattern: "/", params: {}, query: {}, hash: None}');
+  });
+});
+
+describe("a for keeps a row's element when a record in the row is edited in place", () => {
+  /** The element with no child elements whose whole text is `text`. */
+  const leaf = (root: HTMLElement, text: string): Element | undefined =>
+    Array.from(root.querySelectorAll("*")).find(
+      (el) => el.children.length === 0 && el.textContent === text,
+    );
+
+  it.each([
+    [
+      "a List of records",
+      'slot rows : List({title: Text}) = [{title: "a"}, {title: "b"}]',
+      'rows := [{title: "z"}, {title: "b"}]',
+      'for r in rows text("row " + r.title)',
+      ["row a", "row z"],
+    ],
+    [
+      "a Map's entries, a record in each",
+      'slot m : Map(Int, {title: Text}) = {1: {title: "a"}, 2: {title: "b"}}',
+      'm := m.insert(1, {title: "z"})',
+      'for e in m.entries text("entry " + e)',
+      ['entry (1, {title: "a"})', 'entry (1, {title: "z"})'],
+    ],
+  ])("%s", async (_, slot, edit, loop, [before, after]) => {
+    const { root } = await mountSource(
+      withApp(`${slot}
+reducer edit on=ui.click(Edit) do= ${edit}
+tile Edit = button(text="edit")
+tile App = column(Edit, column(${loop}))`),
+    );
+    const row = leaf(root, before ?? "");
+    expect(row).toBeDefined();
+    click(root, "edit");
+    expect(leaf(root, after ?? "")).toBe(row);
   });
 });
