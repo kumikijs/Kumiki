@@ -1,7 +1,7 @@
 import { nearestName } from "@kumikijs/runtime/text-distance";
 import { typeToString, unaliasType } from "../assignable.ts";
 import type { EffectDef, Expr, Pos, TypeExpr } from "../ast.ts";
-import { declaresNoInput, failsWithText, requestFields } from "../capabilities.ts";
+import { BUILTIN_EFFECTS, declaresNoInput, failsWithText, requestFields } from "../capabilities.ts";
 import { type UnkeyedPart, unkeyedPart } from "../unkeyed-part.ts";
 import { type Ctx, type KumikiError, pureScope, type SymbolTable } from "./context.ts";
 import { checkExpr } from "./expr.ts";
@@ -39,6 +39,16 @@ export function effectOutcomeType(
 }
 
 export function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): void {
+  // The runtime registers each standard effect at mount, over whatever codegen wrote under its
+  // name, so a declaration under one never runs.
+  if (BUILTIN_EFFECTS.has(eff.name)) {
+    errors.push({
+      code: "E0234",
+      kind: "reserved-effect-name",
+      message: `Effect "${eff.name}" collides with the built-in effect ${eff.name}; emits of it never run this effect`,
+      pos: eff.pos,
+    });
+  }
   resolveType(eff.inType, sym, errors);
   resolveType(eff.outType, sym, errors);
   if (eff.cap === "http.cancel") {
