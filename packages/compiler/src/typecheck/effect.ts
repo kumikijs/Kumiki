@@ -1,8 +1,10 @@
 import { typeToString, unaliasType } from "../assignable.ts";
-import type { EffectDef, TypeExpr } from "../ast.ts";
+import type { EffectDef, Expr, TypeExpr } from "../ast.ts";
 import { declaresNoInput, failsWithText } from "../capabilities.ts";
+import { type UnkeyedPart, unkeyedPart } from "../unkeyed-part.ts";
 import { type Ctx, type KumikiError, pureScope, type SymbolTable } from "./context.ts";
 import { checkExpr } from "./expr.ts";
+import { inferType } from "./infer.ts";
 import { resolveType } from "./types.ts";
 
 export function effectPayloadType(
@@ -78,8 +80,40 @@ export function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiErro
   if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, effectScope(eff, sym));
   // The key runs at dispatch time, so a name unchecked here fails on the first
   // dispatch rather than at check time.
-  if (eff.policy?.kind === "PolLatestKey")
-    checkExpr(eff.policy.key, sym, errors, effectScope(eff, sym));
+  if (eff.policy?.kind === "PolLatestKey") {
+    const scope = effectScope(eff, sym);
+    checkExpr(eff.policy.key, sym, errors, scope);
+    checkPolicyKeyType(eff.policy.key, sym, scope, errors);
+  }
+}
+
+/** Why a key that is `part`, or holds it, is not keyed by its value. */
+function unkeyedReason({ part, whole }: UnkeyedPart): string {
+  const subject = `${whole ? "it is" : "it holds"} a ${part}`;
+  switch (part) {
+    case "Float":
+      return whole
+        ? `${subject}, and NaN is one key though NaN == NaN is false`
+        : `${subject}, and inside it NaN, Infinity and -Infinity are one key`;
+    case "File":
+      return `${subject}, and two Files with the same name, size and type are one key, while == holds only of a File and itself`;
+    case "Set":
+      return `${subject}, whose == depends on how it was built`;
+  }
+}
+
+// The dispatcher aborts an in-flight request when another starts under the same key, so a key
+// that is one key for two values `==` calls different aborts a request it has no reason to.
+function checkPolicyKeyType(key: Expr, sym: SymbolTable, scope: Ctx, errors: KumikiError[]): void {
+  const type = inferType(key, sym, scope);
+  const unkeyed = unkeyedPart(type, sym);
+  if (!type || !unkeyed) return;
+  errors.push({
+    code: "E0233",
+    kind: "policy-key-type",
+    message: `A latest-per-key key of type ${typeToString(type)} is not keyed by its value: ${unkeyedReason(unkeyed)} (see docs/spec/language.md)`,
+    pos: key.pos,
+  });
 }
 
 /** `$1` is the effect's input, and an effect declared `in=Unit` is emitted with none. */

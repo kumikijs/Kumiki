@@ -136,17 +136,19 @@ export function makeEffectDispatcher(
     const token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
     const ctl = new AbortController();
     state.inflight.set(id, ctl);
+    let res: EffectResult;
     try {
-      const res = await runWithRetry(eff, input, caps, ctl.signal);
-      onResult(eff.name, res.kind, res.value, input, token);
+      res = await runWithRetry(eff, input, caps, ctl.signal);
     } catch (e) {
-      onResult(eff.name, "err", { message: String(e) }, input, token);
-    } finally {
-      if (state.inflight.get(id) === ctl) {
-        state.inflight.delete(id);
-        settle(id);
-      }
+      res = { kind: "err", value: { message: String(e) } };
     }
+    // Released before its result is delivered, so a cancel the `.ok` / `.err` reducers emit finds
+    // a request that is over. Under `latest` a newer request may hold the id by now.
+    if (state.inflight.get(id) === ctl) {
+      state.inflight.delete(id);
+      settle(id);
+    }
+    onResult(eff.name, res.kind, res.value, input, token);
   };
 
   return {
@@ -155,30 +157,37 @@ export function makeEffectDispatcher(
       if (!eff) return;
       if (eff.cap === "http.cancel") {
         const named = String(emit.args[0] ?? "");
+        // The episode records a cancel only when it released something; the reducer step's
+        // `emits` already names the cancel effect.
+        let released = false;
         if (named.length > 0) {
           const target = state.absorbedBy.get(named) ?? named;
           const ic = state.inflight.get(target);
           if (ic) {
             ic.abort();
             state.inflight.delete(target);
+            released = true;
           }
           for (const [name, q] of state.queues) {
             const i = q.pending.findIndex((e) => e.id === target);
             if (i === -1) continue;
             const [e] = q.pending.splice(i, 1);
             if (e?.token) onPolicyCancel?.(e.token, name);
+            released = true;
             break;
           }
+          // A throttle timer marks an open window, not a pending launch, so it is not released.
           for (const [name, t] of state.timers) {
             if (t.kind !== "debounce" || t.id !== target) continue;
             clearTimeout(t.h);
             state.timers.delete(name);
+            released = true;
             if (t.token) onPolicyCancel?.(t.token, name);
             break;
           }
           settle(target);
-          onCancel?.(named);
         }
+        if (released) onCancel?.(named);
         return;
       }
       const input = emit.args[0];
