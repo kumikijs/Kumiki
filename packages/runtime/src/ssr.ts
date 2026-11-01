@@ -106,8 +106,8 @@ export async function renderToString(
     // panic an `error-boundary` catches in it lands on that episode.
     const html = withRenderingApp(
       app,
-      () => renderTileToString(pickRootTile(app, live)),
       (e, site) => recordRenderPanic(logger, e, site, true).episodeId,
+      () => renderTileToString(pickRootTile(app, live)),
     );
     logger.endTrigger();
 

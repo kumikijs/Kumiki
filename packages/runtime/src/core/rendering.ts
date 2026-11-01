@@ -121,7 +121,7 @@ export function recordInRenderPass(e: unknown, site: string): RenderPanic {
 
 // `panics` is the caller's rather than the app's: `renderToString` renders the same AppShape a
 // mount does, into its own bootstrap log.
-export function withRenderingApp<T>(app: AppShape, fn: () => T, panics: RenderPanicSink): T {
+export function withRenderingApp<T>(app: AppShape, panics: RenderPanicSink, fn: () => T): T {
   const prev = renderingApp;
   const prevPanics = host[PANICS];
   renderingApp = app as MountedApp;
