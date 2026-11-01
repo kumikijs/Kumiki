@@ -1,11 +1,14 @@
-import { type TypeEnv, typeToString, unaliasType } from "./assignable.ts";
+import { type TypeEnv, typeSize, typeToString, unaliasType } from "./assignable.ts";
 import type { KeyKind, ShowShape, TypeExpr } from "./ast.ts";
 import { keyRepresentation } from "./key-representation.ts";
 
 /** `0` when `t` has no Map, Set or Tuple outside a variant: the value alone then says how to show it. */
 export function showShapeOf(t: TypeExpr | null, env: TypeEnv): ShowShape {
-  return shapeOf(t, env, new Map());
+  return shapeOf(t, env, new Map(), new Map());
 }
+
+/** The generics a walk is inside, each by its head, with the instance it was entered at. */
+type Path = ReadonlyMap<string, { readonly name: string; readonly size: number }>;
 
 function definedName(t: TypeExpr, env: TypeEnv): string | null {
   return (t.kind === "TypeRef" || t.kind === "TypeApp") && env.types.has(t.name)
@@ -13,48 +16,71 @@ function definedName(t: TypeExpr, env: TypeEnv): string | null {
     : null;
 }
 
-function hasShape(t: TypeExpr | null, env: TypeEnv, seen: Set<string>): boolean {
+// A generic whose recursion grows its argument (`type N(T) = {kids: List(N(List(T)))}`) is a new
+// type at every level, where one nested in itself (`Box(Box(Int))`) shrinks: the walk stops at a
+// repeat of a head it is inside that is no smaller than where it entered that head.
+function grows(t: TypeExpr, name: string, path: Path): boolean {
+  const outer = t.kind === "TypeApp" ? path.get(t.name) : undefined;
+  return outer !== undefined && outer.name !== name && typeSize(t) >= outer.size;
+}
+
+function inside(t: TypeExpr, name: string | null, path: Path): Path {
+  if (t.kind !== "TypeApp" || name === null) return path;
+  return new Map(path).set(t.name, { name, size: typeSize(t) });
+}
+
+function hasShape(t: TypeExpr | null, env: TypeEnv, seen: Set<string>, path: Path): boolean {
   if (!t) return false;
   const name = definedName(t, env);
   if (name !== null) {
-    if (seen.has(name)) return false;
+    if (seen.has(name) || grows(t, name, path)) return false;
     seen.add(name);
   }
+  const inner = inside(t, name, path);
   const u = unaliasType(t, env);
-  if (u?.kind === "TypeRecord") return u.fields.some((f) => hasShape(f.type, env, seen));
+  if (u?.kind === "TypeRecord") return u.fields.some((f) => hasShape(f.type, env, seen, inner));
   if (u?.kind !== "TypeApp") return false;
-  if (u.name === "List") return hasShape(u.args[0] ?? null, env, seen);
+  if (u.name === "List") return hasShape(u.args[0] ?? null, env, seen, inner);
   return u.name === "Map" || u.name === "Set" || u.name === "Tuple";
 }
 
 // A definition's shape is registered under its name before its parts are walked, so a type
 // that contains itself gets a shape that refers back to itself.
-function shapeOf(t: TypeExpr | null, env: TypeEnv, building: Map<string, ShowShape>): ShowShape {
-  if (!t || !hasShape(t, env, new Set())) return 0;
+function shapeOf(
+  t: TypeExpr | null,
+  env: TypeEnv,
+  building: Map<string, ShowShape>,
+  path: Path,
+): ShowShape {
+  if (!t || !hasShape(t, env, new Set(), path)) return 0;
   const name = definedName(t, env);
   const known = name === null ? undefined : building.get(name);
   if (known !== undefined) return known;
+  const register = (shape: ShowShape): void => {
+    if (name !== null) building.set(name, shape);
+  };
+  const inner = inside(t, name, path);
   const u = unaliasType(t, env);
   if (u?.kind === "TypeRecord") {
     const fields: Record<string, ShowShape> = {};
-    if (name !== null) building.set(name, fields);
+    register(fields);
     for (const f of u.fields) {
-      const s = shapeOf(f.type, env, building);
+      const s = shapeOf(f.type, env, building, inner);
       if (s !== 0) fields[f.name] = s;
     }
     return fields;
   }
   if (u?.kind !== "TypeApp") return 0;
-  // Filled in place below, so a part that names this definition again holds the finished shape.
-  const parts: (ShowShape | KeyKind | string)[] = [];
-  const shape = parts as unknown as ShowShape;
-  if (name !== null) building.set(name, shape);
-  const arg = (i: number): ShowShape => shapeOf(u.args[i] ?? null, env, building);
+  const arg = (i: number): ShowShape => shapeOf(u.args[i] ?? null, env, building, inner);
   // A `Text` key, and one the walk cannot place, stays the string it is stored as.
   const key = (): KeyKind | 0 => {
     const kind = keyRepresentation(u.args[0] ?? null, env);
     return kind === "text" || kind === null ? 0 : kind;
   };
+  // Filled in place below, so a part that names this definition again holds the finished shape.
+  const parts: (ShowShape | KeyKind | string)[] = [];
+  const shape = parts as unknown as ShowShape;
+  register(shape);
   if (u.name === "List") parts.push("l", arg(0));
   else if (u.name === "Tuple") parts.push("t", ...u.args.map((_, i) => arg(i)));
   else if (u.name === "Map") parts.push("m", key(), arg(0), arg(1));

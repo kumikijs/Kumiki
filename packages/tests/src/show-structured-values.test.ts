@@ -112,6 +112,13 @@ tile App = column(
     }
   });
 
+  it("writes a generic whose recursion grows its argument as itself", async () => {
+    const text = await pageText(`type N(T) = {v: T, kids: List(N(List(T)))}
+slot n : N(Int) = {v: 1, kids: []}
+tile App = column(text("n: " + n))`);
+    expect(text).toContain("n: {v: 1, kids: []}");
+  });
+
   it("writes the route slot's Maps as Maps", async () => {
     const text = await pageText(`tile App = column(text("route: " + route))`);
     expect(text).toContain('route: {path: "/", pattern: "/", params: {}, query: {}, hash: None}');
