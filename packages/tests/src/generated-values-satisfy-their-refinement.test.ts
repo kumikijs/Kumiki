@@ -129,8 +129,8 @@ describe("a generated value passes every refinement stacked on its type", () => 
   });
 });
 
-// The other value the runtime makes up for a `uuid` slot: the runtime mints it and the compiler's
-// table checks it.
+// Besides the generated values above, the runtime makes up fresh ids, and the compiler's `uuid`
+// predicate accepts them too.
 describe("a fresh id passes the check a uuid-refined slot applies", () => {
   it("mints ids the uuid predicate accepts", () => {
     const accepts = predicate("uuid");

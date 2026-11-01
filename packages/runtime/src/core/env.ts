@@ -116,17 +116,18 @@ export function readEnv<T>(kind: EnvReadKind, live: () => T): T {
 
 type PlatformCrypto = { getRandomValues?: (bytes: Uint8Array) => Uint8Array };
 
-/** The millisecond and counter of the last id `newId` minted: the floor the next sorts above. */
+// The millisecond and counter of the last id `newId` minted: the floor the next id sorts above.
 let lastMs = 0;
 let counter = 0;
 
 /**
  * What a `fresh-id` or an `effect-id` read answers live: a UUIDv7 (RFC 9562), so each id sorts,
- * as text, after the one before it. A new millisecond seeds the counter with 11 random bits, its
- * top bit clear so there is room to count up; the same millisecond, or a clock that stepped back,
- * takes the next count, and a counter that runs out moves the millisecond on instead of wrapping.
- * `crypto.randomUUID` is not asked, since it mints a v4. The `Math.random` fallback is acceptable
- * because a fresh id only has to be distinct, never unguessable.
+ * as text, after the one before it. A new millisecond seeds the 12-bit counter from 11 random
+ * bits, leaving its top bit clear so a millisecond holds at least 2,049 ids. `crypto.randomUUID`
+ * is not asked, since it mints a v4. Within one runtime the millisecond and the counter keep ids
+ * distinct, so the random bits only separate ids two runs mint in one millisecond, and
+ * `Math.random` is enough for that where `getRandomValues` is missing. Nothing needs an id to be
+ * unguessable.
  */
 export function newId(): string {
   const c = (globalThis as { crypto?: PlatformCrypto }).crypto;

@@ -7,8 +7,9 @@
 # up through the ids it mints within one millisecond, or after the clock steps
 # back, so each sorts after the one before it. `mint` writes twelve ids in one
 # run, most of them in the same millisecond, and `ids.sort == ids` says whether
-# sorting them as text gives back the order they were minted in. Each id is
-# written to a slot refined by `uuid`, which a v7 id passes like any uuid.
+# sorting them as text gives back the order they were minted in. Each id goes
+# into a `List(ItemId)`, whose elements are refined by `uuid`, which a v7 id
+# passes like any uuid.
 
 type ItemId = nominal Text where uuid
 
