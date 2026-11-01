@@ -1,5 +1,6 @@
 import {
   type AppShape,
+  type BuiltinEffectName,
   type CapabilityProvider,
   type CapabilityRegistry,
   computeSlotDiffs,
@@ -130,17 +131,19 @@ export async function renderToString(
   }
 }
 
-// A mount installs the standard effects onto `app.effects`; this pass installs and runs none, so
-// an emit of one finds no entry here and is skipped rather than reported as naming no effect.
-export const STANDARD_EFFECTS: ReadonlySet<string> = new Set([
-  "log",
-  "navigate",
-  "navigate-replace",
-  "navigate-back",
-  "scroll-to",
-  "toast",
-  "confirm",
-]);
+// A mount installs the standard effects and this pass does not, so an emit of one that finds no
+// entry here is skipped unreported: it names an effect this pass does not run, not a missing one.
+// Keyed by `BuiltinEffectName`, so a standard effect added there is a type error here until listed.
+const STANDARD_EFFECT_TABLE: { readonly [N in BuiltinEffectName]: true } = {
+  log: true,
+  navigate: true,
+  "navigate-replace": true,
+  "navigate-back": true,
+  "scroll-to": true,
+  toast: true,
+  confirm: true,
+};
+const STANDARD_EFFECTS: ReadonlySet<string> = new Set(Object.keys(STANDARD_EFFECT_TABLE));
 
 async function dispatchEmit(
   app: AppShape,
@@ -149,11 +152,11 @@ async function dispatchEmit(
   caps: CapabilityRegistry,
   logger: EpisodeLogger,
 ): Promise<void> {
-  const effect = app.effects[emit.effect];
+  const effect = Object.hasOwn(app.effects, emit.effect) ? app.effects[emit.effect] : undefined;
   if (!effect) {
     if (STANDARD_EFFECTS.has(emit.effect)) return;
-    // No effect-start / effect-cancel pair: nothing was claimed, so nothing is left pending to
-    // keep the bootstrap episode from committing.
+    // No effect-start / effect-cancel pair, unlike a refused capability: with no effect there is
+    // nothing to start, and the live dispatcher records the panic step alone too.
     logger.recordPanic(reportRefusedEmit(emit.effect, { category: "effect" }));
     return;
   }

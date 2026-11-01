@@ -415,6 +415,10 @@ export const someOf = <T>(value: T): OptionOf<T> => ({ _tag: "Some", _0: value }
 
 export const NONE: OptionOf<never> = { _tag: "None" };
 
+/** Own keys only: a name every object inherits (`toString`, `__proto__`) finds nothing. */
+export const own = <T>(table: Readonly<Record<string, T>>, key: string): T | undefined =>
+  Object.hasOwn(table, key) ? table[key] : undefined;
+
 /** `HttpError` as `.err` receives it. */
 export type HttpError = { status: number; message: string; body: OptionOf<string> };
 

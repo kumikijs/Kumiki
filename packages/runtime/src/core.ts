@@ -29,7 +29,6 @@ export {
 export { ensureAnimationStyles } from "./core/motion.ts";
 export { mountCore } from "./core/mount.ts";
 export {
-  type EmitRefusal,
   isPanic,
   KumikiPanic,
   type PanicRecord,

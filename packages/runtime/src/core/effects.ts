@@ -10,6 +10,7 @@ import {
   type EmitSpec,
   type HttpError,
   NONE,
+  own,
 } from "./types.ts";
 
 export function makeCapabilityRegistry(
@@ -155,10 +156,10 @@ export function makeEffectDispatcher(
 
   return {
     dispatch(emit: EmitSpec): void {
-      const eff = app.effects[emit.effect];
+      const eff = own(app.effects, emit.effect);
       if (!eff) {
-        // No token: a policy is a property of an effect, so with none to read one off nothing
-        // defers this, and the episode that owns the emit is the one in focus.
+        // No token: with no effect there is no policy to defer this emit, so it is reported now, on
+        // the episode in focus.
         onRefusal(emit.effect, { category: "effect" });
         return;
       }

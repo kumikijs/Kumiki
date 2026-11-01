@@ -1,8 +1,17 @@
 import type { AppShape, EffectSpec, EmitSpec, EpisodeStep, userPanicInfo } from "@kumikijs/runtime";
-import { createEpisodeLogger, mount, renderToString } from "@kumikijs/runtime";
+import {
+  createEpisodeLogger,
+  hydrate,
+  mount,
+  mountCore,
+  renderToString,
+  textPatchers,
+  textTiles,
+} from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { STANDARD_EFFECTS } from "../src/ssr.ts";
+import { lifecycleReducer } from "./helpers/app.ts";
 import { captureConsole } from "./helpers/console.ts";
+import { defined } from "./helpers/defined.ts";
 import { freshRoot } from "./helpers/dom.ts";
 
 type PanicInfo = ReturnType<typeof userPanicInfo>;
@@ -278,25 +287,22 @@ const stepKinds = (steps: readonly EpisodeStep[] = []): string[] =>
 function emitOnStart(emits: EmitSpec[]): ReturnType<typeof makeApp> {
   const made = makeApp(["storage.write"]);
   made.app.init = [];
-  made.app.reducers.push({
-    name: "onStart",
-    event: { kind: "lifecycle", name: "app.start" },
-    apply: (live) => ({ slots: live, emits }),
-  });
+  made.app.reducers.push(lifecycleReducer("app.start", (live) => ({ slots: live, emits })));
   return made;
 }
 
+/** Names a plain object inherits from `Object.prototype`, none of them an own key of `app.effects`. */
+const INHERITED = ["toString", "constructor", "__proto__"];
+
 describe("an emit naming no effect is reported to the app (live)", () => {
-  // Synchronously, unlike the refusal above: the dispatcher looks the name up
-  // the moment the emit reaches it, before any policy could defer anything —
-  // a policy is a property of an effect, and there is no effect to read one
-  // off.
   it("fires app.error with the effect category", () => {
     const { app, seen } = emitOnStart([TYPO]);
 
     const { dispose } = mount(app, root);
 
-    expect(seen).toEqual([
+    // No waitFor: the name is looked up the moment the emit reaches the dispatcher, before any
+    // policy could defer it.
+    expect(seen).toMatchObject([
       {
         message: TYPO_MESSAGE,
         location: `effect "sve"`,
@@ -304,6 +310,19 @@ describe("an emit naming no effect is reported to the app (live)", () => {
         cause: { _tag: "None" },
         category: "effect",
       },
+    ]);
+    expect(seen[0]).not.toHaveProperty("stack");
+    dispose();
+  });
+
+  it.each(INHERITED)("reports %s, an inherited key, as naming no effect", (name) => {
+    const { app, seen } = emitOnStart([{ effect: name, args: ["draft"] }]);
+
+    const { dispose } = mount(app, root);
+
+    expect(seen).toMatchObject([{ category: "effect", location: `effect "${name}"` }]);
+    expect(errors).toEqual([
+      `[kumiki] panic in effect "${name}": effect "${name}" is not declared in app.effects`,
     ]);
     dispose();
   });
@@ -360,9 +379,7 @@ describe("an emit naming no effect is reported to the app (live)", () => {
     // `episode-id` names it, rather than an episode of its own or none.
     const logger = createEpisodeLogger({ memoryMax: 10 });
     const { app, seen } = emitOnStart([{ effect: "save", args: ["draft"] }]);
-    const save = app.effects.save;
-    if (!save) throw new Error("fixture lost its effect");
-    save.policy = { kind: "queue" };
+    defined(app.effects.save, "the fixture's effect").policy = { kind: "queue" };
     app.reducers.push({
       name: "onSaved",
       event: { kind: "effect", effect: "save", outcome: "ok" },
@@ -406,9 +423,7 @@ describe("an emit naming no effect is reported to the app (live)", () => {
   it("does not re-enter app.error when the handler itself emits it", () => {
     const { app, seen } = makeApp(["storage.write"]);
     app.init = [TYPO];
-    const handler = app.reducers[0];
-    if (!handler) throw new Error("fixture lost its handler");
-    handler.apply = (live, payload) => {
+    defined(app.reducers[0], "the fixture's handler").apply = (live, payload) => {
       seen.push(payload.$event as PanicInfo);
       return { slots: live, emits: [TYPO] };
     };
@@ -437,6 +452,23 @@ describe("an emit naming no effect is reported to the app (live)", () => {
 
     expect(errors).toEqual([]);
     expect(seen).toEqual([]);
+    dispose();
+  });
+
+  it.each([
+    "toast",
+    "confirm",
+    "navigate",
+  ])("reports %s when the mountCore host installed nothing that registers it", (name) => {
+    // No `builtins` and no `routing`: the only way a compiled program reaches this branch.
+    const { app, seen } = emitOnStart([{ effect: name, args: [{}] }]);
+
+    const { dispose } = mountCore(app, root, { tiles: textTiles, tilePatchers: textPatchers });
+
+    expect(errors).toEqual([
+      `[kumiki] panic in effect "${name}": effect "${name}" is not declared in app.effects`,
+    ]);
+    expect(seen).toMatchObject([{ category: "effect", location: `effect "${name}"` }]);
     dispose();
   });
 
@@ -505,36 +537,91 @@ describe("an emit naming no effect is reported to the log (SSR)", () => {
     ]);
   });
 
-  it("skips a standard effect, which names an effect the pass does not run", async () => {
-    // The pass installs no standard effect, so each of these finds no entry in
-    // `app.effects` — and each is one a compiled program may emit from
-    // `app.init`. Reporting them would put a panic on the console of every
-    // server render of a valid program, and ship its bootstrap as `"panic"`.
+  it.each(INHERITED)("reports %s, an inherited key, as naming no effect", async (name) => {
+    const { app } = makeApp(["storage.write"]);
+    app.init = [{ effect: name, args: ["draft"] }];
+
+    const { snapshot } = await renderToString(app);
+
+    expect(snapshot.bootstrap.steps).toMatchObject([
+      { kind: "panic", category: "effect", location: `effect "${name}"` },
+    ]);
+  });
+
+  it("reports one a follow-up emits, and the bootstrap episode still commits", async () => {
+    // The `.ok` reducer runs inside the effect's own scope, so the report lands there, before the
+    // scope closes; with no start claimed for it, nothing is left pending.
+    const { app } = makeApp(["storage.write"]);
+    app.reducers.push({
+      name: "onSaved",
+      event: { kind: "effect", effect: "save", outcome: "ok" },
+      apply: (live) => ({ slots: live, emits: [TYPO] }),
+    });
+
+    const { snapshot } = await renderToString(app);
+
+    expect(stepKinds(snapshot.bootstrap.steps)).toEqual([
+      "effect-start",
+      "effect-end",
+      "reducer",
+      "panic",
+    ]);
+    expect(snapshot.bootstrap.status).toBe("panic");
+    expect(errors).toEqual([TYPO_LINE]);
+  });
+
+  it("adds no second line and no app.error when the client hydrates the panic bootstrap", async () => {
+    const { app, seen } = makeApp(["storage.write"]);
+    app.init = [TYPO];
+    const rendered = await renderToString(app);
+
+    const handle = hydrate(app, root, rendered, { episodeLogger: createEpisodeLogger() });
+
+    expect(errors).toEqual([TYPO_LINE]);
+    expect(seen).toEqual([]);
+    expect(handle.episodes()[0]).toMatchObject({
+      id: rendered.bootstrapEpisode.id,
+      status: "panic",
+    });
+    handle.dispose();
+  });
+});
+
+/** The standard effects a full mount registers onto an app that declares none. */
+const installed = ((): string[] => {
+  const { app } = makeApp([]);
+  app.effects = {};
+  app.init = [];
+  const at = freshRoot();
+  mount(app, at).dispose();
+  at.remove();
+  return Object.keys(app.effects);
+})();
+
+describe("an emit of a standard effect is skipped on the server", () => {
+  it("knows all seven, so the cases below cannot pass on an empty list", () => {
+    expect([...installed].sort()).toEqual([
+      "confirm",
+      "log",
+      "navigate",
+      "navigate-back",
+      "navigate-replace",
+      "scroll-to",
+      "toast",
+    ]);
+  });
+
+  it.each(installed)("skips %s, a standard effect the pass does not run", async (name) => {
+    // Reporting it would put a panic on the console of every server render of a valid program
+    // whose `init` emits one, and ship its bootstrap as `"panic"`.
     const { app } = makeApp([]);
     app.effects = {};
-    app.init = [
-      { effect: "log", args: [{ level: "info", message: "boot", data: {} }] },
-      { effect: "toast", args: [{ kind: "info", text: "hi" }] },
-      { effect: "navigate", args: [{ path: "/next", params: {}, query: {} }] },
-    ];
+    app.init = [{ effect: name, args: [{}] }];
 
     const { snapshot } = await renderToString(app);
 
     expect(errors).toEqual([]);
     expect(snapshot.bootstrap.steps).toEqual([]);
     expect(snapshot.bootstrap.status).toBe("completed");
-  });
-
-  it("knows every standard effect a mount installs as one", () => {
-    // The pass's list against the installers: a mount through the full entry
-    // registers every standard effect onto an app that declares none.
-    const { app } = makeApp([]);
-    app.effects = {};
-    app.init = [];
-
-    const { dispose } = mount(app, root);
-
-    expect(Object.keys(app.effects).sort()).toEqual([...STANDARD_EFFECTS].sort());
-    dispose();
   });
 });
