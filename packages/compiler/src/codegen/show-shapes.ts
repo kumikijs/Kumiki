@@ -60,7 +60,7 @@ function cyclicParts(shape: Part): Part[] {
 }
 
 // A part on a cycle is declared empty and filled in after, so a reference back to it names the
-// declaration.
+// declaration; a record part has no prototype, so filling it writes a `__proto__` field as a field.
 function declarations(
   shape: Part,
   cyclic: readonly Part[],
@@ -73,14 +73,21 @@ function declarations(
     const name = named.get(s);
     if (name !== undefined && !own) return name;
     if (Array.isArray(s)) return `[${s.map((slot: Slot) => literal(slot)).join(",")}]`;
-    const fields = Object.entries(s).map(([k, slot]) => `${JSON.stringify(k)}:${literal(slot)}`);
+    const fields = Object.entries(s).map(([k, slot]) => `${propertyKey(k)}:${literal(slot)}`);
     return `{${fields.join(",")}}`;
   };
-  const lines = cyclic.map((s, i) => `const ${names[i]} = ${Array.isArray(s) ? "[]" : "{}"};`);
+  const lines = cyclic.map(
+    (s, i) => `const ${names[i]} = ${Array.isArray(s) ? "[]" : "Object.create(null)"};`,
+  );
   lines.push(...cyclic.map((s, i) => `Object.assign(${names[i]}, ${literal(s, true)});`));
   const root = named.get(shape);
   if (root !== undefined) return { text: lines.join(" "), root };
   const name = rootName();
   lines.push(`const ${name} = ${literal(shape)};`);
   return { text: lines.join(" "), root: name };
+}
+
+// In an object literal a plain `"__proto__":` sets the prototype; a computed key is a field.
+function propertyKey(k: string): string {
+  return k === "__proto__" ? `["__proto__"]` : JSON.stringify(k);
 }

@@ -221,6 +221,18 @@ describe("show", () => {
       ["m", 0, 0, ["t", 0, 0]],
       '{"k": (1, "a")}',
     ],
+    [
+      "a `constructor` field the record's shape has no entry for",
+      { constructor: { caller: 1 }, m: { a: 1 } },
+      { m: ["m", 0, 0, 0] },
+      '{constructor: {caller: 1}, m: {"a": 1}}',
+    ],
+    [
+      "a `__proto__` field by the record's own entry for it",
+      JSON.parse('{"__proto__": {"a": 1}, "n": 2}'),
+      JSON.parse('{"__proto__": ["m", 0, 0, 0]}'),
+      '{__proto__: {"a": 1}, n: 2}',
+    ],
   ])("writes %s", (_label, value, shape, expected) => {
     expect(show(value, shape)).toBe(expected);
   });

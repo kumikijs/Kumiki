@@ -83,6 +83,24 @@ slot a : A = {bs: [], m: {}}`,
     expect(a.bs[1].as[1]).toBe(a);
   });
 
+  it.each([
+    [
+      "a record",
+      `type R = {__proto__: Map(Text, Int), n: Int}
+slot r : R = {__proto__: {}, n: 1}`,
+    ],
+    [
+      "a record that contains itself",
+      `type R = {__proto__: Map(Text, Int), kids: List(R)}
+slot r : R = {__proto__: {}, kids: []}`,
+    ],
+  ])("writes a field named `__proto__` of %s as an own field of the shape", (_, defs) => {
+    const { js, shapes } = declaredShapes(withRoot('text("r: " + r)', defs));
+    const r = shapes[shapeAt(js, "r") ?? ""] as object;
+    expect(Object.hasOwn(r, "__proto__")).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(r, "__proto__")?.value).toEqual(["m", 0, 0, 0]);
+  });
+
   it("leaves a value with no shape to read as itself, a number `+` included", () => {
     const js = compileOrFail(withRoot('text("n=" + n), text((n + 1).show)', "slot n : Int = 1"));
     expect(shapeLines(js)).toEqual([]);

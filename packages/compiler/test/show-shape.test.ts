@@ -67,4 +67,10 @@ slot n : N(Int) = {v: 1, kids: []}
 tile App = column(text("n: " + n))`);
     expect(summariesOf(src)).toEqual([]);
   });
+
+  it("keeps the shape of a field named `__proto__` as an own field", () => {
+    const shape = shapeOf("{__proto__: Counts}");
+    expect(Object.hasOwn(shape as object, "__proto__")).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(shape, "__proto__")?.value).toEqual(["m", 0, 0, 0]);
+  });
 });

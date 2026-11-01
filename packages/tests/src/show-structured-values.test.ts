@@ -119,6 +119,13 @@ tile App = column(text("n: " + n))`);
     expect(text).toContain("n: {v: 1, kids: []}");
   });
 
+  it("writes a record with a `constructor` field whose shape has no entry for it", async () => {
+    const text = await pageText(`type R = {constructor: {caller: Int}, m: Map(Text, Int)}
+slot r : R = {constructor: {caller: 2}, m: {"b": 3}}
+tile App = column(text("r: " + r))`);
+    expect(text).toContain('r: {constructor: {caller: 2}, m: {"b": 3}}');
+  });
+
   it("writes the route slot's Maps as Maps", async () => {
     const text = await pageText(`tile App = column(text("route: " + route))`);
     expect(text).toContain('route: {path: "/", pattern: "/", params: {}, query: {}, hash: None}');

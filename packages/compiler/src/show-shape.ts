@@ -62,7 +62,8 @@ function shapeOf(
   const inner = inside(t, name, path);
   const u = unaliasType(t, env);
   if (u?.kind === "TypeRecord") {
-    const fields: Record<string, ShowShape> = {};
+    // No prototype, so a field named `__proto__` is a field like any other.
+    const fields: Record<string, ShowShape> = Object.create(null);
     register(fields);
     for (const f of u.fields) {
       const s = shapeOf(f.type, env, building, inner);

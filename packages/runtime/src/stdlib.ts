@@ -25,13 +25,18 @@ export type KeyKind = "number" | "bool" | "value";
 
 // What the type says and the value does not: a record and a Map are both plain objects, a Set
 // is an object of its keys, and a Tuple is an array like a List.
-export type ShowShape =
-  | 0
-  | { readonly [field: string]: ShowShape }
+export type ShowShape = 0 | RecordShape | Descriptor;
+
+type RecordShape = { readonly [field: string]: ShowShape };
+
+type Descriptor =
   | readonly ["l", ShowShape]
   | readonly ["t", ...ShowShape[]]
   | readonly ["m", KeyKind | 0, ShowShape, ShowShape]
   | readonly ["s", KeyKind | 0, ShowShape];
+
+// A List's, Tuple's, Map's or Set's shape is an array; a record's is an object of its fields.
+const isDescriptor = (s: ShowShape | undefined): s is Descriptor => Array.isArray(s);
 
 /** A stored object key, restored to the kind of value it was written from. */
 function restoreKey(key: string, kind: KeyKind | undefined): unknown {
@@ -381,21 +386,26 @@ export const _stdlibCore = {
     }
     if (typeof v !== "object") return String(v);
     // A descriptor's tag, then its slots; what a slot holds depends on the tag.
-    const d: readonly unknown[] = Array.isArray(shape) ? shape : [];
+    const d = isDescriptor(shape) ? shape : ([0] as const);
     const tag = d[0];
-    if (!tag && "_tag" in v) return (v as { _tag: string })._tag;
-    const at = (x: unknown, s: unknown): string =>
-      typeof x === "string" ? JSON.stringify(x) : _stdlibCore.show(x, s as ShowShape);
+    if (!tag && "_tag" in v) return v._tag as string;
+    const at = (x: unknown, s?: ShowShape): string =>
+      typeof x === "string" ? JSON.stringify(x) : _stdlibCore.show(x, s);
     const list = Array.isArray(v);
     const o = v as Record<string, unknown>;
-    // A Map's or Set's `d[1]` is its key kind: a Set is read as the Map of its members to `true`.
+    // A Map's or Set's key kind reads its stored keys back: a Set is the Map of its members to
+    // `true`. A Tuple's slots past its tag are all shapes, which its type cannot say by index.
+    // A record's shape is read for its own entries: an inherited `constructor` is no field's.
     const items = list
-      ? v.map((x, i) => at(x, d[tag === "t" ? i + 1 : 1]))
-      : tag
-        ? (_stdlibCore.mapEntries(o, (d[1] || undefined) as KeyKind) as [unknown, unknown][]).map(
+      ? v.map((x, i) => at(x, tag === "l" ? d[1] : tag === "t" ? (d[i + 1] as ShowShape) : 0))
+      : tag === "m" || tag === "s"
+        ? (_stdlibCore.mapEntries(o, d[1] || undefined) as [unknown, unknown][]).map(
             ([k, x]) => at(k, d[2]) + (tag === "m" ? `: ${at(x, d[3])}` : ""),
           )
-        : Object.keys(o).map((k) => `${k}: ${at(o[k], (shape as Record<string, ShowShape>)?.[k])}`);
+        : Object.keys(o).map(
+            (k) =>
+              `${k}: ${at(o[k], shape && !isDescriptor(shape) && Object.hasOwn(shape, k) ? shape[k] : 0)}`,
+          );
     const [open, close] = tag === "t" ? "()" : list || tag === "s" ? "[]" : "{}";
     return open + items.join(", ") + close;
   },
