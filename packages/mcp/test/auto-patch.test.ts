@@ -196,7 +196,18 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
       status: "test-blocked",
       ok: false,
       patch: { code: "TEST" },
-      blocked: { reason: "regressed", regressed: ["B"] },
+      blocked: {
+        reason: "regressed",
+        regressed: ["B"],
+        failingTests: [
+          {
+            name: "B",
+            pass: false,
+            diffAt: "slots.message",
+            leaf: { expected: "world", actual: "planet" },
+          },
+        ],
+      },
     });
     expect(readFileSync(file, "utf8")).toBe(original);
   });

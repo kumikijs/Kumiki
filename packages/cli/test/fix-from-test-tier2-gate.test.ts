@@ -241,7 +241,18 @@ describe("the behavioural write is gated", () => {
     expect(readFileSync(file, "utf8")).toBe(before);
     expect(outcome.status).toBe("test-blocked");
     if (outcome.status === "test-blocked") {
-      expect(outcome.blocked).toEqual({ reason: "regressed", regressed: ["B"] });
+      expect(outcome.blocked).toEqual({
+        reason: "regressed",
+        regressed: ["B"],
+        failingTests: [
+          expect.objectContaining({
+            name: "B",
+            pass: false,
+            diffAt: "slots.message",
+            leaf: { expected: "world", actual: "planet" },
+          }),
+        ],
+      });
     }
   });
 
@@ -377,6 +388,37 @@ describe("a test whose body throws", () => {
     expect(outcome.status).toBe("applied");
     expect(readFileSync(file, "utf8")).toContain("fn step() -> Int = 2");
   });
+
+  it("refuses a patch after which a test that passed throws, saying what it threw", async () => {
+    // `step()` 1 picks the last of two items; the patch's 2 is past the end.
+    const file = seedLines([
+      ...DIGIT_IN_IDENTIFIER,
+      "test step-picks =",
+      "    reducer-test inc",
+      "        given  = {slots: {count: 0}, event: {type: ui.click, target: Btn1}}",
+      "        expect = {slots: {count: [0, 1][step()]}, effects: []}",
+    ]);
+    const before = readFileSync(file, "utf8");
+    const lines: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((m: unknown) => void lines.push(String(m)));
+    vi.spyOn(console, "error").mockImplementation((m: unknown) => void lines.push(String(m)));
+    const thrown = "Index 2 is out of range for a List of length 2";
+
+    const outcome = await fixFromTest(file, "inc-adds-two", true);
+
+    expect(readFileSync(file, "utf8")).toBe(before);
+    expect(outcome.status).toBe("test-blocked");
+    if (outcome.status === "test-blocked") {
+      expect(outcome.blocked).toEqual({
+        reason: "regressed",
+        regressed: ["step-picks"],
+        failingTests: [{ name: "step-picks", pass: false, error: thrown, ms: expect.any(Number) }],
+      });
+    }
+    expect(lines.join("\n")).toContain(
+      ["  reason: regressed", "  would regress: step-picks", `    error:    ${thrown}`].join("\n"),
+    );
+  });
 });
 
 describe("the gate when the runner misbehaves on the patched source", () => {
@@ -436,7 +478,11 @@ describe("the gate when the runner misbehaves on the patched source", () => {
 
     expect(outcome.status).toBe("test-blocked");
     if (outcome.status === "test-blocked") {
-      expect(outcome.blocked).toEqual({ reason: "regressed", regressed: ["adds-one"] });
+      expect(outcome.blocked).toEqual({
+        reason: "regressed",
+        regressed: ["adds-one"],
+        failingTests: [],
+      });
     }
     expect(readFileSync(file, "utf8")).toBe(before);
   });
