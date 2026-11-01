@@ -260,6 +260,8 @@ parse-float                 : Option(Float)
 
 `replace(from, to)` replaces every occurrence of `from`, matched as plain text, with `to` as written: `"a-b-c".replace("-", "+")` is `"a+b+c"`, and `"a.b.c".replace(".", "/")` is `"a/b/c"`. `to` has no substitution syntax. A `$` in it is text, whatever follows it, so `"cost: X".replace("X", "$$5")` is `"cost: $$5"` and `"a-b".replace("-", "$&")` is `"a$&b"`, whether `to` is a literal or a value read from a slot. Occurrences are found left to right and do not overlap, so `"aaa".replace("aa", "b")` is `"ba"`; an empty `from` matches at every UTF-16 code-unit position, the end included, so `"abc".replace("", "-")` is `"-a-b-c-"`.
 
+`text.parse-int` reads `text` as [`Int.parse(text)`](#_2-4-3-type-conversion) does, and `text.parse-float` as `Float.parse(text)` does. It is one reading, so the two spellings never make different values of the same text. Only decimal text is read, and only the whole of it: `"3.7".parse-int`, `"1e3".parse-int`, `"0x10".parse-int` and `" 12 ".parse-int` are all `None`, while `"3.7".parse-float` is `Some(3.7)` and `"1e3".parse-float` is `Some(1000)`. A fraction is not truncated into an `Int` — when truncating is what is meant, write `text.parse-float.map($1.to-int)` — and blanks are not read past: `text.trim.parse-int` reads text that may carry them.
+
 ### 2.2.7 Int / Float
 
 ```
@@ -567,14 +569,14 @@ As in [§2.4.1](#_2-4-1-id-generation), `TypeName` is a type that takes no argum
 
 | Base | `Some` of | `None` when the text |
 |---|---|---|
-| `Int` | the number it spells: an optional `+` / `-` and decimal digits | is anything else — a fraction, an exponent, a `0x` / `0b` prefix, surrounding blanks, empty |
+| `Int` | the number it spells: an optional `+` / `-` and decimal digits | is anything else — a fraction, an exponent, a `0x` / `0b` prefix, surrounding blanks, empty — or spells a number outside ±(2^53 − 1), the range an `Int` holds exactly, which [E0217](./errors.md#e0217-int-literal-precision) holds a literal to as well |
 | `Float` | the number it spells: an optional `+` / `-`, decimal digits, an optional `.` and digits, an optional `e` / `E` exponent | is anything else — `.5`, `1.`, `0x10`, `Infinity`, surrounding blanks, empty — or spells a number too large to be finite |
 | `Time` | the instant, as [`Time.parse`](#_2-2-8-time) reads it | is outside the [`Time.parse`](#_2-2-8-time) grammar, or names a date off the calendar (`2026-02-30`) — `2026/02/30`, `+002026-08-14`, `2026-08-14T24:00`, surrounding blanks, empty |
 | `Bool` | `true` for `"true"`, `false` for `"false"` — the two spellings `.show` produces | is anything else |
 | `Text` | the text itself | is empty |
 | `Bytes` | its UTF-8 bytes, as `Bytes.from-text` builds them | is empty |
 
-The readings are exact, like `Bool`'s: `Int.parse(" 12 ")` and `Int.parse("0x10")` are `None`, not `Some(12)` and `Some(16)`. Trim the text first when blanks are expected.
+The readings are exact, like `Bool`'s: `Int.parse(" 12 ")` and `Int.parse("0x10")` are `None`, not `Some(12)` and `Some(16)`. Trim the text first when blanks are expected. The `Int` and `Float` readings are also the ones `text.parse-int` and `text.parse-float` ([§2.2.6](#_2-2-6-text)) read, and the ones an `input` bound to an `Int` or a `Float` reads its text by ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)).
 
 For `Bytes`, `parse` is not the inverse of `show`. `b.show` is base64 ([§2.2.10](#_2-2-10-bytes)) and `Bytes.parse` reads UTF-8, so `Bytes.parse(b.show)` is never `Some(b)`: it is `Some` of the bytes of that base64 text, and `None` for the empty `Bytes`, whose `show` is `""`. The inverse of a `Bytes`'s `show` is `Bytes.from-base64`: `Bytes.from-base64(b.show)` is `b`.
 
