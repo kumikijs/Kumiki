@@ -5,19 +5,21 @@
 
 A record, a List, a Tuple, a Map and a Set show as the literal that builds them
 
-`show` was `String(v)`, so a record or a Map rendered `[object Object]`, and a
-List or a Set rendered its members joined by bare commas:
+`show` was `String(v)`, so a record, a Map or a Set rendered `[object Object]`,
+and a List rendered its members joined by bare commas:
 
 ```
 slot p : {name: Text}   = {name: "ada"}
 slot m : Map(Text, Int) = {"a": 1}
 slot s : Set(Int)       = [1, 2]
+slot l : List(Int)      = [1, 2]
 
 "p: " + p               p: [object Object]
 p.show                  [object Object]
 fmt("{0}", p)           [object Object]
 "m: " + m               m: [object Object]
-"s: " + s               s: 1,2
+"s: " + s               s: [object Object]
+"l: " + l               l: 1,2
 ```
 
 An error-boundary fallback that wrote `"recovered: " + $1` rendered
@@ -31,6 +33,7 @@ p.show                  {name: "ada"}
 fmt("{0}", p)           {name: "ada"}
 "m: " + m               m: {"a": 1}
 "s: " + s               s: [1, 2]
+"l: " + l               l: [1, 2]
 (1, "a").show           (1, "a")
 "recovered: " + $1      recovered: {message: "…", location: "…", episode-id: None, cause: None, category: "tile-render"}
 ```
