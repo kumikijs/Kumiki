@@ -20,7 +20,8 @@
           "Float.parse 3.7",
           "parse-float 3.7",
           "truncated 3"
-        ]
+        ],
+        "domExcludes": ["truncated 3.7"]
       }
     },
     {

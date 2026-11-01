@@ -105,15 +105,18 @@ describe("stdlib argument-less methods", () => {
 
   // Only an optional sign and decimal digits (and for a Float a fraction and an exponent) read: a
   // fraction is no Int rather than truncated into one, and a number handed in is no text.
-  it.each([
+  const rows: [fn: "parseIntOpt" | "parseFloatOpt", text: unknown, result: unknown][] = [
     ["parseIntOpt", "42", Some(42)],
     ["parseIntOpt", "+5", Some(5)],
     ["parseIntOpt", "007", Some(7)],
-    ["parseIntOpt", "-0", Some(-0)],
+    ["parseIntOpt", "9007199254740991", Some(9007199254740991)],
+    ["parseIntOpt", "-9007199254740991", Some(-9007199254740991)],
+    ["parseIntOpt", "9007199254740992", None],
     ["parseIntOpt", "3.7", None],
     ["parseIntOpt", "0x10", None],
     ["parseIntOpt", "1e3", None],
     ["parseIntOpt", " 12 ", None],
+    ["parseIntOpt", "12\n", None],
     ["parseIntOpt", `1${"0".repeat(400)}`, None],
     ["parseIntOpt", "x", None],
     ["parseIntOpt", "", None],
@@ -123,13 +126,21 @@ describe("stdlib argument-less methods", () => {
     ["parseFloatOpt", "-1.5e-3", Some(-0.0015)],
     ["parseFloatOpt", "0x10", None],
     ["parseFloatOpt", " 1.5 ", None],
+    ["parseFloatOpt", "12\n", None],
     ["parseFloatOpt", ".5", None],
     ["parseFloatOpt", "1.", None],
     ["parseFloatOpt", "Infinity", None],
     ["parseFloatOpt", "1e400", None],
     ["parseFloatOpt", "nope", None],
     ["parseFloatOpt", 1.5, None],
-  ] as const)("%s(%j) is %j", (fn, text, result) => {
+  ];
+  const shown = (text: unknown): string =>
+    typeof text === "string" && text.length > 24
+      ? `${text.slice(0, 4)}… (${text.length} characters)`
+      : JSON.stringify(text);
+  it.each(
+    rows.map(([fn, text, result]) => ({ fn, text, result, shown: shown(text) })),
+  )("$fn($shown) is $result", ({ fn, text, result }) => {
     expect(_stdlib[fn](text)).toEqual(result);
   });
 });

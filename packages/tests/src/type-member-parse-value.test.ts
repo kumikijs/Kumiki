@@ -173,14 +173,18 @@ describe("Int and Float read decimal text only, whichever way the parse is spelt
     ["+7", { _tag: "Some", _0: 7 }],
     ["-3", { _tag: "Some", _0: -3 }],
     ["007", { _tag: "Some", _0: 7 }],
-    // Past 2^53 the digits name a number a Float cannot hold exactly; the
-    // reading is the nearest one, as the number literal's is.
-    ["9007199254740993", { _tag: "Some", _0: 9007199254740992 }],
+    // Past ±(2^53 - 1) the digits name a number an Int does not hold exactly, as an Int literal
+    // there is E0217.
+    ["9007199254740991", { _tag: "Some", _0: 9007199254740991 }],
+    ["-9007199254740991", { _tag: "Some", _0: -9007199254740991 }],
+    ["9007199254740993", { _tag: "None" }],
     ["0x10", { _tag: "None" }],
     ["0b101", { _tag: "None" }],
     ["1e3", { _tag: "None" }],
     [" 12 ", { _tag: "None" }],
     ["\t7", { _tag: "None" }],
+    // Read whole: an `m` flag on the form would let `$` match before the newline.
+    ["12\n", { _tag: "None" }],
     ["1.5", { _tag: "None" }],
     ["3.7", { _tag: "None" }],
     ["1.", { _tag: "None" }],
@@ -203,6 +207,7 @@ describe("Int and Float read decimal text only, whichever way the parse is spelt
     ["0b101", { _tag: "None" }],
     [" 1.5", { _tag: "None" }],
     [" 12 ", { _tag: "None" }],
+    ["12\n", { _tag: "None" }],
     [".5", { _tag: "None" }],
     ["1.", { _tag: "None" }],
     ["1_000", { _tag: "None" }],
