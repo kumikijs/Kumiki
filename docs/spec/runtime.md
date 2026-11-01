@@ -383,7 +383,8 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
      per loop in the source;
    - the **occurrence**: how many elements up to and including this one have
      the same shown value (1 for the first `7`, 2 for the second);
-   - the **shown value**, `_s.show(<loopVar>)`.
+   - the **shown value**, `_s.show(<loopVar>)` with each record, Map and Set
+     in it written as nothing, at any depth (below).
 
    *Informative:* the implementation names a loop by the tile definition it is
    written in and its ordinal among that definition's loops in source order
@@ -413,14 +414,19 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
    - An insert or remove before a repeated value renumbers its later
      occurrences, so the elements of equal values may trade places, and the
      moves that makes can take a neighbouring row with them.
-   - Where `show` is not injective for the element type, the implicit key
-     **degenerates to position**. Every record shows alike
-     (`[object Object]`), and a variant shows only its tag, so `Done(1)` and
-     `Done(2)` share one shown value. The occurrence is then the element's
-     position, and a reorder, insert or remove patches rows in place instead
-     of moving them: the guarantees above (minimum moves, `<input>` focus and
-     caret, an open `<select>`, IME composition) do not hold for such a list.
-     A reorderable list of records wants an explicit key, `{key: t.id}`.
+   - Elements that share a shown value are told apart by their occurrence
+     alone, so where every element shows alike the implicit key
+     **degenerates to position**. A record, a Map and a Set add nothing to
+     the shown value, at any depth, so every record shows alike; a variant
+     shows only its tag, so `Done(1)` and `Done(2)` show alike too. Editing a
+     record in place therefore keeps its row's key, and the row's DOM
+     elements with it, whether the record is the element or sits inside one,
+     as in an `.entries` pair, whose key still tells its row from the others.
+     Where the key is the position, a reorder, insert or remove patches rows
+     in place instead of moving them: the guarantees above (minimum moves,
+     `<input>` focus and caret, an open `<select>`, IME composition) do not
+     hold for such a list. A reorderable list of records wants an explicit
+     key, `{key: t.id}`.
 
    Explicit keys always win. Nested `for` loops overwrite the enclosing
    implicit key with the inner loop's, so a tile call under `for i in inner` is

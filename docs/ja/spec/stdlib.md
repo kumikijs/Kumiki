@@ -55,7 +55,7 @@ let id = emit fetchQuote()
 | `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — [ルーティング §3.2](./routing.md#_3-2-current-route-state) 参照 |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
-| `File` | `{name: Text, size: Int, type: Text}` — ファイル入力が、選ばれたファイル 1 つについて報告する値。名前、バイト単位のサイズ、MIME タイプ（ブラウザが判別できなければ `""`）を持つ。ファイルのバイト列はフィールドではない: ブラウザはそれを非同期にしか読み出せないため、`change` イベントが届けるレコードには入らない。サーバーへは `Multipart` ボディの `FileV` パートとして送る（[HTTP §6.1.3](./http.md#_6-1-3-httpbody-型)、[フォーム §5.10](./forms.md#_5-10-file-upload)） |
+| `File` | `{name: Text, size: Int, type: Text}` — ファイル入力が、選ばれたファイル 1 つについて報告する値。名前、バイト単位のサイズ、MIME タイプ（ブラウザが判別できなければ `""`）を持つ。ファイルのバイト列はフィールドではない: ブラウザはそれを非同期にしか読み出せないため、`change` イベントが届けるレコードには入らない。サーバーへは `Multipart` ボディの `FileV` パートとして送る（[HTTP §6.1.3](./http.md#_6-1-3-httpbody-型)、[フォーム §5.10](./forms.md#_5-10-file-upload)）。このレコードは、選ばれたファイルへのランタイムのハンドル `_file` も持つ。これには表示するフィールドがないため、`File` の `show`（[§2.2.7](#_2-2-7-int-float)）は `{name: "a.txt", size: 3, type: "text/plain", _file: {}}` である |
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — `app.error` と `error-boundary` tile の `in=` に渡る値（[ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)） |
 | `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — `route.error(<pattern>)` に渡る値：`PanicInfo` のフィールドと、その reducer が指す `pattern` |
 
@@ -278,6 +278,20 @@ Kumiki の算術はこれで全部である。`math` 名前空間は存在しな
 定義域の外を渡せばプラットフォームの答えがそのまま出る——`(-1.0).sqrt` は `NaN`、`(0.0).log` は `-Infinity`——そして `.show` はそれぞれ `"NaN"` / `"-Infinity"` と描画する。有限でない `Float` の値——これらの関数が定義域の外で与える値と、`/` が 0 の除数に与える値（`1.0 / 0.0` は `Infinity`。[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）——もほかと同じ数値である：`sort` は `-Infinity` をすべての有限値の前に、`Infinity` を後ろに、`NaN` を他のすべての要素の後ろに並べる（[§2.2.3](#_2-2-3-list-t)）。Kumiki に非数を表す別の型はない。上の `Int` は型であって値の保証ではない：`(-1.0).sqrt.floor` は `Int` に型付けされ、値は `NaN` である。slot がそれを拒むための道具は refinement（`where between(…)`）である。
 
 `x.show` は **全型共通**の文字列化メソッド。Int / Float / Bool / variant / nominal すべて `.show : Text` を返す。Kumiki には `to-text` という名前は存在しない。`EffectId` に対する `.show` は [E0204](./errors.md#e0204-effect-id-misuse) になる。不透明なハンドルであり、その文字列表現はランタイムが決めるからである（[§2.1.1.1](#_2-1-1-1-effectid)）。
+
+値をテキストに入れる形もこの1つである：`Text` との `+`（[§2.4.5](#_2-4-5-文字列フォーマット)）、`fmt`、`TypeName.show(v)`（[§2.4.3](#_2-4-3-型変換)）、tile のテキストは、どれも値をその `show` で描画する。null 相当は空文字、バリアントはタグ、数値・`Bool`・`Text` はその文字列である。record とコレクションは、プログラムがそれを書くリテラルの形で書かれる：
+
+| 値 | `show` |
+|---|---|
+| record | `{name: "ada", age: 3}` — 各フィールドを `name: value` として、record が保持している順に |
+| `List(T)` | `[1, 2]` |
+| `Tuple(T1, …, Tn)` | `(1, "a")` |
+| `Map(K, V)` | `{"a": 1}` — 各エントリを `key: value` として、`keys` が答える順に |
+| `Set(T)` | `[1, 2]` — Set リテラルが並べるとおりにメンバーを、`to-list` が答える順に（[§2.2.2](#_2-2-2-set-t)） |
+
+その各部分も同じ規則で書かれるが、違いが1つある：record やコレクションの中の `Text` は引用符で囲まれ、JSON が文字列をエスケープするとおりにエスケープされる（`["a", "say \"hi\""]`）。単独の `Text` はその文字列のままである。中のバリアントはタグ（`[Some, None]`、`{role: Admin}`）、空の List と Set は `[]`、空の Map は `{}` である。Map のキーと Set のメンバーは `keys` / `to-list` が返す値である：`Map(Int, Text)` なら `{3: "c"}`、`Map(Pt, Text)` なら <code v-pre>{{x: 0, y: 0}: "o"}</code>。`Bytes` はその base64（`aGk=`、[§2.2.10](#_2-2-10-bytes)）、`Time` と `Duration` は保持しているミリ秒の数（[§2.2.9](#_2-2-9-duration)）であり、単独でも構造の中でも同じである。
+
+実行時の Map は record と同じくオブジェクト、Set はメンバーをキーとするオブジェクト、Tuple は List と同じく配列なので、値をそのどれとして書くかを決めるのは**型**である。checker は、Map・Set・Tuple を含む型の式を show するすべての箇所で、その型を `show` に渡す——エイリアス、ジェネリクス、自分自身を含む型を通しても同じである。checker が型を決められない場所——`{}` から始める `fold` のアキュムレータ `$1`、本体の型を checker が決められない、`->` のない `fn` の結果、ジェネリック型がそれより小さくない引数で自分自身を最初に繰り返す箇所より下の部分（`type N(T) = {v: T, kids: List(N(List(T)))}`）——では、Map は格納されたキーの record として、Set は `true` の record として、Tuple は List として書かれ、`_tag` キーを持つ Map はバリアントとして読まれて、そのキーの値として書かれる。これは checker が解決できる範囲の穴であり、プログラムが頼ってよい規則ではない。
 
 ### 2.2.8 Time
 
@@ -601,7 +615,7 @@ random()                   : Float        ; 0 <= x < 1
 fmt(template, ...args)     : Text         ; "Hello {0}, you have {1}"
 ```
 
-**プレースホルダ**は `{`・10進数字1文字以上・`}` である。各プレースホルダは、その番号の引数——`{0}` はテンプレートの次の第1引数——で置き換えられる。描画は `+` と同じ（下で触れる `show` 相当：バリアントはタグ、null 相当は空文字、`Bytes` はその base64（[§2.2.10](#_2-2-10-bytes)）、それ以外はその文字列表現）で、`fmt("{0}-{1}", "a", "b")` は `"a-b"` になる。同じ番号を繰り返してよく、番号の並び順も自由である：`fmt("{1} {0} {1}", "a", "b")` は `"b a b"` になる。置換はテンプレートを左から右へ1回走査するだけである：置き換えた値の*中*に現れた `{0}` はテキストであり、もう一度埋める対象にはならない。
+**プレースホルダ**は `{`・10進数字1文字以上・`}` である。各プレースホルダは、その番号の引数——`{0}` はテンプレートの次の第1引数——で置き換えられる。描画は `+` と同じ（その `show`、[§2.2.7](#_2-2-7-int-float)：バリアントはタグ、null 相当は空文字、record やコレクションはそのリテラル、`Bytes` はその base64（[§2.2.10](#_2-2-10-bytes)）、それ以外はその文字列表現）で、`fmt("{0}-{1}", "a", "b")` は `"a-b"` になる。同じ番号を繰り返してよく、番号の並び順も自由である：`fmt("{1} {0} {1}", "a", "b")` は `"b a b"` になる。置換はテンプレートを左から右へ1回走査するだけである：置き換えた値の*中*に現れた `{0}` はテキストであり、もう一度埋める対象にはならない。
 
 数字は10進の番号としてまとめて読むので、先頭の 0 は桁としてのみ意味を持つ：`{01}` は番号 1 である。
 
@@ -615,7 +629,7 @@ fmt(template, ...args)     : Text         ; "Hello {0}, you have {1}"
 
 個数の検査（[E0213](./errors.md#e0213-call-arity-mismatch)）は上のシグネチャに対して行われる。必須なのはテンプレートだけである——プレースホルダの無いテンプレートは引数を取らないからだ。
 
-`+` で `Text` と他型を結合した場合、自動で `show` 相当が呼ばれる。
+`+` で `Text` と他型を結合した場合、自動で `show` 相当が呼ばれる（[§2.2.7](#_2-2-7-int-float)）：`"p: " + {name: "ada"}` は `p: {name: "ada"}` である。
 
 ### 2.4.6 デバッグ補助
 
