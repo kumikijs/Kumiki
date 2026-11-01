@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf, locatedSummariesOf } from "./helpers/diagnostics.ts";
 
 const program = (fallbackIn: string, body = `column(text("recovered"))`): string =>
   `slot secret : Option(Text) = None
@@ -8,15 +8,12 @@ tile Risky error-boundary=Fb = column(text("v: " + secret.get))
 tile Home = column(Risky)
 app M caps=[] routes={"/" -> Home, "/404" -> Home} init=[]`;
 
-const diagnostics = (src: string) =>
-  checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
-
 // Order-free: which diagnostic comes first follows definition order, not a rule.
 const codeSet = (src: string) => [...new Set(codesOf(src))].sort();
 
 describe("an error-boundary fallback takes a PanicInfo", () => {
   it("a fallback declaring another in= is E0220 at the clause", () => {
-    expect(diagnostics(program("in=Text", `column(text("recovered: " + $1))`))).toEqual([
+    expect(locatedSummariesOf(program("in=Text", `column(text("recovered: " + $1))`))).toEqual([
       'E0220 3:27 Tile "Risky" uses "Fb" as its error-boundary, which declares in=Text — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo',
     ]);
   });
@@ -24,18 +21,18 @@ describe("an error-boundary fallback takes a PanicInfo", () => {
   it("a fallback declaring no in= that reads $1 is E0220 beside E0103, naming PanicInfo", () => {
     const src = program("", `column(text("x: " + $1))`);
     expect(codeSet(src)).toEqual(["E0103", "E0220"]);
-    expect(diagnostics(src)).toContain(
+    expect(locatedSummariesOf(src)).toContain(
       'E0220 3:27 Tile "Risky" uses "Fb" as its error-boundary, which declares no in= but reads $1 — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo',
     );
   });
 
   it("a fallback declaring no in= and never reading $1 is not reported", () => {
-    expect(diagnostics(program(""))).toEqual([]);
+    expect(locatedSummariesOf(program(""))).toEqual([]);
   });
 
   it("a $1 bound by a method call's implicit argument is not the fallback reading the panic", () => {
     const body = `column(text(["a"].map($1 + "!").join(", ")))`;
-    expect(diagnostics(program("", body))).toEqual([]);
+    expect(locatedSummariesOf(program("", body))).toEqual([]);
   });
 
   it("a $1-free fallback with no in= can still be a route target", () => {
@@ -44,7 +41,7 @@ slot secret : Option(Text) = None
 tile Risky error-boundary=Fallback = column(text("v: " + secret.get))
 tile Home = column(Risky)
 app M caps=[] routes={"/" -> Home, "/oops" -> Fallback, "/404" -> Home} init=[]`;
-    expect(diagnostics(src)).toEqual([]);
+    expect(locatedSummariesOf(src)).toEqual([]);
   });
 
   it("a $1-free fallback with no in= can still be a sub-route target", () => {
@@ -54,7 +51,7 @@ tile Risky error-boundary=Fallback = column(text("v: " + secret.get))
 tile Shell sub-routes={"/oops" -> Fallback, "/risky" -> Risky} = column(route-outlet())
 tile Home = column(text("home"))
 app M caps=[] routes={"/" -> Home, "/s/*" -> Shell, "/404" -> Home} init=[]`;
-    expect(diagnostics(src)).toEqual([]);
+    expect(locatedSummariesOf(src)).toEqual([]);
   });
 
   it("in=PanicInfo is accepted, and so is an alias, a nominal over it, or its five fields", () => {
@@ -79,7 +76,7 @@ app M caps=[] routes={"/" -> Home, "/404" -> Home} init=[]`;
 
   it("a record narrower than PanicInfo is E0220 — there is no width subtyping", () => {
     expect(
-      diagnostics(program("in={message: Text}", `column(text("recovered: " + $1.message))`)),
+      locatedSummariesOf(program("in={message: Text}", `column(text("recovered: " + $1.message))`)),
     ).toEqual([
       'E0220 3:27 Tile "Risky" uses "Fb" as its error-boundary, which declares in={message: Text} — a fallback is applied to the panic, so it receives a PanicInfo as $1 and must declare in=PanicInfo',
     ]);

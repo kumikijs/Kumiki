@@ -20,7 +20,9 @@ import { duplicateSubRoutes } from "../uniqueness.ts";
 import { checkAgainst } from "./against.ts";
 import {
   checkBindStrictProp,
+  checkBindTargetRoot,
   checkBindTargetSteps,
+  checkErrorField,
   checkInputBindType,
   checkSecondSpelling,
   checkToggleBind,
@@ -36,7 +38,7 @@ import {
 import { inferType } from "./infer.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
 import { collectRenderedBuiltinKinds, collectTileBuiltinKinds } from "./tile-collect.ts";
-import { checkA11y, checkButtonType, checkIconName } from "./tile-props.ts";
+import { checkA11y, checkBuiltinProp, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
 
 export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]): void {
@@ -44,11 +46,12 @@ export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]
     kind: "tile",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     routeBind: "no-payload",
   };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
-    bindLocal(ctx, "$1", tile.in);
+    bindLocal(ctx, "$1", tile.in, "input");
   }
   checkTileExpr(tile.body, sym, errors, ctx);
   if (tile.errorBoundary !== undefined && !sym.tiles.has(tile.errorBoundary)) {
@@ -93,6 +96,7 @@ function readsUndeclaredInput(tile: TileDef, sym: SymbolTable): boolean {
     kind: "tile",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     routeBind: "no-payload",
     undeclaredInputReads: seen,
   };
@@ -208,10 +212,9 @@ export function checkTileExpr(
 ): void {
   switch (t.kind) {
     case "TileFor": {
-      checkExpr(t.iter, sym, errors, ctx);
       checkIterationTarget(t.iter, sym, errors, ctx);
       const inner = innerScope(ctx);
-      bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx));
+      bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx), "for");
       checkTileExpr(t.body, sym, errors, inner);
       return;
     }
@@ -376,7 +379,8 @@ function checkTileCall(
   checkIconName(t, sym, errors);
   checkButtonType(t, errors);
   checkBindStrictProp(t, errors);
-  checkBindTargetSteps(t, errors);
+  checkBindTargetSteps(t, sym, errors, ctx);
+  checkBindTargetRoot(t, sym, errors, ctx);
   checkToggleBind(t, sym, errors, ctx);
   checkSecondSpelling(t, errors);
   checkInputBindType(t, sym, errors, ctx);
@@ -445,6 +449,7 @@ function checkTileCall(
       continue;
     }
     checkExpr(v, sym, errors, ctx);
+    if (arg.name !== undefined) checkBuiltinProp(t.name, arg.name, v, sym, errors, ctx);
   }
   for (const prop of t.props) {
     if (HANDLER_NAMES.has(prop.name)) {
@@ -482,8 +487,10 @@ function checkTileCall(
       checkAgainst(prop.value, PREFETCH_ARGS_TYPE, sym, errors, ctx);
     } else {
       checkExpr(prop.value, sym, errors, ctx);
+      checkBuiltinProp(t.name, prop.name, prop.value, sym, errors, ctx);
     }
   }
+  checkErrorField(t, sym, errors, ctx);
 }
 
 const PREFETCH_ARGS_TYPE = appType("Map", primType("Text"), primType("Text"));

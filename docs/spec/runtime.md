@@ -191,10 +191,10 @@ reducer clear on=ui.click(Btn) do= name := ""    # rejected — not allowed
 
 ### 10.3.5 The bind path of input/textarea/select
 
-You can bind to a **nested lvalue path** like `bind=draft.title`. The runtime:
-- Display: follows `_live[root][...path]` to read the initial value
+You can bind to a **nested lvalue path** like `bind=draft.title` or `bind=rows[i].title` ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)). The runtime:
+- Display: follows `_live[root][...path]` to read the initial value, an index step as the read `rows[i]` does, with its key evaluated on every render
 - Change: on an input event, uses `_setPath` to immutably update the root slot
-- Focus restoration: identifies it by putting the full path string (`"draft.title"`) in the `data-kumiki-bind` attribute
+- Focus restoration: identifies it by putting the full path string (`"draft.title"`, `"rows[0].title"` — an index step as the key it names) in the `data-kumiki-bind` attribute
 
 ### 10.3.6 Dynamic theme switching
 
@@ -972,9 +972,9 @@ Hydration runs in a strict, synchronous order. If any step throws, the client di
 2. **Slot overlay.** Write each entry of `snapshot.slots` into `app.live` BEFORE wiring routing, effects, or `app.start`. Volatile slots stay at their declared default — they were never in the snapshot.
 3. **Bootstrap ingest.** Inject `snapshot.bootstrap` into the episode logger via the dedicated `ingestBootstrap` path. This is the only legal way for a client to surface an `ssr.hydrate` episode; `beginTrigger` is forbidden for that kind. After this step, `app.episodes()[0]` is the SSR causal chain.
 4. **Event handler attach.** Attach the runtime's event delegation to the SSR HTML so user input starts dispatching client-side reducers.
-5. **`app.start` fires.** The lifecycle reducer fires normally (it never ran on the server). `app.init` does NOT re-fire — the snapshot already carries its results. `route.enter` for the current pattern fires after `app.start`, exactly as in a CSR boot.
+5. **`app.start` fires.** The lifecycle reducer fires normally (it never ran on the server). `app.init` does NOT re-fire — the snapshot already carries its results. `route.enter` for every pattern the current route is matched under ([Routing §3.4](./routing.md#_3-4-route-lifecycle)) fires after `app.start`, exactly as in a CSR boot.
 
-The observed order on the client is therefore `app.episodes() = [bootstrap, app.start episode, route.enter episode?, user-driven episodes...]`. The hydration boundary preserves episode continuity — no `ssr.hydrate`-to-`app.start` gap and no duplicate init effects.
+The observed order on the client is therefore `app.episodes() = [bootstrap, app.start episode, route.enter episodes..., user-driven episodes...]`, with one `route.enter` episode for each reducer the chain runs, the parent's first. The hydration boundary preserves episode continuity — no `ssr.hydrate`-to-`app.start` gap and no duplicate init effects.
 
 ### 10.6.3 Edge
 
