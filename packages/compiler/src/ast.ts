@@ -325,7 +325,10 @@ export type FragmentShape = "pair" | "key-value" | "value" | "undecided";
 export type { ShowShape };
 
 export type Expr = ExprForm & {
-  /** Set by the checker where the value is shown; absent without `check()`, so the value is read as itself. */
+  /**
+   * Set by the checker where the value is shown; absent without `check()`, and where the type has
+   * no shape or could not be inferred, so the value is read as itself.
+   */
   showShape?: ShowShape;
 };
 

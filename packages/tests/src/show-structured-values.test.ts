@@ -112,6 +112,15 @@ tile App = column(
     }
   });
 
+  it("writes a `fn` result with no `->` by its body's type", async () => {
+    const text = await pageText(`fn grown(m: Map(Text, Int)) = m.insert("b", 2)
+fn pair(x: Int) = (x, "a")
+slot m : Map(Text, Int) = {"a": 1}
+tile App = column(text("grown: " + grown(m)), text("pair: " + pair(1)))`);
+    expect(text).toContain('grown: {"a": 1, "b": 2}');
+    expect(text).toContain('pair: (1, "a")');
+  });
+
   it("writes a generic whose recursion grows its argument as itself", async () => {
     const text = await pageText(`type N(T) = {v: T, kids: List(N(List(T)))}
 slot n : N(Int) = {v: 1, kids: []}

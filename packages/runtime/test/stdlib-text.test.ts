@@ -1,3 +1,4 @@
+import { File as PlatformFile } from "node:buffer";
 import { describe, expect, it } from "vitest";
 import { _stdlibCore, type ShowShape } from "../src/stdlib.ts";
 
@@ -221,6 +222,14 @@ describe("show", () => {
       ["m", 0, 0, ["t", 0, 0]],
       '{"k": (1, "a")}',
     ],
+    // Where the checker cannot decide the type, a Map with a `_tag` key reads as a variant.
+    ["a Map with a `_tag` key and no shape as a variant", { _tag: "x", b: "y" }, undefined, "x"],
+    [
+      "a Map with a `_tag` key by its shape",
+      { _tag: "x", b: "y" },
+      ["m", 0, 0, 0],
+      '{"_tag": "x", "b": "y"}',
+    ],
     [
       "a `constructor` field the record's shape has no entry for",
       { constructor: { caller: 1 }, m: { a: 1 } },
@@ -232,6 +241,13 @@ describe("show", () => {
       JSON.parse('{"__proto__": {"a": 1}, "n": 2}'),
       JSON.parse('{"__proto__": ["m", 0, 0, 0]}'),
       '{__proto__: {"a": 1}, n: 2}',
+    ],
+    // happy-dom's `File` has fields of its own, where a browser's, like Node's, has none.
+    [
+      "a File as its three fields and the handle on the picked file",
+      { name: "a.txt", size: 3, type: "text/plain", _file: new PlatformFile(["abc"], "a.txt") },
+      undefined,
+      '{name: "a.txt", size: 3, type: "text/plain", _file: {}}',
     ],
   ])("writes %s", (_label, value, shape, expected) => {
     expect(show(value, shape)).toBe(expected);

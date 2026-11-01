@@ -201,6 +201,11 @@ describe("loopKeys", () => {
     ]);
   });
 
+  // A Map with a `_tag` key is a variant here, since a key is built without the element's type.
+  it("keys a Map with a `_tag` key by that key's value", () => {
+    expect(_stdlibCore.loopKeys([{ _tag: "x", b: "y" }], "App_0")).toEqual(["App_0|1|x"]);
+  });
+
   describe("a record, Map or Set inside a List or Tuple element adds nothing to its key", () => {
     const keyOf = (x: unknown) => _stdlibCore.loopKeys([x], "L")[0];
 

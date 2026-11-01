@@ -55,7 +55,7 @@ let id = emit fetchQuote()
 | `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — [ルーティング §3.2](./routing.md#_3-2-current-route-state) 参照 |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
-| `File` | `{name: Text, size: Int, type: Text}` — ファイル入力が、選ばれたファイル 1 つについて報告する値。名前、バイト単位のサイズ、MIME タイプ（ブラウザが判別できなければ `""`）を持つ。ファイルのバイト列はフィールドではない: ブラウザはそれを非同期にしか読み出せないため、`change` イベントが届けるレコードには入らない。サーバーへは `Multipart` ボディの `FileV` パートとして送る（[HTTP §6.1.3](./http.md#_6-1-3-httpbody-型)、[フォーム §5.10](./forms.md#_5-10-file-upload)） |
+| `File` | `{name: Text, size: Int, type: Text}` — ファイル入力が、選ばれたファイル 1 つについて報告する値。名前、バイト単位のサイズ、MIME タイプ（ブラウザが判別できなければ `""`）を持つ。ファイルのバイト列はフィールドではない: ブラウザはそれを非同期にしか読み出せないため、`change` イベントが届けるレコードには入らない。サーバーへは `Multipart` ボディの `FileV` パートとして送る（[HTTP §6.1.3](./http.md#_6-1-3-httpbody-型)、[フォーム §5.10](./forms.md#_5-10-file-upload)）。このレコードは、選ばれたファイルへのランタイムのハンドル `_file` も持つ。これには表示するフィールドがないため、`File` の `show`（[§2.2.7](#_2-2-7-int-float)）は `{name: "a.txt", size: 3, type: "text/plain", _file: {}}` である |
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — `app.error` と `error-boundary` tile の `in=` に渡る値（[ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)） |
 | `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — `route.error(<pattern>)` に渡る値：`PanicInfo` のフィールドと、その reducer が指す `pattern` |
 
@@ -291,7 +291,7 @@ Kumiki の算術はこれで全部である。`math` 名前空間は存在しな
 
 その各部分も同じ規則で書かれるが、違いが1つある：record やコレクションの中の `Text` は引用符で囲まれ、JSON が文字列をエスケープするとおりにエスケープされる（`["a", "say \"hi\""]`）。単独の `Text` はその文字列のままである。中のバリアントはタグ（`[Some, None]`、`{role: Admin}`）、空の List と Set は `[]`、空の Map は `{}` である。Map のキーと Set のメンバーは `keys` / `to-list` が返す値である：`Map(Int, Text)` なら `{3: "c"}`、`Map(Pt, Text)` なら <code v-pre>{{x: 0, y: 0}: "o"}</code>。`Bytes` はその base64（`aGk=`、[§2.2.10](#_2-2-10-bytes)）、`Time` と `Duration` は保持しているミリ秒の数（[§2.2.9](#_2-2-9-duration)）であり、単独でも構造の中でも同じである。
 
-実行時の Map は record と同じくオブジェクト、Set はメンバーをキーとするオブジェクト、Tuple は List と同じく配列なので、値をそのどれとして書くかを決めるのは**型**である。checker は、Map・Set・Tuple を含む型の式を show するすべての箇所で、その型を `show` に渡す——エイリアス、ジェネリクス、自分自身を含む型を通しても同じである。checker が型を決められない場所——`{}` から始める `fold` のアキュムレータ `$1`、`->` のない `fn` の結果、ジェネリック型がそれより小さくない引数で自分自身を最初に繰り返す箇所より下の部分（`type N(T) = {v: T, kids: List(N(List(T)))}`）——では、Map は格納されたキーの record として、Set は `true` の record として、Tuple は List として書かれる。これは checker が解決できる範囲の穴であり、プログラムが頼ってよい規則ではない。
+実行時の Map は record と同じくオブジェクト、Set はメンバーをキーとするオブジェクト、Tuple は List と同じく配列なので、値をそのどれとして書くかを決めるのは**型**である。checker は、Map・Set・Tuple を含む型の式を show するすべての箇所で、その型を `show` に渡す——エイリアス、ジェネリクス、自分自身を含む型を通しても同じである。checker が型を決められない場所——`{}` から始める `fold` のアキュムレータ `$1`、本体の型を checker が決められない、`->` のない `fn` の結果、ジェネリック型がそれより小さくない引数で自分自身を最初に繰り返す箇所より下の部分（`type N(T) = {v: T, kids: List(N(List(T)))}`）——では、Map は格納されたキーの record として、Set は `true` の record として、Tuple は List として書かれ、`_tag` キーを持つ Map はバリアントとして読まれて、そのキーの値として書かれる。これは checker が解決できる範囲の穴であり、プログラムが頼ってよい規則ではない。
 
 ### 2.2.8 Time
 

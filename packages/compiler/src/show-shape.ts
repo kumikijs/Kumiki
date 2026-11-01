@@ -2,7 +2,10 @@ import { type TypeEnv, typeSize, typeToString, unaliasType } from "./assignable.
 import type { KeyKind, ShowShape, TypeExpr } from "./ast.ts";
 import { keyRepresentation } from "./key-representation.ts";
 
-/** `0` when `t` has no Map, Set or Tuple outside a variant: the value alone then says how to show it. */
+/**
+ * `0` when `t` has no Map, Set or Tuple outside a variant, or could not be inferred: the value
+ * alone then says how to show it.
+ */
 export function showShapeOf(t: TypeExpr | null, env: TypeEnv): ShowShape {
   return shapeOf(t, env, new Map(), new Map());
 }
