@@ -124,6 +124,23 @@ function isCalendarDate(y: number, m: number, d: number): boolean {
   return m >= 1 && m <= 12 && d >= 1 && d <= days;
 }
 
+const INT_TEXT = /^[+-]?[0-9]+$/;
+const FLOAT_TEXT = /^[+-]?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$/;
+
+/**
+ * `Number` also reads blank text as 0, `0x` / `0o` / `0b`, `.5` and `1.`, so the form decides
+ * which text reads and `Number` only its value.
+ */
+function readNumber(
+  text: unknown,
+  form: RegExp,
+  holds: (n: number) => boolean,
+): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+  if (typeof text !== "string" || !form.test(text)) return _stdlibCore.None;
+  const n = Number(text);
+  return holds(n) ? _stdlibCore.Some(n) : _stdlibCore.None;
+}
+
 export const _stdlibCore = {
   entryKey,
   slotWrite(
@@ -563,15 +580,13 @@ export const _stdlibCore = {
     }
     return _stdlibCore.None;
   },
-  parseIntOpt(s: unknown): unknown {
-    const n = Number(s);
-    return String(s).trim() !== "" && Number.isFinite(n)
-      ? _stdlibCore.Some(Math.trunc(n))
-      : _stdlibCore.None;
+  // Every text-to-Int / Float reading codegen emits calls these, so no two spellings can read a
+  // text differently. An Int past ±(2^53 - 1) would be another number than the one spelt.
+  parseIntOpt(text: unknown): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+    return readNumber(text, INT_TEXT, Number.isSafeInteger);
   },
-  parseFloatOpt(s: unknown): unknown {
-    const n = Number(s);
-    return String(s).trim() !== "" && Number.isFinite(n) ? _stdlibCore.Some(n) : _stdlibCore.None;
+  parseFloatOpt(text: unknown): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+    return readNumber(text, FLOAT_TEXT, Number.isFinite);
   },
   fileUrl(file: unknown): string {
     if (!file || typeof file !== "object") return "";
