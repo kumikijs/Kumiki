@@ -113,7 +113,8 @@ function variantTag(prefix: string, anchored: boolean): Planner {
 
 /**
  * A read outside the nested scope that declares the name, after it ended or before it begins, is
- * out of scope, not misspelled: the renamed read would type-check and read a different value.
+ * out of scope, not misspelled: a renamed read can type-check, and the regression gate then counts
+ * it as resolved.
  */
 function outOfScopeReason(err: KumikiError): string | undefined {
   if (err.endedScope !== undefined) return "e0103-read-after-scope-ended";

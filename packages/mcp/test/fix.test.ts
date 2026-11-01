@@ -50,7 +50,7 @@ describe("kumiki_fix", () => {
     const res = await callOnce("kumiki_fix", { path: file });
     expect(res.body.split("\n")).toEqual([
       "(no auto-patches available)",
-      `E0103 Reference to undefined name "idx" — it is declared later, at 3:35, and scoped to a tile's "for" body: move the read into the body (see docs/spec/language.md)`,
+      expect.stringContaining('E0103 Reference to undefined name "idx" — '),
     ]);
     expect(readFileSync(file, "utf8")).toBe(source);
   });

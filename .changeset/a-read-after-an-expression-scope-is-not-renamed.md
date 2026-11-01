@@ -9,8 +9,8 @@ tile's `for`, an arm of a `match` expression (a tile's or a value's). A read
 after one — in a later statement or operand, or in a sibling argument of a
 tile — is E0103. The checker named the scope only for a reducer's `if`
 branches, `for` bodies and match arms, so `kumiki fix` read these as
-misspellings and renamed them to the closest top-level name; the renamed read
-type-checked, so `--apply` counted it as resolved and the program read
+misspellings and renamed them to the closest top-level name; a renamed read
+can type-check, and then `--apply` counted it as resolved and the program read
 another value:
 
 ```kumiki
@@ -33,20 +33,23 @@ The same held for `id := let idx = 1 in idx` followed by `total := idx` in a
 reducer, and for a tile `match` arm's `v` read in a sibling, which was renamed
 to the app's name `A`.
 
-After, the message names the expression, and the diagnostic carries it as
-`endedScope` — `let-in`, `for-expr` (a tile's `for`) or `match-expr` (an arm of
-a `match` expression), beside `if` / `for` / `match` for statement bodies:
+After, the message names the kind of expression and gives the repair for it,
+and the diagnostic carries the kind as `endedScope` — `let-in`, `for-expr` (a
+tile's `for`) or `match-expr` (an arm of a `match` expression), beside `if` /
+`for` / `match` for statement bodies:
 
 ```
 $ kumiki check app.kumiki
-E0103 undef-ref at 3:54: Reference to undefined name "idx" — it is scoped to a tile's "for" body, which ends with it: move the read into the body (see docs/spec/language.md)
+E0103 undef-ref at 3:54: Reference to undefined name "idx" — it was declared in a tile's "for", and a name carries no value out of a loop: move the read into the loop's body (see docs/spec/language.md)
 $ kumiki fix app.kumiki
 (no auto-patches available)
 ```
 
-A `let … in` read after it says `it is scoped to the body of a "let … in",
-which ends with it: move the read into that body, or bind it where both reads
-see it`. `kumiki fix` and the MCP `kumiki_fix` tool propose no rename for any
-of these, in a reducer, a tile, a `fn` or a slot initializer, and a genuine
-misspelling beside one is repaired as before. language.md §1.6.7 states that
+A read after a `let … in` is told to move into its body or to bind the value
+once where both reads see it, with a `let` statement when the read is in a
+reducer. Inside a reducer's `if`, `for` or `match` body, the expression is
+still the scope named, since a read moved into that body would still be after
+it. `kumiki fix` and the MCP `kumiki_fix` tool propose no rename for any of
+these, in a reducer, a tile, a `fn` or a slot initializer, and a genuine
+misspelling beside one is repaired as before. docs/spec/language.md states that
 these bindings end with their expression.

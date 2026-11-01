@@ -13,9 +13,10 @@ import { isPrimTypeName } from "../stdlib-types.ts";
 import { checkAgainst } from "./against.ts";
 import {
   type Ctx,
+  type EndedScope,
   isBuiltinCall,
   type KumikiError,
-  type NestedScope,
+  type NestedScopeKind,
   type SymbolTable,
 } from "./context.ts";
 import { refuseRenderedEffectId } from "./expr.ts";
@@ -205,57 +206,89 @@ export function arithmeticHint(name: string, sym: SymbolTable, ctx: Ctx): string
   return ` — "-" continues an identifier, so this is one name. Write "${head} - ${tail}" with spaces for subtraction.`;
 }
 
-const eitherSide = (repair: string): Record<"ended" | "later", string> => ({
-  ended: repair,
-  later: repair,
-});
+/** Where a name of each kind of scope is declared, as a hint says it. */
+const DECLARED: Record<NestedScopeKind, string> = {
+  if: 'in an "if" branch',
+  for: 'in a "for" loop',
+  match: "in a match arm",
+  "let-in": 'by a "let … in"',
+  "for-expr": `in a tile's "for"`,
+  "match-expr": 'in an arm of a "match" expression',
+};
 
-// A tile `for`'s variable and a `match` arm's pattern stand for one element, one case, so the read
-// moves in; a statement body's name can be declared outside it, a `let … in` value bound higher.
-const NESTED_SCOPE_WORDS: Record<
-  NestedScope,
-  { scope: string; repair: Record<"ended" | "later", string> }
-> = {
+// A `let n = 0` before the statement would not do: the body's own `n` only shadows it.
+const BRANCH_WORDS = {
   if: {
-    scope: 'an "if" branch',
-    repair: {
-      ended: 'declare it before the "if", or move the read into the branch',
-      later: "declare it before this read, or move the read into the branch",
-    },
-  },
-  for: {
-    scope: 'a "for" body',
-    repair: {
-      ended: 'declare it before the "for", or move the read into the body',
-      later: "declare it before this read, or move the read into the body",
-    },
+    part: "branch",
+    sibling: 'the other branch of this "if"',
+    declare: (name: string) =>
+      `declare it once before the "if" with an "if" expression (let ${name} = if c then … else …)`,
   },
   match: {
-    scope: "a match arm",
-    repair: {
-      ended: 'declare it before the "match", or move the read into the arm',
-      later: "declare it before this read, or move the read into the arm",
-    },
-  },
-  "let-in": {
-    scope: 'the body of a "let … in"',
-    repair: eitherSide("move the read into that body, or bind it where both reads see it"),
-  },
-  "for-expr": { scope: `a tile's "for" body`, repair: eitherSide("move the read into the body") },
-  "match-expr": {
-    scope: 'an arm of a "match" expression',
-    repair: eitherSide("move the read into the arm"),
+    part: "arm",
+    sibling: "another arm of this match",
+    declare: () => 'declare it once before the "match" with a match expression',
   },
 };
 
-/** Unlike `arithmeticHint`, kept when a close name is in scope: that the read is outside is known. */
-export function outOfScopeHint(side: "ended" | "later", declaration: ScopedDeclaration): string {
-  const { scope, repair } = NESTED_SCOPE_WORDS[declaration.kind];
-  const where =
-    side === "ended"
-      ? `it is scoped to ${scope}, which ends with it`
-      : `it is declared later, at ${declaration.at.line}:${declaration.at.col}, and scoped to ${scope}`;
-  return ` — ${where}: ${repair[side]} (see docs/spec/language.md)`;
+const NO_VALUE_OUT = "and a name carries no value out of a loop";
+
+// Only a reducer has `let` statements to bind it with.
+const bindForBoth = (ctx: Ctx): string =>
+  ctx.kind === "reducer"
+    ? 'bind it with a "let" statement where both reads see it'
+    : "bind it once where both reads see it";
+
+function endedScopeWords(name: string, { kind, sibling }: EndedScope, ctx: Ctx): string {
+  const where = DECLARED[kind];
+  switch (kind) {
+    case "for":
+      return `${where}, ${NO_VALUE_OUT}: move the read into the loop's body, or write the value to a slot there`;
+    case "for-expr":
+      return `${where}, ${NO_VALUE_OUT}: move the read into the loop's body`;
+    case "let-in":
+      return `${where}, whose body ended before this read: move the read into that body, or ${bindForBoth(ctx)}`;
+    case "match-expr":
+      return `${where}, which ended before this read: move the read into that arm`;
+    default: {
+      const w = BRANCH_WORDS[kind];
+      if (sibling) {
+        return `in ${w.sibling}: ${w.declare(name)}, or move the read into the ${w.part} that declares it`;
+      }
+      return `${where}, which ended before this read: ${w.declare(name)}, or move the read into that ${w.part}`;
+    }
+  }
+}
+
+/** The read is ahead of the value it names: a name declared again before it would read another. */
+function laterScopeRepair(kind: NestedScopeKind, ctx: Ctx): string {
+  switch (kind) {
+    case "for":
+      return "move the read into the loop's body, after the declaration";
+    case "if":
+      return "move the read into that branch, after the declaration";
+    case "match":
+      return "move the read into that arm, after the declaration";
+    case "let-in":
+      return `move the read into its body, or ${bindForBoth(ctx)}`;
+    case "for-expr":
+      return "move the read into the loop's body";
+    case "match-expr":
+      return "move the read into that arm";
+  }
+}
+
+const SEE = " (see docs/spec/language.md)";
+
+/** Unlike `arithmeticHint`, kept when a close name is in scope: that the name ended is known. */
+export function endedScopeHint(name: string, ended: EndedScope, ctx: Ctx): string {
+  return ` — it was declared ${endedScopeWords(name, ended, ctx)}${SEE}`;
+}
+
+/** Like `endedScopeHint`, for a read before the scope that declares the name. */
+export function laterScopeHint({ kind, at }: ScopedDeclaration, ctx: Ctx): string {
+  const where = `later, at ${at.line}:${at.col}, ${DECLARED[kind]}`;
+  return ` — it is declared ${where}: ${laterScopeRepair(kind, ctx)}${SEE}`;
 }
 
 function hasCloseName(name: string, sym: SymbolTable, ctx: Ctx): boolean {

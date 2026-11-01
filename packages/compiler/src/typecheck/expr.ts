@@ -1,27 +1,34 @@
-import {
-  assignable,
-  elementType,
-  nominallyComparable,
-  typeToString,
-  unaliasType,
-} from "../assignable.ts";
+import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
 import { RUN_REDUCER } from "../builtin-calls.ts";
-import { FRAGMENT_ARGUMENTS, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
-import { receiverParams } from "../stdlib-members.ts";
+import { fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
+import {
+  type FragmentArgument,
+  fragmentArgument,
+  fragmentBinds,
+  receiverParams,
+  TYPE_ARGUMENT_OF,
+} from "../stdlib-members.ts";
 import {
   checkAgainst,
   checkEmitTarget,
   checkGetArity,
   checkGetOrArity,
+  checkIndexStep,
   checkRecordUpdate,
   getOrResultType,
-  indexStep,
 } from "./against.ts";
-import { arithmeticHint, checkCallee, outOfScopeHint, reportRunReducerPosition } from "./callee.ts";
+import {
+  arithmeticHint,
+  checkCallee,
+  endedScopeHint,
+  laterScopeHint,
+  reportRunReducerPosition,
+} from "./callee.ts";
 import {
   bindLocal,
   type Ctx,
+  endScope,
   innerScope,
   isBuiltinCall,
   type KumikiError,
@@ -49,7 +56,7 @@ import {
   keyKindOfReader,
   undefMemberError,
 } from "./members.ts";
-import { scopeOutside } from "./nested-scopes.ts";
+import { laterDeclaration } from "./nested-scopes.ts";
 import {
   checkMatchCovers,
   checkPatternAgainstType,
@@ -264,17 +271,25 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         });
         return;
       }
-      const outside = scopeOutside(ctx.nestedScopes, e.name, e.pos);
-      if (outside !== undefined) {
-        const { side, declaration } = outside;
+      const ended = ctx.endedScopes.get(e.name);
+      if (ended !== undefined) {
         errors.push({
           code: "E0103",
           kind: "undef-ref",
-          message: `Reference to undefined name "${e.name}"${outOfScopeHint(side, declaration)}`,
+          message: `Reference to undefined name "${e.name}"${endedScopeHint(e.name, ended, ctx)}`,
           pos: e.pos,
-          ...(side === "ended"
-            ? { endedScope: declaration.kind }
-            : { laterScope: declaration.kind }),
+          endedScope: ended.kind,
+        });
+        return;
+      }
+      const later = laterDeclaration(ctx.nestedScopes, e.name, e.pos);
+      if (later !== undefined) {
+        errors.push({
+          code: "E0103",
+          kind: "undef-ref",
+          message: `Reference to undefined name "${e.name}"${laterScopeHint(later, ctx)}`,
+          pos: e.pos,
+          laterScope: later.kind,
         });
         return;
       }
@@ -330,8 +345,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
     case "Index": {
       checkExpr(e.base, sym, errors, ctx);
       checkExpr(e.index, sym, errors, ctx);
-      const step = indexStep(inferType(e.base, sym, ctx), sym);
-      if (step.kind === "place" && step.key) checkAgainst(e.index, step.key, sym, errors, ctx);
+      checkIndexStep(inferType(e.base, sym, ctx), e.index, "read", e.index.pos, sym, errors, ctx);
       return;
     }
     case "Call":
@@ -390,9 +404,9 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             : null;
         const kind = keyKindOfReader(recvType, e.method, sym);
         if (kind) e.keyKind = kind;
-        const fragment = FRAGMENT_ARGUMENTS.get(e.method);
+        const fragment = fragmentArgument(e.method);
         const shape =
-          fragment?.second === "pair-value" ? fragmentShape(recvType, e.method, sym) : undefined;
+          fragment?.second === "pair-value" ? fragmentShape(recvType, e, sym, ctx) : undefined;
         if (shape !== undefined) e.fragmentShape = shape ?? "undecided";
         for (const [i, a] of e.args.entries()) {
           if (fragment?.index !== i) {
@@ -401,33 +415,33 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
             continue;
           }
+          // A bare `fn` name is checked as the call the lowering makes of it.
+          let body: Expr = a;
           if (isFragmentFnName(a, sym, ctx)) {
             ctx.fragmentFnCallsSeen?.push({ name: a.name, pos: a.pos });
             if (lacksMember) continue;
-            const fits = checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors);
-            if (fits && e.method === "sort-by" && i === 0) {
-              checkSortKey(sym.fns.get(a.name)?.ret ?? null, a.pos, recvType, sym, errors);
+            const arity = sym.fns.get(a.name)?.params.length ?? 0;
+            if (!checkFragmentFnArity(a, arity, e.method, fragment, recvType, shape, errors)) {
+              continue;
             }
-            const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
-            if (fits && declared !== null) checkFragmentFnResult(a, declared, sym, errors);
-            continue;
+            body = fragmentCall(a.name, arity, a.pos);
           }
-          const [p1, p2] = fragmentBindings(recvType, e.method, i, sym);
+          const [p1, p2] = fragmentBindings(recvType, e, sym, ctx);
           const inner = innerScope(ctx);
           bindLocal(inner, "$1", p1);
           if (shape === "value") {
             inner.localBinds.delete("$2");
             inner.localTypes.delete("$2");
             inner.oneValueFragment = { method: e.method, hides: ctx.localBinds.has("$2") };
-          } else if (fragment.binds === 2) {
+          } else if (fragmentBinds(fragment) === 2) {
             bindLocal(inner, "$2", p2);
           }
-          checkExpr(a, sym, errors, inner);
+          checkExpr(body, sym, errors, inner);
           if (e.method === "sort-by" && i === 0) {
-            checkSortKey(inferType(a, sym, inner), a.pos, recvType, sym, errors);
+            checkSortKey(inferType(body, sym, inner), a.pos, recvType, sym, errors);
           }
           const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
-          if (declared !== null) checkAgainst(a, declared, sym, errors, inner);
+          if (declared !== null) checkAgainst(body, declared, sym, errors, inner);
         }
       }
       if (e.method === "get-or") {
@@ -473,6 +487,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         if (errors.length > before) patternsFit = false;
         checkExpr(arm.body, sym, errors, inner);
+        endScope("match-expr", inner, ctx);
       }
       if (patternsFit) checkMatchCovers(e, scrutType, sym, errors);
       return;
@@ -485,7 +500,9 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     case "LetIn": {
       checkExpr(e.value, sym, errors, ctx);
-      checkExpr(e.body, sym, errors, letInScope(e, sym, ctx));
+      const inner = letInScope(e, sym, ctx);
+      checkExpr(e.body, sym, errors, inner);
+      endScope("let-in", inner, ctx);
       return;
     }
     case "TokenRef":
@@ -522,14 +539,13 @@ function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { ki
 
 function checkFragmentFnArity(
   a: Expr & { kind: "Ref" },
+  n: number,
   method: string,
-  fragment: { binds: 1 | 2; second?: "element" | "pair-value" },
+  fragment: FragmentArgument,
   receiver: TypeExpr | null,
   shape: FragmentShape | null | undefined,
-  sym: SymbolTable,
   errors: KumikiError[],
 ): boolean {
-  const n = sym.fns.get(a.name)?.params.length ?? 0;
   const report = (why: string): false => {
     errors.push({
       code: "E0213",
@@ -543,7 +559,9 @@ function checkFragmentFnArity(
     return n === 2 || report(`.${method} supplies exactly 2 — the accumulator and the element`);
   }
   if (n === 0) return report(`.${method} needs at least 1`);
-  if (n > fragment.binds) return report(`.${method} supplies at most ${fragment.binds}`);
+  if (n > fragmentBinds(fragment)) {
+    return report(`.${method} supplies at most ${fragmentBinds(fragment)}`);
+  }
   if (n === 2 && (shape === "value" || shape === null)) {
     const on = receiver ? ` on "${typeToString(receiver)}"` : "";
     return report(
@@ -551,24 +569,6 @@ function checkFragmentFnArity(
     );
   }
   return true;
-}
-
-// A fn named as a fragment answers what an inline fragment would, so its declared result is read
-// against the parameter as the fragment's value is.
-function checkFragmentFnResult(
-  a: Expr & { kind: "Ref" },
-  declared: TypeExpr,
-  sym: SymbolTable,
-  errors: KumikiError[],
-): void {
-  const ret = sym.fns.get(a.name)?.ret ?? null;
-  if (ret === null || !isKnown(ret, sym) || assignable(ret, declared, sym)) return;
-  pushMismatch(
-    errors,
-    "E0201",
-    `Expected ${typeToString(declared)} but "${a.name}" answers ${typeToString(ret)}`,
-    a.pos,
-  );
 }
 
 const COMPARISON_OPS: ReadonlySet<string> = new Set(["<", ">", "<=", ">="]);
@@ -723,11 +723,7 @@ export function pushMismatch(
 
 /** The scope a `let … in` body is read in: the enclosing one, with the name bound. */
 export function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: Ctx): Ctx {
-  const inner: Ctx = {
-    ...ctx,
-    localBinds: new Set(ctx.localBinds),
-    localTypes: new Map(ctx.localTypes),
-  };
+  const inner = innerScope(ctx);
   bindLocal(inner, e.name, inferType(e.value, sym, ctx));
   return inner;
 }
@@ -749,12 +745,11 @@ function memberArgType(
   switch (param) {
     case null:
       return null;
-    case "K":
-    case "T":
-      return t.args[0] ?? null;
-    case "V":
-      return t.args[1] ?? null;
     case "self":
       return recv;
+    case "Int":
+      return prim("Int", t.pos);
+    default:
+      return t.args[TYPE_ARGUMENT_OF[param]] ?? null;
   }
 }

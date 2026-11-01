@@ -8,43 +8,34 @@ import {
   type Statement,
   type TileExpr,
 } from "../ast.ts";
-import type { NestedScope } from "./context.ts";
+import type { NestedScopeKind } from "./context.ts";
 import { walkExpr } from "./expr-walk.ts";
 
 /**
- * One place a definition declares a name in a nested scope, and the stretch of source (`from` …
- * `to`) it is declared for. A read inside the stretch is not outside the scope even when it does not
- * resolve: one ahead of the `let` in the same body, or in the list of the `for` or the value of the
- * `let … in` that declares the name, which is read before the name is in scope.
+ * One place a definition declares a name in a nested scope, and where the stretch of source it is
+ * declared for begins (`from`). A read before `from` is ahead of the scope. A read past it is not,
+ * even when it does not resolve: one ahead of the `let` in the same body, or in the list of the
+ * `for` or the value of the `let … in` that declares the name, read before the name is in scope.
  */
-export type ScopedDeclaration = { kind: NestedScope; at: Pos; from: Pos; to: Pos };
+export type ScopedDeclaration = { kind: NestedScopeKind; at: Pos; from: Pos };
 
 export type NestedScopes = ReadonlyMap<string, readonly ScopedDeclaration[]>;
-
-type Extent = { from: Pos; to: Pos };
 
 function comparePos(a: Pos, b: Pos): number {
   return a.line - b.line || a.col - b.col;
 }
 
-function spanning(a: Extent, b: Extent | null): Extent {
-  if (b === null) return a;
-  return {
-    from: comparePos(b.from, a.from) < 0 ? b.from : a.from,
-    to: comparePos(b.to, a.to) > 0 ? b.to : a.to,
-  };
+function earliest(a: Pos, b: Pos | null): Pos {
+  return b !== null && comparePos(b, a) < 0 ? b : a;
 }
 
-function extentAt(pos: Pos): Extent {
-  return { from: pos, to: pos };
-}
-
-function exprExtent(e: Expr): Extent {
-  let over = extentAt(e.pos);
+/** A node's own position is not always its first, so every node in it is looked at. */
+function exprStart(e: Expr): Pos {
+  let from = e.pos;
   walkExpr(e, (n) => {
-    over = spanning(over, extentAt(n.pos));
+    from = earliest(from, n.pos);
   });
-  return over;
+  return from;
 }
 
 /**
@@ -57,103 +48,100 @@ export function nestedScopes(
   ...roots: (Expr | TileExpr | Statement[] | undefined)[]
 ): NestedScopes {
   const table = new Map<string, ScopedDeclaration[]>();
-  const declare = (kind: NestedScope, name: string, at: Pos, over: Extent): void => {
-    const declaration = { kind, at, ...over };
+  const declare = (kind: NestedScopeKind, name: string, at: Pos, from: Pos): void => {
+    const declaration = { kind, at, from };
     const known = table.get(name);
     if (known) known.push(declaration);
     else table.set(name, [declaration]);
   };
-  const arm = (kind: NestedScope, pattern: Pattern, body: Extent | null): Extent => {
-    const over = spanning(extentAt(pattern.pos), body);
-    for (const b of patternBinds(pattern)) declare(kind, b.name, b.pos, over);
-    return over;
+  const arm = (kind: NestedScopeKind, pattern: Pattern, body: Pos | null): Pos => {
+    const from = earliest(pattern.pos, body);
+    for (const b of patternBinds(pattern)) declare(kind, b.name, b.pos, from);
+    return from;
   };
-  const expr = (e: Expr): Extent => {
+  const expr = (e: Expr): Pos => {
     walkExpr(e, (n) => {
-      if (n.kind === "LetIn") declare("let-in", n.name, n.pos, exprExtent(n));
+      if (n.kind === "LetIn") declare("let-in", n.name, n.pos, exprStart(n));
       if (n.kind === "MatchExpr") {
-        for (const a of n.arms) arm("match-expr", a.pattern, exprExtent(a.body));
+        for (const a of n.arms) arm("match-expr", a.pattern, exprStart(a.body));
       }
     });
-    return exprExtent(e);
+    return exprStart(e);
   };
-  const lvalue = (lv: Lvalue): Extent => {
-    if (lv.kind === "LSlot") return extentAt(lv.pos);
-    const base = spanning(extentAt(lv.pos), lvalue(lv.base));
-    return lv.kind === "LIndex" ? spanning(base, expr(lv.index)) : base;
+  const lvalue = (lv: Lvalue): Pos => {
+    if (lv.kind === "LSlot") return lv.pos;
+    const base = earliest(lv.pos, lvalue(lv.base));
+    return lv.kind === "LIndex" ? earliest(base, expr(lv.index)) : base;
   };
-  const statements = (stmts: Statement[]): Extent | null =>
-    stmts.reduce<Extent | null>((over, s) => {
-      const next = statement(s);
-      return over === null ? next : spanning(over, next);
-    }, null);
-  const body = (kind: NestedScope, stmts: Statement[]): Extent | null => {
-    const over = statements(stmts);
-    if (over !== null) {
-      for (const s of stmts) if (s.kind === "LetStmt") declare(kind, s.name, s.pos, over);
+  const statements = (stmts: Statement[]): Pos | null =>
+    stmts.reduce<Pos | null>((from, s) => earliest(statement(s), from), null);
+  const body = (kind: NestedScopeKind, stmts: Statement[]): Pos | null => {
+    const from = statements(stmts);
+    if (from !== null) {
+      for (const s of stmts) if (s.kind === "LetStmt") declare(kind, s.name, s.pos, from);
     }
-    return over;
+    return from;
   };
-  const statement = (s: Statement): Extent => {
-    const own = extentAt(s.pos);
+  const statement = (s: Statement): Pos => {
+    const own = s.pos;
     switch (s.kind) {
       case "SlotAssign":
-        return spanning(spanning(own, lvalue(s.lvalue)), expr(s.rhs));
+        return earliest(earliest(own, lvalue(s.lvalue)), expr(s.rhs));
       case "LetStmt":
-        return spanning(own, expr(s.rhs));
+        return earliest(own, expr(s.rhs));
       case "Emit":
-        return s.args.reduce((over, a) => spanning(over, expr(a)), own);
+        return s.args.reduce((from, a) => earliest(from, expr(a)), own);
       case "PanicStmt":
-        return spanning(own, expr(s.message));
+        return earliest(own, expr(s.message));
       case "StopTimer":
       case "NoopStmt":
         return own;
       case "ForStmt": {
-        const over = spanning(spanning(own, expr(s.iter)), body("for", s.body));
-        declare("for", s.bind, s.pos, over);
-        return over;
+        const from = earliest(earliest(own, expr(s.iter)), body("for", s.body));
+        declare("for", s.bind, own, from);
+        return from;
       }
       case "IfStmt": {
-        const consequent = spanning(spanning(own, expr(s.cond)), body("if", s.consequent));
-        return spanning(consequent, body("if", s.alternate));
+        const consequent = earliest(earliest(own, expr(s.cond)), body("if", s.consequent));
+        return earliest(consequent, body("if", s.alternate));
       }
       case "MatchStmt":
         return s.arms.reduce(
-          (over, a) => spanning(over, arm("match", a.pattern, body("match", a.body))),
-          spanning(own, expr(s.scrutinee)),
+          (from, a) => earliest(from, arm("match", a.pattern, body("match", a.body))),
+          earliest(own, expr(s.scrutinee)),
         );
       default:
         assertNever(s);
         return own;
     }
   };
-  const tile = (t: TileExpr): Extent => {
-    const own = extentAt(t.pos);
+  const tile = (t: TileExpr): Pos => {
+    const own = t.pos;
     switch (t.kind) {
       case "TileCall": {
-        let over = own;
+        let from = own;
         for (const a of t.args) {
-          over = spanning(over, isTileExpr(a.value) ? tile(a.value) : expr(a.value));
+          from = earliest(from, isTileExpr(a.value) ? tile(a.value) : expr(a.value));
         }
-        for (const p of t.props) over = spanning(spanning(over, extentAt(p.pos)), expr(p.value));
-        return over;
+        for (const p of t.props) from = earliest(earliest(from, p.pos), expr(p.value));
+        return from;
       }
       case "TileFor": {
-        const over = spanning(spanning(own, expr(t.iter)), tile(t.body));
-        declare("for-expr", t.bind, t.pos, over);
-        return over;
+        const from = earliest(earliest(own, expr(t.iter)), tile(t.body));
+        declare("for-expr", t.bind, own, from);
+        return from;
       }
       case "TileWhen":
-        return spanning(spanning(own, expr(t.cond)), tile(t.body));
+        return earliest(earliest(own, expr(t.cond)), tile(t.body));
       case "TileIf":
-        return spanning(
-          spanning(spanning(own, expr(t.cond)), tile(t.consequent)),
+        return earliest(
+          earliest(earliest(own, expr(t.cond)), tile(t.consequent)),
           tile(t.alternate),
         );
       case "TileMatch":
         return t.arms.reduce(
-          (over, a) => spanning(over, arm("match-expr", a.pattern, tile(a.body))),
-          spanning(own, expr(t.scrutinee)),
+          (from, a) => earliest(from, arm("match-expr", a.pattern, tile(a.body))),
+          earliest(own, expr(t.scrutinee)),
         );
       default:
         assertNever(t);
@@ -170,31 +158,23 @@ export function nestedScopes(
 }
 
 /**
- * The nested scope declaring `name` that a read at `pos` is outside of: the one that ended last
- * before the read, or else the first to begin after it. Of two that end together, the outer one,
- * which held the name the longer; of two that begin together, the earlier declaration.
+ * The nested scope declaring `name` that begins after a read at `pos`: the first to begin, and of
+ * two that begin together, the earlier declaration. A scope that ended before the read is the
+ * check's to name, as it goes.
  */
-export function scopeOutside(
+export function laterDeclaration(
   scopes: NestedScopes,
   name: string,
   pos: Pos,
-): { side: "ended" | "later"; declaration: ScopedDeclaration } | undefined {
-  const endsLater = (a: ScopedDeclaration, b: ScopedDeclaration): number =>
-    comparePos(a.to, b.to) || comparePos(b.from, a.from);
-  const beginsSooner = (a: ScopedDeclaration, b: ScopedDeclaration): number =>
-    comparePos(b.from, a.from) || comparePos(b.at, a.at);
-  let ended: ScopedDeclaration | undefined;
+): ScopedDeclaration | undefined {
+  const sooner = (a: ScopedDeclaration, b: ScopedDeclaration): number =>
+    comparePos(a.from, b.from) || comparePos(a.at, b.at);
   let later: ScopedDeclaration | undefined;
   for (const d of scopes.get(name) ?? []) {
-    if (comparePos(d.to, pos) < 0) {
-      if (ended === undefined || endsLater(d, ended) > 0) ended = d;
-    } else if (comparePos(pos, d.from) < 0) {
-      if (later === undefined || beginsSooner(d, later) > 0) later = d;
-    }
+    if (comparePos(pos, d.from) >= 0) continue;
+    if (later === undefined || sooner(d, later) < 0) later = d;
   }
-  if (ended !== undefined) return { side: "ended", declaration: ended };
-  if (later !== undefined) return { side: "later", declaration: later };
-  return undefined;
+  return later;
 }
 
 /** A variant's binds have no position of their own, so they are placed at the variant pattern. */
