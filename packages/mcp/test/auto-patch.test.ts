@@ -6,6 +6,8 @@ import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it, vi } from "vitest";
 import { serialiseFixFromTest } from "../src/index.ts";
 import {
+  COUNTER,
+  call,
   callOnce,
   FIX_COUNTER_TESTS,
   FIX_COUNTER_TYPO_WITH_TEST,
@@ -13,6 +15,7 @@ import {
   FIX_REGRESSION,
   type ToolResult,
   useWorkdir,
+  withClient,
 } from "./helpers/client.ts";
 
 // A plain-object namespace, so `vi.spyOn(fs, ...)` can replace an export.
@@ -152,6 +155,16 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
     const unknown = await callOnce("kumiki_auto_patch", { path: file, testName: "no-such-test" });
     expect(unknown.isError).toBe(true);
     expect(outcome(unknown).status).toBe("not-found");
+  });
+
+  it("finds no test in a file without any, after kumiki_test ran one that has it", async () => {
+    const file = copy(COUNTER, "counter.kumiki");
+    await withClient(async (client) => {
+      expect((await call(client, "kumiki_test", { path: FIX_COUNTER_TESTS })).isError).toBe(false);
+      const res = await call(client, "kumiki_auto_patch", { path: file, testName: "inc-works" });
+      expect(res.isError).toBe(true);
+      expect(outcome(res)).toMatchObject({ status: "not-found", availableTests: [] });
+    });
   });
 
   it("applies on a single-test fixture: FAIL → PASS with regressed:[], not flagged", async () => {

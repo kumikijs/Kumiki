@@ -59,7 +59,12 @@
       }
     ],
     "logout": [{ "outcome": "ok", "value": { "_tag": "Ok", "_0": null } }],
-    "login": [{ "outcome": "err", "value": { "status": 0, "message": "aborted", "body": "" } }]
+    "login": [
+      {
+        "outcome": "err",
+        "value": { "status": 0, "message": "aborted", "body": { "_tag": "None" } }
+      }
+    ]
   },
   "steps": [
     {
