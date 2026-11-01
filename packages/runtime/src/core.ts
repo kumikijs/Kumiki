@@ -58,6 +58,7 @@ export {
   type RefinementStep,
   refinementRejectionOf,
   refinementRejections,
+  rejectedBatchText,
   reportRejectedBatch,
   type SlotGate,
   type SlotMeta,

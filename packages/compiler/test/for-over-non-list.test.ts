@@ -49,7 +49,8 @@ slot tg     : Tags                    = ["s"]
 fn rowsOf(ys: List(Text)) -> List(Text) = ys
 fn pick() -> Option(List(Int)) = None
 fn idx(ys: List(Int)) -> Map(Text, Int) = {"k": 1}
-fn loose(ys: List(Int)) = ys
+fn loose(ys: List(Int)) = ys.map($1)
+fn firstOf(ys: List(Int)) = ys.head
 fn one(a: Int) -> Int = a
 `;
 
@@ -85,6 +86,8 @@ const NOT_A_LIST: [target: string, message: string][] = [
   ["pick()", `${HEAD} Option(List(Int)) — iterate its .get-or([]), or match on Some / None`],
   ["o", `${HEAD} Option(Int) — match on Some / None to take out its value`],
   ["xs.head", `${HEAD} Option(Text) — match on Some / None to take out its value`],
+  // A fn with no `->` answers its body's type.
+  ["firstOf(rows)", `${HEAD} Option(Int) — match on Some / None to take out its value`],
   ["ri", `${HEAD} Result(Int, Text) — match on Ok / Err to take out its value`],
   // Only the success payload decides whether `.get-or([])` iterates.
   ["rl", `${HEAD} Result(Int, List(Text)) — match on Ok / Err to take out its value`],
@@ -213,10 +216,10 @@ tile App = column(Tally)`);
 describe("a target E0218 cannot judge is not reported", () => {
   // `null` from the inferencer means "cannot tell", never "not a List".
   for (const form of FORM_NAMES) {
-    it(`${form} form: a fn result with no -> is undecided`, () => {
+    it(`${form} form: a fn with no -> whose body is undecided is undecided`, () => {
       const src = FORMS[form]("untyped(rows)").replace(
         "fn one(",
-        "fn untyped(ys: List(Int)) = ys.head\nfn one(",
+        "fn untyped(ys: List(Int)) = ys.fold(0, $1 + $2)\nfn one(",
       );
       expect(checkSource(src)).toEqual([]);
     });
