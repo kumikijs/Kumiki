@@ -6,7 +6,7 @@ import { jsOfExpr, showJs } from "./expr.ts";
 export function keyFor(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string | null {
   const keyProp = t.props.find((p) => p.name === "key");
   if (!keyProp) return null;
-  return showJs(jsOfExpr(keyProp.value, ctx), keyProp.value);
+  return showJs(jsOfExpr(keyProp.value, ctx), keyProp.value, ctx.gen);
 }
 
 function isNotPropData(tile: string, name: string, forEl = false): boolean {

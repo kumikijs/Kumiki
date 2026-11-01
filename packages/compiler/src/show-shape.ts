@@ -77,13 +77,35 @@ function shapeOf(
     const kind = keyRepresentation(u.args[0] ?? null, env);
     return kind === "text" || kind === null ? 0 : kind;
   };
-  // Filled in place below, so a part that names this definition again holds the finished shape.
-  const parts: (ShowShape | KeyKind | string)[] = [];
-  const shape = parts as unknown as ShowShape;
-  register(shape);
-  if (u.name === "List") parts.push("l", arg(0));
-  else if (u.name === "Tuple") parts.push("t", ...u.args.map((_, i) => arg(i)));
-  else if (u.name === "Map") parts.push("m", key(), arg(0), arg(1));
-  else if (u.name === "Set") parts.push("s", key(), arg(0));
-  return shape;
+  // Each is registered before its slots are filled, so a slot that names this definition
+  // again holds the finished shape.
+  switch (u.name) {
+    case "List": {
+      const shape: ["l", ShowShape] = ["l", 0];
+      register(shape);
+      shape[1] = arg(0);
+      return shape;
+    }
+    case "Tuple": {
+      const shape: ["t", ...ShowShape[]] = ["t"];
+      register(shape);
+      shape.push(...u.args.map((_, i) => arg(i)));
+      return shape;
+    }
+    case "Map": {
+      const shape: ["m", KeyKind | 0, ShowShape, ShowShape] = ["m", key(), 0, 0];
+      register(shape);
+      shape[2] = arg(0);
+      shape[3] = arg(1);
+      return shape;
+    }
+    case "Set": {
+      const shape: ["s", KeyKind | 0, ShowShape] = ["s", key(), 0];
+      register(shape);
+      shape[2] = arg(0);
+      return shape;
+    }
+    default:
+      return 0;
+  }
 }

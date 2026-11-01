@@ -268,13 +268,14 @@ function boundInputValueJs(
   reading: ParseReading | null,
   t: TileExpr & { kind: "TileCall" },
   readJs: string,
+  gen: GenCtx,
 ): string {
   if (reading === "Time") {
     const typeArg = t.args.find((a) => a.name === "type")?.value as Expr | undefined;
     const pattern = typeArg?.kind === "Str" ? TIME_INPUT_PATTERNS.get(typeArg.value) : undefined;
     if (pattern) return `_s.formatTime(${readJs}, ${JSON.stringify(pattern)})`;
   }
-  return showJs(readJs, undefined);
+  return showJs(readJs, undefined, gen);
 }
 
 function tileCallJs(
@@ -367,7 +368,7 @@ function tileCallJs(
       }
       case "button": {
         const textArg = t.args.find((a) => a.name === "text");
-        const textJs = textArg ? argShownJs(textArg, ctx) : showJs('""', undefined);
+        const textJs = textArg ? argShownJs(textArg, ctx) : showJs('""', undefined, gen);
         const typeArg = t.args.find((a) => a.name === "type");
         const typeField = typeArg ? `type: ${jsOfExpr(asExpr(typeArg.value), ctx)}, ` : "";
         return `({ kind: "button", text: ${textJs}, ${typeField}props: ${propsObj} })`;
@@ -378,7 +379,7 @@ function tileCallJs(
         for (const arg of t.args) {
           if (!arg.name || arg.name === "bind") continue;
           const valJs = jsOfExpr(asExpr(arg.value), ctx);
-          if (arg.name === "value") fields.push(`value: ${showJs(valJs, asExpr(arg.value))}`);
+          if (arg.name === "value") fields.push(`value: ${showJs(valJs, asExpr(arg.value), gen)}`);
           else if (arg.name === "placeholder") fields.push(`placeholder: ${valJs}`);
           else if (arg.name === "type") fields.push(`type: ${valJs}`);
           else if (arg.name === "id") fields.push(`id: ${valJs}`);
@@ -394,7 +395,7 @@ function tileCallJs(
             gen.usedReaders.add(reading);
             fields.push(`parse: ${readerName(reading)}`);
           }
-          fields.push(`value: ${boundInputValueJs(reading, t, bindInfo.read)}`);
+          fields.push(`value: ${boundInputValueJs(reading, t, bindInfo.read, gen)}`);
         }
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
@@ -405,13 +406,13 @@ function tileCallJs(
         for (const arg of t.args) {
           if (!arg.name || arg.name === "bind") continue;
           const valJs = jsOfExpr(asExpr(arg.value), ctx);
-          if (arg.name === "value") fields.push(`value: ${showJs(valJs, asExpr(arg.value))}`);
+          if (arg.name === "value") fields.push(`value: ${showJs(valJs, asExpr(arg.value), gen)}`);
           else if (arg.name === "placeholder") fields.push(`placeholder: ${valJs}`);
           else if (arg.name === "id") fields.push(`id: ${valJs}`);
           else if (arg.name === "rows") fields.push(`rows: ${valJs}`);
         }
         if (bindInfo)
-          fields.push(...bindFields(bindInfo), `value: ${showJs(bindInfo.read, undefined)}`);
+          fields.push(...bindFields(bindInfo), `value: ${showJs(bindInfo.read, undefined, gen)}`);
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
       }
@@ -482,8 +483,8 @@ function tileCallJs(
         const text = textExpr ? jsOfExpr(textExpr, ctx) : '""';
         const fields = [
           `kind: "link"`,
-          `text: ${showJs(text, textExpr)}`,
-          `to: ${showJs(to, toArg ? asExpr(toArg.value) : undefined)}`,
+          `text: ${showJs(text, textExpr, gen)}`,
+          `to: ${showJs(to, toArg ? asExpr(toArg.value) : undefined, gen)}`,
         ];
         const prefetchProp = t.props.find((p) => p.name === "prefetch");
         if (prefetchProp) {
@@ -512,7 +513,7 @@ function tileCallJs(
       case "image": {
         const src = contentArg(t);
         const srcJs = src ? jsOfExpr(asExpr(src.value), ctx) : '""';
-        return `({ kind: "image", src: ${showJs(srcJs, src ? asExpr(src.value) : undefined)}, props: ${propsObj} })`;
+        return `({ kind: "image", src: ${showJs(srcJs, src ? asExpr(src.value) : undefined, gen)}, props: ${propsObj} })`;
       }
       case "icon": {
         const name = contentArg(t);
@@ -522,7 +523,7 @@ function tileCallJs(
           if (literal) ctx.gen.usedIcons.add(literal);
         }
         const nameJs = nameExpr ? jsOfExpr(nameExpr, ctx) : '""';
-        return `({ kind: "icon", name: ${showJs(nameJs, nameExpr ?? undefined)}, props: ${propsObj} })`;
+        return `({ kind: "icon", name: ${showJs(nameJs, nameExpr ?? undefined, gen)}, props: ${propsObj} })`;
       }
       case "code": {
         const text = contentJs(t, ctx);
@@ -632,7 +633,7 @@ function tileCallJs(
       case "details": {
         const children = collectChildren(t.args, gen, ctx, enclosingTiles);
         const summaryArg = t.args.find((a) => a.name === "summary");
-        const summary = summaryArg ? argShownJs(summaryArg, ctx) : showJs('""', undefined);
+        const summary = summaryArg ? argShownJs(summaryArg, ctx) : showJs('""', undefined, gen);
         const fields: string[] = [
           `kind: "details"`,
           `summary: ${summary}`,
@@ -648,7 +649,7 @@ function tileCallJs(
         const bindInfo = extractBindPath(t.args, ctx);
         const textJs = contentJs(t, ctx);
         if (bindInfo) {
-          fields.push(...bindFields(bindInfo), `text: ${showJs(bindInfo.read, undefined)}`);
+          fields.push(...bindFields(bindInfo), `text: ${showJs(bindInfo.read, undefined, gen)}`);
         } else {
           fields.push(`text: ${textJs}`);
         }
@@ -669,13 +670,13 @@ function firstPositional(t: TileExpr & { kind: "TileCall" }): TileArg | undefine
 
 function contentJs(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string {
   const arg = contentArg(t);
-  return arg ? argShownJs(arg, ctx) : showJs('""', undefined);
+  return arg ? argShownJs(arg, ctx) : showJs('""', undefined, ctx.gen);
 }
 
 /** A tile argument as the text it renders (`showJs`). */
 function argShownJs(arg: TileArg, ctx: EvalCtx): string {
   const e = asExpr(arg.value);
-  return showJs(jsOfExpr(e, ctx), e);
+  return showJs(jsOfExpr(e, ctx), e, ctx.gen);
 }
 
 function asExpr(v: Expr | TileExpr): Expr {

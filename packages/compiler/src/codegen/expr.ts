@@ -1,4 +1,4 @@
-import type { Expr, FragmentShape, KeyKind, Pattern, Pos, ShowShape, TypeExpr } from "../ast.ts";
+import type { Expr, FragmentShape, KeyKind, Pattern, Pos } from "../ast.ts";
 import { callsBuiltin, decodedType, RUN_REDUCER } from "../builtin-calls.ts";
 import { type ParseReading, parseQualifier } from "../parse-reading.ts";
 import { fragmentArgument } from "../stdlib-members.ts";
@@ -94,7 +94,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       const l = jsOfExpr(e.lhs, ctx);
       const r = jsOfExpr(e.rhs, ctx);
       if (e.op === "+") {
-        return `_s.add(${shownOperandJs(l, e.lhs)}, ${shownOperandJs(r, e.rhs)})`;
+        return `_s.add(${shownOperandJs(l, e.lhs, ctx.gen)}, ${shownOperandJs(r, e.rhs, ctx.gen)})`;
       }
       if (e.op === "&") return `(${l} && ${r})`;
       if (e.op === "|") return `(${l} || ${r})`;
@@ -117,7 +117,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (e.field === "entries") return `_s.mapEntries(${baseJs}${keyKindArg(e.keyKind)})`;
       if (e.field === "size") return `_s.mapSize(${baseJs})`;
       if (e.field === "to-ms" || e.field === "ms") return `(${baseJs})`;
-      if (e.field === "show") return showJs(baseJs, e.base);
+      if (e.field === "show") return showJs(baseJs, e.base, ctx.gen);
       if (e.field === "length") return `((${baseJs}) ?? "").length`;
       if (e.field === "is-empty") return `_s.isEmpty(${baseJs})`;
       if (e.field === "lower") return `(String((${baseJs}) ?? "")).toLowerCase()`;
@@ -161,7 +161,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (/^[A-Z][A-Za-z0-9_]*\.fresh$/.test(cn)) return `_s.freshId()`;
       if (/^[A-Z][A-Za-z0-9_]*\.parse$/.test(cn)) return parseJs(cn, e.args, e.pos, ctx);
       if (/^[A-Z][A-Za-z0-9_]*\.show$/.test(cn)) {
-        return showJs(requiredArg(cn, e.args, e.pos, ctx), e.args[0]);
+        return showJs(requiredArg(cn, e.args, e.pos, ctx), e.args[0], ctx.gen);
       }
       // Duration constructors → milliseconds (Time is stored as a raw ms number).
       if (cn === "Duration.ms") return `(${requiredArg(cn, e.args, e.pos, ctx)})`;
@@ -188,7 +188,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "fmt") {
         const template = requiredArg(cn, e.args, e.pos, ctx);
         const rest = e.args.slice(1).map((a) => jsOfExpr(a, ctx));
-        const shown = [template, ...rest].map((js, i) => shownOperandJs(js, e.args[i]));
+        const shown = [template, ...rest].map((js, i) => shownOperandJs(js, e.args[i], ctx.gen));
         return `_s.fmt(${shown.join(", ")})`;
       }
       if (cn === "panic") return `_s.panic(${requiredArg(cn, e.args, e.pos, ctx)})`;
@@ -439,45 +439,15 @@ function keyKindArg(kind: KeyKind | undefined): string {
   return kind ? `, ${JSON.stringify(kind)}` : "";
 }
 
-export function showJs(js: string, e: Expr | undefined): string {
+/** `js` as the text it shows, by the shape the checker recorded where `e` is shown. */
+export function showJs(js: string, e: Expr | undefined, gen: GenCtx): string {
   const shape = e?.showShape;
-  return shape === undefined ? `_s.show(${js})` : `_s.show(${js}, ${showShapeJs(shape)})`;
+  return shape ? `_s.show(${js}, ${gen.showShapes.nameOf(shape)})` : `_s.show(${js})`;
 }
 
 // Passed through unshown when there is no shape, since a number `+` reads the operand as a number.
-function shownOperandJs(js: string, e: Expr | undefined): string {
-  return e?.showShape === undefined ? js : showJs(js, e);
-}
-
-// A type that contains itself has a shape that refers back to itself: each part on such a
-// cycle is declared first and filled in after, so a reference back to it names the declaration.
-function showShapeJs(shape: ShowShape): string {
-  const cyclic = new Set<Exclude<ShowShape, 0>>();
-  const onPath = new Set<object>();
-  const done = new Set<object>();
-  const walk = (s: ShowShape): void => {
-    if (typeof s !== "object") return;
-    if (onPath.has(s)) cyclic.add(s);
-    if (onPath.has(s) || done.has(s)) return;
-    onPath.add(s);
-    for (const part of Object.values(s)) walk(part as ShowShape);
-    onPath.delete(s);
-    done.add(s);
-  };
-  walk(shape);
-  if (cyclic.size === 0) return JSON.stringify(shape);
-  const names = new Map([...cyclic].map((s, i) => [s, `_shape${i}`]));
-  const literal = (s: ShowShape, own = false): string => {
-    if (typeof s !== "object") return JSON.stringify(s);
-    const name = names.get(s);
-    if (name !== undefined && !own) return name;
-    if (Array.isArray(s)) return `[${s.map((part) => literal(part as ShowShape)).join(", ")}]`;
-    const fields = Object.entries(s).map(([k, part]) => `${JSON.stringify(k)}: ${literal(part)}`);
-    return `{ ${fields.join(", ")} }`;
-  };
-  const decls = [...names].map(([s, name]) => `${name} = ${Array.isArray(s) ? "[]" : "{}"}`);
-  const fills = [...names].map(([s, name]) => `Object.assign(${name}, ${literal(s, true)});`);
-  return `(() => { const ${decls.join(", ")}; ${fills.join(" ")} return ${literal(shape)}; })()`;
+function shownOperandJs(js: string, e: Expr | undefined, gen: GenCtx): string {
+  return e?.showShape ? showJs(js, e, gen) : js;
 }
 
 function fragmentFnCall(method: string, index: number, a: Expr, ctx: EvalCtx): Expr | null {
@@ -554,7 +524,7 @@ export function methodCallJs(
     case "fold":
       return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, (${p1}, ${p2}) => ${jsOfExpr(args[1]!, two)})`;
     case "show":
-      return showJs(recvJs, recv);
+      return showJs(recvJs, recv, ctx.gen);
     case "is-some":
       return `_s.variantIs(${recvJs}, "Some")`;
     case "is-none":
