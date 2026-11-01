@@ -83,13 +83,13 @@ export function makeEffectDispatcher(
     | { kind: "throttle"; h: Timer; id: string };
   type QueueEntry = { id: string; token: string };
   type Queue = { tail: Promise<void>; pending: QueueEntry[] };
-  type Launch = { name: string; token: string; ctl: AbortController };
+  type Run = { name: string; token: string; ctl: AbortController };
   type RunState = {
     // Keyed by `EffectId`: what `http.cancel` names and `latest` replaces.
     inflight: Map<string, AbortController>;
-    // Every launch whose result has not been delivered, including one a cancel already took out
-    // of `inflight`. Only a launch still here delivers its result, so `dispose` empties it.
-    launched: Set<Launch>;
+    // Every launched request whose result has not been delivered, including one a cancel already
+    // took out of `inflight`. Only a run still here delivers its result, so `dispose` empties it.
+    runs: Set<Run>;
     // The id of an emit a policy dropped, to the id of the request that absorbed it, so a cancel
     // through either one reaches that request. An entry goes when that request settles.
     absorbedBy: Map<string, string>;
@@ -101,7 +101,7 @@ export function makeEffectDispatcher(
   };
   const state: RunState = {
     inflight: new Map(),
-    launched: new Set(),
+    runs: new Set(),
     absorbedBy: new Map(),
     timers: new Map(),
     onceSeen: new Map(),
@@ -140,23 +140,22 @@ export function makeEffectDispatcher(
     }
     const token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
     const ctl = new AbortController();
-    const run: Launch = { name: eff.name, token, ctl };
+    const run: Run = { name: eff.name, token, ctl };
     state.inflight.set(id, ctl);
-    state.launched.add(run);
+    state.runs.add(run);
     let res: EffectResult;
     try {
       res = await runWithRetry(eff, input, caps, ctl.signal);
     } catch (e) {
       res = { kind: "err", value: { message: String(e) } };
     }
-    const live = state.launched.delete(run);
     // Released before its result is delivered, so a cancel the `.ok` / `.err` reducers emit finds
     // a request that is over. Under `latest` a newer request may hold the id by now.
     if (state.inflight.get(id) === ctl) {
       state.inflight.delete(id);
       settle(id);
     }
-    if (live) onResult(eff.name, res.kind, res.value, input, token);
+    if (state.runs.delete(run)) onResult(eff.name, res.kind, res.value, input, token);
   };
 
   return {
@@ -269,27 +268,27 @@ export function makeEffectDispatcher(
     // Ends everything first and records after: recording a cancel can commit an episode, which
     // runs the logger's `onEpisode`, and nothing that does may leave an effect running.
     dispose(): void {
-      const cancelled: { token: string; name: string }[] = [];
+      const cancelled: [token: string, name: string][] = [];
       for (const [name, t] of state.timers) {
         clearTimeout(t.h);
-        if (t.kind === "debounce") cancelled.push({ token: t.token, name });
+        if (t.kind === "debounce") cancelled.push([t.token, name]);
       }
       for (const [name, q] of state.queues) {
-        for (const e of q.pending.splice(0)) cancelled.push({ token: e.token, name });
+        for (const e of q.pending.splice(0)) cancelled.push([e.token, name]);
       }
       // A launch is cancelled whether it is running or waiting between retry attempts, and so is
       // one a cancel already aborted whose result has not come back.
-      for (const run of state.launched) {
+      for (const run of state.runs) {
         run.ctl.abort();
-        cancelled.push({ token: run.token, name: run.name });
+        cancelled.push([run.token, run.name]);
       }
       state.timers.clear();
       state.queues.clear();
-      state.launched.clear();
+      state.runs.clear();
       state.inflight.clear();
       state.absorbedBy.clear();
-      for (const c of cancelled) {
-        if (c.token) onPolicyCancel?.(c.token, c.name);
+      for (const [token, name] of cancelled) {
+        if (token) onPolicyCancel?.(token, name);
       }
     },
   };
