@@ -112,6 +112,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0226](./errors.md#e0226-input-bind-type) | `input-bind-type` | tile | forms |
 | [E0227](./errors.md#e0227-non-exhaustive-match) | `non-exhaustive-match` | type | core |
 | [E0229](./errors.md#e0229-bind-target-not-slot) | `bind-target-not-slot` | tile | forms |
+| [E0231](./errors.md#e0231-reserved-type-name) | `reserved-type-name` | type | core |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | core |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | stdlib |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | forms |
@@ -126,7 +127,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0402](./errors.md#e0402-motion-invalid-timing) | `motion-invalid-timing` | tile | style |
 | [E0403](./errors.md#e0403-motion-malformed) | `motion-malformed` | tile | style |
 | [E0601](./errors.md#e0601-duplicate-write) | `duplicate-write` | reducer | core |
-| [E0602](./errors.md#e0602-unassignable-member) | `unassignable-member` | reducer | core |
+| [E0602](./errors.md#e0602-unassignable-member) | `unassignable-member` | reducer / tile | core |
 | [E0701](./errors.md#e0701-a11y-button) | `a11y-button` | tile | lifecycle |
 | [E0702](./errors.md#e0702-a11y-image) | `a11y-image` | tile | lifecycle |
 | [E0703](./errors.md#e0703-a11y-link) | `a11y-link` | tile | lifecycle |

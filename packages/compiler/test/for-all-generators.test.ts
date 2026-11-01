@@ -213,6 +213,12 @@ describe("a for-all type the generator cannot build", () => {
     ["an EffectId", "EffectId", '"EffectId" has none'],
     ["a tuple holding a File", "Tuple(Int, File)", '"File" has none'],
     ["a FormData, whose FileV variant holds a File", "FormData", '"File" has none'],
+    ["a FormValue, whose FileV variant holds a File", "FormValue", '"File" has none'],
+    [
+      "an HttpStatus refined past its own bounds",
+      "HttpStatus where between(700, 800)",
+      'the refinements of "HttpStatus" leave no value: none is at least 700 and at most 599',
+    ],
     [
       "a generic that nests a parameter deeper",
       "Grow(Int)",

@@ -23,14 +23,16 @@ import {
   refinementBaseProblem,
   refinementProblem,
 } from "../refinements.ts";
+import { isReservedTypeName } from "../stdlib-types.ts";
 import type { KumikiError, SymbolTable } from "./context.ts";
 
 export function resolveType(
   t: TypeExpr,
   sym: SymbolTable,
   errors: KumikiError[],
-  typeParams: ReadonlySet<string> = EMPTY_SCOPE,
+  scope: TypeScope = EMPTY_SCOPE,
 ): void {
+  const typeParams = scope.params;
   switch (t.kind) {
     case "TypePrim":
       return;
@@ -49,33 +51,38 @@ export function resolveType(
       return;
     }
     case "TypeApp": {
-      if (!typeParams.has(t.name)) {
-        if (!isKnownTypeName(t.name, sym)) {
-          errors.push({
-            code: "E0117",
-            kind: "undef-type",
-            message: `Reference to undefined type "${t.name}"`,
-            pos: t.pos,
-          });
-        } else {
-          checkTypeArity(t.name, t.args.length, t.pos, sym, errors);
-          checkApplication(t, sym, typeParams, errors);
-        }
+      if (typeParams.has(t.name)) {
+        // Substitution leaves such an application opaque, so this is its one report.
+        errors.push({
+          code: "E0210",
+          kind: "type-arity-mismatch",
+          message: `Type parameter "${t.name}" of "${scope.owner}" takes no type arguments, but is written "${t.name}(${t.args.map(typeToString).join(", ")})"`,
+          pos: t.pos,
+        });
+      } else if (!isKnownTypeName(t.name, sym)) {
+        errors.push({
+          code: "E0117",
+          kind: "undef-type",
+          message: `Reference to undefined type "${t.name}"`,
+          pos: t.pos,
+        });
+      } else {
+        checkTypeArity(t.name, t.args.length, t.pos, sym, errors);
+        checkApplication(t, sym, typeParams, errors);
       }
-      for (const a of t.args) resolveType(a, sym, errors, typeParams);
+      for (const a of t.args) resolveType(a, sym, errors, scope);
       return;
     }
     case "TypeRecord":
-      for (const f of t.fields) resolveType(f.type, sym, errors, typeParams);
+      for (const f of t.fields) resolveType(f.type, sym, errors, scope);
       return;
     case "TypeUnion":
-      for (const v of t.variants)
-        for (const p of v.payloads) resolveType(p, sym, errors, typeParams);
+      for (const v of t.variants) for (const p of v.payloads) resolveType(p, sym, errors, scope);
       return;
     case "TypeNominal":
     case "TypeRefinement":
       checkRefinement(t.refinement, t.inner, sym, typeParams, errors);
-      resolveType(t.inner, sym, errors, typeParams);
+      resolveType(t.inner, sym, errors, scope);
       return;
   }
 }
@@ -125,7 +132,7 @@ function baseProblem(
   sym: SymbolTable,
   typeParams: ReadonlySet<string>,
 ): RefinementProblem | undefined {
-  const base = judgedBase(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
+  const base = unaliasType(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
   const message = base ? refinementBaseProblem(r, base) : undefined;
   return message ? { kind: "refinement-args-invalid", message } : undefined;
 }
@@ -133,13 +140,6 @@ function baseProblem(
 /** Each of `params` mapped to the opaque type, so that nothing is concluded from it. */
 function opaqueParams(params: Iterable<string>, pos: Pos): Map<string, TypeExpr> {
   return new Map([...params].map((p) => [p, unknownType(pos)]));
-}
-
-function judgedBase(t: TypeExpr, sym: SymbolTable): TypeExpr | undefined {
-  const base = unaliasType(t, sym);
-  if (base === null) return undefined;
-  if (base.kind === "TypeApp" && !isKnownTypeName(base.name, sym)) return undefined;
-  return base;
 }
 
 function checkApplication(
@@ -300,16 +300,22 @@ function walkApplied(t: TypeExpr, at: AppliedBody, run: AppliedRun, todo: Applie
     case "TypePrim":
     case "TypeRef":
       return;
-    case "TypeApp":
+    case "TypeApp": {
       parts(t.args);
-      todo.push({
-        kind: "enter",
-        name: t.name,
-        args: t.args.map((a) => substituteType(a, at.applied)),
-        judged: t.args.map((a) => substituteType(a, at.before)),
-        scope: at.inside,
-      });
+      // Substituted whole, so that a parameter at the head leaves no application to enter
+      // rather than naming a top-level generic.
+      const nested = substituteType(t, at.applied);
+      if (nested.kind === "TypeApp") {
+        todo.push({
+          kind: "enter",
+          name: t.name,
+          args: nested.args,
+          judged: t.args.map((a) => substituteType(a, at.before)),
+          scope: at.inside,
+        });
+      }
       return;
+    }
     case "TypeRecord":
       parts(t.fields.map((f) => f.type));
       return;
@@ -321,8 +327,8 @@ function walkApplied(t: TypeExpr, at: AppliedBody, run: AppliedRun, todo: Applie
       const r = t.refinement;
       // A problem with the arguments is the definition's, reported there.
       if (r && !refinementProblem(r)) {
-        const was = judgedBase(substituteType(t.inner, at.before), run.sym);
-        const now = judgedBase(substituteType(t.inner, at.applied), run.sym);
+        const was = unaliasType(substituteType(t.inner, at.before), run.sym);
+        const now = unaliasType(substituteType(t.inner, at.applied), run.sym);
         if (now && !(was && refinementBaseProblem(r, was))) {
           const over = `${run.shown} applies it over ${typeToString(now)}`;
           const message = refinementBaseProblem(r, now, over);
@@ -358,10 +364,27 @@ function checkTypeArity(
   });
 }
 
-const EMPTY_SCOPE: ReadonlySet<string> = new Set();
+type TypeScope = { readonly owner: string; readonly params: ReadonlySet<string> };
+
+const EMPTY_SCOPE: TypeScope = { owner: "", params: new Set() };
 
 export function checkTypeDef(def: TypeDef, sym: SymbolTable, errors: KumikiError[]): void {
-  resolveType(def.body, sym, errors, new Set(def.params));
+  resolveType(def.body, sym, errors, { owner: def.name, params: new Set(def.params) });
+}
+
+/**
+ * A program's own definition under a name the standard library keeps (E0231). It is reported from
+ * the program's definitions, not from {@link checkTypeDef}, which also judges the standard library's
+ * own entries when a type reaches them.
+ */
+export function reservedTypeName(def: TypeDef): KumikiError | null {
+  if (!isReservedTypeName(def.name)) return null;
+  return {
+    code: "E0231",
+    kind: "reserved-type-name",
+    message: `Type "${def.name}" collides with the standard library's ${def.name}; uses of it never see this type`,
+    pos: def.pos,
+  };
 }
 
 /**
@@ -370,7 +393,7 @@ export function checkTypeDef(def: TypeDef, sym: SymbolTable, errors: KumikiError
  */
 export function reachesBrokenDefinition(t: TypeExpr, sym: SymbolTable): boolean {
   const reached = new Map<string, TypeDef>();
-  const todo: { t: TypeExpr; params: ReadonlySet<string> }[] = [{ t, params: EMPTY_SCOPE }];
+  const todo: { t: TypeExpr; params: ReadonlySet<string> }[] = [{ t, params: EMPTY_SCOPE.params }];
   for (let at = todo.pop(); at !== undefined; at = todo.pop()) {
     const { t: cur, params } = at;
     const inside = (parts: readonly TypeExpr[]) => {

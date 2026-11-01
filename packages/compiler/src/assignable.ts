@@ -7,7 +7,10 @@ export type TypeEnv = { types: ReadonlyMap<string, TypeDef> };
 
 export const unknownType = (pos: Pos): TypeExpr => ({ kind: "TypeRef", name: "?", pos });
 
-/** True when nothing can be concluded about `t` — an unresolved name, or absent. */
+/**
+ * True when nothing can be concluded about `t`: it is absent, a bare name that is no type, or a
+ * name that is no type constructor applied to arguments.
+ */
 export function isOpaque(t: TypeExpr | null, env: TypeEnv): boolean {
   const u = unaliasType(t, env);
   return u === null || u.kind === "TypeRef";
@@ -168,7 +171,14 @@ function followChain(
     }
     if (cur.kind !== "TypeRef" && cur.kind !== "TypeApp") return settle(cur);
     const def = walk.env.types.get(cur.name);
-    if (!def) return settle(cur);
+    // Arguments to a name that is no type constructor describe nothing to compare against.
+    if (!def) {
+      return settle(
+        cur.kind === "TypeApp" && !isKnownTypeName(cur.name, walk.env)
+          ? { kind: "TypeRef", name: cur.name, pos: cur.pos }
+          : cur,
+      );
+    }
     if (guard.has(cur.name)) return settle(null);
     if (!predicates) {
       if (cur.kind === "TypeRef") {
@@ -262,6 +272,9 @@ export function substituteType(t: TypeExpr, sub: ReadonlyMap<string, TypeExpr>):
     case "TypeRef":
       return sub.get(t.name) ?? t;
     case "TypeApp":
+      // A parameter takes no arguments (E0210 where written); left in place, the head
+      // would resolve against a top-level type that shares the parameter's name.
+      if (sub.has(t.name)) return unknownType(t.pos);
       return { ...t, args: t.args.map((a) => substituteType(a, sub)) };
     case "TypeRecord":
       return {
@@ -289,6 +302,14 @@ export function recordFieldType(
   name: string,
 ): TypeExpr | null {
   return rec.fields.find((f) => f.name === name)?.type ?? null;
+}
+
+/** The place an index into the unaliased `base` names — a List's element, a Map's value — or `null` (a Set has members, not places). */
+export function indexPlaceType(base: TypeExpr | null): TypeExpr | null {
+  if (base?.kind !== "TypeApp") return null;
+  if (base.name === "List") return base.args[0] ?? null;
+  if (base.name === "Map") return base.args[1] ?? null;
+  return null;
 }
 
 export function elementType(t: TypeExpr | null, env: TypeEnv): TypeExpr | null {

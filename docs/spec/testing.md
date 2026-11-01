@@ -76,12 +76,10 @@ seed of the wrong type runs the reducer from a state the app can never be in,
 and an expectation of one asserts a state it can never reach: on
 `slot count : Int`, `given.slots: {count: "5"}` makes `count + 1` the text
 `"51"`, which `expect.slots: {count: "51"}` agrees with. A value whose type the
-checker does not infer is not yet held to the slot's: an empty `{}` written for
-a type that is not a collection, or the result of a `.map` / `.fold` / `.zip` /
-`.flat-map`, checks `ok` whatever the slot's type, in a test as in an
-initializer (`slot at : Text = {}` does). That is a known gap, not a rule
-([#514](https://github.com/kumikijs/Kumiki/issues/514),
-[#959](https://github.com/kumikijs/Kumiki/issues/959)). A wildcard in a
+checker does not infer is not yet held to the slot's: the result of a `.map` /
+`.fold` / `.zip` / `.flat-map` checks `ok` whatever the slot's type, in a test as
+in an initializer. That is a known gap, not a rule
+([#959](https://github.com/kumikijs/Kumiki/issues/959)). A wildcard in a
 `reducer-test` `expect` ([§8.2.2](#_8-2-2-wildcards)) has no type, so it is not
 held to the slot's. The `route` slot is the runtime's, of the standard
 `Route`; a seed of it names only the fields it needs, and a wildcard may stand
@@ -199,7 +197,7 @@ test route-seeded-in-part =
         expect = {slots: {at: "/posts/:id#7"}}
 ```
 
-A field name outside the route's own — `path`, `pattern`, `params`, `query`, `hash` — is **E0108**, and a `route` that is not a record, a wildcard for the whole route included, is **E0201**. Without those, a typo would be dropped by the completion and the test would run against the empty route: green, and exercising the branch it was written to avoid. Each field a `route` record names, in a seed, an `expect.slots` or a `slots-equal`, is a value of that field's type in the standard `Route` ([§3.2](./routing.md#_3-2-current-route-state)), or a type error at that position as [§8.1.1](#_8-1-1-the-names-a-test-body-writes) describes — whatever a program's own `type Route` says, because the slot holds the runtime's route. The completion fills only the fields left out, so `hash: "top"` (for `Some("top")`) or `params: {"id": 7}` would, without this check, reach the reducer as written: a route the app can never be on.
+A field name outside the route's own — `path`, `pattern`, `params`, `query`, `hash` — is **E0108**, and a `route` that is not a record, a wildcard for the whole route included, is **E0201**. Without those, a typo would be dropped by the completion and the test would run against the empty route: green, and exercising the branch it was written to avoid. Each field a `route` record names, in a seed, an `expect.slots` or a `slots-equal`, is a value of that field's type in the standard `Route` ([§3.2](./routing.md#_3-2-current-route-state)), or a type error at that position as [§8.1.1](#_8-1-1-the-names-a-test-body-writes) describes — the slot holds the runtime's route, and a program cannot declare a `type Route` of its own ([E0231](./errors.md#e0231-reserved-type-name)). The completion fills only the fields left out, so `hash: "top"` (for `Some("top")`) or `params: {"id": 7}` would, without this check, reach the reducer as written: a route the app can never be on.
 
 `expect.slots` names the slots it compares; a slot it leaves out is not compared, so the seeded route never has to be repeated — and may be asserted like any other slot when it is what the test is about. A named slot's value is still matched exactly ([§8.2.2](#_8-2-2-wildcards)), so an `expect` naming `route` spells the whole record.
 
