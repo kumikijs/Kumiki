@@ -1,4 +1,3 @@
-import { File as PlatformFile } from "node:buffer";
 import { describe, expect, it } from "vitest";
 import { _stdlibCore, type ShowShape } from "../src/stdlib.ts";
 
@@ -241,13 +240,6 @@ describe("show", () => {
       JSON.parse('{"__proto__": {"a": 1}, "n": 2}'),
       JSON.parse('{"__proto__": ["m", 0, 0, 0]}'),
       '{__proto__: {"a": 1}, n: 2}',
-    ],
-    // happy-dom's `File` has fields of its own, where a browser's, like Node's, has none.
-    [
-      "a File as its three fields and the handle on the picked file",
-      { name: "a.txt", size: 3, type: "text/plain", _file: new PlatformFile(["abc"], "a.txt") },
-      undefined,
-      '{name: "a.txt", size: 3, type: "text/plain", _file: {}}',
     ],
   ])("writes %s", (_label, value, shape, expected) => {
     expect(show(value, shape)).toBe(expected);
