@@ -45,15 +45,71 @@ export function load(path: string): Store {
   return loadSource(readFileSync(path, "utf8"));
 }
 
+// A lone `\r` is whitespace inside a line (language.md), not a line break.
+const LINE_BREAK = /\r?\n/;
+
 /** `load` for source text that is not (or not yet) on disk. */
 export function loadSource(source: string): Store {
-  const lines = source.split(/\r?\n/);
+  const lines = source.split(LINE_BREAK);
   const tokens = lex(source);
   const program = parse(tokens);
   const defs = buildEntries(program, lines, tokens);
   const byQName = new Map<string, DefEntry>();
   for (const e of defs) byQName.set(`${e.layer}.${e.name}`, e);
   return { source, lines, program, defs, byQName };
+}
+
+/**
+ * Edits go through these offsets rather than a split and a `\n` join, which
+ * would rewrite every CRLF in the file to LF.
+ */
+export function lineSpan(text: string, line: number): { start: number; end: number } | null {
+  if (line < 1) return null;
+  let start = 0;
+  for (let n = 1; n < line; n++) {
+    const nl = text.indexOf("\n", start);
+    if (nl === -1) return null;
+    start = nl + 1;
+  }
+  const nl = text.indexOf("\n", start);
+  if (nl === -1) return { start, end: text.length };
+  return { start, end: text[nl - 1] === "\r" ? nl - 1 : nl };
+}
+
+function lineBreakOf(text: string): string {
+  return LINE_BREAK.exec(text)?.[0] ?? "\n";
+}
+
+/** A body or a patch carries whichever line break it was written with; the file keeps one. */
+export function joinLines(source: string, lines: readonly string[]): string {
+  return lines.join("\n").split(LINE_BREAK).join(lineBreakOf(source));
+}
+
+/**
+ * The empty range `to === from - 1` inserts before line `from`: the store gives a
+ * definition that range when the next one starts on its line.
+ */
+export function spliceLines(
+  text: string,
+  from: number,
+  to: number,
+  lines: readonly string[],
+): string {
+  const first = lineSpan(text, from);
+  const last = lineSpan(text, to);
+  if (first === null || to < from - 1 || (to > 0 && last === null)) {
+    throw new Error(`lines ${from} to ${to} are not lines of the text`);
+  }
+  if (lines.length > 0) {
+    // With `to` 0 they go before line 1, where no line's break follows them,
+    // so the file's does.
+    const rest = last === null ? lineBreakOf(text) + text : text.slice(last.end);
+    return text.slice(0, first.start) + joinLines(text, lines) + rest;
+  }
+  const next = lineSpan(text, to + 1);
+  if (next !== null) return text.slice(0, first.start) + text.slice(next.start);
+  const prev = lineSpan(text, from - 1);
+  return prev === null ? "" : text.slice(0, prev.end);
 }
 
 function buildEntries(program: Program, lines: string[], tokens: Token[]): DefEntry[] {

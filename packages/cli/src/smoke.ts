@@ -9,6 +9,7 @@ import {
   createEpisodeLogger,
   describeDiagnostic,
   type EpisodeLogger,
+  isPanic,
   runScenario,
   type Scenario,
   type ScenarioReport,
@@ -221,6 +222,42 @@ function loadScenario(path: string): Scenario {
   return doc as Scenario;
 }
 
+function episodeLogError(path: string, error: unknown): Error {
+  return new Error(`could not write episode log ${path}: ${messageOf(error)}`, { cause: error });
+}
+
+/**
+ * The in-memory store keeps only the most recent N, so the file is appended as each episode
+ * commits. A failed write is held, not thrown: the hook runs inside the runtime's commit, where
+ * a throw would read as an error of the app. Nothing is appended after it, so the file has no
+ * gap. `close` stops the writing, so an episode that commits once the run is over (an effect
+ * its dispose did not cancel) is not written, and gives back the held failure.
+ */
+export function fileEpisodeLogger(path: string): {
+  logger: EpisodeLogger;
+  close: () => Error | null;
+} {
+  let failure: { error: unknown } | null = null;
+  let closed = false;
+  const logger = createEpisodeLogger({
+    onEpisode: (ep) => {
+      if (closed || failure) return;
+      try {
+        appendFileSync(path, `${JSON.stringify(ep)}\n`);
+      } catch (error) {
+        failure = { error };
+      }
+    },
+  });
+  return {
+    logger,
+    close: () => {
+      closed = true;
+      return failure ? episodeLogError(path, failure.error) : null;
+    },
+  };
+}
+
 /** CLI entry: run a scenario JSON file against a .kumiki file; print the trace. */
 export async function runCmd(
   kumikiPath: string,
@@ -230,11 +267,21 @@ export async function runCmd(
 ): Promise<void> {
   const scenario = loadScenario(scenarioPath);
   const logFile = opts.episodeLog ?? process.env.KUMIKI_EPISODE_LOG;
-  const episodeLogger = logFile ? createEpisodeLogger() : null;
+  if (logFile) {
+    // Tried before the scenario runs, or a run that commits no episode never touches the
+    // path. Appending nothing keeps what the file already holds.
+    try {
+      appendFileSync(logFile, "");
+    } catch (e) {
+      throw episodeLogError(logFile, e);
+    }
+  }
+  const log = logFile ? fileEpisodeLogger(logFile) : null;
   const report = await runScenarioSource(readFileSync(kumikiPath, "utf8"), scenario, capabilities, {
-    episodeLogger,
+    episodeLogger: log?.logger ?? null,
     sourcePath: kumikiPath,
   });
+  const logFailure = log?.close() ?? null;
   for (let i = 0; i < report.steps.length; i++) {
     const s = report.steps[i];
     if (!s) continue;
@@ -250,11 +297,7 @@ export async function runCmd(
     for (const d of s.diagnostics) console.log(`    diagnostic: ${describeDiagnostic(d)}`);
   }
   console.log(report.ok ? "\nscenario passed" : "\nscenario FAILED");
-  if (episodeLogger && logFile) {
-    for (const ep of episodeLogger.list()) {
-      appendFileSync(logFile, `${JSON.stringify(ep)}\n`);
-    }
-  }
+  if (logFailure) throw logFailure;
   if (!report.ok) process.exit(1);
 }
 
@@ -279,12 +322,18 @@ export async function runTestsSource(
   });
 }
 
-function runOne(t: TestRunner): TestResult {
+export function runOne(t: TestRunner): TestResult {
   try {
     return t.run();
   } catch (e) {
-    return { name: t.name, pass: false, error: e instanceof Error ? e.message : String(e) };
+    return { name: t.name, pass: false, error: thrownText(e) };
   }
+}
+
+/** A panic is the program failing; anything else points at the harness, so it keeps its kind. */
+function thrownText(e: unknown): string {
+  if (!(e instanceof Error)) return leafStr(e);
+  return isPanic(e) && e.message !== "" ? e.message : String(e);
 }
 
 export async function testFile(path: string, capabilities: string[] = []): Promise<TestResult[]> {
@@ -418,7 +467,6 @@ export async function testCmd(
       }
     };
     await runSafe();
-    console.log("\nwatching for changes… (Ctrl-C to stop)");
     const { watch } = await import("node:fs");
     let timer: ReturnType<typeof setTimeout> | undefined;
     const watcher = watch(path, () => {
@@ -428,6 +476,8 @@ export async function testCmd(
         void runSafe();
       }, 100);
     });
+    // Only once the watcher is in place: a change saved after this line is seen.
+    console.log("\nwatching for changes… (Ctrl-C to stop)");
     process.on("SIGINT", () => {
       watcher.close();
       console.log("\nwatch stopped");

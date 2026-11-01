@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runCli, SPAWN } from "./helpers/cli.ts";
@@ -50,12 +50,8 @@ test inc-works =
         expect = {slots: {count: 1}, effects: []}
 `;
 
-/**
- * In `first-shows` the list is empty, so `First` panics as it renders. In
- * `first-given-throws` the test's own `given` reads past the end of a list, so
- * the test's body throws before the render.
- */
-const WITH_PANICKING_TESTS = `slot count : Int = 0
+/** In `first-shows` the list is empty, so `First` panics as it renders. */
+const WITH_RENDER_PANIC = `slot count : Int = 0
 slot items : List(Int) = []
 reducer inc on=ui.click(IncBtn) do= count := count + 1
 tile IncBtn = button(text="+1", onClick=inc)
@@ -69,15 +65,21 @@ test first-shows =
     tile-test First
         given  = {slots: {items: []}}
         expect = heading("First: 1")
-test first-given-throws =
-    tile-test First
-        given  = {slots: {items: [1], count: [0][1]}}
-        expect = heading("First: 1")
 test inc-works =
     reducer-test inc
         given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
         expect = {slots: {count: 1}, effects: []}
 `;
+
+/** `[1][3]` indexes past the end of a one-item list, so `expect-panics`' body throws. */
+const WITH_THROWING_TEST = WITH_TESTS.replace(
+  "test inc-works =",
+  `test expect-panics =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: [1][3]}, effects: []}
+test inc-works =`,
+);
 
 describe("kumiki fix", () => {
   it("exits 1 in dry-run while the errors are still on disk", SPAWN, () => {
@@ -236,14 +238,14 @@ describe("kumiki test", () => {
   });
 
   it("fails a test whose body throws on its own, and still runs the rest", SPAWN, () => {
-    // The throwing test comes ahead of the passing one, so that one only
-    // reports if the run goes on past the throw.
-    const { stdout, code } = runCli(["test", write("test-throws.kumiki", WITH_PANICKING_TESTS)]);
+    // The throwing test comes first, so the passing one after it only reports
+    // if the run goes on past the throw.
+    const { stdout, code } = runCli(["test", write("test-throws.kumiki", WITH_THROWING_TEST)]);
     expect(stdout).toMatch(
-      /^FAIL {2}first-given-throws \(\d+ms\)\n {2}error: {4}Index 1 is out of range for a List of length 1$/m,
+      /^FAIL {2}expect-panics \(\d+ms\)\n {2}error: {4}Index 3 is out of range for a List of length 1$/m,
     );
     expect(stdout).toMatch(/^PASS {2}inc-works \(\d+ms\)$/m);
-    expect(stdout).toContain("1/3 passed");
+    expect(stdout).toContain("1/2 passed");
     expect(code).toBe(1);
   });
 
@@ -253,7 +255,7 @@ describe("kumiki test", () => {
     // reads as the tile's and not as a throw in the test's body.
     const { stdout, code } = runCli([
       "test",
-      write("test-render-panic.kumiki", WITH_PANICKING_TESTS),
+      write("test-render-panic.kumiki", WITH_RENDER_PANIC),
     ]);
     expect(stdout).toMatch(
       new RegExp(
@@ -262,13 +264,12 @@ describe("kumiki test", () => {
           ' {2}expected: heading\\("First: 1"\\)',
           ' {2}actual: {3}panic: "Index 0 is out of range for a List of length 0"',
           " {2}diff at: {2}\\(unexpected panic\\)",
-          "FAIL {2}first-given-throws ",
+          "PASS {2}inc-works \\(\\d+ms\\)$",
         ].join("\n"),
         "m",
       ),
     );
-    expect(stdout).toMatch(/^PASS {2}inc-works \(\d+ms\)$/m);
-    expect(stdout).toContain("1/3 passed");
+    expect(stdout).toContain("1/2 passed");
     expect(code).toBe(1);
   });
 });
@@ -402,7 +403,49 @@ describe("kumiki run", () => {
   });
 });
 
-describe("the verbs the table documents but this change does not touch", () => {
+describe("kumiki lock / unlock", () => {
+  function lockedByA(file: string): string {
+    const locks = `${file}.kumiki-locks.json`;
+    const entries = [{ agent: "agent:a", patterns: ["slot.*"] }];
+    writeFileSync(locks, `${JSON.stringify({ entries }, null, 2)}\n`);
+    return locks;
+  }
+
+  it("lock exits 1 for a pattern another agent's overlaps, and 0 for its holder", SPAWN, () => {
+    const file = write("lock.kumiki", CLEAN);
+    const locks = lockedByA(file);
+    const granted = readFileSync(locks, "utf8");
+
+    const { stderr, code } = runCli(["lock", file, "agent:b", "slot.count"]);
+    expect(stderr).toContain('"slot.*", held by agent:a');
+    expect(code).toBe(1);
+    expect(readFileSync(locks, "utf8")).toBe(granted);
+
+    expect(runCli(["lock", file, "agent:a", "slot.*"]).code).toBe(0);
+  });
+
+  it("lock exits 2 for a pattern that names no glob, before reading anything", SPAWN, () => {
+    const file = write("lock-no-glob.kumiki", CLEAN);
+    const { stderr, code } = runCli(["lock", file, "agent:a", " , "]);
+    expect(stderr).toContain('lock pattern " , " names no glob');
+    expect(stderr).toContain("Usage: kumiki lock");
+    expect(code).toBe(2);
+    expect(existsSync(`${file}.kumiki-locks.json`)).toBe(false);
+  });
+
+  it("unlock exits 1 for an agent that holds no lock, and 0 for one that does", SPAWN, () => {
+    const file = write("unlock.kumiki", CLEAN);
+    const none = runCli(["unlock", file, "agent:x"]);
+    expect(none.stderr).toContain("agent:x holds no lock");
+    expect(none.code).toBe(1);
+    expect(existsSync(`${file}.kumiki-locks.json`)).toBe(false);
+
+    lockedByA(file);
+    expect(runCli(["unlock", file, "agent:a"]).code).toBe(0);
+  });
+});
+
+describe("the verbs that fail on what the program does when it runs", () => {
   const PANICS = `slot count : Int = 0
 reducer boom on=ui.click(BoomBtn) do= panic("boom")
 tile BoomBtn = button(text="go", onClick=boom)

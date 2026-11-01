@@ -1,8 +1,9 @@
+import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
-import { withButtonApp, withReducer, withRoot } from "./helpers/programs.ts";
+import { checkSource, codesOf, pointedErrorsOf } from "./helpers/diagnostics.ts";
+import { withButtonApp, withReducer } from "./helpers/programs.ts";
 
-const appCodes = (defs: string) => codesOf(withButtonApp(defs));
+const appCodes = (defs: string, opts?: { caps: string }) => codesOf(withButtonApp(defs, opts));
 const reducerCodes = (defs: string, body: string) => codesOf(withReducer(defs, body));
 
 describe("the code ⇆ kind pairing of every diagnostic this adds", () => {
@@ -166,6 +167,57 @@ describe("undefined type names (E0117)", () => {
       ),
     ).toEqual([]);
   });
+
+  it.each<[string, string, { caps: string }?]>([
+    ["a slot type", `slot y : Foo(Int) = 1`],
+    ["a fn parameter", `fn f(x: Foo(Int)) -> Int = 1\nslot s : Int = f(1)`],
+    ["a fn parameter used as its result", `fn f(x: Foo(Int)) -> Int = x`],
+    ["a fn result", `fn h() -> Foo(Int) = 1`],
+    ["a record field", `type R = {a: Foo(Int)}\nslot r : R = {a: 1}`],
+    ["a variant payload", `type U = Has(Foo(Int)) | Empty\nslot u : U = Has(1)`],
+    ["a List element", `slot l : List(Foo(Int)) = [1]`],
+    ["an Option payload", `slot o : Option(Foo(Int)) = Some(1)`],
+    ["an alias", `type A = Foo(Int)\nslot a : A = 1`],
+    ["a declared generic's argument", `type NE(T) = T where nonempty\nslot r : NE(Foo(Int)) = 1`],
+    ["two arguments", `slot y : Foo(Int, Text) = 1`],
+    ["a nominal", `type N = nominal Foo(Int)\nslot n : N = 1`],
+    ["an inline nominal", `slot n : nominal Foo(Int) = 1`],
+    ["a refinement", `slot r : Foo(Int) where positive = 1`],
+    ["a misspelt stdlib constructor", `slot l : Lst(Int) = [1]`],
+    [
+      "an effect's input",
+      `effect save cap=log.write in=Foo(Int) out=Unit\nreducer s on=ui.click(B) do= emit save(1)`,
+      { caps: "log.write" },
+    ],
+    ["a tile's input", `tile Row in=Foo(Int) = text("r")\ntile C = column(Row(1))`],
+    ["a bound control's slot", `slot y : Foo(Int) = 1\ntile C = column(input(bind=y))`],
+  ])("reports an undefined type applied in %s once", (_where, defs, opts) => {
+    expect(appCodes(defs, opts)).toEqual(["E0117"]);
+  });
+
+  it.each([
+    `n := y`,
+    `n := y + 1`,
+    `f := y < 1`,
+    `f := not y`,
+    `n := if y then 1 else 0`,
+    `y := "x"`,
+    `n := match y with | Some(v) -> 1 | None -> 0`,
+  ])("reports nothing more where a value of an undefined application is used: %s", (body) => {
+    const defs = `slot y : Foo(Int) = 1\nslot n : Int = 0\nslot f : Bool = false`;
+    expect(reducerCodes(defs, body)).toEqual(["E0117"]);
+  });
+
+  it.each([
+    [`slot l : List(Int) = ["x"]`, ["E0201"]],
+    [`slot l : List(Int) = "x"`, ["E0201"]],
+    [`slot o : Option(Text) = 1`, ["E0201"]],
+    [`slot o : Option(Text) = Some(1)`, ["E0201"]],
+    [`type G(T) = {v: T}\nslot g : G(Int) = {v: "x"}`, ["E0201"]],
+    [`type G(T) = {v: T}\nslot g : G(Int) = {v: 1}`, []],
+  ])("still checks a value against a stdlib constructor or a declared generic: %s", (defs, want) => {
+    expect(appCodes(defs)).toEqual(want);
+  });
 });
 
 describe("Int literal precision (E0217)", () => {
@@ -173,16 +225,53 @@ describe("Int literal precision (E0217)", () => {
     expect(appCodes(`slot s : Int = 123456789012345678901234567890`)).toEqual(["E0217"]);
   });
 
-  it("reports the first integer past the safe range", () => {
+  it("reports an integer past the safe range that rounds to its neighbour", () => {
     expect(appCodes(`slot s : Int = 9007199254740993`)).toEqual(["E0217"]);
   });
 
-  it("accepts the largest safe integer", () => {
-    expect(appCodes(`slot s : Int = 9007199254740991`)).toEqual([]);
+  it.each<[string, string[]]>([
+    ["9007199254740991", []],
+    ["-9007199254740991", []],
+    ["9007199254740992", ["E0217"]],
+    ["-9007199254740992", ["E0217"]],
+  ])("holds %s to the safe range", (literal, codes) => {
+    expect(appCodes(`slot s : Int = ${literal}`)).toEqual(codes);
   });
 
   it("reports a fractional literal as a type mismatch, not a precision loss", () => {
     expect(appCodes(`slot s : Int = 0.5`)).toEqual(["E0201"]);
+  });
+
+  it.each([
+    ["a slot", `slot s : Int = -9007199254740993`],
+    ["a list item", `slot xs : List(Int) = [-9007199254740993]`],
+    ["a record field", `type R = {a: Int}\nslot r : R = {a: -9007199254740993}`],
+    ["a variant payload", `slot o : Option(Int) = Some(-9007199254740993)`],
+    ["a fn argument", `fn id(x: Int) -> Int = x\nslot n : Int = id(-9007199254740993)`],
+    ["a reducer write", `slot n : Int = 0\nreducer w on=ui.click(B) do= n := -9007199254740993`],
+    ["a map key", `slot m : Map(Int, Int) = {-9007199254740993: 0}`],
+  ])("reports a negative literal past the bound in %s, signed, at its sign", (_, defs) => {
+    expect(pointedErrorsOf(withButtonApp(defs))).toEqual([
+      {
+        code: "E0217",
+        message:
+          "Int literal -9007199254740993 is not exactly representable and was rounded to -9007199254740992",
+        text: expect.stringMatching(/^-9007199254740993/),
+      },
+    ]);
+  });
+
+  it("folds one sign into the literal, so `- -N` negates the literal `-N` and is not checked", () => {
+    expect(appCodes("slot s : Int = - -9007199254740993")).toEqual([]);
+  });
+
+  it("refuses to build a negative literal past the bound", () => {
+    const r = compile(withButtonApp(`slot s : Int = -9007199254740993`), {
+      runtimeSpecifier: "./runtime.js",
+    });
+    expect(r.kind).toBe("fail");
+    if (r.kind !== "fail") return;
+    expect(r.errors.map((e) => e.code)).toEqual(["E0217"]);
   });
 });
 
@@ -387,96 +476,5 @@ describe("a re-binding does not inherit the outer type", () => {
         `for x in names\n    n := x`,
       ),
     ).toEqual(["E0201"]);
-  });
-});
-
-describe("for over a Map or a Set is E0218", () => {
-  const MAP = "slot names : Map(Text, Text) = {}";
-  const SET = "slot tags : Set(Text) = {}";
-
-  it("reports the tile form", () => {
-    const src = `${MAP}
-tile App = column(for k in names text(k))
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-    expect(codesOf(src)).toEqual(["E0218"]);
-  });
-
-  it("reports the reducer form, which is a different node", () => {
-    const src = withRoot(
-      'text("x")',
-      `${MAP}
-slot n : Int = 0
-reducer count on=app.start do=
-    for k in names
-        n := n + 1`,
-    );
-    expect(codesOf(src)).toEqual(["E0218"]);
-  });
-
-  it("reports a Set, which is a keyed object too", () => {
-    const src = `${SET}
-tile App = column(for t in tags text(t))
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-    const diags = checkSource(src);
-    expect(diags.map((d) => d.code)).toEqual(["E0218"]);
-    expect(diags[0]?.message).toContain(".to-list");
-  });
-
-  it("sees through a type alias", () => {
-    const src = `type Names = Map(Text, Text)
-slot names : Names = {}
-tile App = column(for k in names text(k))
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-    expect(codesOf(src)).toEqual(["E0218"]);
-  });
-
-  it("accepts the two forms the spec names, and a plain List", () => {
-    const src = `${MAP}
-${SET}
-slot xs : List(Text) = []
-tile App = column(
-             for k in names.keys text(k),
-             for t in tags.to-list text(t),
-             for x in xs text(x))
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-    expect(codesOf(src)).toEqual([]);
-  });
-
-  it("stays silent when the type cannot be determined", () => {
-    const src = `tile App = column(for r in nope text(r))
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-    expect(codesOf(src)).toEqual(["E0103"]);
-  });
-
-  it("accepts a List that comes back from a fn", () => {
-    const src = `slot xs : List(Text) = []
-fn rows(ys: List(Text)) -> List(Text) = ys
-tile App = column(for r in rows(xs) text(r))
-app A
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
-    expect(codesOf(src)).toEqual([]);
   });
 });

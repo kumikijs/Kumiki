@@ -148,3 +148,21 @@ describe("a slot typed with a stdlib nominal is checked by that nominal's predic
     expect(root.textContent).not.toContain("Invalid email format");
   });
 });
+
+describe("a program's own type under a declarable stdlib name", () => {
+  it("is what the slot is built with, so a plain Text carries no email predicate", async () => {
+    const app = await loadSource(
+      withApp(`type Email = Text
+slot contact : Email = ""
+reducer set on=ui.click(SetBtn) do= contact := "not-an-email"
+tile SetBtn = button(text="set", onClick=set)
+tile App = column(SetBtn)`),
+    );
+    const { root } = mountApp(app);
+
+    click(root, "set");
+
+    expect(app.live?.contact).toBe("not-an-email");
+    expect(errors).toEqual([]);
+  });
+});

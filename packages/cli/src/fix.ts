@@ -213,8 +213,13 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path: s
         for (const e of b.introduced) console.error(`  ${e.code} ${e.message}`);
       else if (b.reason === "parse-error" || b.reason === "test-runner-threw")
         console.error(`  ${b.message}`);
-      else if (b.reason === "regressed") console.log(`  would regress: ${b.regressed.join(", ")}`);
-      else if (b.reason === "still-fails")
+      else if (b.reason === "regressed") {
+        for (const name of b.regressed) {
+          console.log(`  would regress: ${name}`);
+          const after = b.failingTests.find((t) => t.name === name);
+          if (after) for (const line of failureLines(after)) console.log(`  ${line}`);
+        }
+      } else if (b.reason === "still-fails")
         for (const line of failureLines(b.failingTest)) console.log(line);
       return;
     }
