@@ -23,7 +23,7 @@ fmt("{0}", p)           [object Object]
 An error-boundary fallback that wrote `"recovered: " + $1` rendered
 `recovered: [object Object]` for the same reason.
 
-Now each one is the literal that builds it (stdlib.md §2.2.7):
+Now each one is the literal that builds it:
 
 ```
 "p: " + p               p: {name: "ada"}
@@ -37,7 +37,8 @@ fmt("{0}", p)           {name: "ada"}
 
 Each member is shown by the same rule, and a `Text` member is quoted, so
 `["a", "b"]` is `["a", "b"]` and not `a,b`. A `Text` on its own, a number, a
-`Bool`, a variant (its tag), `Bytes`, `Time` and `Duration` show as before.
+`Bool`, a variant (its tag), `Time` and `Duration` show as before, and a `Bytes`
+inside a structure is its base64, as it is on its own.
 `+` with a `Text`, `.show`, `T.show`, `fmt`, a `key` and a tile's text all go
 through one `show`, so they agree.
 

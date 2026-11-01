@@ -167,7 +167,8 @@ describe("show", () => {
     ["a Bool", false, undefined, "false"],
     ["null as the empty string", null, undefined, ""],
     ["undefined as the empty string", undefined, undefined, ""],
-    ["Bytes as before", new Uint8Array([104, 105]), undefined, "104,105"],
+    ["Bytes as its base64", new Uint8Array([104, 105]), undefined, "aGk="],
+    ["Bytes inside a List as its base64", [new Uint8Array([104, 105])], undefined, "[aGk=]"],
     ["a variant as its tag", { _tag: "Some", _0: 1 }, undefined, "Some"],
     [
       "a variant inside a List as its tag",
