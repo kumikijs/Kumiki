@@ -59,6 +59,7 @@ describe("kumiki build ships only the runtime modules an app uses", () => {
       "tiles-input.js",
       "tiles-input-select.js",
       "tiles-input-textarea.js",
+      "tiles-input-fieldset.js",
       "tiles-collection.js",
       "tiles-overlay.js",
       "tiles-media.js",
@@ -79,7 +80,7 @@ describe("kumiki build ships only the runtime modules an app uses", () => {
     const total = expected
       .map((f) => readFileSync(join(outDir, "runtime", f)).length)
       .reduce((a, b) => a + b, 0);
-    expect(total).toBeLessThan(64_000);
+    expect(total).toBeLessThan(65_000);
     expect(readFileSync(join(outDir, "runtime", "core.js"), "utf8")).not.toContain(": AppShape");
   });
 

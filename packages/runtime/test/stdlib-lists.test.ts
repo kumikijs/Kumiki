@@ -53,6 +53,16 @@ describe("listSortBy", () => {
     expect(_stdlibCore.listSortBy([10, "9", 2], (x) => x)).toEqual([2, "9", 10]);
   });
 
+  it("keeps an undefined element in its order among null and NaN when it is its own key", () => {
+    expect(_stdlibCore.listSortBy([undefined, Number.NaN, 2, null, 1], (x) => x)).toStrictEqual([
+      1,
+      2,
+      undefined,
+      Number.NaN,
+      null,
+    ]);
+  });
+
   it("keeps every element of a key list `<` cannot order, and leaves the input alone", () => {
     const xs = keyed([3, "b", 1, { r: 1 }, "a"]);
     const out = _stdlibCore.listSortBy(xs, (x) => x.k);
@@ -62,18 +72,70 @@ describe("listSortBy", () => {
 });
 
 describe("listSort", () => {
-  it("sorts a numeric list numerically, not lexicographically", () => {
-    expect(_stdlibCore.listSort([3, 1, 2, 10])).toEqual([1, 2, 3, 10]);
-    expect(_stdlibCore.listSort([])).toEqual([]);
-    expect(_stdlibCore.listSort(null)).toEqual([]);
+  const { NaN: nan, POSITIVE_INFINITY: inf, NEGATIVE_INFINITY: ninf } = Number;
+
+  it.each<[string, unknown[] | null, unknown[]]>([
+    ["a numeric list numerically, not lexicographically", [3, 1, 2, 10], [1, 2, 3, 10]],
+    ["an empty list as empty", [], []],
+    ["a nullish list as empty", null, []],
+    ["Infinity after every finite number", [10, 9, 1.5, inf], [1.5, 9, 10, inf]],
+    ["-Infinity before every finite number", [10, ninf, 9, 1.5], [ninf, 1.5, 9, 10]],
+    [
+      "NaN after every other number, Infinity included",
+      [nan, 10, 9, inf, nan, ninf, 1.5],
+      [ninf, 1.5, 9, 10, inf, nan, nan],
+    ],
+    [
+      "the numbers of a list holding null numerically, null last",
+      [10, 9, null, 1.5],
+      [1.5, 9, 10, null],
+    ],
+    [
+      "the numbers of a list holding undefined numerically, undefined last",
+      [10, undefined, 9, 1.5],
+      [1.5, 9, 10, undefined],
+    ],
+    [
+      "absent values and NaN last, in the order they had",
+      [undefined, nan, 2, null, 1],
+      [1, 2, undefined, nan, null],
+    ],
+    ["a text list as strings", ["banana", "apple", "cherry"], ["apple", "banana", "cherry"]],
+    ["text that spells a number as text", ["9", "10"], ["10", "9"]],
+    ["text in UTF-16 code-unit order, not a locale's", ["a", "Z"], ["Z", "a"]],
+    [
+      "the text of a list holding null as text, null last",
+      ["b", null, "a", "nullx"],
+      ["a", "b", "nullx", null],
+    ],
+    ["a list mixing numbers and text with null last", ["z", null, 1], [1, "z", null]],
+  ])("sorts %s", (_, input, expected) => {
+    expect(_stdlibCore.listSort(input)).toStrictEqual(expected);
   });
 
-  it("sorts a text list as strings", () => {
-    expect(_stdlibCore.listSort(["banana", "apple", "cherry"])).toEqual([
-      "apple",
-      "banana",
-      "cherry",
-    ]);
+  // `sort-by` over records keyed by the values, so that it sees each value only as a key.
+  const sortedAsKeys = (ks: unknown[]) =>
+    _stdlibCore
+      .listSortBy(
+        ks.map((k) => ({ k })),
+        (r) => r.k,
+      )
+      .map((r) => r.k);
+
+  it.each<[string, unknown[]]>([
+    ["numbers, infinities and NaN", [nan, 10, 2, inf, -0.5, ninf, 2]],
+    ["numbers and null", [10, 9, null, 1.5]],
+    ["numbers and undefined", [10, undefined, 9, 1.5]],
+    ["numbers, NaN, null and undefined", [undefined, 3, nan, null, 1]],
+    ["text and null", ["b", null, "a", "nullx"]],
+  ])("orders %s as sort-by orders the same values as keys", (_, xs) => {
+    expect(_stdlibCore.listSort(xs)).toStrictEqual(sortedAsKeys(xs));
+  });
+
+  it("orders a list mixing numbers and text by each value's text, unlike sort-by", () => {
+    const xs = [10, "9", 2];
+    expect(_stdlibCore.listSort(xs)).toStrictEqual([10, 2, "9"]);
+    expect(sortedAsKeys(xs)).toStrictEqual([2, "9", 10]);
   });
 
   it("does not mutate the input list", () => {

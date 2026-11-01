@@ -1,3 +1,4 @@
+import { type TypeEnv, unaliasType } from "./assignable.ts";
 import type { TypeExpr } from "./ast.ts";
 import { appType, primType, recordType, refType } from "./stdlib-types.ts";
 
@@ -50,6 +51,12 @@ const TEXT_FAILURE_CAPABILITIES: ReadonlySet<string> = new Set([
 /** Whether an effect on `cap` fails with the `Text` its `out=` declares. */
 export function failsWithText(cap: string): boolean {
   return TEXT_FAILURE_CAPABILITIES.has(cap);
+}
+
+/** An effect declared `in=Unit`, through any alias or nominal over it, is emitted with no argument. */
+export function declaresNoInput(inType: TypeExpr | null, env: TypeEnv): boolean {
+  const u = unaliasType(inType, env);
+  return u?.kind === "TypePrim" && u.name === "Unit";
 }
 
 export const REDUCER_REF: TypeExpr = refType("ReducerRef");

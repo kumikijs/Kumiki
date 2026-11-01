@@ -1,11 +1,13 @@
 import { newId, readEnv } from "./env.ts";
-import type {
-  AppShape,
-  CapabilityProvider,
-  CapabilityRegistry,
-  EffectResult,
-  EffectSpec,
-  EmitSpec,
+import {
+  type AppShape,
+  type CapabilityProvider,
+  type CapabilityRegistry,
+  type EffectResult,
+  type EffectSpec,
+  type EmitSpec,
+  type HttpError,
+  NONE,
 } from "./types.ts";
 
 export function makeCapabilityRegistry(
@@ -141,18 +143,20 @@ export function makeEffectDispatcher(
     const run: Launch = { name: eff.name, token, ctl };
     state.inflight.set(id, ctl);
     state.launched.add(run);
+    let res: EffectResult;
     try {
-      const res = await runWithRetry(eff, input, caps, ctl.signal);
-      if (state.launched.has(run)) onResult(eff.name, res.kind, res.value, input, token);
+      res = await runWithRetry(eff, input, caps, ctl.signal);
     } catch (e) {
-      if (state.launched.has(run)) onResult(eff.name, "err", { message: String(e) }, input, token);
-    } finally {
-      state.launched.delete(run);
-      if (state.inflight.get(id) === ctl) {
-        state.inflight.delete(id);
-        settle(id);
-      }
+      res = { kind: "err", value: { message: String(e) } };
     }
+    const live = state.launched.delete(run);
+    // Released before its result is delivered, so a cancel the `.ok` / `.err` reducers emit finds
+    // a request that is over. Under `latest` a newer request may hold the id by now.
+    if (state.inflight.get(id) === ctl) {
+      state.inflight.delete(id);
+      settle(id);
+    }
+    if (live) onResult(eff.name, res.kind, res.value, input, token);
   };
 
   return {
@@ -161,30 +165,37 @@ export function makeEffectDispatcher(
       if (!eff) return;
       if (eff.cap === "http.cancel") {
         const named = String(emit.args[0] ?? "");
+        // The episode records a cancel only when it released something; the reducer step's
+        // `emits` already names the cancel effect.
+        let released = false;
         if (named.length > 0) {
           const target = state.absorbedBy.get(named) ?? named;
           const ic = state.inflight.get(target);
           if (ic) {
             ic.abort();
             state.inflight.delete(target);
+            released = true;
           }
           for (const [name, q] of state.queues) {
             const i = q.pending.findIndex((e) => e.id === target);
             if (i === -1) continue;
             const [e] = q.pending.splice(i, 1);
             if (e?.token) onPolicyCancel?.(e.token, name);
+            released = true;
             break;
           }
+          // A throttle timer marks an open window, not a pending launch, so it is not released.
           for (const [name, t] of state.timers) {
             if (t.kind !== "debounce" || t.id !== target) continue;
             clearTimeout(t.h);
             state.timers.delete(name);
+            released = true;
             if (t.token) onPolicyCancel?.(t.token, name);
             break;
           }
           settle(target);
-          onCancel?.(named);
         }
+        if (released) onCancel?.(named);
         return;
       }
       const input = emit.args[0];
@@ -313,8 +324,8 @@ export function readStatus(value: unknown): number | null {
   return typeof s === "number" ? s : null;
 }
 
-export function abortedHttpError(): { status: number; message: string; body: string } {
-  return { status: 0, message: "aborted", body: "" };
+export function abortedHttpError(): HttpError {
+  return { status: 0, message: "aborted", body: NONE };
 }
 
 // The value `.ok` / `.err` receives from a result that stands in for `eff`'s invoke: an err on

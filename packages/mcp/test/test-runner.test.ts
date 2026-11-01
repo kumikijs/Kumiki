@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { callOnce, FIX_COUNTER_TESTS, FIX_FAILING_SINGLE, flag } from "./helpers/client.ts";
+import {
+  COUNTER,
+  call,
+  callOnce,
+  FIX_COUNTER_TESTS,
+  FIX_FAILING_SINGLE,
+  flag,
+  withClient,
+} from "./helpers/client.ts";
 
 type Report = {
   total: number;
@@ -27,5 +35,37 @@ describe("kumiki_test", { timeout: 30000 }, () => {
   it("flags a failing test run and a filter that matches nothing", async () => {
     expect(await flag("kumiki_test", { path: FIX_FAILING_SINGLE })).toBe(true);
     expect(await flag("kumiki_test", { path: FIX_COUNTER_TESTS, filter: "nope*" })).toBe(true);
+  });
+
+  it("reports no tests for a file without any, after a file with a failing one", async () => {
+    await withClient(async (client) => {
+      const first = await call(client, "kumiki_test", { path: FIX_FAILING_SINGLE });
+      expect(first.isError).toBe(true);
+      expect(JSON.parse(first.body)).toMatchObject({ total: 1, failed: 1 });
+      const res = await call(client, "kumiki_test", { path: COUNTER });
+      expect(res.isError).toBe(false);
+      expect(JSON.parse(res.body)).toEqual({
+        total: 0,
+        passed: 0,
+        failed: 0,
+        filter: null,
+        results: [],
+      });
+    });
+  });
+
+  it("flags a filter on a file without tests, after a file whose tests it matches", async () => {
+    await withClient(async (client) => {
+      expect((await call(client, "kumiki_test", { path: FIX_COUNTER_TESTS })).isError).toBe(false);
+      const res = await call(client, "kumiki_test", { path: COUNTER, filter: "inc-*" });
+      expect(res.isError).toBe(true);
+      expect(JSON.parse(res.body)).toEqual({
+        total: 0,
+        passed: 0,
+        failed: 0,
+        filter: "inc-*",
+        results: [],
+      });
+    });
   });
 });

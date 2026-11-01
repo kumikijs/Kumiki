@@ -15,6 +15,16 @@ export const BUILTIN_CALLS: ReadonlyMap<string, BuiltinArity> = new Map([
   ["prefers-dark", exactly(0)],
 ]);
 
+// Kept out of BUILTIN_CALLS so the checker reports it outside a property-test invariant: its
+// lowering reads `_init` and `_event`, which only a trial binds.
+export const RUN_REDUCER = "run-reducer";
+
+// Builtins a call names without a qualifier: only these can collide with a `fn` name.
+export const UNQUALIFIED_BUILTIN_CALLS: ReadonlySet<string> = new Set([
+  ...BUILTIN_CALLS.keys(),
+  RUN_REDUCER,
+]);
+
 /** Callees codegen lowers by their full `Qualifier.member` name. */
 export const QUALIFIED_BUILTIN_CALLS: ReadonlyMap<string, BuiltinArity> = new Map([
   ["EffectId.none", exactly(0)],
@@ -40,6 +50,29 @@ export const QUALIFIED_CALL_NAMESPACES: ReadonlySet<string> = new Set([
   "Duration",
   "Bytes",
 ]);
+
+// The parser rewrites these spellings to the builtin they name, so nothing past it sees which
+// spelling was written.
+export const BUILTIN_MEMBERS: ReadonlyMap<string, string> = new Map([["Time.now", "now"]]);
+
+// Kept out of QUALIFIED_CALL_NAMESPACES: isMissingNamespaceMember would then make Time.fresh() or
+// a bare Time.parse an E0116 instead of the type member's report.
+const BUILTIN_MEMBER_QUALIFIERS: ReadonlySet<string> = new Set(
+  [...BUILTIN_MEMBERS.keys()].map((name) => name.slice(0, name.indexOf("."))),
+);
+
+// A builtin a member names is offered under that member only: the keyword `now` takes no
+// parentheses, so it never repairs a call.
+const MEMBER_ONLY_BUILTINS: ReadonlySet<string> = new Set(BUILTIN_MEMBERS.values());
+
+export function readsBareMemberAsCall(qualifier: string): boolean {
+  return QUALIFIED_CALL_NAMESPACES.has(qualifier) || BUILTIN_MEMBER_QUALIFIERS.has(qualifier);
+}
+
+export function qualifiedCallee(qualifier: string, member: string): string {
+  const written = `${qualifier}.${member}`;
+  return BUILTIN_MEMBERS.get(written) ?? written;
+}
 
 export const TYPE_MEMBER_CALLS: ReadonlyMap<string, BuiltinArity> = new Map([
   ["fresh", exactly(0)],
@@ -122,13 +155,28 @@ export function builtinArity(callee: string): BuiltinArity | undefined {
   return TYPE_MEMBER_CALLS.get(callee.slice(dot + 1));
 }
 
-/** Whether codegen has a lowering for `callee`. */
+/**
+ * Whether `callee` names a builtin codegen has a lowering for. A program's `fn` of the same name
+ * takes its calls instead (Language §1.8.5), so this alone does not say which one a call reaches.
+ */
 export function isBuiltinCallee(callee: string): boolean {
   return builtinArity(callee) !== undefined;
 }
 
+// A `fn` the program declares under a builtin's name wins. Codegen and the checker both ask this,
+// so they cannot read one name two ways.
+export function callsBuiltin(callee: string, declaresFn: (name: string) => boolean): boolean {
+  if (UNQUALIFIED_BUILTIN_CALLS.has(callee)) return !declaresFn(callee);
+  return isBuiltinCallee(callee);
+}
+
 export function calleeCandidates(fnNames: Iterable<string>, missing?: string): string[] {
-  const base = [...BUILTIN_CALLS.keys(), ...QUALIFIED_BUILTIN_CALLS.keys(), ...fnNames];
+  const base = [
+    ...[...BUILTIN_CALLS.keys()].filter((name) => !MEMBER_ONLY_BUILTINS.has(name)),
+    ...QUALIFIED_BUILTIN_CALLS.keys(),
+    ...BUILTIN_MEMBERS.keys(),
+    ...fnNames,
+  ];
   const dot = missing === undefined ? -1 : missing.indexOf(".");
   if (missing === undefined || dot <= 0 || !QUALIFIER_RE.test(missing.slice(0, dot))) return base;
   const qualifier = missing.slice(0, dot);

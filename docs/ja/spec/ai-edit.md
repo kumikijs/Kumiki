@@ -39,7 +39,7 @@ kumiki list <layer>                 # レイヤ内の全定義名
 kumiki list                         # 全定義名（layer prefix 付き）
 ```
 
-参照元とは、checker または lowering がその名前をこの定義として読む位置でこの定義を指す定義であり、型メンバ呼び出しの qualifier もそこに含まれる：`ItemId.fresh()`・`ItemId.parse(t)`・`ItemId.show(v)` は型 `ItemId` を指す（[標準ライブラリ §2.4.1](./stdlib.md#_2-4-1-id-生成)・[§2.4.3](./stdlib.md#_2-4-3-型変換)）。lowering がデコードの型として読む `Decoder.Json(T)` の引数も同じで、`Decoder.Json(Map(ItemId, Item))` の `ItemId` と `Item` は参照である。`ItemId.fresh()` で id を生成する reducer は `type.ItemId` の参照元であり、`rename` は他の参照とともに qualifier も書き換える。`Decoder`・`EffectId`・`Duration`・`Bytes` では、引数を与えた `parse` / `show` だけが型メンバ呼び出しである：プログラムが自前の `type Duration` を宣言していれば `Duration.show(d)` はその参照元だが、名前空間の組み込み呼び出し（`Duration.ms(5)`・`EffectId.none`）は型を指さず、`Duration.fresh()` は E0116 である（[E0117](./errors.md#e0117-undef-type)）。
+参照元とは、checker または lowering がその名前をこの定義として読む位置でこの定義を指す定義であり、型メンバ呼び出しの qualifier もそこに含まれる：`ItemId.fresh()`・`ItemId.parse(t)`・`ItemId.show(v)` は型 `ItemId` を指す（[標準ライブラリ §2.4.1](./stdlib.md#_2-4-1-id-生成)・[§2.4.3](./stdlib.md#_2-4-3-型変換)）。lowering がデコードの型として読む `Decoder.Json(T)` の引数も同じで、`Decoder.Json(Map(ItemId, Item))` の `ItemId` と `Item` は参照である。`ItemId.fresh()` で id を生成する reducer は `type.ItemId` の参照元であり、`rename` は他の参照とともに qualifier も書き換える。`Decoder`・`EffectId`・`Duration`・`Bytes` では、引数を与えた `parse` / `show` だけが型メンバ呼び出しである：プログラムが自前の `type Decoder` を宣言していれば `Decoder.show(d)` はその参照元だが、名前空間の組み込み呼び出し（`Decoder.Text`・`Duration.ms(5)`・`EffectId.none`）は型を指さず、`Decoder.fresh()` は E0116 である（[E0117](./errors.md#e0117-undef-type)）。
 
 ### 9.2.2 書き込み系 {#_9-2-2-write-commands}
 
@@ -118,7 +118,7 @@ verb ごとに、`1` が意味するのは以下である。
 | `list` | ファイルが存在しない、またはフィルタがどの種類の定義も指していない。実在するがその下に定義が無い場合は何も出力せず `0` |
 | `add` / `replace` / `remove` / `rename` / `edit` / `patch` | 書き込みが拒否されロールバックされた |
 | `lock` / `unlock` | `lock` が求めたパターンと重なるパターンを他のエージェントが保持している、または `unlock` が名指したエージェントが解放すべきロックを保持していない（[§9.8.3](#_9-8-3-task-boundaries)） |
-| `replay` | ログが読めない、指定した episode がログに無い、または再生した episode が panic した |
+| `replay` | ログが読めない、指定した episode がログに無い、再生した episode が panic したか未処理の effect エラーを出した、または episode の入口の reducer がプログラムに無い、あるいはログがそれを名指さないか記録していないため再生されなかった（[§10.5.3](./runtime.md#_10-5-3-replay)） |
 | `dev` | サーバを起動できなかった。起動後は中断されるまで動き続けるので何も報告しない |
 
 警告が終了コードを変えることはない。2 つの段階を分けているのはまさにそこで、`error` は「プログラムが誤っている」という主張、`warning` は「怪しい」という主張であり、パイプラインを止めてよいのは前者だけである。
