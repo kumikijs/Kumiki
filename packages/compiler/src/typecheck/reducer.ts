@@ -160,7 +160,7 @@ function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet
   return `tile "${tile}" has no descendant that fires "${ev}"`;
 }
 
-function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
+export function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
   const kinds = kindsPhrase(g.kinds);
   return g.bubbles
     ? `${kinds} takes no "${ev}" listener on the <${g.wrapper}> around its <${g.focused}>, ` +
