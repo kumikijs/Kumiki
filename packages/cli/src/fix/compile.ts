@@ -113,7 +113,13 @@ function variantTag(prefix: string, anchored: boolean): Planner {
 
 const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   ["E0102", anyDefinition], // undef-reducer
-  ["E0103", anyDefinition], // undef-ref / undef-slot
+  [
+    "E0103", // undef-ref / undef-slot
+    // A read after the body that declared it is out of scope, not misspelled: a renamed read can
+    // type-check, and the regression gate then counts it as resolved.
+    (err, store) =>
+      err.endedScope !== undefined ? "e0103-read-after-scope-ended" : anyDefinition(err, store),
+  ],
   ["E0105", anyDefinition], // undef-tile
   ["E0107", anyDefinition], // undef-motion
   [
@@ -225,8 +231,9 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   [
     "E0218",
     (err, store) => {
-      const remedy = /iterate its (\.[a-z-]+)/.exec(err.message)?.[1];
-      if (!remedy) return "e0218-remedy-extract-failed";
+      // No suffix alone repairs other targets: what an `Option`'s `None` iterates is the author's call.
+      if (!err.accessor) return "e0218-no-accessor";
+      const remedy = `.${err.accessor}`;
       const name = identifierAt(store, err.pos);
       if (!name) return "e0218-target-not-a-plain-name";
       return {

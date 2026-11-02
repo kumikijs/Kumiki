@@ -33,7 +33,7 @@ export {
   KumikiPanic,
   type PanicRecord,
   panicInfo,
-  reportCapabilityRefusal,
+  reportRefusedEmit,
   reportUnhandledEffectError,
   userPanicInfo,
 } from "./core/panic.ts";
@@ -58,6 +58,7 @@ export {
   type RefinementStep,
   refinementRejectionOf,
   refinementRejections,
+  rejectedBatchText,
   reportRejectedBatch,
   type SlotGate,
   type SlotMeta,
@@ -66,9 +67,12 @@ export {
   slotAccepts,
 } from "./core/refinement.ts";
 export {
-  currentEpisodeId,
   getRenderingApp,
   getRenderingView,
+  type RenderPanic,
+  type RenderPanicSink,
+  recordInRenderPass,
+  recordRenderPanic,
   resolveApp,
   warnUnresolvedEvent,
   withRenderingApp,
@@ -95,6 +99,8 @@ export { isPlainDataBag } from "./core/tile-equality.ts";
 export {
   type AppShape,
   type BindReader,
+  type BuiltinEffectName,
+  type BuiltinEffects,
   type BuiltinInstaller,
   type CapabilityProvider,
   type CapabilityRegistry,
@@ -104,6 +110,7 @@ export {
   type EmitSpec,
   type EventHandler,
   type HoldLeave,
+  type HttpError,
   type LocationLike,
   type MountedApp,
   type MountHandle,

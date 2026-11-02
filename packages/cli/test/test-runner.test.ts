@@ -1,7 +1,8 @@
 import { writeFileSync } from "node:fs";
 import { feature } from "@kumikijs/examples";
+import { KumikiPanic, type TestResult } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { runTests, runTestsSource } from "../src/smoke.ts";
+import { runOne, runTests, runTestsSource } from "../src/smoke.ts";
 import { CHILD_TIMEOUT_MS, runCli, SPAWN, spawnCli, waitFor } from "./helpers/cli.ts";
 import { APP_A, seed } from "./helpers/files.ts";
 
@@ -55,6 +56,14 @@ describe("kumiki test", () => {
     }
     expect(stdout).toMatch(/PASS {2}run-reducer-sees-route \(100 cases, \d+ms\)/);
     expect(stdout).toContain("9/9 passed");
+  });
+
+  it("runs a reducer-test whose given and expect name a variant called Time", SPAWN, () => {
+    const { stdout, code } = runCli(["test", feature("228-primitive-named-variants")]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("PASS  by-time-sets-the-time-variant");
+    expect(stdout).toContain("PASS  by-size-leaves-the-time-variant");
+    expect(stdout).toContain("2/2 passed");
   });
 
   it("filters by a name prefix", SPAWN, () => {
@@ -161,6 +170,32 @@ test replay =
       expected: 'the episodes in "log.jsonl"',
       actual:
         "no episode log was read: compile was given no readEpisodeLog, so nothing was replayed",
+    });
+  });
+});
+
+describe("a test whose body throws", () => {
+  it.each<[string, unknown, string]>([
+    [
+      "a panic, as its message",
+      new KumikiPanic("Index 3 is out of range for a List of length 1"),
+      "Index 3 is out of range for a List of length 1",
+    ],
+    ["a panic with no message, as its kind", new KumikiPanic(""), "KumikiPanic"],
+    [
+      "any other error, with its kind",
+      new TypeError("_s.runTileTest is not a function"),
+      "TypeError: _s.runTileTest is not a function",
+    ],
+    ["a thrown value that is not an error, as JSON", { code: 1 }, '{"code":1}'],
+  ])("fails alone, reporting %s", (_case, thrown, error) => {
+    const run = (): TestResult => {
+      throw thrown;
+    };
+    expect(runOne({ name: "t", kind: "reducer-test", run })).toEqual({
+      name: "t",
+      pass: false,
+      error,
     });
   });
 });

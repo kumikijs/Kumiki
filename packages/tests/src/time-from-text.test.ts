@@ -61,7 +61,7 @@ describe("format on a Time the program keeps in a Set", () => {
 slot days : Set(Time) = {}
 slot kept : Int = -1
 reducer go on=ui.click(Go)
-    do= kept := days.add(1772877600000).filter($1.format("yyyy") == "2026").size
+    do= kept := days.add(Time.parse("2026-03-07T10:00:00Z").get-or(now)).filter($1.format("yyyy") == "2026").size
 tile Go = button(text="go")
 tile App = column(Go)
 app A
