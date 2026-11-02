@@ -97,20 +97,23 @@ function genForm(
 }
 
 // Every value in a shape passes the runtime's own check for the form, so a shrunk form stays one.
-const FORM_SHAPES: Record<"email" | "url" | "uuid", RegExp> = {
-  email: /^[a-z]+@[a-z]+\.example\.com$/,
-  url: /^https:\/\/[a-z]+\.example\.com\/[a-z]+$/,
-  uuid: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+const FORM_SHAPES: Record<"email" | "url" | "uuid", readonly RegExp[]> = {
+  email: [/^[a-z]+@[a-z]+\.example\.com$/],
+  url: [/^https:\/\/[a-z]+\.example\.com\/[a-z]+$/],
+  uuid: [/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/],
 };
 
-// The shapes `genForm` builds an email or url in when a length refinement sits beside it.
-const SIZED_FORM_SHAPES: Record<"email" | "url", RegExp> = {
-  email: /^[a-z]+@[a-z]+\.[a-z]{1,3}$/,
-  url: /^https:\/\/[a-z]+\.example\.com\/[a-z]*$|^https:\/\/[a-z]+$|^[a-z]+:\/\/[a-z]$/,
+// The shapes `genForm` builds an email or url in when a length refinement sits beside it. A url
+// takes one of three by its length (up to 8, 9 to 21, from 22), and no value fits two of them.
+const SIZED_FORM_SHAPES: Record<"email" | "url", readonly RegExp[]> = {
+  email: [/^[a-z]+@[a-z]+\.[a-z]{1,3}$/],
+  url: [/^[a-z]{1,4}:\/\/[a-z]$/, /^https:\/\/[a-z]+$/, /^https:\/\/[a-z]+\.example\.com\/[a-z]*$/],
 };
 
-function formShape(form: "email" | "url" | "uuid", sized: boolean): RegExp {
-  return sized && form !== "uuid" ? SIZED_FORM_SHAPES[form] : FORM_SHAPES[form];
+function formShapes(desc: TextDesc): readonly RegExp[] {
+  if (desc.form === undefined) return [];
+  const sized = desc.minLen !== undefined || desc.maxLen !== undefined;
+  return sized && desc.form !== "uuid" ? SIZED_FORM_SHAPES[desc.form] : FORM_SHAPES[desc.form];
 }
 
 // `one-of` names the whole domain, whatever the base type is, so it is answered ahead of the type it refines.
@@ -118,22 +121,20 @@ function choicesOf(desc: GenDesc): (number | string)[] | undefined {
   return "oneOf" in desc && desc.oneOf && desc.oneOf.length > 0 ? desc.oneOf : undefined;
 }
 
+type TextDesc = Extract<GenDesc, { t: "Text" }>;
 type ScalarDesc = Extract<GenDesc, { t: "Int" | "Float" | "Text" }>;
 
 /**
  * Whether `v` is in the domain `desc` declares, read from the fields generation builds to. The
- * spans an unbounded type is sampled from (±1000, 50 characters) are not part of the domain.
+ * spans an unbounded type is sampled from are not part of the domain.
  */
 function admits(desc: ScalarDesc, v: unknown): boolean {
-  const choices = choicesOf(desc);
-  if (choices) return choices.includes(v as number | string);
   if (desc.t === "Text") {
     return (
       typeof v === "string" &&
       v.length >= (desc.minLen ?? 0) &&
       v.length <= (desc.maxLen ?? Number.POSITIVE_INFINITY) &&
-      (desc.form === undefined ||
-        formShape(desc.form, desc.minLen !== undefined || desc.maxLen !== undefined).test(v))
+      (desc.form === undefined || formShapes(desc).some((shape) => shape.test(v)))
     );
   }
   return (
@@ -142,6 +143,21 @@ function admits(desc: ScalarDesc, v: unknown): boolean {
     v >= (desc.min ?? Number.NEGATIVE_INFINITY) &&
     v <= (desc.max ?? Number.POSITIVE_INFINITY)
   );
+}
+
+/**
+ * `v` with one of its words (a run of letters) cut to half its length, then with one cut by its
+ * last letter. A form shortens a word this way and keeps its literal parts: halving first takes a
+ * long word down in a few rounds, and there is one candidate per word rather than per character.
+ */
+function shortenedWords(v: string): string[] {
+  const words = [...v.matchAll(/[a-z]+/g)].map((m) => ({
+    start: m.index,
+    end: m.index + m[0].length,
+  }));
+  const cut = (keep: (len: number) => number) =>
+    words.map(({ start, end }) => v.slice(0, start + keep(end - start)) + v.slice(end));
+  return [...cut((len) => Math.floor(len / 2)), ...cut((len) => len - 1)];
 }
 
 /**
@@ -294,10 +310,11 @@ function shrinkCandidates(
         v.slice(0, desc.minLen ?? 0),
         v.slice(0, Math.max(desc.minLen ?? 0, Math.floor(v.length / 2))),
       ]);
-      // One character shorter is how a form shortens a word and keeps its literal parts.
-      if (desc.form) for (let i = 0; i < v.length; i++) out.add(v.slice(0, i) + v.slice(i + 1));
+      if (desc.form) for (const c of shortenedWords(v)) out.add(c);
       out.delete(v);
-      return [...out].filter((c) => admits(desc, c));
+      // A form keeps the one of its shapes it was generated in.
+      const shape = formShapes(desc).find((s) => s.test(v));
+      return [...out].filter((c) => admits(desc, c) && (shape === undefined || shape.test(c)));
     }
     case "List":
       if (!Array.isArray(v) || v.length === 0) return [];

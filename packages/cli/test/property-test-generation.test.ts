@@ -164,7 +164,7 @@ test dec-stays-above-ten =
 
   it("fails the way the generated case did, so is not one whose batch was refused", async () => {
     const [result] = await run(REFUSED);
-    expect(result?.actual).toBe('counterexample (case 1/100): {"n":1}');
+    expect(result?.actual).toMatch(/^counterexample \(case \d+\/100\): \{"n":1\}$/);
   });
 });
 

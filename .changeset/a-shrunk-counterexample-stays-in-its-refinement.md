@@ -10,12 +10,14 @@ domain the variable's descriptor declares, read from the same fields generation
 reads — and covers the refinements it used to leave as generated:
 
 - An `email` or `url` becomes a shorter value of the shape it was generated in,
-  one character at a time, down to a letter per word. `for-all = {e: Text where
-  email}` with `invariant = e.length > 100` reported the address it generated
-  (`{"e":"wsciej@bpqrsh.example.com"}`); it now reports
-  `{"e":"j@h.example.com"}`. A `uuid`, whose shape fixes its length, is still
+  a word at a time, each word halved or cut by a letter, down to a letter per
+  word. A test `email-is-long` with `for-all = {e: Text where email}` and
+  `invariant = e.length > 100` reported the address it generated
+  (`{"e":"domoal@fzqjyk.example.com"}`); it now reports
+  `{"e":"d@f.example.com"}`. A `uuid`, whose shape fixes its length, is still
   reported as generated. A shape generated beside a length refinement shrinks
-  inside that length.
+  inside that length, and a `url` keeps the one of its three shapes, chosen by
+  length, that it was generated in.
 - A `one-of` value moves through the literals listed before it, not only to the
   first. Over `one-of("xs", "sm", "md", "lg")`, a property that holds only on
   `"xs"` reported a generated `"md"` or `"lg"` as it was, because the one

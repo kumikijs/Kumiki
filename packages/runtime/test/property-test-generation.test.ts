@@ -339,38 +339,97 @@ describe("a trial whose run-reducer batch is rejected fails", () => {
     );
   });
 
-  it("does not shrink a refused trial toward one refused for another slot", () => {
-    // `low` refuses s above 10 and `high` s below 20, so every trial is refused by one or both.
+  // Fixed rather than taken from a name, so renaming a test keeps its case. Each test asserts the
+  // generated case it needs before it shrinks one.
+  const SEED = 4;
+
+  /** Each of `names` as `slot <name> : Int where between(0, 100)`, beside a plain slot `s`. */
+  function percentApp(names: readonly string[], reducers: ReducerSpec[]): StepApp {
     const between = (v: unknown) => typeof v === "number" && v >= 0 && v <= 100;
     const slot = { value: 0, refine: between, refineKind: "between", refineArgs: [0, 100] };
-    const app: StepApp = {
+    return {
       live: {},
-      slots: { low: slot, high: slot, s: { value: 0 } },
-      reducers: [
-        {
-          name: "split",
-          event: { kind: "ui", ev: "click" },
-          apply: (live) => ({
-            slots: { low: 10 - (live.s as number), high: (live.s as number) - 20 },
-            emits: [],
-          }),
-        },
-      ],
+      slots: { ...Object.fromEntries(names.map((n) => [n, slot])), s: { value: 0 } },
+      reducers,
     };
-    const property = (shrink: boolean) =>
-      _stdlib.runPropertyTest({
-        name: "split-is-refused",
-        vars: { s: { t: "Int", min: 1, max: 50 } },
-        trial: (b) => {
-          _stdlib.runReducerStep(app, { slots: { s: b.s } }, "split", {});
-          return true;
-        },
-        shrink,
-      });
-    const generated = property(false).actual;
-    expect(generated).toMatch(/— reducer "split" was rejected: slot "low" cannot hold -\d+ \(/);
-    expect(generated).not.toContain('slot "high"');
-    expect(property(true).actual).toBe(generated);
+  }
+
+  /** A reducer that writes what `write` makes of the slot `s`. */
+  const writing = (name: string, write: (s: number) => Record<string, number>): ReducerSpec => ({
+    name,
+    event: { kind: "ui", ev: "click" },
+    apply: (live) => ({ slots: write(live.s as number), emits: [] }),
+  });
+
+  /**
+   * A property over `s` from 1 to `max` that runs `reducers` in turn and holds whenever they all
+   * commit, so a trial fails only by being refused. Answers the counterexample's `s` and reason.
+   */
+  function refused(
+    app: StepApp,
+    reducers: readonly string[],
+    max: number,
+    opts: { seed: number; shrink: boolean },
+  ): { s: number; reason: string | undefined } {
+    const r = _stdlib.runPropertyTest({
+      name: "refused",
+      vars: { s: { t: "Int", min: 1, max } },
+      trial: (b) => {
+        let state = { slots: { s: b.s } as Record<string, unknown> };
+        for (const name of reducers) state = _stdlib.runReducerStep(app, state, name, {});
+        return true;
+      },
+      ...opts,
+    });
+    const m = /^counterexample \(case \d+\/100\): \{"s":(\d+)\} — (.*)$/.exec(r.actual ?? "");
+    return { s: Number(m?.[1]), reason: m?.[2] };
+  }
+
+  it("does not shrink a refused trial toward one refused for another slot", () => {
+    // `low` refuses s above 10 and `high` s below 20, so every trial is refused by one or both.
+    const app = percentApp(
+      ["low", "high"],
+      [writing("split", (s) => ({ low: 10 - s, high: s - 20 }))],
+    );
+    const run = (shrink: boolean) => refused(app, ["split"], 50, { seed: SEED, shrink });
+    const generated = run(false).s;
+    expect(generated).toBeGreaterThanOrEqual(20);
+    const { s, reason } = run(true);
+    expect(s).toBeGreaterThanOrEqual(20);
+    expect(s).toBeLessThanOrEqual(generated);
+    expect(reason).toBe(
+      `reducer "split" was rejected: slot "low" cannot hold ${10 - s} (between(0, 100))`,
+    );
+  });
+
+  it("keeps every slot that refused the generated case in the case it shrinks to", () => {
+    // `wide` refuses every s and `narrow` s above 30, so below 31 `wide` refuses alone.
+    const app = percentApp(
+      ["wide", "narrow"],
+      [writing("split", (s) => ({ wide: s - 100, narrow: 30 - s }))],
+    );
+    const run = (shrink: boolean) => refused(app, ["split"], 50, { seed: SEED, shrink });
+    expect(run(false).s).toBeGreaterThan(30);
+    const { s, reason } = run(true);
+    expect(s).toBeGreaterThan(30);
+    expect(reason).toBe(
+      `reducer "split" was rejected: slot "wide" cannot hold ${s - 100} (between(0, 100)), slot "narrow" cannot hold ${30 - s} (between(0, 100))`,
+    );
+  });
+
+  it("does not shrink a refused trial toward one another reducer refused", () => {
+    // `a` then `b` write `count`: `a` refuses s = 1 and `b` every s from 2, for the same slot.
+    const app = percentApp(
+      ["count"],
+      [writing("a", (s) => ({ count: s - 2 })), writing("b", (s) => ({ count: s - 25 }))],
+    );
+    const run = (shrink: boolean) => refused(app, ["a", "b"], 24, { seed: SEED, shrink });
+    expect(run(false).s).toBeGreaterThan(1);
+    const { s, reason } = run(true);
+    expect(s).toBeGreaterThan(1);
+    expect(reason).toBe(
+      `reducer "b" was rejected: slot "count" cannot hold ${s - 25} (between(0, 100))`,
+    );
   });
 });
 
@@ -400,27 +459,39 @@ describe("a trial that throws fails with what it threw", () => {
     expect(thrown(e)).toBe(`counterexample (case 1/100): {"n":0} — ${reason}`);
   });
 
-  it("shrinks a panic only through trials that panic", () => {
-    // n from 1 to 9 makes the invariant false, a failure of another kind.
+  const panic = (n: number) => new KumikiPanic(`Index ${n} is out of range`);
+  const error = (n: number) => new Error(`Index ${n} is out of range`);
+
+  it.each([
+    ["a panic", "is false", "panicked", panic, undefined],
+    ["a panic", "throws", "panicked", panic, error],
+    ["a throw", "is false", "threw", error, undefined],
+    ["a throw", "panics", "threw", error, panic],
+  ])("shrinks %s, never to a trial that %s", (_fails, _other, kind, from10, under10) => {
+    // n = 0 holds, n from 1 to 9 fails the other way, and from 10 the trial throws `from10`.
     const property = (shrink: boolean) =>
       _stdlib.runPropertyTest({
-        name: "index-from-ten-panics",
+        name: "fails-from-ten",
         vars: { n: { t: "Int", min: 0, max: 100 } },
         trial: (b) => {
           const n = b.n as number;
-          if (n >= 10) throw new KumikiPanic(`Index ${n} is out of range`);
+          if (n >= 10) throw from10(n);
+          if (n > 0 && under10) throw under10(n);
           return n === 0;
         },
         shrink,
       });
-    const generated = /\{"n":(\d+)\} — panicked: /.exec(property(false).actual ?? "")?.[1];
-    const m = /^counterexample \(case \d+\/100\): \{"n":(\d+)\} — (.*)$/.exec(
-      property(true).actual ?? "",
-    );
+    const reported = (shrink: boolean) =>
+      /^counterexample \(case \d+\/100\): \{"n":(\d+)\} — (.*)$/.exec(
+        property(shrink).actual ?? "",
+      );
+    const generated = Number(reported(false)?.[1]);
+    expect(generated).toBeGreaterThanOrEqual(10);
+    const m = reported(true);
     const n = Number(m?.[1]);
     expect(n).toBeGreaterThanOrEqual(10);
-    expect(n).toBeLessThan(Number(generated));
-    expect(m?.[2]).toBe(`panicked: Index ${n} is out of range`);
+    expect(n).toBeLessThanOrEqual(generated);
+    expect(m?.[2]).toBe(`${kind}: Index ${n} is out of range`);
   });
 
   it("leaves an invariant that is false without a reason", () => {

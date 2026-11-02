@@ -64,10 +64,12 @@ describe("a generated value passes the check the runtime applies to a write", ()
 function shrinkPath(
   desc: GenDesc,
   accepts: (v: unknown) => boolean,
+  seed?: number,
 ): { tried: unknown[]; refused: unknown[]; settled: unknown } {
   const tried: unknown[] = [];
   const report = _stdlibTest.runPropertyTest({
     name: `shrunk ${JSON.stringify(desc)}`,
+    seed,
     vars: { v: desc },
     trial: (binds) => {
       tried.push(binds.v);
@@ -82,6 +84,18 @@ function shrinkPath(
     settled: (JSON.parse(settled) as { v: unknown }).v,
   };
 }
+
+/** The descriptor a stack of refinements over `Text` folds to. */
+const stacked = (stack: [string, (number | string)[]][]): GenDesc =>
+  stack.reduce<GenDesc>((d, [pred, args]) => applyRefine(d, refinement(pred, args)), {
+    t: "Text",
+  });
+
+/** Whether every refinement of `stack` accepts a value. */
+const accepting = (stack: [string, (number | string)[]][]) => {
+  const checks = stack.map(([pred, args]) => predicate(pred, args));
+  return (v: unknown): boolean => checks.every((p) => p(v));
+};
 
 describe("a shrunk value passes the check the generator honoured", () => {
   it.each<[string, GenDescData, (number | string)[]]>([
@@ -187,14 +201,24 @@ describe("a generated value passes every refinement stacked on its type", () => 
 });
 
 describe("a shrunk value passes every refinement stacked on its type", () => {
-  // A shape built at a length shrinks inside the lengths the rest allow, down to the shortest.
-  it.each<[[string, (number | string)[]][], number]>([
+  // A shape built at a length shrinks inside the lengths the rest allow, down to the shortest
+  // value of the shape it was generated in.
+  it.each<[[string, (number | string)[]][], number, RegExp]>([
     [
       [
         ["email", []],
         ["len-gt", [10]],
       ],
       11,
+      /^[a-z]+@[a-z]+\.[a-z]{1,3}$/,
+    ],
+    [
+      [
+        ["email", []],
+        ["len-lt", [20]],
+      ],
+      5,
+      /^[a-z]@[a-z]\.[a-z]$/,
     ],
     [
       [
@@ -202,6 +226,16 @@ describe("a shrunk value passes every refinement stacked on its type", () => {
         ["len-lt", [9]],
       ],
       5,
+      /^[a-z]:\/\/[a-z]$/,
+    ],
+    [
+      [
+        ["url", []],
+        ["len-gt", [8]],
+        ["len-lt", [22]],
+      ],
+      9,
+      /^https:\/\/[a-z]$/,
     ],
     [
       [
@@ -209,16 +243,32 @@ describe("a shrunk value passes every refinement stacked on its type", () => {
         ["len-gt", [21]],
       ],
       22,
+      /^https:\/\/[a-z]\.example\.com\/$/,
     ],
-  ])("shrinks a Text under %j through values it accepts, to %i characters", (stack, shortest) => {
-    const desc = stack.reduce<GenDesc>(
-      (d, [pred, args]) => applyRefine(d, refinement(pred, args)),
-      { t: "Text" },
-    );
-    const checks = stack.map(([pred, args]) => predicate(pred, args));
-    const { refused, settled } = shrinkPath(desc, (v) => checks.every((p) => p(v)));
+  ])("shrinks a Text under %j through values it accepts, to %i characters", (stack, shortest, shape) => {
+    const { refused, settled } = shrinkPath(stacked(stack), accepting(stack));
     expect(refused).toEqual([]);
-    expect((settled as string).length).toBe(shortest);
+    expect(settled).toHaveLength(shortest);
+    expect(settled).toMatch(shape);
+  });
+
+  // Beside a length, a url is built in one of three shapes by its length. Each row's seed generates
+  // a url in its band.
+  it.each<[string, number, RegExp, number, number]>([
+    ["from 22 characters", 4, /^https:\/\/[a-z]+\.example\.com\/[a-z]*$/, 22, 99],
+    ["from 9 to 21 characters", 8, /^https:\/\/[a-z]+$/, 9, 21],
+    ["up to 8 characters", 7, /^[a-z]+:\/\/[a-z]$/, 5, 8],
+  ])("keeps a url under len-lt(100) generated %s in that shape", (_, seed, shape, min, max) => {
+    const stack: [string, (number | string)[]][] = [
+      ["url", []],
+      ["len-lt", [100]],
+    ];
+    const inBand = (v: unknown): boolean =>
+      typeof v === "string" && shape.test(v) && v.length >= min && v.length <= max;
+    const { tried, settled } = shrinkPath(stacked(stack), accepting(stack), seed);
+    expect(tried[0]).toSatisfy(inBand);
+    expect(settled).not.toBe(tried[0]);
+    expect(settled).toSatisfy(inBand);
   });
 });
 
