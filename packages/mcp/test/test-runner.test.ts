@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { callOnce, FIX_COUNTER_TESTS, FIX_FAILING_SINGLE, flag } from "./helpers/client.ts";
+import {
+  COUNTER,
+  call,
+  callOnce,
+  FIX_COUNTER_TESTS,
+  FIX_FAILING_SINGLE,
+  FIX_TEST_THROWS,
+  flag,
+  withClient,
+} from "./helpers/client.ts";
 
 type Report = {
   total: number;
@@ -24,8 +33,58 @@ describe("kumiki_test", { timeout: 30000 }, () => {
     expect(parsed.results[0]?.name).toBe("inc-works");
   });
 
+  it("returns the error of a test whose body threw, beside the file's other results", async () => {
+    const res = await callOnce("kumiki_test", { path: FIX_TEST_THROWS });
+    expect(res.isError).toBe(true);
+    expect(JSON.parse(res.body)).toMatchObject({
+      total: 2,
+      passed: 1,
+      failed: 1,
+      results: [
+        {
+          name: "expect-panics",
+          pass: false,
+          error: "Index 3 is out of range for a List of length 1",
+        },
+        { name: "inc-works", pass: true },
+      ],
+    });
+  });
+
   it("flags a failing test run and a filter that matches nothing", async () => {
     expect(await flag("kumiki_test", { path: FIX_FAILING_SINGLE })).toBe(true);
     expect(await flag("kumiki_test", { path: FIX_COUNTER_TESTS, filter: "nope*" })).toBe(true);
+  });
+
+  it("reports no tests for a file without any, after a file with a failing one", async () => {
+    await withClient(async (client) => {
+      const first = await call(client, "kumiki_test", { path: FIX_FAILING_SINGLE });
+      expect(first.isError).toBe(true);
+      expect(JSON.parse(first.body)).toMatchObject({ total: 1, failed: 1 });
+      const res = await call(client, "kumiki_test", { path: COUNTER });
+      expect(res.isError).toBe(false);
+      expect(JSON.parse(res.body)).toEqual({
+        total: 0,
+        passed: 0,
+        failed: 0,
+        filter: null,
+        results: [],
+      });
+    });
+  });
+
+  it("flags a filter on a file without tests, after a file whose tests it matches", async () => {
+    await withClient(async (client) => {
+      expect((await call(client, "kumiki_test", { path: FIX_COUNTER_TESTS })).isError).toBe(false);
+      const res = await call(client, "kumiki_test", { path: COUNTER, filter: "inc-*" });
+      expect(res.isError).toBe(true);
+      expect(JSON.parse(res.body)).toEqual({
+        total: 0,
+        passed: 0,
+        failed: 0,
+        filter: "inc-*",
+        results: [],
+      });
+    });
   });
 });

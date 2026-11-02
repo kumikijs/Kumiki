@@ -18,6 +18,9 @@ export type IndexRange = {
 
 const handles = new WeakMap<IndexedDbCfg, Promise<IDBDatabase>>();
 
+// `blocked` is only a notice: the same request still ends in `success` or `error` once every
+// other connection closes, so the open keeps waiting for that end instead of failing. Nothing
+// times the wait out, so the notice is reported.
 function openDb(cfg: IndexedDbCfg): Promise<IDBDatabase> {
   const cached = handles.get(cfg);
   if (cached) return cached;
@@ -27,6 +30,10 @@ function openDb(cfg: IndexedDbCfg): Promise<IDBDatabase> {
       return;
     }
     const req = indexedDB.open(cfg.name, cfg.version);
+    req.onblocked = (ev) =>
+      console.warn(
+        `kumiki: app.indexed-db "${cfg.name}" upgrade ${ev.oldVersion} -> ${ev.newVersion} is blocked by other open connections; indexed-* effects wait until they close`,
+      );
     req.onupgradeneeded = () => {
       const db = req.result;
       for (const s of cfg.stores) {
@@ -40,11 +47,25 @@ function openDb(cfg: IndexedDbCfg): Promise<IDBDatabase> {
         }
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => {
+        db.close();
+        forget();
+      };
+      // `close` fires only when the browser closes the connection (site data cleared, eviction),
+      // never for `db.close()`, which is why `onversionchange` forgets the connection itself.
+      db.onclose = forget;
+      resolve(db);
+    };
     req.onerror = () => reject(req.error ?? new Error("IndexedDB open failed"));
-    req.onblocked = () => reject(new Error("IndexedDB open blocked"));
   });
+  // Forgets this open only while it is still the one kept for `cfg`.
+  const forget = (): void => {
+    if (handles.get(cfg) === p) handles.delete(cfg);
+  };
   handles.set(cfg, p);
+  p.catch(forget);
   return p;
 }
 

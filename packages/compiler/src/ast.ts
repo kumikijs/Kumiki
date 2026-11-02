@@ -1,4 +1,4 @@
-import type { IndexedDbStore, KeyKind } from "@kumikijs/runtime";
+import type { IndexedDbStore, KeyKind, ShowShape } from "@kumikijs/runtime";
 
 export type Pos = { line: number; col: number };
 
@@ -45,7 +45,7 @@ export type TestDef = {
   forAll?: { name: string; type: TypeExpr; pos: Pos }[];
   /** `property-test` only: the boolean `invariant` expression checked per case. */
   invariant?: Expr;
-  /** `property-test` only: trial count (default 100). */
+  /** `property-test` only: trial count, a whole number, 1 or more (default 100). */
   count?: number;
   /** `property-test` only: shrink on failure (default true). */
   shrink?: boolean;
@@ -226,6 +226,20 @@ export function assertNever(node: never): void {
   void node;
 }
 
+/**
+ * The sign is part of a number literal (language.md), but the lexer emits it as
+ * its own operator, so `-1` reaches the AST as a negation of `1`. One leading `-`
+ * is folded in: `- -1` is the negation of the literal `-1`, so it is `null` here.
+ * Parentheses leave no node, so `-(1)` is the literal `-1`.
+ */
+export function numberLiteral(e: Expr): { value: number; raw: string } | null {
+  if (e.kind === "Num") return { value: e.value, raw: e.raw ?? String(e.value) };
+  if (e.kind === "UnaryOp" && e.op === "-" && e.rhs.kind === "Num") {
+    return { value: -e.rhs.value, raw: `-${e.rhs.raw ?? String(e.rhs.value)}` };
+  }
+  return null;
+}
+
 export type Refinement = {
   kind: "Refinement";
   pred: string;
@@ -255,6 +269,11 @@ export type EventPattern =
       kind: "LifecycleEvent";
       name: string;
       tileTarget?: { readonly event: "tile.mount" | "tile.unmount" } & NamedRef;
+      routePattern?: {
+        readonly event: "route.enter" | "route.leave" | "route.error";
+        readonly pattern: string;
+        readonly pos: Pos;
+      };
       pos: Pos;
     };
 
@@ -303,7 +322,17 @@ export type { KeyKind };
 
 export type FragmentShape = "pair" | "key-value" | "value" | "undecided";
 
-export type Expr =
+export type { ShowShape };
+
+export type Expr = ExprForm & {
+  /**
+   * Set by the checker where the value is shown; absent without `check()`, and where the type has
+   * no shape or could not be inferred, so the value is read as itself.
+   */
+  showShape?: ShowShape;
+};
+
+type ExprForm =
   | { kind: "Num"; value: number; raw?: string; pos: Pos }
   | { kind: "Str"; value: string; pos: Pos }
   | { kind: "Bool"; value: boolean; pos: Pos }
@@ -342,7 +371,7 @@ export type Expr =
     }
   | { kind: "MapLit"; entries: { key: Expr; value: Expr }[]; pos: Pos }
   | { kind: "Wildcard"; wild: "any-id"; pos: Pos }
-  | { kind: "Wildcard"; wild: "slot"; slot: string; pos: Pos }
+  | { kind: "Wildcard"; wild: "slot"; slot: string; slotPos: Pos; pos: Pos }
   | { kind: "MatchExpr"; scrutinee: Expr; arms: MatchArm[]; pos: Pos }
   | { kind: "IfExpr"; cond: Expr; consequent: Expr; alternate: Expr; pos: Pos }
   | { kind: "LetIn"; name: string; value: Expr; body: Expr; pos: Pos }

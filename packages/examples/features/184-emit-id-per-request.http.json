@@ -1,0 +1,4 @@
+{
+  "GET /api/parts/a": { "text": "part a" },
+  "GET /api/parts/b": { "text": "part b" }
+}

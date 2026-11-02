@@ -1,12 +1,12 @@
 import { isTileExpr, type TileExpr, type UiEventKind } from "../ast.ts";
 import { HANDLER_NAMES, handlerReducerName, UI_LIFTS } from "../ui-lifts.ts";
 import { type EnclosingTiles, type EvalCtx, fieldKey, handlerRef, jsProperty } from "./context.ts";
-import { jsOfExpr } from "./expr.ts";
+import { jsOfExpr, showJs } from "./expr.ts";
 
 export function keyFor(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string | null {
   const keyProp = t.props.find((p) => p.name === "key");
   if (!keyProp) return null;
-  return `_s.show(${jsOfExpr(keyProp.value, ctx)})`;
+  return showJs(jsOfExpr(keyProp.value, ctx), keyProp.value, ctx.gen);
 }
 
 function isNotPropData(tile: string, name: string, forEl = false): boolean {
@@ -15,6 +15,9 @@ function isNotPropData(tile: string, name: string, forEl = false): boolean {
   if (tile === "link" && (name === "prefetch" || name === "prefetch-args")) return true;
   if (forEl && name === "style") return true;
   if (forEl && name === "bind") return true;
+  // A read of an `error` tile's `field` can panic (`.get` on a `None`, an index
+  // past a List's end) where the tile itself renders nothing.
+  if (tile === "error" && name === "field") return true;
   return false;
 }
 
