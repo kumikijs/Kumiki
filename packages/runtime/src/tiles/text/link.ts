@@ -20,7 +20,22 @@ const BROWSER_SCHEMES = new Set(["http:", "https:", "mailto:", "tel:", "sms:"]);
 
 const warnedLink = new WeakMap<Element, string>();
 
+/** Any base answers whether a target names an origin; `.invalid` (RFC 2606) is one no real target names. */
+const PROBE_ORIGIN = "http://link.invalid";
+
+/** No scheme or `//` authority of its own: `#faq`, `?page=2`, `install`, `/docs`. */
+function namesNoOrigin(to: string): boolean {
+  try {
+    return new URL(to, PROBE_ORIGIN).origin === PROBE_ORIGIN;
+  } catch {
+    return true;
+  }
+}
+
 function linkDisposition(to: string): LinkDisposition {
+  // The router's on any page, whatever its URL: `about:srcdoc` in the playground's iframe
+  // resolves `#faq` to an `about:` URL of its own.
+  if (namesNoOrigin(to)) return "route";
   const here = typeof location !== "undefined" ? location.href : "";
   if (!here) return "route";
   let base: URL;

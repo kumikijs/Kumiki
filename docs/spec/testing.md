@@ -31,7 +31,7 @@ what it is:
 | an `expect.effects` entry | an effect, declared or standard | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | a `given.mocks` key | an effect | [E0104](./errors.md#e0104-undef-effect-init-not-effect-call) |
 | every expression — a slot value, `given.in`, `expect.panic`, an `invariant`, a mock payload, an `episode-test` `expect` | whatever the expression layer says | E0103, E0116, … |
-| a `given.slots` / `expect.slots` value, an `expect.effects` argument, a `given.mocks` payload | a value of the slot's type, the effect's `in=` type, the effect's `out=` half | [E0201](./errors.md#e0201-type-mismatch), [E0214](./errors.md#e0214-missing-record-field), [E0215](./errors.md#e0215-unknown-record-field) |
+| a slot value (in `given.slots`, `expect.slots` or `slots-equal`), an `expect.effects` argument, a `given.mocks` payload | a value of the slot's declared type, the effect's `in=` type, the effect's `out=` half | [E0201](./errors.md#e0201-type-mismatch), [E0213](./errors.md#e0213-call-arity-mismatch), [E0214](./errors.md#e0214-missing-record-field), [E0215](./errors.md#e0215-unknown-record-field), [E0216](./errors.md#e0216-unknown-variant) |
 | a `given` / `expect` **section** key | one of the closed set that kind accepts | [E0714](./errors.md#e0714-test-section-unknown) |
 
 The sections themselves are a vocabulary rather than names to resolve, one
@@ -63,10 +63,34 @@ generated test — the payload is built from the event's *other* fields, and the
 reducer the runner applies is the test's own target — so this rule is about
 what the test says rather than what it does.
 
+A slot value a test writes is a value of the slot's declared type, in every
+test kind (the multi-step `reducer-test` of [§8.5](#_8-5-effect-mock)
+included) and in each section that writes one: a `given.slots` seed, an
+`expect.slots` value, and an `episode-test`'s `slots-equal` record. It is
+checked as the slot's own initializer is, under the same rules — an `Int`
+flows into a `Float`, an empty `[]` or `{}` is the declared collection and
+`None` the declared `Option`, and a `where` refinement is not evaluated — and a
+value the type does not take is a type error at that position (**E0201**, or
+E0213 / E0214 / E0215 / E0216 when a record's or variant's shape is wrong). A
+seed of the wrong type runs the reducer from a state the app can never be in,
+and an expectation of one asserts a state it can never reach: on
+`slot count : Int`, `given.slots: {count: "5"}` makes `count + 1` the text
+`"51"`, which `expect.slots: {count: "51"}` agrees with. A value whose type the
+checker does not infer is not yet held to the slot's: the result of a `.map` /
+`.fold` / `.zip` / `.flat-map` checks `ok` whatever the slot's type, in a test as
+in an initializer. That is a known gap, not a rule
+([#959](https://github.com/kumikijs/Kumiki/issues/959)). A wildcard in a
+`reducer-test` `expect` ([§8.2.2](#_8-2-2-wildcards)) has no type, so it is not
+held to the slot's. The `route` slot is the runtime's, of the standard
+`Route`; a seed of it names only the fields it needs, and a wildcard may stand
+for one of those fields but not for the whole route
+([§8.2.5](#_8-2-5-the-route-slot)).
+
 A slot is *readable* in a test body — the value is the one the slot holds — and
 a `for-all` name is in scope in both `given` and `invariant`, with the type its
-generator declares. `run-reducer(<reducer>)` takes a reducer name rather than a
-value, and only a property-test invariant may call it
+generator declares. In a program that declares no `fn run-reducer`
+([Language §1.8.5](./language.md#_1-8-5-calling-from-tile-reducer)), `run-reducer(<reducer>)` takes a reducer name
+rather than a value, and only a property-test invariant may call it
 ([§8.3](#_8-3-property-tests)): it lowers to a read of the trial's bindings, so
 anywhere else the generated module dies before a single test reports.
 
@@ -173,7 +197,7 @@ test route-seeded-in-part =
         expect = {slots: {at: "/posts/:id#7"}}
 ```
 
-A field name outside the route's own — `path`, `pattern`, `params`, `query`, `hash` — is **E0108**, and a `route` that is not a record is **E0201**. Without those, a typo would be dropped by the completion and the test would run against the empty route: green, and exercising the branch it was written to avoid.
+A field name outside the route's own — `path`, `pattern`, `params`, `query`, `hash` — is **E0108**, and a `route` that is not a record, a wildcard for the whole route included, is **E0201**. Without those, a typo would be dropped by the completion and the test would run against the empty route: green, and exercising the branch it was written to avoid. Each field a `route` record names, in a seed, an `expect.slots` or a `slots-equal`, is a value of that field's type in the standard `Route` ([§3.2](./routing.md#_3-2-current-route-state)), or a type error at that position as [§8.1.1](#_8-1-1-the-names-a-test-body-writes) describes — the slot holds the runtime's route, and a program cannot declare a `type Route` of its own ([E0231](./errors.md#e0231-reserved-type-name)). The completion fills only the fields left out, so `hash: "top"` (for `Some("top")`) or `params: {"id": 7}` would, without this check, reach the reducer as written: a route the app can never be on.
 
 `expect.slots` names the slots it compares; a slot it leaves out is not compared, so the seeded route never has to be repeated — and may be asserted like any other slot when it is what the test is about. A named slot's value is still matched exactly ([§8.2.2](#_8-2-2-wildcards)), so an `expect` naming `route` spells the whole record.
 
@@ -204,6 +228,31 @@ property-given ::= 'slots' ':' record-lit | 'event' ':' event-lit
 
 `run-reducer(name)` answers the state the reducer leaves, `{slots: {…}}`, and its `slots` are typed with the program's declared slots (plus the runtime's `route`). A read through it is checked like a read of the slot itself: `run-reducer(add).slots.tags.to-list` on a `Set(Int)` is a `List(Int)` whose keys read back as numbers ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)), and a slot name the program does not declare is [E0108](./errors.md#e0108-undef-member) rather than an `undefined` that fails the property as a counterexample.
 
+A trial whose `run-reducer` batch a refinement rejects **fails** ([batching](./runtime.md#a-batch-commits-all-or-nothing)). Its batch did not commit, so the step has no state to answer: an invariant read against the state it started from would hold about a step that never happened. Below, `inc` cannot take `count` past 3, and `run-reducer(inc).slots.count >= 0` would hold on the trial where `n` is 3 had the refused step answered the table it started from:
+
+```kumiki snippet
+slot count : Int where between(0, 3) = 0
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+tile IncBtn = button(text="+1")
+
+test inc-stays-in-range =
+    property-test
+        for-all   = {n: Int where between(0, 3)}
+        given     = {slots: {count: n}, event: {type: ui.click, target: IncBtn}}
+        invariant = run-reducer(inc).slots.count >= 0
+```
+
+The failure carries the counterexample and the rejection, which names the reducer and the write it was refused for:
+
+```
+FAIL  inc-stays-in-range (1 cases, 2ms)
+  expected: invariant holds for all generated inputs
+  actual:   counterexample (case 1/100): {"n":3} — reducer "inc" was rejected: slot "count" cannot hold 4 (between(0, 3))
+  diff at:  (property)
+```
+
+A property therefore holds only over trials in which every `run-reducer` committed. To state what happens when a batch is refused, write a reducer-test, whose `expect` names the slots a refused batch leaves ([§8.2.3](#_8-2-3-the-batch-rule-applies-here-too)); to keep a property clear of the refusal, generate the inputs the reducer accepts (`n: Int where between(0, 2)`).
+
 ### 8.3.2 Generators
 
 Each type has an automatic generator:
@@ -219,12 +268,20 @@ Each type has an automatic generator:
 | `Set(T)` | 0~10 elements |
 | `Option(T)` | 50% None / 50% Some |
 | `Result(T, E)` | 50% Ok / 50% Err |
+| `Unit` | `()` |
+| `Tuple(T1, …, Tn)` | each element by its own generator |
 | `nominal T` | T's generator |
 | `refinement T where p` | generate T constrained by p |
 | record `{…}` | each field generated recursively |
 | union | a random variant, payloads generated recursively |
+| `G(A1, …, An)` | G's body, its parameters generated as the arguments |
+| a recursive type | its body, to a bounded depth (below) |
 
-Custom generators:
+Every `for-all` value is a value of its type, built in full — each element of a tuple and each field of a record by its own generator, under every refinement stacked on it (a `regex` aside, which the note below explains), so `p: Tuple(Text, Int where negative)` is always a pair whose second half is negative, and `n: Pos where between(-5, 5)` over `type Pos = Int where positive` is between 1 and 5. A type the generator cannot build is refused when the program is checked, at the `for-all` field that names it ([E0715](./errors.md#e0715-for-all-no-generator)) — one that holds, anywhere in it, a `File` or an `EffectId` (which only the platform or an `emit` makes), a recursive type with no finite value (`type Inf = {v: Int, next: Inf}`), a generic that nests a parameter deeper (`type Grow(T) = Stop | Deeper(Grow(List(T)))`, a new type at every step), or refinements no value passes (`Int where positive where negative`). A generic reached again under another argument, or one that swaps its parameters, is generated: each instantiation it reaches is a type of its own. No part of a trial's value is a stand-in.
+
+A recursive type is generated to a bounded depth. For four steps into the type every choice is taken at random; past that, each takes the way that ends soonest — the variant or `Result` outcome that needs the fewest further steps, `None`, an empty collection. `type Tree = Leaf | Node(Int, Tree)` generates trees at most four `Node`s deep, `type Chain = {v: Int, next: Option(Chain)}` chains that end at `None`, and two types that hold each other end wherever either of them can. A recursive type ends this way whenever it has a finite value at all; one that has none is E0715's. A collection inside a recursive type holds at most 10 members at the top and half as many at each step in (5, 2, 1, then none), so a type that recurses through two collections at once stays small.
+
+A refinement on the type narrows what is generated:
 
 ```kumiki snippet
 test foo =
@@ -233,7 +290,7 @@ test foo =
         ...
 ```
 
-> **Implementation note.** A refinement folds into its base generator as a bound rather than reject-sampling: `between(a, b)` constrains the numeric range, `nonempty` / `len-*` the string length, `positive` / `negative` the sign. `email` / `url` / `uuid` fold in as a **shape**: the generator builds an instance of the form, so a generated value passes the same check the runtime applies to a write ([Language §1.3.3](./language.md#_1-3-3-registered-refinement-predicates)) — a generator that ignored them would drive the property over states the app refuses to be in. `one-of` generates from the listed literals. `regex` is the one predicate with no constraint to fold, because generating from an arbitrary pattern is a different problem from checking against one: a `for-all` over a `regex`-refined type generates unconstrained base values, so give it a custom generator or write the case by hand. Generation is **seeded** (default: a hash of the test name), so a failing case reproduces exactly across runs; on failure the counterexample is **shrunk** (unless `shrink = false`) toward a minimal value (numbers → 0, strings → "", collections → fewer elements). `run-reducer(name)` inside `invariant` applies a reducer to the current `{slots}` state using the `given` event and returns the next state: the whole slot table — the declared defaults and the seeded `route` ([§8.2.5](#_8-2-5-the-route-slot)), then `given.slots`, then the reducer's writes — or, when a refinement rejects the batch, that table without the writes ([batching](./runtime.md#a-batch-commits-all-or-nothing)). A slot the trial neither seeds nor writes therefore reads its default, as it does in a reducer-test. Steps chain (`run-reducer(toggle).run-reducer(toggle).slots.todos`), each starting from the whole table the step before it answers. A rejection is reported on `console.error`, not in the property's result, so an invariant cannot tell a refused batch from a reducer that wrote nothing.
+> **Implementation note.** A refinement folds into its base generator as a bound rather than reject-sampling: `between(a, b)` constrains the numeric range, `nonempty` / `len-*` the string length, `positive` / `negative` the sign. `email` / `url` / `uuid` fold in as a **shape**: the generator builds an instance of the form, so a generated value passes the same check the runtime applies to a write ([Language §1.3.3](./language.md#_1-3-3-registered-refinement-predicates)) — a generator that ignored them would drive the property over states the app refuses to be in. `one-of` generates from the listed literals. Stacked refinements narrow each other: each bound is the tighter of the two, a `one-of` keeps only the listed values the other refinements pass, and a shape is built at a length the others allow. `regex` is the one predicate with no constraint to fold, because generating from an arbitrary pattern is a different problem from checking against one: a `for-all` over a `regex`-refined type generates unconstrained base values, so generate that variable from a `one-of` list of values that match the pattern, or write the case as a reducer-test. Generation is **seeded** (default: a hash of the test name), so a failing case reproduces exactly across runs; on failure the counterexample is **shrunk** (unless `shrink = false`) toward a minimal value that is still a value of its type (numbers → 0 or the bound nearest it, strings → the shortest length allowed, collections → fewer elements, `Some` → `None`, a record or a tuple one part at a time), so the counterexample reported is one a trial could have been run on. `run-reducer(name)` inside `invariant` applies a reducer to the current `{slots}` state using the `given` event and returns the next state: the whole slot table — the declared defaults and the seeded `route` ([§8.2.5](#_8-2-5-the-route-slot)), then `given.slots`, then the reducer's writes. A slot the trial neither seeds nor writes therefore reads its default, as it does in a reducer-test. Steps chain (`run-reducer(toggle).run-reducer(toggle).slots.todos`), each starting from the whole table the step before it answers. A step whose batch a refinement rejects answers no state: the trial fails with the rejection ([§8.3.1](#_8-3-1-syntax)).
 
 ## 8.4 Tile snapshot Tests
 
@@ -389,6 +446,8 @@ kumiki test --watch            # re-run on change
 kumiki test --coverage         # coverage (per reducer/effect/tile)
 ```
 
+Every run reports the `test` definitions of the file it was given and nothing else — a `--watch` re-run and each call of the MCP `kumiki_test` too, though both load one program after another in a single process. A file with no `test` reports none. Without a filter, `kumiki test` prints `no tests found` and `kumiki_test` returns an empty `results`. With a filter, `kumiki test` prints `no tests match "<filter>"` on stderr and exits 1, and `kumiki_test` returns the empty `results` with `isError`.
+
 ### 8.7.1 Output
 
 ```
@@ -399,6 +458,8 @@ FAIL  counter-display
   actual:   column(heading("Count: 0"), row(...))
   diff at:  [0].text  "Count: 5" -> "Count: 0"
 ```
+
+A test whose body throws is a `FAIL` of that test alone, with what it threw on an `error:` line under it; the file's other tests still run and report. A panic is shown by its message, or as `KumikiPanic` when it has none. Anything else keeps its kind — `TypeError: …` — since it points at the compiler or the runtime rather than at the program, and a thrown value that is not an error is shown as JSON.
 
 A file that does not compile runs no test. The runner names the file by its resolved (absolute) path and prints each diagnostic as `kumiki check` does, warnings before errors — `<code> <kind> at <line>:<col>: <message>` — adding the `test` a diagnostic sits inside:
 
@@ -416,7 +477,7 @@ E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}
   - a **string, number or boolean leaf** whose actual value is written as a *unique* literal (the [Output](#_8-7-1-output) snapshot case, and a constant such as `fn step() -> Int = 1`). A candidate is a **whole token**: the `1` inside `Btn1`, inside `10`, inside a string or inside a comment is never one;
   - a **string leaf** whose actual and expected values differ in one middle stretch that a single string literal contains, which is rewritten in place;
   - a **numeric slot** written by exactly one reducer, in the shape `slot := slot + N`, `- N` or `* N`, whose operand is solved from the two values.
-- `--apply` writes that patch **through a gate**: the patched source is re-parsed, re-typechecked and tested before anything reaches disk, and the write happens only if it compiles, the named test passes, and every test that passed before still passes. A patch refused this way is not written — the file stays as the compile repair above left it, byte-identical to before the call when there was none — and the refusal says why: it does not parse, it introduces a diagnostic (listed), the test runner throws on it, the named test does not run, the named test still fails, or it would make a test that passed before fail or stop running (named). A refusal is reported as such, never as an applied fix and never as a raw compile error. A dry run (no `--apply`) proposes the patch without running the gate.
+- `--apply` writes that patch **through a gate**: the patched source is re-parsed, re-typechecked and tested before anything reaches disk, and the write happens only if it compiles, the named test passes, and every test that passed before still passes. A patch refused this way is not written — the file stays as the compile repair above left it, byte-identical to before the call when there was none — and the refusal says why: it does not parse, it introduces a diagnostic (listed), the test runner throws on it, the named test does not run, the named test still fails, or it would make a test that passed before fail or stop running (named, each with how it now fails). A refusal is reported as such, never as an applied fix and never as a raw compile error. A dry run (no `--apply`) proposes the patch without running the gate.
 
 Every other divergence (wrong operators, effect-list mismatches, a value no single literal accounts for) is reported as a diff rather than guessed.
 

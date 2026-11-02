@@ -1,8 +1,5 @@
-import { runScenario } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { withRoot } from "./helpers/dom.ts";
-import { loadSource } from "./helpers/load.ts";
-import { failureDetail } from "./helpers/scenario.ts";
+import { answerConfirm, logAfter, navigateTo as nav } from "./helpers/scenario.ts";
 
 const SRC = `
 slot log : Text = ""
@@ -33,31 +30,18 @@ reducer goOn on=ui.click(_) do= ()
 reducer stay on=ui.click(_) do= ()
 `);
 
-type Step = { navigate: string } | { click: string };
-
-const YES = { click: "[data-kumiki-confirm] button[data-kumiki-confirm-action='yes']" };
-
-async function logAfter(steps: Step[], src = SRC): Promise<unknown> {
-  const app = await loadSource(src, ["nav.push", "notification.show"]);
-  const report = await withRoot((root) =>
-    runScenario(app, root, { steps: steps.map((s) => ({ do: s })) }, { router: "memory" }),
-  );
-  expect(report.ok, failureDetail(report)).toBe(true);
-  return report.steps.at(-1)?.state?.log;
-}
-
-const nav = (...paths: string[]): Step[] => paths.map((navigate) => ({ navigate }));
-
 describe("route.leave on a move within one pattern", () => {
   it("leaves the old params, then enters the new ones", async () => {
-    expect(await logAfter(nav("/t/1", "/t/2"))).toBe("enter 1;leave 1;enter 2;");
+    expect(await logAfter(SRC, nav("/t/1", "/t/2"))).toBe("enter 1;leave 1;enter 2;");
   });
 
   it("leaves a sub-routes parent before a child switch re-enters it", async () => {
-    expect(await logAfter(nav("/s/a", "/s/b"))).toBe("enter /s/a;leave /s/a;enter /s/b;");
+    expect(await logAfter(SRC, nav("/s/a", "/s/b"))).toBe("enter /s/a;leave /s/a;enter /s/b;");
   });
 
   it("Yes on a held move enters the new params, not the old ones", async () => {
-    expect(await logAfter([...nav("/t/1", "/t/2"), YES], GUARDED)).toBe("enter 1;leave 1;enter 2;");
+    expect(await logAfter(GUARDED, [...nav("/t/1", "/t/2"), answerConfirm("yes")])).toBe(
+      "enter 1;leave 1;enter 2;",
+    );
   });
 });

@@ -56,6 +56,12 @@ ${APP_A}`,
       description: 'replace "Int.pasre" with "Int.parse" at 3:35',
       fixed: "a := Int.parse(t).get-or(0)",
     },
+    {
+      repair: "answers a misspelt `Time.now` with the qualified builtin (E0116)",
+      source: `slot at : Time = Time.nwo\ntile App = column(text(at.format("yyyy")))\n${APP_A}`,
+      description: 'replace "Time.nwo" with "Time.now" at 1:18',
+      fixed: "slot at : Time = Time.now\n",
+    },
   ])("$repair", ({ source, description, fixed }) => {
     const file = seed(source);
     expect(descriptionsOf(file)).toContain(description);
@@ -72,6 +78,17 @@ ${APP_A}`);
     const { patches, skipped } = planFixesExplained(store, check(store.program));
     expect(patches.map((p) => p.code)).not.toContain("E0218");
     expect(skipped.find((sk) => sk.code === "E0218")?.reason).toBe("e0218-target-not-a-plain-name");
+  });
+
+  it("declines a target no accessor repairs, such as an Option (E0218)", () => {
+    const store = storeOf(`slot loaded : Option(List(Text)) = Some(["a"])
+tile App = column(for x in loaded text(x))
+${APP_A}`);
+    const { patches, skipped } = planFixesExplained(store, check(store.program));
+    expect(patches.map((p) => p.code)).not.toContain("E0218");
+    expect(skipped.filter((sk) => sk.code === "E0218").map((sk) => sk.reason)).toEqual([
+      "e0218-no-accessor",
+    ]);
   });
 
   it("makes a text builtin's text= its positional content (E0129)", () => {
@@ -375,6 +392,14 @@ ${APP_A}`);
     expect(e0209[0]?.description).not.toContain("Grn0");
   });
 
+  it("proposes no tag from a program's own union under a reserved name, which the checker never reads", () => {
+    const file = seed(`type FormValue = Txt(Text) | Num(Float)
+slot v : FormValue = Txtt("a")
+tile App = column(text("x"))
+${APP_A}`);
+    expect(descriptionsOf(file).filter((d) => d.includes('"Txtt"'))).toEqual([]);
+  });
+
   it("E0106 does not fall back to unrelated top-level names (scoped candidate set)", () => {
     const store = storeOf(`slot note  : Int = 0
 slot count : Int = 0
@@ -467,6 +492,12 @@ describe("planFixesExplained: skip-reason classification", () => {
       'slot doubel-value : Int = 0\ntile App = heading("hi")\n',
       "E0116",
       'Call to undefined function "doubel-value"',
+    ],
+    [
+      "e0116-no-close-callee",
+      'slot at : Time = nwo()\ntile App = heading("hi")\n',
+      "E0116",
+      'Call to undefined function "nwo"',
     ],
     ["e0117-quoted-name-extract-failed", LONE_TILE, "E0117", "some undefined type"],
     [
@@ -673,6 +704,62 @@ ${APP_A}`);
   });
 });
 
+describe("planFixesExplained: a read after the body that declared it (E0103)", () => {
+  // `idx` is one edit from the slot `id`, so a rename would type-check and read `id`.
+  const scoped = (body: string): string => `slot id    : Int = 0
+slot total : Int = 0
+slot count : Int = 0
+slot flag  : Bool = true
+reducer tally on=ui.click(Btn)
+    do= ${body}
+tile Btn = button(text="go")
+tile App = column(Btn, text(total.show))
+${APP_A}`;
+  const FOR_BODY = "for idx in [1] { () }\n        total := idx";
+  const plan = (source: string, reword: (message: string) => string = (m) => m) => {
+    const store = storeOf(source);
+    const errors = check(store.program).map((e) => ({ ...e, message: reword(e.message) }));
+    const { patches, skipped } = planFixesExplained(store, errors);
+    return {
+      messages: errors.map((e) => e.message),
+      patches: patches.map((p) => p.description),
+      skipped: skipped.map((s) => [s.code, s.reason]),
+    };
+  };
+
+  it.each([
+    ["a `for` body", FOR_BODY],
+    ["an `if` branch", "if flag then { let idx = 1 } else { () }\n        total := idx"],
+    [
+      "a match arm",
+      "match Some(1) with\n          | Some(idx) -> { () }\n          | None      -> { () }\n        total := idx",
+    ],
+  ])("proposes no rename for a name %s declared", (_form, body) => {
+    const { patches, skipped } = plan(scoped(body));
+    expect(patches).toEqual([]);
+    expect(skipped).toEqual([["E0103", "e0103-read-after-scope-ended"]]);
+  });
+
+  const withMisspelling = scoped(`${FOR_BODY}\n        count := cont`);
+  const ONE_OF_EACH = {
+    patches: ['replace "cont" with "count" at 8:18'],
+    skipped: [["E0103", "e0103-read-after-scope-ended"]],
+  };
+
+  it("still renames a misspelling beside it", () => {
+    expect(plan(withMisspelling)).toMatchObject(ONE_OF_EACH);
+  });
+
+  it("tells the two apart by the diagnostic's field, not its message", () => {
+    const reworded = plan(withMisspelling, (m) => m.replace(/ — .*/, ""));
+    expect(reworded.messages).toEqual([
+      'Reference to undefined name "idx"',
+      'Reference to undefined name "cont"',
+    ]);
+    expect(reworded).toMatchObject(ONE_OF_EACH);
+  });
+});
+
 describe("applyFixPlan: regression gate", () => {
   it("clean patch: writes through and reports not-blocked", () => {
     const file = seed(
@@ -698,6 +785,17 @@ ${APP_A}`);
     expect(result.regressionBlocked).toBe(true);
     expect(result.applied).toBe(0);
     expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
+  it("a rename inside a for target keeps the E0218 that remains, not blocked (E0103)", () => {
+    const file = seed(`slot rows : List(Int) = [1]
+fn idx(ys: List(Int)) -> Map(Text, Int) = {"k": 1}
+tile App = column(for x in idx(rws) text("row"))
+${APP_A}`);
+    const result = applyFixPlan(file, "E0103");
+    expect(result.regressionBlocked).toBeFalsy();
+    expect(result.applied).toBe(1);
+    expect(readFileSync(file, "utf8")).toContain("for x in idx(rows) text");
   });
 
   it("no resolutions: rolled back even when nothing new is introduced", () => {

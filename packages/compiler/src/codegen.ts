@@ -27,11 +27,17 @@ import { coverageJs, genTest } from "./codegen/emit-test.ts";
 import { bindReaderDecls, genRouteTile, genTile } from "./codegen/emit-tile.ts";
 import { analyzeRuntimeUsage, emitImportHeader } from "./codegen/imports.ts";
 import { nestedRefinements } from "./codegen/nested-refinements.ts";
+import { showShapes } from "./codegen/show-shapes.ts";
 import { STDLIB_TYPES } from "./stdlib-types.ts";
 
 export type CodegenOptions = {
   runtimeSpecifier: string;
-  /** Emit the in-language `test` definitions (`__kumikiTests`). Off for production builds. */
+  /**
+   * Emit the in-language `test` definitions and publish them, with their static
+   * coverage, as `__kumikiTests` / `__kumikiCoverage`. For a program without tests,
+   * `__kumikiTests` is `[]` and `__kumikiCoverage` lists its definitions with none
+   * used. Off for production builds.
+   */
   includeTests?: boolean;
   exportApp?: boolean;
   runtimeModulesDir?: string;
@@ -78,13 +84,14 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     usedIcons: new Set(),
     refinements: nestedRefinements({ types }),
     usedReaders: new Set(),
+    showShapes: showShapes(),
   };
 
   const lines: string[] = [];
 
   lines.push("function createApp() {");
   lines.push(HANDLER_MEMO_PREAMBLE);
-  // The bound-input readers go here once the body below has said which it uses.
+  // The bound-input readers and the shown shapes go here once the body below has said which it uses.
   const readersAt = lines.length;
 
   for (const fn of fns) {
@@ -209,18 +216,22 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     }
   }
 
-  if (opts.includeTests && tests.length > 0) {
-    lines.push("const _tilesById = {");
-    for (const tile of tiles) {
-      lines.push(`  ${JSON.stringify(tile.name)}: (${jsBinding("$1")}) => ${genTile(tile, ctx)},`);
+  if (opts.includeTests) {
+    if (tests.length > 0) {
+      lines.push("const _tilesById = {");
+      for (const tile of tiles) {
+        lines.push(
+          `  ${JSON.stringify(tile.name)}: (${jsBinding("$1")}) => ${genTile(tile, ctx)},`,
+        );
+      }
+      lines.push("};");
+      lines.push("App._tilesById = _tilesById;");
     }
-    lines.push("};");
-    lines.push("App._tilesById = _tilesById;");
     lines.push("App._tests = [");
     for (const t of tests) lines.push(genTest(t, ctx, opts));
     lines.push("];");
     // Static coverage for `kumiki test --coverage`.
-    lines.push(`App._coverage = ${coverageJs(tests, reducers, tiles, effects)};`);
+    lines.push(`App._coverage = ${coverageJs(tests, reducers, tiles, effects, fns)};`);
   }
 
   lines.splice(refinementsAt, 0, ...ctx.refinements.decls);
@@ -230,7 +241,10 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push("const App = createApp();");
   lines.push("globalThis.__kumikiApp = App;");
 
-  if (opts.includeTests && tests.length > 0) {
+  // Published even for a program without tests: a runner that loads one program after
+  // another in a process reads these globals, and would otherwise report the previous
+  // program's tests.
+  if (opts.includeTests) {
     lines.push("");
     lines.push("globalThis.__kumikiTests = App._tests;");
     lines.push("globalThis.__kumikiCoverage = App._coverage;");
@@ -238,7 +252,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   lines.push("");
 
   // After the refinements splice above, which sits at a larger index.
-  lines.splice(readersAt, 0, ...bindReaderDecls(ctx.usedReaders));
+  lines.splice(readersAt, 0, ...bindReaderDecls(ctx.usedReaders), ...ctx.showShapes.decls);
 
   const usage = analyzeRuntimeUsage(
     app,
@@ -287,7 +301,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
 
 export {
   FIELD_ACCESS_SHORTCUTS,
-  FRAGMENT_ARGUMENTS,
+  fragmentCall,
   KNOWN_MEMBERS,
   KNOWN_METHODS,
   METHOD_MIN_ARGS,

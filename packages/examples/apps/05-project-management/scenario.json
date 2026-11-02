@@ -46,6 +46,11 @@
       "expect": { "noErrors": true }
     },
     {
+      "label": "a due date long past, so the task is overdue whenever the scenario runs",
+      "do": { "fill": "#task-due", "value": "2000-01-01" },
+      "expect": { "noErrors": true, "state": { "draftTask": { "dueDate": "2000-01-01" } } }
+    },
+    {
       "label": "the task is created against the project the route names, and shows on its own page",
       "do": { "submit": "form" },
       "expect": {
@@ -66,6 +71,15 @@
         "state": { "commentDraft": "" },
         "domIncludes": ["Blocked on the wait primitive."],
         "domExcludes": ["No comments yet"]
+      }
+    },
+    {
+      "label": "the project's task list labels a task whose due date has passed Overdue",
+      "do": { "clickText": "< Back" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Write the scenario", "Overdue"],
+        "domExcludes": ["Upcoming", "Soon"]
       }
     },
     {
