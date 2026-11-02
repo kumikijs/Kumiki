@@ -69,7 +69,7 @@ function shrinkPath(
   const tried: unknown[] = [];
   const report = _stdlibTest.runPropertyTest({
     name: `shrunk ${JSON.stringify(desc)}`,
-    seed,
+    ...(seed === undefined ? {} : { seed }),
     vars: { v: desc },
     trial: (binds) => {
       tried.push(binds.v);
