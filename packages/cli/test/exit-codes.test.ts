@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runCli, SPAWN } from "./helpers/cli.ts";
 import { seed, tempDir } from "./helpers/files.ts";
+import { tiedCounts } from "./helpers/tie.ts";
 
 const write = (name: string, source: string): string => seed(source, name);
 
@@ -79,10 +80,51 @@ describe("kumiki fix", () => {
     expect(code).toBe(0);
   });
 
+  // Writing either name would leave a file `check` calls clean: exit 0 on a coin flip, which
+  // `fix --apply && next-step` walks straight past.
+  describe.each([
+    ["countA", "countB"],
+    ["countB", "countA"],
+  ])("with %s declared before %s, two names equally close", (first, second) => {
+    it("proposes neither and exits 1", SPAWN, () => {
+      const { stdout, stderr, code } = runCli([
+        "fix",
+        write(`tie-${first}.kumiki`, tiedCounts(first, second)),
+      ]);
+      expect(stdout).not.toContain('replace "count"');
+      expect(stdout).toContain("(no auto-patches available)");
+      expect(stderr).toContain('E0103 Reference to undefined name "count"');
+      expect(code).toBe(1);
+    });
+
+    it("writes neither with --apply and exits 1", SPAWN, () => {
+      const source = tiedCounts(first, second);
+      const file = write(`tie-apply-${first}.kumiki`, source);
+      const { stdout, code } = runCli(["fix", file, "--apply"]);
+      expect(stdout).not.toContain("file now clean");
+      expect(readFileSync(file, "utf8")).toBe(source);
+      expect(code).toBe(1);
+    });
+  });
+
   it("exits 1 when --apply leaves errors behind", SPAWN, () => {
     const file = write("fix-apply-partial.kumiki", `${FIXABLE}tile Orphan = column(zzz.show)\n`);
     const { stdout, code } = runCli(["fix", file, "--apply"]);
     expect(stdout).toContain("error(s) remain");
+    expect(code).toBe(1);
+  });
+
+  it("writes the repair beside a tie with --apply, leaves the tie, and exits 1", SPAWN, () => {
+    // `countAA` is one edit from `countA` and two from `countB`, so it has one repair.
+    const source = tiedCounts("countA", "countB").replace(
+      "countA := countA + 1",
+      "countA := countAA + 1",
+    );
+    const file = write("fix-apply-beside-tie.kumiki", source);
+    const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
+    expect(readFileSync(file, "utf8")).toBe(tiedCounts("countA", "countB"));
+    expect(stdout).toContain("error(s) remain");
+    expect(stderr).toContain('E0103 Reference to undefined name "count"');
     expect(code).toBe(1);
   });
 

@@ -80,6 +80,8 @@ For name-resolution errors, the compiler can suggest the closest existing name. 
 - a `let … in` name: make it a `let` statement, or move the read into the expression after `in`;
 - a read before the body that declares the name: move the read into that body, after the declaration.
 
+When two or more names are equally close (`count` beside `countA` and `countB`), `fix` proposes none — picking one would be a guess — and leaves the error for you to resolve: its skip reason is `close-names-tied`, with the tied names in the skip's `candidates`. A name the program declares does outrank a built-in one at the same distance (`Filtre` → the declared `Filter`, not the built-in `File`).
+
 ```sh
 pnpm kumiki fix <file>          # show planned fixes
 pnpm kumiki fix <file> --apply  # apply them
