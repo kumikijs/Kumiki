@@ -27,6 +27,8 @@ type FixFromTestStatus =
       /** Behavioral tier: the target test failed but no deterministic literal repair exists. */
       failingTest?: TestResult;
       reason?: string;
+      /** The tied names, sorted, when `reason` is `close-names-tied`. */
+      candidates?: string[];
       compileFixes?: number;
     }
   | {
@@ -112,11 +114,13 @@ function noCompilePatch(
   compileErrors: KumikiError[],
   skipped: SkipReason[],
 ): Extract<FixFromTestStatus, { status: "no-patch" }> {
+  const first = skipped[0];
   return {
     ok: false,
     status: "no-patch",
     compileErrors,
-    reason: skipped[0]?.reason ?? "every-patch-declined",
+    reason: first?.reason ?? "every-patch-declined",
+    ...(first?.candidates === undefined ? {} : { candidates: first.candidates }),
   };
 }
 

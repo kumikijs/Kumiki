@@ -6,7 +6,7 @@ import {
   check,
   collectTimerNames,
   lex,
-  nearestName,
+  nearestNames,
   parse,
   servesNotFound,
   typeCandidates,
@@ -27,7 +27,10 @@ import {
 } from "./text-edit.ts";
 
 /** A planned repair without the diagnostic it answers, or the reason there is none. */
-type Planned = Omit<AutoPatch, "code" | "message"> | string;
+type Planned = Omit<AutoPatch, "code" | "message"> | Declined;
+
+/** A reason there is no repair, and for a tie the names it would have had to choose between. */
+type Declined = { reason: string; candidates?: string[] };
 
 type Planner = (err: KumikiError, store: Store) => Planned;
 
@@ -56,12 +59,14 @@ function namesIn(store: Store, ...layers: string[]): string[] {
 }
 
 type NameRepair = {
-  /** Prefix of every skip reason this repair reports. */
+  /** Prefix of every skip reason this repair reports, except a tie's shared `close-names-tied`. */
   prefix: string;
   /** How many quoted names the message must carry; the misspelled one is the first. */
   quoted: 1 | 2;
   /** The names the misspelling may be close to; null when there are none to pick from. */
   pool: (store: Store, quoted: readonly string[]) => Iterable<string> | null;
+  /** The program's own names in a pool that holds built-in ones too, which outrank them at a tie. */
+  declared?: (store: Store) => Iterable<string>;
   emptyPool?: string;
   noSuggestion: string;
   /** Write at the name when it sits at the diagnostic's position, else on its line. */
@@ -73,12 +78,15 @@ type NameRepair = {
 function nameRepair(r: NameRepair): Planner {
   return (err, store) => {
     const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
-    if (quoted.length < r.quoted) return `${r.prefix}quoted-name-extract-failed`;
+    if (quoted.length < r.quoted) return { reason: `${r.prefix}quoted-name-extract-failed` };
     const missing = r.pick?.(quoted) ?? quoted[0]!;
     const pool = r.pool(store, quoted);
-    if (pool === null) return `${r.prefix}${r.emptyPool}`;
-    const suggested = nearestName(missing, pool);
-    if (!suggested) return `${r.prefix}${r.noSuggestion}`;
+    if (pool === null) return { reason: `${r.prefix}${r.emptyPool}` };
+    const near = nearestNames(missing, pool, r.declared?.(store));
+    // Writing the first of a tie would let the order of the program's definitions pick the name.
+    if (near.length > 1) return { reason: "close-names-tied", candidates: near };
+    const suggested = near[0];
+    if (suggested === undefined) return { reason: `${r.prefix}${r.noSuggestion}` };
     const anchor: PatchAnchor = r.anchored
       ? nameAnchor(store, err.pos, missing)
       : { kind: "span", pos: err.pos };
@@ -119,7 +127,9 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
     // A read after the body that declared it is out of scope, not misspelled: a renamed read can
     // type-check, and the regression gate then counts it as resolved.
     (err, store) =>
-      err.endedScope !== undefined ? "e0103-read-after-scope-ended" : anyDefinition(err, store),
+      err.endedScope !== undefined
+        ? { reason: "e0103-read-after-scope-ended" }
+        : anyDefinition(err, store),
   ],
   ["E0105", anyDefinition], // undef-tile
   ["E0107", anyDefinition], // undef-motion
@@ -154,6 +164,7 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
       prefix: "e0116-",
       quoted: 1,
       pool: (store, quoted) => calleeCandidates(namesIn(store, "fn"), quoted[0]!),
+      declared: (store) => namesIn(store, "fn"),
       noSuggestion: "no-close-callee",
       anchored: false,
     }),
@@ -164,6 +175,7 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
       prefix: "e0117-",
       quoted: 1,
       pool: (store) => typeCandidates(namesIn(store, "type")),
+      declared: (store) => namesIn(store, "type"),
       noSuggestion: "no-close-type",
       anchored: false,
     }),
@@ -174,6 +186,7 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
       prefix: "e0104-",
       quoted: 1,
       pool: (store) => namesIn(store, "effect").concat([...BUILTIN_EFFECT_CAPS.keys()]),
+      declared: (store) => namesIn(store, "effect"),
       noSuggestion: "no-close-effect",
       anchored: false,
     }),
@@ -194,10 +207,10 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
     "E0301",
     (err, store) => {
       const cap = /requires capability "([^"]+)"/.exec(err.message)?.[1];
-      if (cap === undefined) return "e0301-quoted-name-extract-failed";
-      if (!store.defs.some((e) => e.def.kind === "AppDef")) return "e0301-no-app-def";
+      if (cap === undefined) return { reason: "e0301-quoted-name-extract-failed" };
+      if (!store.defs.some((e) => e.def.kind === "AppDef")) return { reason: "e0301-no-app-def" };
       if (appendAppCap(store.source, cap) === null) {
-        return "e0301-cap-already-present-or-no-caps-field";
+        return { reason: "e0301-cap-already-present-or-no-caps-field" };
       }
       return {
         description: `add capability "${cap}" to app.caps`,
@@ -212,9 +225,9 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
       const app = store.program.defs.find((d): d is AppDef => d.kind === "AppDef");
       const routes = app?.routes ?? [];
       if (routes.some((r) => r.path === "/404") && !servesNotFound(routes)) {
-        return "e0001-404-is-a-redirect";
+        return { reason: "e0001-404-is-a-redirect" };
       }
-      if (append404Route(store.source) === null) return "e0001-no-routes-clause";
+      if (append404Route(store.source) === null) return { reason: "e0001-no-routes-clause" };
       const defined = store.byQName.has("tile.NotFound");
       return {
         description: defined
@@ -233,10 +246,10 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
     "E0218",
     (err, store) => {
       // No suffix alone repairs other targets: what an `Option`'s `None` iterates is the author's call.
-      if (!err.accessor) return "e0218-no-accessor";
+      if (!err.accessor) return { reason: "e0218-no-accessor" };
       const remedy = `.${err.accessor}`;
       const name = identifierAt(store, err.pos);
-      if (!name) return "e0218-target-not-a-plain-name";
+      if (!name) return { reason: "e0218-target-not-a-plain-name" };
       return {
         description: `append "${remedy}" to "${name}" at ${err.pos.line}:${err.pos.col}`,
         apply: (text) => replaceAt(text, err.pos, name, `${name}${remedy}`),
@@ -269,10 +282,10 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
           anchor: { kind: "span", pos: err.pos },
         };
       }
-      return "e0129-dropped-argument-has-no-single-repair";
+      return { reason: "e0129-dropped-argument-has-no-single-repair" };
     },
   ],
-  ["E0124", () => "e0124-type-arguments-unknown"],
+  ["E0124", () => ({ reason: "e0124-type-arguments-unknown" })],
 ]);
 
 export function planFixesExplained(
@@ -282,10 +295,17 @@ export function planFixesExplained(
   const patches: AutoPatch[] = [];
   const skipped: SkipReason[] = [];
   for (const err of errors) {
-    const planned = PLANNERS.get(err.code)?.(err, store) ?? "no-repair-branch";
-    if (typeof planned === "string") {
-      skipped.push({ code: err.code, reason: planned, message: err.message });
-      debugSkip(`planFixes:${err.code}`, planned, err.message);
+    const planned = PLANNERS.get(err.code)?.(err, store) ?? { reason: "no-repair-branch" };
+    if ("reason" in planned) {
+      const { reason, candidates } = planned;
+      skipped.push({
+        code: err.code,
+        reason,
+        message: err.message,
+        ...(candidates === undefined ? {} : { candidates }),
+      });
+      const tied = candidates === undefined ? "" : ` (${candidates.join(", ")})`;
+      debugSkip(`planFixes:${err.code}`, reason, `${err.message}${tied}`);
     } else {
       patches.push({ code: err.code, message: err.message, ...planned });
     }
