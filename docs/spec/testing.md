@@ -465,6 +465,8 @@ FAIL  counter-display
   diff at:  [0].text  "Count: 5" -> "Count: 0"
 ```
 
+A test whose body throws is a `FAIL` of that test alone, with what it threw on an `error:` line under it; the file's other tests still run and report. A panic is shown by its message, or as `KumikiPanic` when it has none. Anything else keeps its kind — `TypeError: …` — since it points at the compiler or the runtime rather than at the program, and a thrown value that is not an error is shown as JSON.
+
 A file that does not compile runs no test. The runner names the file by its resolved (absolute) path and prints each diagnostic as `kumiki check` does, warnings before errors — `<code> <kind> at <line>:<col>: <message>` — adding the `test` a diagnostic sits inside:
 
 ```
@@ -481,7 +483,7 @@ E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}
   - a **string, number or boolean leaf** whose actual value is written as a *unique* literal (the [Output](#_8-7-1-output) snapshot case, and a constant such as `fn step() -> Int = 1`). A candidate is a **whole token**: the `1` inside `Btn1`, inside `10`, inside a string or inside a comment is never one;
   - a **string leaf** whose actual and expected values differ in one middle stretch that a single string literal contains, which is rewritten in place;
   - a **numeric slot** written by exactly one reducer, in the shape `slot := slot + N`, `- N` or `* N`, whose operand is solved from the two values.
-- `--apply` writes that patch **through a gate**: the patched source is re-parsed, re-typechecked and tested before anything reaches disk, and the write happens only if it compiles, the named test passes, and every test that passed before still passes. A patch refused this way is not written — the file stays as the compile repair above left it, byte-identical to before the call when there was none — and the refusal says why: it does not parse, it introduces a diagnostic (listed), the test runner throws on it, the named test does not run, the named test still fails, or it would make a test that passed before fail or stop running (named). A refusal is reported as such, never as an applied fix and never as a raw compile error. A dry run (no `--apply`) proposes the patch without running the gate.
+- `--apply` writes that patch **through a gate**: the patched source is re-parsed, re-typechecked and tested before anything reaches disk, and the write happens only if it compiles, the named test passes, and every test that passed before still passes. A patch refused this way is not written — the file stays as the compile repair above left it, byte-identical to before the call when there was none — and the refusal says why: it does not parse, it introduces a diagnostic (listed), the test runner throws on it, the named test does not run, the named test still fails, or it would make a test that passed before fail or stop running (named, each with how it now fails). A refusal is reported as such, never as an applied fix and never as a raw compile error. A dry run (no `--apply`) proposes the patch without running the gate.
 
 Every other divergence (wrong operators, effect-list mismatches, a value no single literal accounts for) is reported as a diff rather than guessed.
 
