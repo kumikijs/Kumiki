@@ -33,7 +33,7 @@ export {
   KumikiPanic,
   type PanicRecord,
   panicInfo,
-  reportCapabilityRefusal,
+  reportRefusedEmit,
   reportUnhandledEffectError,
   userPanicInfo,
 } from "./core/panic.ts";

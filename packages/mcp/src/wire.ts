@@ -56,6 +56,7 @@ export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unkn
         ...(o.testRunError ? { testRunError: o.testRunError } : {}),
         ...(o.failingTest ? { failingTest: o.failingTest } : {}),
         ...(o.reason ? { reason: o.reason } : {}),
+        ...(o.candidates ? { candidates: o.candidates } : {}),
         ...withCompileFixes,
       };
     case "compile-proposed":
