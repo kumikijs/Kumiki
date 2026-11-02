@@ -292,12 +292,7 @@ app A
   it("compose in either order the diagnostics arrive in", () => {
     // Both are region patches: E0001 prepends a tile, which moves every line of the app, and
     // E0301 lengthens the caps clause, which moves every offset after it.
-    const store = storeOf(`effect logHello cap=log.write
-                in=Text
-                out=Unit
-
-reducer greet on=app.start do= emit logHello("hi")
-tile App = heading("hi")
+    const store = storeOf(`${SAVES}
 app A
     caps   = []
     routes = {"/" -> App}
@@ -308,11 +303,19 @@ app A
     for (const arrived of [errors, [...errors].reverse()]) {
       const order = arrived.map((e) => e.code).join(" then ");
       const { patches } = planFixesExplained(store, arrived);
-      expect(patches.map((p) => p.code)).toEqual(arrived.map((e) => e.code));
-      expect(patches.map((p) => p.anchor.kind)).toEqual(["region", "region"]);
-      const program = parse(lex(patches.reduce((text, p) => p.apply(text), store.source)));
+      expect(
+        patches.map((p) => p.code),
+        order,
+      ).toEqual(arrived.map((e) => e.code));
+      expect(
+        patches.map((p) => p.anchor.kind),
+        order,
+      ).toEqual(["region", "region"]);
+      const composed = patches.reduce((text, p) => p.apply(text), store.source);
+      expect(() => parse(lex(composed)), order).not.toThrow();
+      const program = parse(lex(composed));
       const app = appOf(program);
-      expect(app.caps, order).toEqual(["log.write"]);
+      expect(app.caps, order).toEqual(["storage.write"]);
       expect(
         app.routes.map((r) => [r.path, r.tile]),
         order,
