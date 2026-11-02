@@ -1,6 +1,8 @@
 import { newId, readEnv } from "./env.ts";
+import type { EmitRefusal } from "./panic.ts";
 import {
   type AppShape,
+  type BuiltinEffects,
   type CapabilityProvider,
   type CapabilityRegistry,
   type EffectResult,
@@ -8,6 +10,7 @@ import {
   type EmitSpec,
   type HttpError,
   NONE,
+  own,
 } from "./types.ts";
 
 export function makeCapabilityRegistry(
@@ -72,7 +75,7 @@ export function makeEffectDispatcher(
     key: unknown,
     token: string,
   ) => void,
-  onCapabilityRefusal: (effect: string, cap: string, token?: string) => void,
+  onRefusal: (effect: string, why: EmitRefusal, token?: string) => void,
   onLaunch?: (effect: string, input: unknown) => string,
   onCancel?: (targetId: string) => void,
   onPolicyCancel?: (token: string, effectName: string) => void,
@@ -127,7 +130,7 @@ export function makeEffectDispatcher(
     if (eff.cap !== "" && !caps.has(eff.cap)) {
       settle(id);
       try {
-        onCapabilityRefusal(eff.name, eff.cap, presetToken);
+        onRefusal(eff.name, { category: "capability", cap: eff.cap }, presetToken);
       } finally {
         if (presetToken) onPolicyCancel?.(presetToken, eff.name);
       }
@@ -161,8 +164,13 @@ export function makeEffectDispatcher(
 
   return {
     dispatch(emit: EmitSpec): void {
-      const eff = app.effects[emit.effect];
-      if (!eff) return;
+      const eff = own(app.effects, emit.effect);
+      if (!eff) {
+        // No token: with no effect there is no policy to defer this emit, so it is reported now, on
+        // the episode in focus.
+        onRefusal(emit.effect, { category: "effect" });
+        return;
+      }
       if (eff.cap === "http.cancel") {
         const named = String(emit.args[0] ?? "");
         // The episode records a cancel only when it released something; the reducer step's
@@ -298,8 +306,8 @@ export function overridableInvoke(
   };
 }
 
-export function installLogEffect(app: AppShape): void {
-  app.effects.log = {
+export function installLogEffect(effects: BuiltinEffects): void {
+  effects.log = {
     name: "log",
     cap: "log.write",
     invoke: overridableInvoke("log.write", async (input) => {
