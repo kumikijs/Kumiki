@@ -8,13 +8,20 @@ export {
   type ShownField,
   submitHeldBy,
 } from "./core/binding.ts";
-export { overridableInvoke, readStatus } from "./core/effects.ts";
+export {
+  abortedHttpError,
+  emitId,
+  overridableInvoke,
+  readStatus,
+  standInValue,
+} from "./core/effects.ts";
 export {
   beginEnvRecord,
   beginEnvReplay,
   type EnvScopeOutcome,
   type EnvScopeReport,
   endEnvScope,
+  newId,
   readEnv,
   withEnvRecord,
   withEnvReplay,
@@ -51,6 +58,7 @@ export {
   type RefinementStep,
   refinementRejectionOf,
   refinementRejections,
+  rejectedBatchText,
   reportRejectedBatch,
   type SlotGate,
   type SlotMeta,
@@ -88,6 +96,8 @@ export { isPlainDataBag } from "./core/tile-equality.ts";
 export {
   type AppShape,
   type BindReader,
+  type BuiltinEffectName,
+  type BuiltinEffects,
   type BuiltinInstaller,
   type CapabilityProvider,
   type CapabilityRegistry,
@@ -96,6 +106,8 @@ export {
   type EffectSpec,
   type EmitSpec,
   type EventHandler,
+  type HoldLeave,
+  type HttpError,
   type LocationLike,
   type MountedApp,
   type MountHandle,

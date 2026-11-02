@@ -1,4 +1,4 @@
-import { httpFetch } from "@kumikijs/runtime";
+import { type EffectResult, httpFetch } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 type FetchCall = { url: string; init: RequestInit };
@@ -23,29 +23,25 @@ describe("httpFetch", () => {
     vi.useRealTimers();
   });
 
-  it("prepends base-url to the request URL", async () => {
-    const { calls } = stubFetch(() => new Response(JSON.stringify({ ok: true }), { status: 200 }));
-    await httpFetch("GET", { url: "/quote" }, { baseUrl: "https://api.example.com" });
-    expect(calls[0]?.url).toBe("https://api.example.com/quote");
-  });
-
   it("merges headers with precedence auto < global < input", async () => {
     const { calls } = stubFetch(() => new Response("ok", { status: 200 }));
     await httpFetch(
       "POST",
       {
         url: "/x",
-        headers: { "X-User": "input-wins", "Content-Type": "application/xml" },
+        headers: { "x-user": "input-wins", "content-type": "application/xml" },
         body: { hello: "world" },
       },
       {
-        headers: () => ({ "X-User": "global-loses", "X-Global": "yes" }),
+        headers: () => ({ "X-User": "global-loses", "X-Global": "yes", ACCEPT: "text/x-global" }),
       },
     );
-    const sent = (calls[0]?.init.headers ?? {}) as Record<string, string>;
-    expect(sent["X-User"]).toBe("input-wins");
-    expect(sent["X-Global"]).toBe("yes");
-    expect(sent["Content-Type"]).toBe("application/xml");
+    expect(calls[0]?.init.headers).toEqual({
+      ACCEPT: "text/x-global",
+      "content-type": "application/xml",
+      "x-user": "input-wins",
+      "X-Global": "yes",
+    });
   });
 
   it("threads credentials default same-origin and respects override", async () => {
@@ -73,10 +69,10 @@ describe("httpFetch", () => {
       });
     }) as unknown as typeof fetch;
     const res = await httpFetch("GET", { url: "/slow" }, { baseUrl: "https://x", timeout: 5 });
-    expect(res.kind).toBe("err");
-    if (res.kind !== "err") return;
-    const v = res.value as { message: string };
-    expect(v.message).toMatch(/aborted/i);
+    expect(res).toEqual({
+      kind: "err",
+      value: { status: 0, message: "aborted", body: { _tag: "None" } },
+    });
   });
 
   it("normalizes external-signal abort to {status:0, message:'aborted'}", async () => {
@@ -100,10 +96,10 @@ describe("httpFetch", () => {
     );
     expect(res.kind).toBe("err");
     if (res.kind !== "err") return;
-    const v = res.value as { status: number; message: string; body: string };
+    const v = res.value as { status: number; message: string; body: unknown };
     expect(v.status).toBe(0);
     expect(v.message).toBe("aborted");
-    expect(v.body).toBe("");
+    expect(v.body).toEqual({ _tag: "None" });
   });
 
   it("returns immediately with aborted when external signal is already aborted", async () => {
@@ -122,7 +118,7 @@ describe("httpFetch", () => {
     expect(v.message).toBe("aborted");
   });
 
-  it("reports a body stream that errors mid-read as status 0", async () => {
+  it("keeps a 2xx's status when its body stream errors mid-read, with no body", async () => {
     stubFetch(
       () =>
         new Response(
@@ -137,36 +133,41 @@ describe("httpFetch", () => {
     const res = await httpFetch("POST", { url: "/orders" });
     expect(res.kind).toBe("err");
     if (res.kind !== "err") return;
-    const v = res.value as { status: number; message: string };
-    expect(v.status).toBe(0);
+    const v = res.value as { status: number; message: string; body: unknown };
+    expect(v.status).toBe(201);
     expect(v.message).toMatch(/stream reset/);
+    expect(v.body).toEqual({ _tag: "None" });
   });
 
-  it("reports an abort during the body read as aborted, not a decode failure", async () => {
-    let body: ReadableStreamDefaultController<Uint8Array> | undefined;
-    stubFetch(
-      () =>
+  it.each<[string, number, { timeout: number } | undefined]>([
+    ["a cancel", 200, undefined],
+    ["a cancel", 503, undefined],
+    ["a timeout", 503, { timeout: 5 }],
+  ])("reports %s during a %i's body read as aborted, not what the response said", async (by, status, cfg) => {
+    // The headers arrive at once; the body only ever fails, when the request's signal aborts.
+    const { calls } = stubFetch(
+      ({ init }) =>
         new Response(
           new ReadableStream<Uint8Array>({
             start(c) {
-              body = c;
+              init.signal?.addEventListener("abort", () => {
+                c.error(new DOMException("The operation was aborted.", "AbortError"));
+              });
             },
           }),
-          { status: 200 },
+          { status },
         ),
     );
     const ctl = new AbortController();
-    const pending = httpFetch("GET", { url: "/q" }, undefined, ctl.signal);
-    while (!body) await new Promise((r) => setTimeout(r, 0));
-    ctl.abort();
-    body.error(new DOMException("The operation was aborted.", "AbortError"));
-    const res = await pending;
-    expect(res.kind).toBe("err");
-    if (res.kind !== "err") return;
-    const v = res.value as { status: number; message: string };
-    expect(v.message).toBe("aborted");
-    expect(v.message).not.toMatch(/^decode failed/);
-    expect(v.status).toBe(0);
+    const pending = httpFetch("GET", { url: "/q" }, cfg, ctl.signal);
+    // One turn lets the headers arrive and the body read begin.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toHaveLength(1);
+    if (by === "a cancel") ctl.abort();
+    expect(await pending).toEqual({
+      kind: "err",
+      value: { status: 0, message: "aborted", body: { _tag: "None" } },
+    });
   });
 
   it("reports a body-less 204 under the default decoder as a decode failure with status 204", async () => {
@@ -177,6 +178,182 @@ describe("httpFetch", () => {
     const v = res.value as { status: number; message: string };
     expect(v.status).toBe(204);
     expect(v.message).toMatch(/^decode failed/);
+  });
+});
+
+describe("httpFetch base-url", () => {
+  const originalFetch = globalThis.fetch;
+  const API = "https://api.example.com";
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  async function fetched(
+    url: unknown,
+    baseUrl?: string,
+    query?: Record<string, string>,
+  ): Promise<string | undefined> {
+    const { calls } = stubFetch(() => new Response("null"));
+    await httpFetch("GET", { url, query }, baseUrl === undefined ? undefined : { baseUrl });
+    return calls[0]?.url;
+  }
+
+  it.each([
+    [API, "/items/1", `${API}/items/1`],
+    [API, "items/1", `${API}/items/1`],
+    [`${API}/`, "/items/1", `${API}/items/1`],
+    [`${API}/`, "items/1", `${API}/items/1`],
+    [`${API}//`, "items/1", `${API}/items/1`],
+    [API, "items/1?next=https://cdn.other.org", `${API}/items/1?next=https://cdn.other.org`],
+    [API, "items/1#top", `${API}/items/1#top`],
+    [API, "/users:search", `${API}/users:search`],
+    [API, "1a:b", `${API}/1a:b`],
+    [API, "a_b:c", `${API}/a_b:c`],
+    ["/", "users", "/users"],
+    ["/", "/users", "/users"],
+  ])("joins %s and %s with exactly one /", async (base, url, want) => {
+    expect(await fetched(url, base)).toBe(want);
+  });
+
+  it.each([
+    "https://cdn.other.org/item.json",
+    "HTTP://cdn.other.org/item.json",
+    "//cdn.other.org/item.json",
+    "data:application/json,null",
+    "git+ssh://host/x",
+    "s3://bucket/key",
+    "a:b",
+    "users:search",
+  ])("fetches the absolute url %s as written, whichever way the base ends", async (url) => {
+    expect(await fetched(url, API)).toBe(url);
+    expect(await fetched(url, `${API}/`)).toBe(url);
+  });
+
+  it.each([
+    [`${API}/v1`, "/users", `${API}/v1/users`],
+    [`${API}/v1`, "users", `${API}/v1/users`],
+    [`${API}/v1/`, "/users", `${API}/v1/users`],
+    ["/api", "users", "/api/users"],
+    ["/api/", "/users", "/api/users"],
+  ])("keeps the path of the base %s in front of %s", async (base, url, want) => {
+    expect(await fetched(url, base)).toBe(want);
+  });
+
+  it.each([
+    [`${API}/items`, "", `${API}/items`],
+    [`${API}/items`, "?page=2", `${API}/items?page=2`],
+    [`${API}/items`, "#top", `${API}/items#top`],
+    [`${API}/items/`, "", `${API}/items/`],
+    [`${API}/items/`, "?page=2", `${API}/items/?page=2`],
+  ])("appends %j to the base %s as written", async (base, url, want) => {
+    expect(await fetched(url, base)).toBe(want);
+  });
+
+  it.each([
+    [`${API}/search?q=`, "term", `${API}/search?q=term`],
+    [`${API}/search?q=`, "/term", `${API}/search?q=/term`],
+    [
+      "https://proxy.example.com/?url=",
+      "https://target/x",
+      "https://proxy.example.com/?url=https://target/x",
+    ],
+    [`${API}/page#`, "top", `${API}/page#top`],
+  ])("appends the url to the base %s, which carries a ? or a #, as written", async (base, url, want) => {
+    expect(await fetched(url, base)).toBe(want);
+  });
+
+  it.each([
+    "/items/1",
+    "items/1",
+    "https://cdn.other.org/item.json",
+  ])("fetches %s as written with no base-url, or an empty one", async (url) => {
+    expect(await fetched(url)).toBe(url);
+    expect(await fetched(url, "")).toBe(url);
+  });
+
+  it("joins a url that is not text as its text, and makes the request", async () => {
+    expect(await fetched(42, API)).toBe(`${API}/42`);
+    expect(await fetched(42)).toBe("42");
+  });
+
+  it("appends the query after the join", async () => {
+    expect(await fetched("/search", `${API}/`, { q: "a b" })).toBe(`${API}/search?q=a+b`);
+  });
+});
+
+describe("httpFetch global headers and credentials under a base-url", () => {
+  const originalFetch = globalThis.fetch;
+  const API = "https://api.example.com";
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /** What the request to `url` carried of the program's global `headers` and `credentials`. */
+  async function carried(url: string, baseUrl?: string, own?: Record<string, string>) {
+    const { calls } = stubFetch(() => new Response("null"));
+    await httpFetch(
+      "GET",
+      { url, headers: own },
+      {
+        ...(baseUrl === undefined ? {} : { baseUrl }),
+        headers: () => ({ Authorization: "Bearer t" }),
+        credentials: "include",
+      },
+    );
+    const init = calls[0]?.init ?? {};
+    // `Accept` is the runtime's own default, not the program's.
+    const { Accept, ...headers } = (init.headers ?? {}) as Record<string, string>;
+    expect(Accept).toBe("application/json");
+    return { headers, credentials: init.credentials };
+  }
+
+  it.each([
+    [API, "/items"],
+    [API, "items"],
+    [`${API}/`, "https://api.example.com/other"],
+    [`${API}/v1`, "/users"],
+    [`${API}/search?q=`, "term"],
+    ["/api", "users"],
+  ])("sends them under the base %s with %s, on the base's origin", async (base, url) => {
+    expect(await carried(url, base)).toEqual({
+      headers: { Authorization: "Bearer t" },
+      credentials: "include",
+    });
+  });
+
+  it.each([
+    [API, "https://cdn.other.org/x"],
+    [API, "//cdn.other.org/x"],
+    [API, "http://api.example.com/x"],
+    [API, "https://api.example.com:8443/x"],
+    ["/api", "https://cdn.other.org/x"],
+  ])("sends neither under the base %s with %s, on another origin", async (base, url) => {
+    expect(await carried(url, base)).toEqual({ headers: {}, credentials: "same-origin" });
+  });
+
+  it("sends neither when the base names no origin it can be read as", async () => {
+    expect(await carried("/x", "https://exa mple.com")).toEqual({
+      headers: {},
+      credentials: "same-origin",
+    });
+  });
+
+  it("still sends a request's own headers to another origin", async () => {
+    expect(await carried("https://cdn.other.org/x", API, { "X-Key": "k" })).toEqual({
+      headers: { "X-Key": "k" },
+      credentials: "same-origin",
+    });
+  });
+
+  it("sends them with every request when there is no base-url", async () => {
+    for (const base of [undefined, ""]) {
+      expect(await carried("https://cdn.other.org/x", base)).toEqual({
+        headers: { Authorization: "Bearer t" },
+        credentials: "include",
+      });
+    }
   });
 });
 
@@ -211,6 +388,46 @@ describe("httpFetch request body", () => {
     expect(fd.get("agree")).toBe("true");
   });
 
+  it("drops only the Content-Type of a Multipart body, keeping Accept and the global headers", async () => {
+    const { calls } = stubFetch(() => new Response("{}"));
+    await httpFetch(
+      "POST",
+      {
+        url: "/up",
+        decode: "json",
+        headers: { "content-type": "multipart/form-data" },
+        body: multipart({ agree: { _tag: "BoolV", _0: true } }),
+      },
+      { headers: () => ({ Authorization: "Bearer t" }) },
+    );
+    expect(calls[0]?.init.headers).toEqual({
+      Accept: "application/json",
+      Authorization: "Bearer t",
+    });
+  });
+
+  it.each([
+    ["the effect's", { "Content-Type": undefined }, undefined],
+    ["a global", undefined, { "Content-Type": undefined }],
+  ])("keeps the default Content-Type when %s value for it is undefined", async (_, own, global) => {
+    // The types rule this out, but a field a predicate-free `Decoder.Json(T)` let through
+    // missing reaches the handler as `undefined`.
+    const { calls } = stubFetch(() => new Response("{}"));
+    await httpFetch(
+      "POST",
+      {
+        url: "/x",
+        headers: own as unknown as Record<string, string> | undefined,
+        body: { _tag: "Json", _0: { a: 1 } },
+      },
+      global ? { headers: () => global as unknown as Record<string, string> } : undefined,
+    );
+    expect(calls[0]?.init.headers).toEqual({
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    });
+  });
+
   it("fails a FileV that holds no file, without making a request", async () => {
     // A file record restored from persistence through JSON has `_file: {}`.
     const { calls } = stubFetch(() => new Response("ok"));
@@ -233,6 +450,86 @@ describe("httpFetch request body", () => {
     const { calls } = stubFetch(() => new Response(null));
     await httpFetch(method, { url: "/q", body: { _tag: "Json", _0: { a: 1 } } });
     expect(calls[0]?.init.body).toBeUndefined();
-    expect(calls[0]?.init.headers).toEqual({});
+    expect(calls[0]?.init.headers).toEqual({ Accept: "application/json" });
+  });
+
+  it.each([
+    ["no decoder", undefined, { Accept: "application/json" }],
+    ["Decoder.Json(T) as the sentinel", "json", { Accept: "application/json" }],
+    ["Decoder.Json(T) as a check", () => undefined, { Accept: "application/json" }],
+    ["Decoder.Text", "text", {}],
+    ["Decoder.Bytes", "bytes", {}],
+    ["Decoder.None", "none", {}],
+  ])("sends the Accept that %s implies", async (_, decode, expected) => {
+    const { calls } = stubFetch(() => new Response("null"));
+    await httpFetch("GET", { url: "/q", decode });
+    expect(calls[0]?.init.headers).toEqual(expected);
+  });
+});
+
+describe("the HttpError's body", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const some = (text: string) => ({ _tag: "Some", _0: text });
+  const none = { _tag: "None" };
+
+  /** The `status` and `body` of the HttpError `run` fails with. */
+  async function failure(run: Promise<EffectResult>): Promise<{ status: number; body: unknown }> {
+    const res = await run;
+    if (res.kind !== "err") throw new Error(`expected an err, got ${JSON.stringify(res)}`);
+    const { status, body } = res.value as { status: number; body: unknown };
+    return { status, body };
+  }
+
+  /** A response whose body stream fails as soon as it is read. */
+  const unreadable = (status: number) =>
+    new Response(
+      new ReadableStream({
+        start(c) {
+          c.error(new TypeError("stream reset"));
+        },
+      }),
+      { status },
+    );
+
+  const refuseAll = () => ({ kind: "nonempty", args: [], path: [] });
+  const unsendable = {
+    _tag: "Multipart",
+    _0: { doc: { _tag: "FileV", _0: { name: "a.txt", size: 1, type: "text/plain", _file: {} } } },
+  };
+
+  it.each<[string, () => Response | Promise<Response>, number, unknown, Record<string, unknown>?]>([
+    [
+      "a 404 with a body",
+      () => new Response("report 7 was archived", { status: 404 }),
+      404,
+      some("report 7 was archived"),
+    ],
+    ["a 404 with an empty body", () => new Response("", { status: 404 }), 404, some("")],
+    ["a 401", () => new Response("sign in first", { status: 401 }), 401, some("sign in first")],
+    ["a 503", () => new Response("busy", { status: 503 }), 503, some("busy")],
+    [
+      "a 2xx that does not parse",
+      () => new Response("<html>Created</html>", { status: 201 }),
+      201,
+      some("<html>Created</html>"),
+    ],
+    [
+      "a 2xx whose value the declared type refuses",
+      () => new Response('{"name":""}', { status: 200 }),
+      200,
+      some('{"name":""}'),
+      { decode: refuseAll },
+    ],
+    ["a non-2xx whose body cannot be read", () => unreadable(500), 500, none],
+    ["a network failure", () => Promise.reject(new TypeError("Failed to fetch")), 0, none],
+    ["a request body that cannot be sent", () => new Response("ok"), 0, none, { body: unsendable }],
+  ])("gives %s its status and body", async (_, respond, status, body, input) => {
+    stubFetch(respond);
+    expect(await failure(httpFetch("POST", { url: "/r", ...input }))).toEqual({ status, body });
   });
 });

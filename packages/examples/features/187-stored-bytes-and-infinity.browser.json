@@ -1,0 +1,14 @@
+{
+  "steps": [
+    {
+      "label": "Save writes sent through the real handler over Chromium's localStorage",
+      "do": { "click": "#save" },
+      "expect": { "noErrors": true, "visible": ["shown: saved"] }
+    },
+    {
+      "label": "Load reads it back as the value it was: the two bytes and Infinity",
+      "do": { "click": "#load" },
+      "expect": { "noErrors": true, "visible": ["same=true data=aGk= ratio=Infinity"] }
+    }
+  ]
+}

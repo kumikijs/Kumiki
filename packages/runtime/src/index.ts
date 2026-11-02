@@ -50,6 +50,7 @@ export {
   applyContainerProps,
   applyTextProps,
   type BindSegment,
+  type BuiltinEffectName,
   type BuiltinInstaller,
   beginEnvRecord,
   beginEnvReplay,
@@ -198,7 +199,7 @@ export {
   renderToString,
 } from "./ssr.ts";
 export { renderTileToString } from "./ssr-render.ts";
-export { _stdlibCore, type KeyKind } from "./stdlib.ts";
+export { _stdlibCore, type KeyKind, type ShowShape } from "./stdlib.ts";
 export {
   ConstraintRefusal,
   constraintFault,
