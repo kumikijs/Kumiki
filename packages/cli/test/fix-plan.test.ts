@@ -4,6 +4,7 @@ import { check, collectTimerNames, lex, parse, variantTagsOf } from "@kumikijs/c
 import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
 import { APP_A, seed, storeOf } from "./helpers/files.ts";
+import { tiedCounts } from "./helpers/tie.ts";
 
 const APP_ONE_LINE = `app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 
@@ -78,6 +79,17 @@ ${APP_A}`);
     const { patches, skipped } = planFixesExplained(store, check(store.program));
     expect(patches.map((p) => p.code)).not.toContain("E0218");
     expect(skipped.find((sk) => sk.code === "E0218")?.reason).toBe("e0218-target-not-a-plain-name");
+  });
+
+  it("declines a target no accessor repairs, such as an Option (E0218)", () => {
+    const store = storeOf(`slot loaded : Option(List(Text)) = Some(["a"])
+tile App = column(for x in loaded text(x))
+${APP_A}`);
+    const { patches, skipped } = planFixesExplained(store, check(store.program));
+    expect(patches.map((p) => p.code)).not.toContain("E0218");
+    expect(skipped.filter((sk) => sk.code === "E0218").map((sk) => sk.reason)).toEqual([
+      "e0218-no-accessor",
+    ]);
   });
 
   it("makes a text builtin's text= its positional content (E0129)", () => {
@@ -381,6 +393,14 @@ ${APP_A}`);
     expect(e0209[0]?.description).not.toContain("Grn0");
   });
 
+  it("proposes no tag from a program's own union under a reserved name, which the checker never reads", () => {
+    const file = seed(`type FormValue = Txt(Text) | Num(Float)
+slot v : FormValue = Txtt("a")
+tile App = column(text("x"))
+${APP_A}`);
+    expect(descriptionsOf(file).filter((d) => d.includes('"Txtt"'))).toEqual([]);
+  });
+
   it("E0106 does not fall back to unrelated top-level names (scoped candidate set)", () => {
     const store = storeOf(`slot note  : Int = 0
 slot count : Int = 0
@@ -540,6 +560,204 @@ describe("planFixesExplained: skip-reason classification", () => {
     expect(patches).toHaveLength(1);
     expect(patches[0]?.description).toContain('replace "App" with "Apps"');
   });
+
+  describe("close-names-tied: two names equally close, so nothing is written", () => {
+    // `defs(a, b)` declares `a` first; the quoted name is one edit from each.
+    const TIES: {
+      code: string;
+      defs: (a: string, b: string) => string[];
+      message: string;
+      tied: [string, string];
+    }[] = [
+      {
+        code: "E0102",
+        defs: (a, b) => [`slot ${a} : Int = 0`, `slot ${b} : Int = 0`],
+        message: 'reducer refers to undefined name "count"',
+        tied: ["countA", "countB"],
+      },
+      {
+        code: "E0103",
+        defs: (a, b) => [`slot ${a} : Int = 0`, `slot ${b} : Int = 0`],
+        message: 'Reference to undefined name "count"',
+        tied: ["countA", "countB"],
+      },
+      {
+        code: "E0105",
+        defs: (a, b) => [`tile ${a} = heading("a")`, `tile ${b} = heading("b")`],
+        message: 'Reference to undefined tile "Card"',
+        tied: ["CardA", "CardB"],
+      },
+      {
+        code: "E0107",
+        defs: (a, b) => [
+          `motion ${a} = {keyframes: {from: {opacity: 0}, to: {opacity: 1}}}`,
+          `motion ${b} = {keyframes: {from: {opacity: 1}, to: {opacity: 0}}}`,
+        ],
+        message: 'Reference to undefined motion "fade"',
+        tied: ["fadeA", "fadeB"],
+      },
+      {
+        code: "E0211",
+        defs: (a, b) => [`tile ${a} = heading("a")`, `tile ${b} = heading("b")`],
+        message: 'Reducer "bump" selects undefined tile "Card"',
+        tied: ["CardA", "CardB"],
+      },
+      {
+        code: "E0106",
+        defs: (a, b) => [
+          `reducer a on=timer(100ms, name=${a}) do= n := n + 1`,
+          `reducer b on=timer(100ms, name=${b}) do= n := n + 1`,
+        ],
+        message: 'stop-timer refers to undefined timer name "tick"',
+        tied: ["tickA", "tickB"],
+      },
+      {
+        code: "E0116",
+        defs: (a, b) => [`fn ${a}(x: Int) -> Int = x`, `fn ${b}(x: Int) -> Int = x`],
+        message: 'Call to undefined function "score"',
+        tied: ["scoreA", "scoreB"],
+      },
+      {
+        code: "E0117",
+        defs: (a, b) => [`type ${a} = Int`, `type ${b} = Int`],
+        message: 'Reference to undefined type "Shape"',
+        tied: ["ShapeA", "ShapeB"],
+      },
+      {
+        code: "E0104",
+        defs: (a, b) => [
+          `effect ${a} cap=log.write in=Text out=Unit`,
+          `effect ${b} cap=log.write in=Text out=Unit`,
+        ],
+        message: 'Reference to undefined effect "save"',
+        tied: ["saveA", "saveB"],
+      },
+      {
+        code: "E0118",
+        defs: (a, b) => [`slot ${a} : Text = "a"`, `slot ${b} : Text = "b"`],
+        message: 'Reference to undefined theme "mode"',
+        tied: ["modeA", "modeB"],
+      },
+      {
+        code: "E0216",
+        defs: (a, b) => [`type S = ${a} | ${b}`],
+        message: 'Variant "Idle" is not a member of type "S"',
+        tied: ["IdleA", "IdleB"],
+      },
+      {
+        code: "E0209",
+        defs: (a, b) => [`type S = ${a} | ${b}`],
+        message: 'Variant "Idle" is not a member of scrutinee type "S"',
+        tied: ["IdleA", "IdleB"],
+      },
+    ];
+
+    // Each branch is asked with its two tied definitions in both orders: a branch that keeps the
+    // first name it meets passes one order and fails the other.
+    it.each(
+      TIES.flatMap((t) => [
+        { ...t, first: t.tied[0], second: t.tied[1] },
+        { ...t, first: t.tied[1], second: t.tied[0] },
+      ]),
+    )("$code, with $first declared first", ({ code, defs, message, tied, first, second }) => {
+      const store = storeOf(["slot n : Int = 0", ...defs(first, second), ""].join("\n"));
+      const { patches, skipped } = planFixesExplained(store, [synth(code, message)]);
+      expect(patches).toEqual([]);
+      expect(skipped).toEqual([{ code, reason: "close-names-tied", message, candidates: tied }]);
+    });
+
+    it.each([
+      ["countA", "countB"],
+      ["countB", "countA"],
+    ])("plans the program `check` reports the tie in, with %s declared first", (first, second) => {
+      const store = storeOf(tiedCounts(first, second));
+      const errors = check(store.program);
+      expect(errors.map((e) => e.code)).toEqual(["E0103"]);
+      const { patches, skipped } = planFixesExplained(store, errors);
+      expect(patches).toEqual([]);
+      expect(skipped.map((s) => [s.reason, s.candidates])).toEqual([
+        ["close-names-tied", ["countA", "countB"]],
+      ]);
+    });
+
+    it("refuses a tie among built-in names too", () => {
+      // Writing one of the four units would change how long something waits by a factor nothing
+      // in the program chose.
+      const { patches, skipped } = planFixesExplained(storeOf(LONE_TILE), [
+        synth("E0116", 'Call to undefined function "Duration.x"'),
+      ]);
+      expect(patches).toEqual([]);
+      expect(skipped.map((s) => [s.reason, s.candidates])).toEqual([
+        ["close-names-tied", ["Duration.d", "Duration.h", "Duration.m", "Duration.s"]],
+      ]);
+    });
+
+    it("lets a declared fn outrank a built-in call at the same distance", () => {
+      // `randm` is one edit from the declared `rando` and from the built-in `random`.
+      const store = storeOf('fn rando(x: Int) -> Int = x\ntile App = heading("hi")\n');
+      const { patches, skipped } = planFixesExplained(store, [
+        synth("E0116", 'Call to undefined function "randm"'),
+      ]);
+      expect(skipped).toEqual([]);
+      expect(patches.map((p) => p.description)).toEqual(['replace "randm" with "rando" at 1:1']);
+    });
+  });
+});
+
+describe("planFixesExplained: a read after the body that declared it (E0103)", () => {
+  // `idx` is one edit from the slot `id`, so a rename would type-check and read `id`.
+  const scoped = (body: string): string => `slot id    : Int = 0
+slot total : Int = 0
+slot count : Int = 0
+slot flag  : Bool = true
+reducer tally on=ui.click(Btn)
+    do= ${body}
+tile Btn = button(text="go")
+tile App = column(Btn, text(total.show))
+${APP_A}`;
+  const FOR_BODY = "for idx in [1] { () }\n        total := idx";
+  const plan = (source: string, reword: (message: string) => string = (m) => m) => {
+    const store = storeOf(source);
+    const errors = check(store.program).map((e) => ({ ...e, message: reword(e.message) }));
+    const { patches, skipped } = planFixesExplained(store, errors);
+    return {
+      messages: errors.map((e) => e.message),
+      patches: patches.map((p) => p.description),
+      skipped: skipped.map((s) => [s.code, s.reason]),
+    };
+  };
+
+  it.each([
+    ["a `for` body", FOR_BODY],
+    ["an `if` branch", "if flag then { let idx = 1 } else { () }\n        total := idx"],
+    [
+      "a match arm",
+      "match Some(1) with\n          | Some(idx) -> { () }\n          | None      -> { () }\n        total := idx",
+    ],
+  ])("proposes no rename for a name %s declared", (_form, body) => {
+    const { patches, skipped } = plan(scoped(body));
+    expect(patches).toEqual([]);
+    expect(skipped).toEqual([["E0103", "e0103-read-after-scope-ended"]]);
+  });
+
+  const withMisspelling = scoped(`${FOR_BODY}\n        count := cont`);
+  const ONE_OF_EACH = {
+    patches: ['replace "cont" with "count" at 8:18'],
+    skipped: [["E0103", "e0103-read-after-scope-ended"]],
+  };
+
+  it("still renames a misspelling beside it", () => {
+    expect(plan(withMisspelling)).toMatchObject(ONE_OF_EACH);
+  });
+
+  it("tells the two apart by the diagnostic's field, not its message", () => {
+    const reworded = plan(withMisspelling, (m) => m.replace(/ — .*/, ""));
+    expect(reworded.messages).toEqual([
+      'Reference to undefined name "idx"',
+      'Reference to undefined name "cont"',
+    ]);
+    expect(reworded).toMatchObject(ONE_OF_EACH);
+  });
 });
 
 describe("applyFixPlan: regression gate", () => {
@@ -567,6 +785,17 @@ ${APP_A}`);
     expect(result.regressionBlocked).toBe(true);
     expect(result.applied).toBe(0);
     expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
+  it("a rename inside a for target keeps the E0218 that remains, not blocked (E0103)", () => {
+    const file = seed(`slot rows : List(Int) = [1]
+fn idx(ys: List(Int)) -> Map(Text, Int) = {"k": 1}
+tile App = column(for x in idx(rws) text("row"))
+${APP_A}`);
+    const result = applyFixPlan(file, "E0103");
+    expect(result.regressionBlocked).toBeFalsy();
+    expect(result.applied).toBe(1);
+    expect(readFileSync(file, "utf8")).toContain("for x in idx(rows) text");
   });
 
   it("no resolutions: rolled back even when nothing new is introduced", () => {

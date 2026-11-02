@@ -1,0 +1,54 @@
+# Feature: `show` writes a record, a List, a Tuple, a Map and a Set as the
+# literal that builds it.
+#
+#   record  {name: "ada", age: 3}
+#   List    [1, 2]
+#   Tuple   (1, "a")
+#   Map     {"a": 1}
+#   Set     [1, 2]
+#
+# Each member is shown by the same rule, except that a `Text` member is
+# quoted; a `Text` on its own is its characters. A variant is its tag, nested
+# or not. `+` with a `Text`, `.show`, `T.show`, `fmt` and a tile's text all
+# go through this one rule, so `"p: " + p`, `p.show` and `fmt("{0}", p)`
+# write the same text. The `add` button grows the Set and the Map, and each
+# re-renders in the same form.
+
+type Point = {x: Int, y: Int}
+type Level = Low | High
+
+slot person : {name: Text, age: Int}  = {name: "ada", age: 3}
+slot nums   : List(Int)               = [1, 2]
+slot words  : List(Text)              = ["a", "b"]
+slot pair   : Tuple(Int, Text)        = (1, "a")
+slot counts : Map(Text, Int)          = {"a": 1}
+slot tags   : Set(Int)                = [1, 2]
+slot at     : Map(Point, Text)        = {{x: 0, y: 0}: "origin"}
+slot levels : List(Level)             = [Low, High]
+slot none   : List(Int)               = []
+slot blank  : Map(Text, Int)          = {}
+
+reducer addTag on=ui.click(AddTag) do=
+    tags := tags.add(3)
+    counts := counts.insert("b", 2)
+
+tile AddTag = button(text="add") {id: "add"}
+
+tile App = column(
+  AddTag,
+  text("record: " + person),
+  text("show: " + person.show),
+  text(fmt("fmt: {0}", person)),
+  text("list: " + nums),
+  text("words: " + words),
+  text("tuple: " + pair),
+  text("map: " + counts),
+  text("set: " + tags),
+  text("at: " + at),
+  text("levels: " + levels),
+  text("empty: " + none + " " + blank))
+
+app ShowStructuredValues
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

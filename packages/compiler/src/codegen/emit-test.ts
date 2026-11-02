@@ -11,6 +11,7 @@ import {
 import { callsBuiltin, RUN_REDUCER } from "../builtin-calls.ts";
 import type { CodegenOptions } from "../codegen.ts";
 import { parseEpisodeLogText } from "../episode-log.ts";
+import { forAllGenerator, noGeneratorMessage } from "../for-all-generator.ts";
 import {
   bareNameAt,
   expectSection,
@@ -23,7 +24,6 @@ import { walkExpr } from "../typecheck/expr-walk.ts";
 import { bindRef, type EvalCtx, fieldKey, type GenCtx, makeEvalCtx } from "./context.ts";
 import { collectEmits } from "./emit-reducer.ts";
 import { tileExprJs } from "./emit-tile.ts";
-import { typeToGenDesc } from "./emit-type.ts";
 import { jsOfExpr, reducerNameArg } from "./expr.ts";
 
 /** The outcome of a mock value `ok(v)` / `err(e)` / `delay(ms, ok(v)|err(e))`. */
@@ -158,7 +158,12 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
     const forAll = t.forAll ?? [];
     const pctx = makeEvalCtx(gen, new Set(forAll.map((f) => f.name)));
     const varsJs = forAll
-      .map((f) => `${fieldKey(f.name)}: ${JSON.stringify(typeToGenDesc(f.type, gen, new Set()))}`)
+      .map((f) => {
+        // E0715 refuses this at check time; a caller that skipped `check` gets the code, not a stand-in.
+        const g = forAllGenerator(f.type, gen);
+        if ("refused" in g) throw new Error(`E0715 ${noGeneratorMessage(f.name, g.refused)}`);
+        return `${fieldKey(f.name)}: ${JSON.stringify(g.desc)}`;
+      })
       .join(", ");
     const binds = forAll
       .map((f) => `const ${bindRef(pctx, f.name)} = _b[${fieldKey(f.name)}];`)

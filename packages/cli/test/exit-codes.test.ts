@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runCli, SPAWN } from "./helpers/cli.ts";
 import { seed, tempDir } from "./helpers/files.ts";
+import { tiedCounts } from "./helpers/tie.ts";
 
 const write = (name: string, source: string): string => seed(source, name);
 
@@ -50,6 +51,16 @@ test inc-works =
         expect = {slots: {count: 1}, effects: []}
 `;
 
+/** `[1][3]` indexes past the end of a one-item list, so `expect-panics`' body throws. */
+const WITH_THROWING_TEST = WITH_TESTS.replace(
+  "test inc-works =",
+  `test expect-panics =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: [1][3]}, effects: []}
+test inc-works =`,
+);
+
 describe("kumiki fix", () => {
   it("exits 1 in dry-run while the errors are still on disk", SPAWN, () => {
     const { stdout, code } = runCli(["fix", write("fix-dry.kumiki", FIXABLE)]);
@@ -69,10 +80,51 @@ describe("kumiki fix", () => {
     expect(code).toBe(0);
   });
 
+  // Writing either name would leave a file `check` calls clean: exit 0 on a coin flip, which
+  // `fix --apply && next-step` walks straight past.
+  describe.each([
+    ["countA", "countB"],
+    ["countB", "countA"],
+  ])("with %s declared before %s, two names equally close", (first, second) => {
+    it("proposes neither and exits 1", SPAWN, () => {
+      const { stdout, stderr, code } = runCli([
+        "fix",
+        write(`tie-${first}.kumiki`, tiedCounts(first, second)),
+      ]);
+      expect(stdout).not.toContain('replace "count"');
+      expect(stdout).toContain("(no auto-patches available)");
+      expect(stderr).toContain('E0103 Reference to undefined name "count"');
+      expect(code).toBe(1);
+    });
+
+    it("writes neither with --apply and exits 1", SPAWN, () => {
+      const source = tiedCounts(first, second);
+      const file = write(`tie-apply-${first}.kumiki`, source);
+      const { stdout, code } = runCli(["fix", file, "--apply"]);
+      expect(stdout).not.toContain("file now clean");
+      expect(readFileSync(file, "utf8")).toBe(source);
+      expect(code).toBe(1);
+    });
+  });
+
   it("exits 1 when --apply leaves errors behind", SPAWN, () => {
     const file = write("fix-apply-partial.kumiki", `${FIXABLE}tile Orphan = column(zzz.show)\n`);
     const { stdout, code } = runCli(["fix", file, "--apply"]);
     expect(stdout).toContain("error(s) remain");
+    expect(code).toBe(1);
+  });
+
+  it("writes the repair beside a tie with --apply, leaves the tie, and exits 1", SPAWN, () => {
+    // `countAA` is one edit from `countA` and two from `countB`, so it has one repair.
+    const source = tiedCounts("countA", "countB").replace(
+      "countA := countA + 1",
+      "countA := countAA + 1",
+    );
+    const file = write("fix-apply-beside-tie.kumiki", source);
+    const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
+    expect(readFileSync(file, "utf8")).toBe(tiedCounts("countA", "countB"));
+    expect(stdout).toContain("error(s) remain");
+    expect(stderr).toContain('E0103 Reference to undefined name "count"');
     expect(code).toBe(1);
   });
 
@@ -152,6 +204,46 @@ test inc-works =
     expect(passing.code).toBe(0);
   });
 
+  // `idx` is one edit from the slot `id`, and the read renamed to `id`
+  // type-checks: a rename would leave a clean file that reads another slot.
+  const OUT_OF_SCOPE = `slot id    : Int = 0
+slot total : Int = 0
+slot count : Int = 0
+reducer tally on=ui.click(Btn)
+    do= for idx in [1] { () }
+        total := idx
+tile Btn = button(text="go")
+tile App = column(Btn, heading("Total: " + total.show))
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("exits 1 proposing nothing for a read after the body that declared it", SPAWN, () => {
+    const { stdout, code } = runCli(["fix", write("scope-dry.kumiki", OUT_OF_SCOPE)]);
+    expect(stdout).toBe("(no auto-patches available)\n");
+    expect(code).toBe(1);
+  });
+
+  it("exits 1 under --apply with that read left as written", SPAWN, () => {
+    const file = write("scope-apply.kumiki", OUT_OF_SCOPE);
+    const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
+    expect(readFileSync(file, "utf8")).toBe(OUT_OF_SCOPE);
+    expect(stdout).toBe("(no auto-patches available)\n");
+    expect(stderr).toContain('E0103 Reference to undefined name "idx" — ');
+    expect(code).toBe(1);
+  });
+
+  it("still repairs a misspelling beside that read under --apply", SPAWN, () => {
+    const src = OUT_OF_SCOPE.replace("total := idx", "total := idx\n        count := cont");
+    const file = write("scope-misspelling.kumiki", src);
+    const { stdout, code } = runCli(["fix", file, "--apply"]);
+    expect(stdout).toContain("applied 1 fix(es) — 1 error(s) remain");
+    expect(readFileSync(file, "utf8")).toBe(src.replace("count := cont", "count := count"));
+    expect(code).toBe(1);
+  });
+
   it("applies a patch to a file that also has a warning", SPAWN, () => {
     const { stdout, code } = runCli([
       "fix",
@@ -204,6 +296,18 @@ describe("kumiki test", () => {
     const { stdout, code } = runCli(["test", write("test-none.kumiki", CLEAN)]);
     expect(stdout).toContain("no tests found");
     expect(code).toBe(0);
+  });
+
+  it("fails a test whose body throws on its own, and still runs the rest", SPAWN, () => {
+    // The throwing test comes first, so the passing one after it only reports
+    // if the run goes on past the throw.
+    const { stdout, code } = runCli(["test", write("test-throws.kumiki", WITH_THROWING_TEST)]);
+    expect(stdout).toMatch(
+      /^FAIL {2}expect-panics \(\d+ms\)\n {2}error: {4}Index 3 is out of range for a List of length 1$/m,
+    );
+    expect(stdout).toMatch(/^PASS {2}inc-works \(\d+ms\)$/m);
+    expect(stdout).toContain("1/2 passed");
+    expect(code).toBe(1);
   });
 });
 

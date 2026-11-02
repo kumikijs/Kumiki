@@ -249,9 +249,10 @@ export function executeEpisode(
   };
 
   // The entry step: the first `reducer` step, or the first `panic` step naming the reducer whose
-  // body threw (one with no `name` is a capability refusal). A `reducer` step always names one,
-  // so a log line that lost its `name` is reported below, not passed over as no entry at all;
-  // and only an `ssr.hydrate` bootstrap opens without one, so any other episode lacking it is too.
+  // body threw (one with no `name` is a capability refusal or a render panic, a boundary's
+  // included). A `reducer` step always names one, so a log line that lost its `name` is reported
+  // below, not passed over as no entry at all; and only an `ssr.hydrate` bootstrap opens without
+  // one, so any other episode lacking it is too.
   const entryAt = ep.steps.findIndex((s) => s.kind === "reducer" || namesItsReducer(s));
   const entryStep: EpisodeStepLite | undefined = ep.steps[entryAt];
   const firstRed = namesItsReducer(entryStep) ? entryStep : undefined;
