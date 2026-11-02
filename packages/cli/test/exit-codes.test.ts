@@ -93,7 +93,9 @@ describe("kumiki fix", () => {
       ]);
       expect(stdout).not.toContain('replace "count"');
       expect(stdout).toContain("(no auto-patches available)");
-      expect(stderr).toContain('E0103 Reference to undefined name "count"');
+      expect(stderr).toContain(
+        'error E0103 undef-ref at 7:49: Reference to undefined name "count"',
+      );
       expect(code).toBe(1);
     });
 
@@ -124,7 +126,7 @@ describe("kumiki fix", () => {
     const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
     expect(readFileSync(file, "utf8")).toBe(tiedCounts("countA", "countB"));
     expect(stdout).toContain("error(s) remain");
-    expect(stderr).toContain('E0103 Reference to undefined name "count"');
+    expect(stderr).toContain('error E0103 undef-ref at 7:49: Reference to undefined name "count"');
     expect(code).toBe(1);
   });
 
