@@ -279,6 +279,25 @@ export type DiagnosticSite = {
   tile?: string | undefined;
 };
 
+/**
+ * The standard effects' names. The compiler keys its table of standard effects by this union and
+ * refuses an `effect` declared under one: the installer writes over it at mount.
+ */
+export type BuiltinEffectName =
+  | "navigate"
+  | "navigate-replace"
+  | "navigate-back"
+  | "scroll-to"
+  | "toast"
+  | "confirm"
+  | "log";
+
+/**
+ * What an installer writes `app.effects` through, so it can register a standard effect only under
+ * its own name.
+ */
+export type BuiltinEffects = { [N in BuiltinEffectName]?: EffectSpec & { name: N } };
+
 /** Mount-internal navigation handles handed to builtin-effect installers. */
 export type NavContext = {
   navigate: (path: string, replace: boolean) => void;
@@ -303,7 +322,7 @@ export type RoutingImpl = {
   href(route: ParsedRoute): string;
   /** For an in-page jump, what brings the hash's element into view once the page has rendered; `undefined` for any other move. */
   jump(from: ParsedRoute, to: ParsedRoute, root: Node): (() => void) | undefined;
-  /** Register navigate / navigate-replace / navigate-back on `app.effects`. */
+  /** Register navigate / navigate-replace / navigate-back / scroll-to on `app.effects`. */
   installNavEffects(app: AppShape, nav: NavContext): void;
 };
 
@@ -431,7 +450,6 @@ export type MountedApp = AppShape & {
   _submitHeldBy: (e: Event) => readonly string[] | undefined;
   /** Prefetch dedupe set, created on the first link prefetch. */
   _prefetched?: Set<string>;
-  _episodeId?: () => string | undefined;
   live: Record<string, unknown>;
 };
 

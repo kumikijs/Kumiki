@@ -153,6 +153,8 @@ type Handle = nominal Text where len-gt(3) where len-lt(7)
 
 違反した値は、**連鎖を基底型の側から外側へ読む順**で**最初に失敗した述語**に対して報告される。1 つの型式の中ではそれが書かれた順であり、名前をまたぐ場合は宣言がたどる順である——`Handle` が `Short` の上に宣言されている以上、ファイル内でどちらの定義が先にあろうと `Short` の `len-lt(7)` が `Handle` 自身の `len-gt(3)` より先に来る。書き込みが reducer のバッチを破棄したときに拒否が名指すのはその述語であり（[batching](./runtime.md#a-batch-commits-all-or-nothing)）、`error` tile が描画するのもその述語のメッセージである（[エラー表示](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)）。
 
+`type-param` が指すのは型であって型コンストラクタではないので、引数を取らない：`type H(T) = …` の body の `T(Int)` は [E0210](./errors.md#e0210-type-arity-mismatch) である。型パラメータは同じ綴りのトップレベル名を覆い隠す（[§1.3.6](#_1-3-6-不変条件) 不変条件 5）ので、`type H(List) = …` の body の `List(Int)` も同じ誤りである。
+
 ### 1.3.2 ビルトイン汎化型
 
 ```
@@ -408,6 +410,10 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
   リクエストを走らせる。`Map` 自身の key も同じ書き方で格納されるので、`Map(Float, V)`
   はその値が key になるなら key になる。`Float` は `.show` を、`File` は
   `{name: $1.name, size: $1.size}` を通して key にする
+- effect は[標準 effect](./stdlib.md#_2-6-標準-effect)の名前（`navigate`・`navigate-replace`・
+  `navigate-back`・`scroll-to`・`toast`・`confirm`・`log`）を名乗れない：ランタイムはマウント時に
+  それぞれをそれ自身の名前で登録するため、その名前の宣言は決して実行されない
+  （[E0234](./errors.md#e0234-reserved-effect-name)）
 
 ### 1.5.3 例
 
