@@ -50,6 +50,16 @@ test inc-works =
         expect = {slots: {count: 1}, effects: []}
 `;
 
+/** `[1][3]` indexes past the end of a one-item list, so `expect-panics`' body throws. */
+const WITH_THROWING_TEST = WITH_TESTS.replace(
+  "test inc-works =",
+  `test expect-panics =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: [1][3]}, effects: []}
+test inc-works =`,
+);
+
 describe("kumiki fix", () => {
   it("exits 1 in dry-run while the errors are still on disk", SPAWN, () => {
     const { stdout, code } = runCli(["fix", write("fix-dry.kumiki", FIXABLE)]);
@@ -244,6 +254,18 @@ describe("kumiki test", () => {
     const { stdout, code } = runCli(["test", write("test-none.kumiki", CLEAN)]);
     expect(stdout).toContain("no tests found");
     expect(code).toBe(0);
+  });
+
+  it("fails a test whose body throws on its own, and still runs the rest", SPAWN, () => {
+    // The throwing test comes first, so the passing one after it only reports
+    // if the run goes on past the throw.
+    const { stdout, code } = runCli(["test", write("test-throws.kumiki", WITH_THROWING_TEST)]);
+    expect(stdout).toMatch(
+      /^FAIL {2}expect-panics \(\d+ms\)\n {2}error: {4}Index 3 is out of range for a List of length 1$/m,
+    );
+    expect(stdout).toMatch(/^PASS {2}inc-works \(\d+ms\)$/m);
+    expect(stdout).toContain("1/2 passed");
+    expect(code).toBe(1);
   });
 });
 
