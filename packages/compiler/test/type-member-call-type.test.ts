@@ -180,11 +180,17 @@ slot t : Option(Tally) = Tally.parse("4")`),
     ]);
   });
 
-  it("adds nothing to an alias that resolves to nothing", () => {
+  it.each([
+    "Bar",
+    "Bar(Int)",
+  ])("adds nothing to an alias of %s, which resolves to nothing", (body) => {
     expect(
-      diagnostics(`type Foo = Bar\nslot o : Option(Int) = None
+      diagnostics(`type Foo = ${body}\nslot o : Option(Int) = None
 reducer r on=ui.click(B) do= o := Foo.parse("1")`),
     ).toEqual(['E0117 Reference to undefined type "Bar"']);
+  });
+
+  it("adds no E0802 to an alias that cycles", () => {
     const cyclic = diagnostics(`type P = Q\ntype Q = P\nslot o : Option(Int) = None
 reducer r on=ui.click(B) do= o := P.parse("1")`);
     expect(cyclic.some((d) => d.startsWith("E0009"))).toBe(true);

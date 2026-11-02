@@ -51,6 +51,7 @@ export {
   applyContainerProps,
   applyTextProps,
   type BindSegment,
+  type BuiltinEffectName,
   type BuiltinInstaller,
   beginEnvRecord,
   beginEnvReplay,
@@ -69,6 +70,7 @@ export {
   type EventHandler,
   emptyRoute,
   endEnvScope,
+  isPanic,
   KumikiPanic,
   type LocationLike,
   type MountedApp,
@@ -199,7 +201,7 @@ export {
   renderToString,
 } from "./ssr.ts";
 export { renderTileToString } from "./ssr-render.ts";
-export { _stdlibCore, type KeyKind } from "./stdlib.ts";
+export { _stdlibCore, type KeyKind, type ShowShape } from "./stdlib.ts";
 export {
   ConstraintRefusal,
   constraintFault,
@@ -221,7 +223,7 @@ export {
   replayEpisodes,
   type TestResult,
 } from "./testkit.ts";
-export { levenshtein, nearestName } from "./text-distance.ts";
+export { levenshtein, nearestName, nearestNames } from "./text-distance.ts";
 export { collectionPatchers, collectionTiles } from "./tiles-collection.ts";
 export { inputPatchers, inputTiles } from "./tiles-input.ts";
 export { layoutPatchers, layoutTiles } from "./tiles-layout.ts";

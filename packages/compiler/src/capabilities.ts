@@ -1,3 +1,5 @@
+import type { BuiltinEffectName } from "@kumikijs/runtime";
+import { type TypeEnv, unaliasType } from "./assignable.ts";
 import type { TypeExpr } from "./ast.ts";
 import { appType, primType, recordType, refType } from "./stdlib-types.ts";
 
@@ -52,6 +54,12 @@ export function failsWithText(cap: string): boolean {
   return TEXT_FAILURE_CAPABILITIES.has(cap);
 }
 
+/** An effect declared `in=Unit`, through any alias or nominal over it, is emitted with no argument. */
+export function declaresNoInput(inType: TypeExpr | null, env: TypeEnv): boolean {
+  const u = unaliasType(inType, env);
+  return u?.kind === "TypePrim" && u.name === "Unit";
+}
+
 export const REDUCER_REF: TypeExpr = refType("ReducerRef");
 
 /** A standard effect: the capability it is gated on and the input it takes. */
@@ -62,29 +70,29 @@ export type BuiltinEffect = {
   readonly defaulted?: readonly string[];
 };
 
-export const BUILTIN_EFFECTS: ReadonlyMap<string, BuiltinEffect> = new Map<string, BuiltinEffect>([
-  ["navigate", { cap: "nav.push", inType: navigation, defaulted: ["params", "query"] }],
-  ["navigate-replace", { cap: "nav.replace", inType: navigation, defaulted: ["params", "query"] }],
-  ["navigate-back", { cap: "nav.back", inType: primType("Unit") }],
-  ["scroll-to", { cap: null, inType: recordType({ x: primType("Int"), y: primType("Int") }) }],
-  [
-    "toast",
-    {
-      cap: "notification.show",
-      inType: recordType({ kind: text, text, duration: appType("Option", refType("Duration")) }),
-    },
-  ],
-  [
-    "confirm",
-    {
-      cap: "notification.show",
-      // Left out, `message` shows the title.
-      inType: recordType({ title: text, message: text, onYes: REDUCER_REF, onNo: REDUCER_REF }),
-      defaulted: ["message"],
-    },
-  ],
-  ["log", { cap: "log.write", inType: recordType({ level: text, message: text, data: textMap }) }],
-]);
+// Keyed by the runtime's `BuiltinEffectName`, so a name added to one and not the other is a type
+// error.
+const BUILTIN_EFFECT_TABLE: { readonly [N in BuiltinEffectName]: BuiltinEffect } = {
+  navigate: { cap: "nav.push", inType: navigation, defaulted: ["params", "query"] },
+  "navigate-replace": { cap: "nav.replace", inType: navigation, defaulted: ["params", "query"] },
+  "navigate-back": { cap: "nav.back", inType: primType("Unit") },
+  "scroll-to": { cap: null, inType: recordType({ x: primType("Int"), y: primType("Int") }) },
+  toast: {
+    cap: "notification.show",
+    inType: recordType({ kind: text, text, duration: appType("Option", refType("Duration")) }),
+  },
+  confirm: {
+    cap: "notification.show",
+    // Left out, `message` shows the title.
+    inType: recordType({ title: text, message: text, onYes: REDUCER_REF, onNo: REDUCER_REF }),
+    defaulted: ["message"],
+  },
+  log: { cap: "log.write", inType: recordType({ level: text, message: text, data: textMap }) },
+};
+
+export const BUILTIN_EFFECTS: ReadonlyMap<string, BuiltinEffect> = new Map(
+  Object.entries(BUILTIN_EFFECT_TABLE),
+);
 
 export function builtinFieldOmittable(
   builtin: BuiltinEffect,
