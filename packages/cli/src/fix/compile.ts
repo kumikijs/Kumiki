@@ -298,7 +298,12 @@ export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
 
 const ANCHOR_TIER: Record<PatchAnchor["kind"], number> = { span: 0, line: 1, region: 2 };
 
-/** Exact spans first, bottom-up so earlier offsets stay valid; then line and region patches. */
+/**
+ * Exact spans first, bottom-up so earlier offsets stay valid; then line and region patches. The
+ * sort is stable, so two patches it does not tell apart (two in the `line` tier, two in the
+ * `region` tier, or two spans at one position) keep the plan's order. A `region` patch must not
+ * depend on that order; see `PatchAnchor`.
+ */
 function applicationOrder(patches: AutoPatch[]): AutoPatch[] {
   return [...patches].sort((a, b) => {
     const tier = ANCHOR_TIER[a.anchor.kind] - ANCHOR_TIER[b.anchor.kind];
