@@ -1,8 +1,9 @@
+import { writeFileSync } from "node:fs";
 import { feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
-import { runTestsSource } from "../src/smoke.ts";
-import { runCli, SPAWN } from "./helpers/cli.ts";
-import { seed } from "./helpers/files.ts";
+import { runTests, runTestsSource } from "../src/smoke.ts";
+import { CHILD_TIMEOUT_MS, runCli, SPAWN, spawnCli, waitFor } from "./helpers/cli.ts";
+import { APP_A, seed } from "./helpers/files.ts";
 
 const TESTS = feature("28-tests");
 
@@ -54,6 +55,14 @@ describe("kumiki test", () => {
     }
     expect(stdout).toMatch(/PASS {2}run-reducer-sees-route \(100 cases, \d+ms\)/);
     expect(stdout).toContain("9/9 passed");
+  });
+
+  it("runs a reducer-test whose given and expect name a variant called Time", SPAWN, () => {
+    const { stdout, code } = runCli(["test", feature("228-primitive-named-variants")]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("PASS  by-time-sets-the-time-variant");
+    expect(stdout).toContain("PASS  by-size-leaves-the-time-variant");
+    expect(stdout).toContain("2/2 passed");
   });
 
   it("filters by a name prefix", SPAWN, () => {
@@ -161,5 +170,61 @@ test replay =
       actual:
         "no episode log was read: compile was given no readEpisodeLog, so nothing was replayed",
     });
+  });
+});
+
+describe("one file after another in one process", () => {
+  const WITH_TEST = `slot count : Int = 0
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+tile IncBtn = button(text="+1", onClick=inc)
+tile App = column(heading("Count: " + count.show), IncBtn)
+${APP_A}
+test inc-increments =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: 2}, effects: []}
+`;
+  const NO_TEST = WITH_TEST.slice(0, WITH_TEST.indexOf("\ntest "));
+
+  it("reports neither the tests nor the coverage of the file run before", async () => {
+    const first = await runTests(seed(WITH_TEST, "a.kumiki"), undefined, [], { coverage: true });
+    expect(first.results.map((r) => `${r.name}:${r.pass}`)).toEqual(["inc-increments:false"]);
+    expect(first.coverage?.reducers.used).toEqual(["inc"]);
+
+    const second = await runTests(seed(NO_TEST, "b.kumiki"), undefined, [], { coverage: true });
+    expect(second.results.map((r) => r.name)).toEqual([]);
+    expect({ total: second.total, failed: second.failed }).toEqual({ total: 0, failed: 0 });
+    expect(second.coverage).toEqual({
+      reducers: { total: ["inc"], used: [] },
+      tiles: { total: ["IncBtn", "App"], used: [] },
+      effects: { total: [], used: [] },
+    });
+  });
+
+  // Two waits of up to CHILD_TIMEOUT_MS each, and SPAWN's margin over one for the stop.
+  it("prints `no tests found` when --watch re-runs a file whose last test was deleted", {
+    timeout: CHILD_TIMEOUT_MS + SPAWN.timeout,
+  }, async () => {
+    const file = seed(WITH_TEST, "w.kumiki");
+    const cli = spawnCli(["test", file, "--watch"]);
+    const CHANGED = "— change detected —";
+    const rerun = (): string =>
+      cli.stdout.includes(CHANGED) ? cli.stdout.slice(cli.stdout.indexOf(CHANGED)) : "";
+    try {
+      await waitFor(cli, () => cli.stdout.includes("watching for changes"), "the first run");
+      expect(cli.stdout).toContain("FAIL  inc-increments");
+
+      writeFileSync(file, NO_TEST);
+      await waitFor(
+        cli,
+        () =>
+          /no tests found|\d+\/\d+ passed/.test(rerun()) || cli.stderr.includes("test run failed"),
+        "the re-run's report",
+      );
+      expect(rerun()).toContain("no tests found");
+      expect(rerun()).not.toContain("inc-increments");
+    } finally {
+      await cli.stop();
+    }
   });
 });
