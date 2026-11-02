@@ -71,7 +71,11 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
   scroll: { cases: [["scroll", { kind: "scroll", children: [CHILD], props: CONTAINER_PROPS }]] },
   panel: { cases: [["panel", { kind: "panel", children: [CHILD], props: CONTAINER_PROPS }]] },
   fieldset: {
-    cases: [["fieldset", { kind: "fieldset", children: [CHILD], props: CONTAINER_PROPS }]],
+    cases: [
+      ["fieldset", { kind: "fieldset", children: [CHILD], props: CONTAINER_PROPS }],
+      ["fieldset (legend)", { kind: "fieldset", children: [CHILD], props: { legend: "Billing" } }],
+      ["fieldset (empty legend)", { kind: "fieldset", children: [CHILD], props: { legend: "" } }],
+    ],
   },
   region: { cases: [["region", { kind: "region", children: [CHILD], props: CONTAINER_PROPS }]] },
   grid: {
@@ -206,6 +210,11 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
       ["check", { kind: "check", checked: true }],
       ["check (id, control state)", { kind: "check", checked: false, props: { id: "c" } }],
       ["check (bind)", { kind: "check", checked: true, bind: "agreed" }],
+      ["check (label)", { kind: "check", checked: true, props: { label: "I agree" } }],
+      ["check (empty label)", { kind: "check", checked: false, props: { label: "" } }],
+      // A label that is not Text follows the legend's rule: a number renders as its digits, a Bool renders nothing.
+      ["check (number label)", { kind: "check", checked: false, props: { label: 5 } }],
+      ["check (Bool label)", { kind: "check", checked: false, props: { label: true } }],
     ],
   },
   switch: {
@@ -222,6 +231,14 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
         { kind: "radio", group: "plan", value: "pro", selected: true, props: { label: "Pro" } },
       ],
       ["radio (no label)", { kind: "radio", group: "plan", value: "free" }],
+      [
+        "radio (number label)",
+        { kind: "radio", group: "plan", value: "free", props: { label: 5 } },
+      ],
+      [
+        "radio (Bool label)",
+        { kind: "radio", group: "plan", value: "free", props: { label: true } },
+      ],
       [
         "radio (bind)",
         { kind: "radio", group: "plan", value: "pro", selected: true, bind: "plan" },
@@ -257,6 +274,39 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
         "select (placeholder, nothing chosen)",
         {
           kind: "select",
+          placeholder: "Pick one",
+          options: [{ label: "A", value: "a" }],
+        },
+      ],
+      [
+        "select (variant and record values)",
+        {
+          kind: "select",
+          value: { _tag: "Some", _0: { _tag: "B" } },
+          options: [
+            { label: "None", value: { _tag: "None" } },
+            { label: "A", value: { _tag: "Some", _0: { _tag: "A" } } },
+            { label: "B", value: { _tag: "Some", _0: { _tag: "B" } } },
+            { label: "Box", value: { w: 2, h: 3 } },
+          ],
+        },
+      ],
+      [
+        "select (an option with no value)",
+        {
+          kind: "select",
+          value: "b",
+          options: [
+            { label: "A", value: undefined },
+            { label: "B", value: "b" },
+          ],
+        },
+      ],
+      [
+        "select (placeholder, the Unit value)",
+        {
+          kind: "select",
+          value: null,
           placeholder: "Pick one",
           options: [{ label: "A", value: "a" }],
         },
@@ -432,6 +482,27 @@ describe("the server pass renders what the client renders", () => {
           expect(shapeOf(server, opts)).toEqual(shapeOf(client, opts));
         });
       }
+    });
+  }
+});
+
+// The shape comparison skips `selected`, a property on the client, so which option a select
+// holds is compared on its own: the served attribute against the mounted option's property.
+describe("a select holds the same option on both paths", () => {
+  const onServer = (el: HTMLElement): (string | null)[] =>
+    Array.from(el.querySelectorAll("option"))
+      .filter((o) => o.hasAttribute("selected"))
+      .map((o) => o.textContent);
+  const onClient = (el: HTMLElement): (string | null)[] =>
+    Array.from((el as HTMLSelectElement).options)
+      .filter((o) => o.selected)
+      .map((o) => o.textContent);
+
+  for (const [label, node] of TABLE.select.cases) {
+    it(`agrees on ${label}`, () => {
+      const served = onServer(serverElement(node));
+      expect(served).toHaveLength(1);
+      expect(served).toEqual(onClient(clientElement(node)));
     });
   }
 });

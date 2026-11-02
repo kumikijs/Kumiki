@@ -1,0 +1,26 @@
+{
+  "steps": [
+    {
+      "label": "the slots start on the union's other tags",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["health=down history=0", "said=-", "filter=urgent", "score=0"]
+      }
+    },
+    {
+      "label": "recover writes the union's own Ok and None through a let, and a Result's Ok beside them",
+      "do": { "click": "#recover" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["health=ok history=1", "said=back up", "filter=all", "score=2"],
+        "state": {
+          "health": { "_tag": "Ok" },
+          "history": [{ "_tag": "Ok" }],
+          "said": "back up",
+          "filter": { "_tag": "None" },
+          "score": { "_tag": "Ok", "_0": 2 }
+        }
+      }
+    }
+  ]
+}

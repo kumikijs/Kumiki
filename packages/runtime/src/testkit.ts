@@ -1,8 +1,12 @@
 import {
   batchRejections,
+  type EmitSpec,
+  isPanic,
   type ReducerSpec,
   type RefinementRejection,
+  rejectedBatchText,
   reportRejectedBatch,
+  standInValue,
 } from "./core.ts";
 import { valueEqual } from "./stdlib.ts";
 import type {
@@ -23,18 +27,32 @@ import {
   genValue,
   shrinkCounterexample,
 } from "./testkit/generate.ts";
-import {
-  type EnvDrift,
-  executeEpisode,
-  type ReplayApp,
-  type ReplayObserver,
-  resetLiveFromSlots,
-  type SlotMetaLike,
-  seedRoute,
-  standInValue,
-} from "./testkit/replay.ts";
+import { type ReplayApp, replayEpisodes, type SlotMetaLike, seedRoute } from "./testkit/replay.ts";
 import { serializeTileNode, tileStructEqual } from "./testkit/tile-match.ts";
 import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard.ts";
+
+// `before` must be the whole table `resetLive` built: that is what puts a slot the test neither
+// seeds nor writes in the answer. `runReducerTest` and `runReducerStep` share it so the two agree
+// on a batch that commits; a `run-reducer` step fails its trial on a rejected one instead.
+function settleBatch(
+  before: Record<string, unknown>,
+  result: Partial<ReturnType<ReducerSpec["apply"]>> | null | undefined,
+  slotMetas: Record<string, SlotMetaLike>,
+): { rejected: RefinementRejection[] } | { slots: Record<string, unknown>; emits: EmitSpec[] } {
+  const rejected = batchRejections(result, slotMetas);
+  if (rejected.length > 0) return { rejected };
+  return { slots: { ...before, ...(result?.slots ?? {}) }, emits: result?.emits ?? [] };
+}
+
+/** A `run-reducer` step whose batch a refinement rejected: its batch did not commit, so the trial fails. */
+class RejectedStep extends Error {}
+
+/** Why a trial that threw failed, with a panic told apart from any other error. */
+function thrownReason(e: unknown): string {
+  if (e instanceof RejectedStep) return e.message;
+  const message = e instanceof Error ? e.message : String(e);
+  return isPanic(e) ? `panicked: ${message}` : `threw: ${message}`;
+}
 
 export const _stdlibTest = {
   /** The wildcard map-key sentinel; codegen lowers a `<any-id>` map key to it. */
@@ -63,19 +81,16 @@ export const _stdlibTest = {
     name: string,
     event: Record<string, unknown>,
   ): { slots: Record<string, unknown> } {
-    const slots = state?.slots ?? {};
-    this.resetLive(app.live, app.slots, slots);
+    this.resetLive(app.live, app.slots, state?.slots ?? {});
     const r = app.reducers.find((x) => x.name === name);
     if (!r) throw new Error(`reducer "${name}" not found`);
-    const res = r.apply(app.live, { $el: event, $event: event });
-    const rejected = batchRejections(res, app.slots);
-    if (rejected.length > 0) {
-      reportRejectedBatch(name, rejected);
-      return { slots: { ...slots } };
-    }
-    const next: Record<string, unknown> = { ...slots };
-    for (const [k, v] of Object.entries(res.slots ?? {})) next[k] = v;
-    return { slots: next };
+    const settled = settleBatch(
+      app.live,
+      r.apply(app.live, { $el: event, $event: event }),
+      app.slots,
+    );
+    if ("rejected" in settled) throw new RejectedStep(rejectedBatchText(name, settled.rejected));
+    return { slots: settled.slots };
   },
   runPropertyTest(input: {
     name: string;
@@ -89,24 +104,25 @@ export const _stdlibTest = {
     const count = input.count ?? 100;
     const doShrink = input.shrink ?? true;
     const rng = _rng(input.seed ?? _hashStr(name));
-    // `fails` is true when the invariant does NOT hold (a throw counts as a fail).
-    const fails = (b: Record<string, unknown>): boolean => {
+    const failure = (b: Record<string, unknown>): { reason?: string } | undefined => {
       try {
-        return trial(b) !== true;
-      } catch {
-        return true;
+        return trial(b) === true ? undefined : {};
+      } catch (e) {
+        return { reason: thrownReason(e) };
       }
     };
+    const fails = (b: Record<string, unknown>): boolean => failure(b) !== undefined;
     for (let i = 0; i < count; i++) {
       const binds: Record<string, unknown> = {};
       for (const k of Object.keys(vars)) binds[k] = genValue(vars[k] as GenDesc, rng);
       if (fails(binds)) {
         const minimal = doShrink ? shrinkCounterexample(vars, fails, binds) : binds;
+        const reason = failure(minimal)?.reason;
         return {
           name,
           pass: false,
           expected: "invariant holds for all generated inputs",
-          actual: `counterexample (case ${i + 1}/${count}): ${_jsonStr(minimal)}`,
+          actual: `counterexample (case ${i + 1}/${count}): ${_jsonStr(minimal)}${reason ? ` — ${reason}` : ""}`,
           diffAt: "(property)",
           cases: i + 1,
         };
@@ -150,13 +166,12 @@ export const _stdlibTest = {
   }): TestResult {
     const { name, target, givenSlots, slotMetas, result, panic, expect } = input;
     // No `?? {}` fallback: a caller that forgets `slotMetas` must throw here, not silently lose every refinement check and pass a batch the app refuses.
-    const rejected = batchRejections(result, slotMetas);
-    if (rejected.length > 0) {
-      reportRejectedBatch(target, rejected);
-      return compareReducerExpect(name, { ...givenSlots }, [], panic, expect);
+    const settled = settleBatch(givenSlots, result, slotMetas);
+    if (!("rejected" in settled)) {
+      return compareReducerExpect(name, settled.slots, settled.emits, panic, expect);
     }
-    const finalSlots = { ...givenSlots, ...(result?.slots ?? {}) };
-    return compareReducerExpect(name, finalSlots, result?.emits ?? [], panic, expect);
+    reportRejectedBatch(target, settled.rejected);
+    return compareReducerExpect(name, { ...givenSlots }, [], panic, expect);
   },
   runReducerTestFlow(input: {
     name: string;
@@ -237,18 +252,19 @@ export const _stdlibTest = {
     };
   }): TestResult {
     const { name, app, episodes, mocks, expect } = input;
-    resetLiveFromSlots(app);
+    const report = replayEpisodes({ app, episodes, mocks, observer: () => "continue" });
 
-    const panics: { episodeId: string; message: string }[] = [];
-    const unhandledErrors: string[] = [];
-    const stepCounter = { n: 0 };
-    const observer: ReplayObserver = () => "continue";
-    const envDrift: EnvDrift = { live: 0, unused: 0, malformed: 0 };
-
-    for (const ep of episodes) {
-      const r = executeEpisode(app, ep, mocks, observer, stepCounter, undefined, envDrift);
-      for (const p of r.panics) panics.push({ episodeId: ep.id, ...p });
-      for (const u of r.unhandledErrors) unhandledErrors.push(u.effect);
+    // Ahead of every `expect`: an episode that was not replayed moved no slot and raised
+    // nothing, so each expectation would be judged on its absence, and a slot mismatch
+    // would name the symptom rather than the missing reducer.
+    if (report.entryReducersMissing.length > 0) {
+      return {
+        name,
+        pass: false,
+        expected: "every episode replayed",
+        actual: report.entryReducersMissing.map((m) => `${m.episodeId}: ${m.message}`).join("; "),
+        diffAt: "episodes",
+      };
     }
 
     let expectedSlots: Record<string, unknown> | null = null;
@@ -281,21 +297,21 @@ export const _stdlibTest = {
         }
       }
     }
-    if (expect.noPanics && panics.length > 0) {
+    if (expect.noPanics && report.panics.length > 0) {
       return {
         name,
         pass: false,
         expected: "no panics",
-        actual: panics.map((p) => `${p.episodeId}: ${p.message}`).join("; "),
+        actual: report.panics.map((p) => `${p.episodeId}: ${p.message}`).join("; "),
         diffAt: "panics",
       };
     }
-    if (expect.noErrors && unhandledErrors.length > 0) {
+    if (expect.noErrors && report.unhandledErrors.length > 0) {
       return {
         name,
         pass: false,
         expected: "no unhandled effect errors",
-        actual: unhandledErrors.join(", "),
+        actual: report.unhandledErrors.map((u) => u.effect).join(", "),
         diffAt: "errors",
       };
     }
@@ -326,5 +342,4 @@ export {
   type ReplayObserver,
   type ReplayReport,
   replayEpisodes,
-  standInValue,
 } from "./testkit/replay.ts";

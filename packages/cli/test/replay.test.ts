@@ -1,9 +1,11 @@
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ReplayEvent } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { formatEvent } from "../src/replay.ts";
 import { runCli, SPAWN } from "./helpers/cli.ts";
+import { seed, seedLines } from "./helpers/files.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const COUNTER = resolve(here, "fixtures/replay/counter.kumiki");
@@ -113,6 +115,8 @@ describe("kumiki replay", () => {
     expect(out).toContain("stopped at step 1");
     expect(out).toMatch(/"count":\s*1/);
     expect(out).not.toMatch(/"count":\s*3/);
+    // The log holds three episodes; the run stopped in the first.
+    expect(out).toContain("\n1 episode(s) replayed");
   });
 
   it.each([
@@ -152,6 +156,39 @@ describe("kumiki replay", () => {
     const { out, code } = replayCounter(...args);
     expect(code).toBe(exit);
     expect(out).toMatch(message);
+  });
+
+  it("names an episode whose entry reducer is not in the program, and exits 1", SPAWN, () => {
+    const program = seed(readFileSync(COUNTER, "utf8").replace(/\binc\b/g, "bump"));
+    const episode = (id: string, step: Record<string, unknown>): string =>
+      JSON.stringify({
+        id,
+        trigger: { kind: "ui.click", target: "IncBtn" },
+        steps: [{ kind: "reducer", ...step, "slot-diffs": [], emits: [] }],
+        status: "completed",
+      });
+    const log = seedLines(
+      [
+        episode("ep_inc", { name: "inc" }),
+        episode("ep_bump", { name: "bump" }),
+        // A hand-edited line: a `reducer` step with no `name`.
+        episode("ep_anon", {}),
+      ],
+      "renamed.log.jsonl",
+    );
+    const { stdout, stderr, code } = runCli(["replay", program, "--from-log", log]);
+    expect(stdout).toContain(
+      'episode ep_inc — ui.click on IncBtn  (not replayed: no reducer named "inc")',
+    );
+    expect(stdout).toContain("[reducer] bump  count: 0 -> 1");
+    expect(stdout).toContain(
+      "episode ep_anon — ui.click on IncBtn  (not replayed: reducer step 1 has no name)",
+    );
+    expect(stdout).toContain("1 episode(s) replayed");
+    expect(stderr).toContain(
+      'not replayed: ep_inc: no reducer named "inc"; ep_anon: reducer step 1 has no name',
+    );
+    expect(code).toBe(1);
   });
 
   it("missing --from-log shows usage and exits 2", SPAWN, () => {

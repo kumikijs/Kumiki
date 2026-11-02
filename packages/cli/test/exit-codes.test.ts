@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CHILD_TIMEOUT_MS, type CliResult, runCli, SPAWN } from "./helpers/cli.ts";
@@ -49,6 +49,16 @@ test inc-works =
         given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
         expect = {slots: {count: 1}, effects: []}
 `;
+
+/** `[1][3]` indexes past the end of a one-item list, so `expect-panics`' body throws. */
+const WITH_THROWING_TEST = WITH_TESTS.replace(
+  "test inc-works =",
+  `test expect-panics =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: [1][3]}, effects: []}
+test inc-works =`,
+);
 
 describe("kumiki fix", () => {
   it("exits 1 in dry-run while the errors are still on disk", SPAWN, () => {
@@ -152,6 +162,46 @@ test inc-works =
     expect(passing.code).toBe(0);
   });
 
+  // `idx` is one edit from the slot `id`, and the read renamed to `id`
+  // type-checks: a rename would leave a clean file that reads another slot.
+  const OUT_OF_SCOPE = `slot id    : Int = 0
+slot total : Int = 0
+slot count : Int = 0
+reducer tally on=ui.click(Btn)
+    do= for idx in [1] { () }
+        total := idx
+tile Btn = button(text="go")
+tile App = column(Btn, heading("Total: " + total.show))
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("exits 1 proposing nothing for a read after the body that declared it", SPAWN, () => {
+    const { stdout, code } = runCli(["fix", write("scope-dry.kumiki", OUT_OF_SCOPE)]);
+    expect(stdout).toBe("(no auto-patches available)\n");
+    expect(code).toBe(1);
+  });
+
+  it("exits 1 under --apply with that read left as written", SPAWN, () => {
+    const file = write("scope-apply.kumiki", OUT_OF_SCOPE);
+    const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
+    expect(readFileSync(file, "utf8")).toBe(OUT_OF_SCOPE);
+    expect(stdout).toBe("(no auto-patches available)\n");
+    expect(stderr).toContain('E0103 Reference to undefined name "idx" — ');
+    expect(code).toBe(1);
+  });
+
+  it("still repairs a misspelling beside that read under --apply", SPAWN, () => {
+    const src = OUT_OF_SCOPE.replace("total := idx", "total := idx\n        count := cont");
+    const file = write("scope-misspelling.kumiki", src);
+    const { stdout, code } = runCli(["fix", file, "--apply"]);
+    expect(stdout).toContain("applied 1 fix(es) — 1 error(s) remain");
+    expect(readFileSync(file, "utf8")).toBe(src.replace("count := cont", "count := count"));
+    expect(code).toBe(1);
+  });
+
   it("applies a patch to a file that also has a warning", SPAWN, () => {
     const { stdout, code } = runCli([
       "fix",
@@ -204,6 +254,18 @@ describe("kumiki test", () => {
     const { stdout, code } = runCli(["test", write("test-none.kumiki", CLEAN)]);
     expect(stdout).toContain("no tests found");
     expect(code).toBe(0);
+  });
+
+  it("fails a test whose body throws on its own, and still runs the rest", SPAWN, () => {
+    // The throwing test comes first, so the passing one after it only reports
+    // if the run goes on past the throw.
+    const { stdout, code } = runCli(["test", write("test-throws.kumiki", WITH_THROWING_TEST)]);
+    expect(stdout).toMatch(
+      /^FAIL {2}expect-panics \(\d+ms\)\n {2}error: {4}Index 3 is out of range for a List of length 1$/m,
+    );
+    expect(stdout).toMatch(/^PASS {2}inc-works \(\d+ms\)$/m);
+    expect(stdout).toContain("1/2 passed");
+    expect(code).toBe(1);
   });
 });
 
@@ -336,7 +398,49 @@ describe("kumiki run", () => {
   });
 });
 
-describe("the verbs the table documents but this change does not touch", () => {
+describe("kumiki lock / unlock", () => {
+  function lockedByA(file: string): string {
+    const locks = `${file}.kumiki-locks.json`;
+    const entries = [{ agent: "agent:a", patterns: ["slot.*"] }];
+    writeFileSync(locks, `${JSON.stringify({ entries }, null, 2)}\n`);
+    return locks;
+  }
+
+  it("lock exits 1 for a pattern another agent's overlaps, and 0 for its holder", SPAWN, () => {
+    const file = write("lock.kumiki", CLEAN);
+    const locks = lockedByA(file);
+    const granted = readFileSync(locks, "utf8");
+
+    const { stderr, code } = runCli(["lock", file, "agent:b", "slot.count"]);
+    expect(stderr).toContain('"slot.*", held by agent:a');
+    expect(code).toBe(1);
+    expect(readFileSync(locks, "utf8")).toBe(granted);
+
+    expect(runCli(["lock", file, "agent:a", "slot.*"]).code).toBe(0);
+  });
+
+  it("lock exits 2 for a pattern that names no glob, before reading anything", SPAWN, () => {
+    const file = write("lock-no-glob.kumiki", CLEAN);
+    const { stderr, code } = runCli(["lock", file, "agent:a", " , "]);
+    expect(stderr).toContain('lock pattern " , " names no glob');
+    expect(stderr).toContain("Usage: kumiki lock");
+    expect(code).toBe(2);
+    expect(existsSync(`${file}.kumiki-locks.json`)).toBe(false);
+  });
+
+  it("unlock exits 1 for an agent that holds no lock, and 0 for one that does", SPAWN, () => {
+    const file = write("unlock.kumiki", CLEAN);
+    const none = runCli(["unlock", file, "agent:x"]);
+    expect(none.stderr).toContain("agent:x holds no lock");
+    expect(none.code).toBe(1);
+    expect(existsSync(`${file}.kumiki-locks.json`)).toBe(false);
+
+    lockedByA(file);
+    expect(runCli(["unlock", file, "agent:a"]).code).toBe(0);
+  });
+});
+
+describe("the verbs that fail on what the program does when it runs", () => {
   const PANICS = `slot count : Int = 0
 reducer boom on=ui.click(BoomBtn) do= panic("boom")
 tile BoomBtn = button(text="go", onClick=boom)

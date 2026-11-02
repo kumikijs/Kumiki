@@ -12,7 +12,9 @@ const app = (name: string, ...args: TypeExpr[]): TypeExpr => ({
   args,
   pos: NO_POS,
 });
-const record = (fields: Record<string, TypeExpr>): TypeExpr => ({
+type RecordType = Extract<TypeExpr, { kind: "TypeRecord" }>;
+
+const record = (fields: Record<string, TypeExpr>): RecordType => ({
   kind: "TypeRecord",
   fields: Object.entries(fields).map(([name, type]) => ({ name, type, pos: NO_POS })),
   pos: NO_POS,
@@ -34,6 +36,38 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
   pos: NO_POS,
 });
 
+/**
+ * The record the runtime keeps in the `route` slot; its field names must be `emptyRoute()`'s keys,
+ * or a test's `route` seed is refused or left partly undefined. The runtime's `ParsedRoute` also
+ * carries an optional `childPattern`, which picks the tile `route-outlet` renders and the sub-route
+ * a route event fires for; that is runtime bookkeeping, not part of the type.
+ */
+export const ROUTE_TYPE: RecordType = record({
+  path: prim("Text"),
+  pattern: prim("Text"),
+  params: app("Map", prim("Text"), prim("Text")),
+  query: app("Map", prim("Text"), prim("Text")),
+  hash: app("Option", prim("Text")),
+});
+
+const PANIC_INFO_FIELDS = {
+  message: prim("Text"),
+  location: prim("Text"),
+  "episode-id": app("Option", prim("Text")),
+  cause: app("Option", prim("Text")),
+  category: prim("Text"),
+};
+
+export const PANIC_INFO_TYPE: RecordType = record(PANIC_INFO_FIELDS);
+
+// What a `route.error(<pattern>)` reducer is handed as `$event`: a `PanicInfo`'s fields and the
+// `pattern` the reducer names. It is not a `PanicInfo`, because a record type matches only its own field set.
+export const ROUTE_ERROR_INFO_TYPE: RecordType = record({
+  ...PANIC_INFO_FIELDS,
+  pattern: prim("Text"),
+});
+
+// `route`, `$route` and a panic reducer's `$event` are typed from the exports above.
 export const STDLIB_TYPES: readonly TypeDef[] = [
   def("HttpStatus", nominal(prim("Int"), "between", [0, 599])),
   def(
@@ -48,27 +82,10 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   def("Email", nominal(prim("Text"), "email")),
   def("Uuid", nominal(prim("Text"), "uuid")),
   def("Duration", nominal(prim("Int"))),
-  def(
-    "Route",
-    record({
-      path: prim("Text"),
-      pattern: prim("Text"),
-      params: app("Map", prim("Text"), prim("Text")),
-      query: app("Map", prim("Text"), prim("Text")),
-      hash: app("Option", prim("Text")),
-    }),
-  ),
+  def("Route", ROUTE_TYPE),
   def("FormData", app("Map", prim("Text"), ref("FormValue"))),
-  def(
-    "PanicInfo",
-    record({
-      message: prim("Text"),
-      location: prim("Text"),
-      "episode-id": app("Option", prim("Text")),
-      cause: app("Option", prim("Text")),
-      category: prim("Text"),
-    }),
-  ),
+  def("PanicInfo", PANIC_INFO_TYPE),
+  def("RouteErrorInfo", ROUTE_ERROR_INFO_TYPE),
   def("FormValue", {
     kind: "TypeUnion",
     variants: [
@@ -80,6 +97,35 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
     pos: NO_POS,
   }),
 ];
+
+// The runtime or the standard library builds or reads values of these, so a
+// program's own definition would be what the checker reasoned about while the
+// runtime kept to the entry above. The other entries name types only a program
+// builds values of, and a program may declare its own.
+export const RESERVED_TYPE_NAMES: ReadonlySet<string> = new Set([
+  "PanicInfo",
+  "RouteErrorInfo",
+  "Route",
+  "HttpError",
+  "HttpStatus",
+  "Duration",
+  "FormValue",
+]);
+
+export function isReservedTypeName(name: string): boolean {
+  return RESERVED_TYPE_NAMES.has(name);
+}
+
+// A browser reads a file's bytes only asynchronously, so the record a `change` event
+// delivers cannot hold them; they are not a field. `File` stays a `TypePrim` with this
+// side table, not a record in `STDLIB_TYPES` like `Route`: a record type would accept any
+// `{name, size, type}` literal as a `File`, and that value has no `_file` for a `FileV`
+// part or `file-url()` to read. As a prim, a `File` is only ever one the runtime made.
+export const FILE_FIELDS: RecordType = record({
+  name: prim("Text"),
+  size: prim("Int"),
+  type: prim("Text"),
+});
 
 export const BUILTIN_TYPE_CONSTRUCTORS: ReadonlyMap<string, number | null> = new Map([
   ["List", 1],

@@ -3,16 +3,22 @@ import type { Expr, Pos } from "../ast.ts";
 import {
   type BuiltinArity,
   builtinArity,
-  isQualifierName,
-  QUALIFIED_BUILTIN_CALLS,
-  QUALIFIED_CALL_NAMESPACES,
-  TYPE_MEMBER_CALLS,
+  isMissingNamespaceMember,
+  typeMemberQualifier,
   UNIMPLEMENTED_CALLS,
 } from "../builtin-calls.ts";
+import { BUILTIN_TILES } from "../builtins.ts";
 import { PARSE_READINGS_PHRASE, parseQualifier, qualifierType } from "../parse-reading.ts";
 import { isPrimTypeName } from "../stdlib-types.ts";
 import { checkAgainst } from "./against.ts";
-import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
+import {
+  type Ctx,
+  type EndedScope,
+  isBuiltinCall,
+  type KumikiError,
+  type SymbolTable,
+} from "./context.ts";
+import { refuseRenderedEffectId } from "./expr.ts";
 import { freshResultType, prim } from "./infer.ts";
 
 export function checkCallee(
@@ -35,12 +41,7 @@ export function checkCallee(
     return;
   }
   const dot = callee.indexOf(".");
-  if (
-    dot > 0 &&
-    argCount === 0 &&
-    QUALIFIED_CALL_NAMESPACES.has(callee.slice(0, dot)) &&
-    !QUALIFIED_BUILTIN_CALLS.has(callee)
-  ) {
+  if (isMissingNamespaceMember(callee, argCount)) {
     errors.push({
       code: "E0116",
       kind: "undef-call",
@@ -49,13 +50,10 @@ export function checkCallee(
     });
     return;
   }
-  if (dot > 0 && TYPE_MEMBER_CALLS.has(callee.slice(dot + 1))) {
-    const qualifier = callee.slice(0, dot);
-    if (
-      isQualifierName(qualifier) &&
-      !isKnownTypeName(qualifier, sym) &&
-      !isPrimTypeName(qualifier)
-    ) {
+  const qualifier = typeMemberQualifier(callee, argCount);
+  if (qualifier !== undefined) {
+    const member = callee.slice(dot + 1);
+    if (!isKnownTypeName(qualifier, sym) && !isPrimTypeName(qualifier)) {
       errors.push({
         code: "E0117",
         kind: "undef-type",
@@ -64,16 +62,12 @@ export function checkCallee(
       });
       return;
     }
-    const typeArity =
-      isQualifierName(qualifier) && isKnownTypeName(qualifier, sym)
-        ? constructorArity(qualifier, sym)
-        : 0;
+    const typeArity = isKnownTypeName(qualifier, sym) ? constructorArity(qualifier, sym) : 0;
     if (typeArity !== 0) {
       const wanted =
         typeArity === null
           ? "type arguments"
           : `${typeArity} type argument${typeArity === 1 ? "" : "s"}`;
-      const member = callee.slice(dot + 1);
       const readable =
         member === "parse"
           ? ` and whose base has a reading of a text (${PARSE_READINGS_PHRASE})`
@@ -88,11 +82,7 @@ export function checkCallee(
       });
       return;
     }
-    if (
-      callee.slice(dot + 1) === "parse" &&
-      isQualifierName(qualifier) &&
-      parseQualifier(qualifier, sym).kind === "none"
-    ) {
+    if (member === "parse" && parseQualifier(qualifier, sym).kind === "none") {
       errors.push({
         code: "E0802",
         kind: "unimplemented-function",
@@ -102,8 +92,7 @@ export function checkCallee(
       return;
     }
     if (
-      callee.slice(dot + 1) === "fresh" &&
-      isQualifierName(qualifier) &&
+      member === "fresh" &&
       qualifierType(qualifier, pos, sym) !== null &&
       freshResultType(qualifier, pos, sym) === null
     ) {
@@ -116,7 +105,7 @@ export function checkCallee(
       return;
     }
   }
-  const arity = builtinArity(callee);
+  const arity = isBuiltinCall(callee, sym) ? builtinArity(callee) : undefined;
   if (arity !== undefined) {
     if (argCount < arity.min || argCount > arity.max) {
       errors.push({
@@ -127,7 +116,10 @@ export function checkCallee(
       });
       return;
     }
-    if (callee === "fmt") reportFmtPlaceholders(args, pos, errors);
+    if (callee === "fmt") {
+      reportFmtPlaceholders(args, pos, errors);
+      for (const a of args) refuseRenderedEffectId(a, "fmt(...)", sym, errors, ctx);
+    }
     const text = args[0];
     if (dot > 0 && callee.slice(dot + 1) === "parse" && text) {
       checkAgainst(text, prim("Text", pos), sym, errors, ctx);
@@ -135,12 +127,11 @@ export function checkCallee(
     return;
   }
   if (!fn) {
-    errors.push({
-      code: "E0116",
-      kind: "undef-call",
-      message: `Call to undefined function "${callee}"`,
-      pos,
-    });
+    // A builtin tile's name is spelled right: what is wrong is where it is written.
+    const message = BUILTIN_TILES.has(callee)
+      ? `"${callee}" is a tile, and a tile renders only as a positional argument of a builtin other than the value builtins`
+      : `Call to undefined function "${callee}"`;
+    errors.push({ code: "E0116", kind: "undef-call", message, pos });
     return;
   }
   if (fn.params.length !== argCount) {
@@ -211,6 +202,35 @@ export function arithmeticHint(name: string, sym: SymbolTable, ctx: Ctx): string
   if (!resolves) return "";
   if (hasCloseName(name, sym, ctx)) return "";
   return ` — "-" continues an identifier, so this is one name. Write "${head} - ${tail}" with spaces for subtraction.`;
+}
+
+// A `let n = 0` before the statement would not do: the body's own `n` only shadows it.
+const BRANCH_WORDS = {
+  if: {
+    part: "branch",
+    ended: 'an "if" branch',
+    sibling: 'the other branch of this "if"',
+    declare: (name: string) =>
+      `declare it once before the "if" with an "if" expression (let ${name} = if c then … else …)`,
+  },
+  match: {
+    part: "arm",
+    ended: "a match arm",
+    sibling: "another arm of this match",
+    declare: () => 'declare it once before the "match" with a match expression',
+  },
+};
+
+/** Unlike `arithmeticHint`, kept when a close name is in scope: that the name ended is known. */
+export function endedScopeHint(name: string, { kind, sibling }: EndedScope): string {
+  const see = " (see docs/spec/language.md)";
+  if (kind === "for") {
+    return ` — it was declared in a "for" loop, and a name carries no value out of a loop: move the read into the loop's body, or write the value to a slot there${see}`;
+  }
+  const w = BRANCH_WORDS[kind];
+  const where = sibling ? w.sibling : `${w.ended}, which ended before this read`;
+  const into = sibling ? `the ${w.part} that declares it` : `that ${w.part}`;
+  return ` — it was declared in ${where}: ${w.declare(name)}, or move the read into ${into}${see}`;
 }
 
 function hasCloseName(name: string, sym: SymbolTable, ctx: Ctx): boolean {
