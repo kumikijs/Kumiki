@@ -1,0 +1,19 @@
+{
+  "steps": [
+    {
+      "label": "diff is the receiver minus the argument, so its sign says which instant is later",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "early.diff(late) = -172800000",
+          "late.diff(early) = 172800000",
+          "early.diff(early) = 0",
+          "distance = 172800000",
+          "round trip = true true",
+          "due early, seen late: Overdue",
+          "due late, seen early: DueSoon"
+        ]
+      }
+    }
+  ]
+}
