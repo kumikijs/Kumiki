@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runCli, SPAWN } from "./helpers/cli.ts";
 import { seed, tempDir } from "./helpers/files.ts";
+import { tiedCounts } from "./helpers/tie.ts";
 
 const write = (name: string, source: string): string => seed(source, name);
 
@@ -30,23 +31,6 @@ app Demo
 
 /** The warning above plus a repairable typo — the two must not interfere. */
 const WARN_AND_FIXABLE = WARN_ONLY.replace("count.show", "cnt.show");
-
-/** One E0103: `count` is one edit from `countA` and from `countB`, declared in either order. */
-const tied = (first: string, second: string): string => `slot ${first} : Int = 0
-slot ${second} : Int = 0
-
-reducer bumpA on=ui.click(BtnA) do= countA := countA + 1
-reducer bumpB on=ui.click(BtnB) do= countB := countB + 1
-
-tile BtnA = button(text="a", onClick=bumpA)
-tile BtnB = button(text="b", onClick=bumpB)
-tile App  = column(BtnA, BtnB, text("total: " + count.show))
-
-app Tie
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
 
 /** No `app`, so E0003 — a diagnostic `planFixes` has no repair branch for. */
 const UNFIXABLE = `slot count : Int = 0
@@ -105,7 +89,7 @@ describe("kumiki fix", () => {
     it("proposes neither and exits 1", SPAWN, () => {
       const { stdout, stderr, code } = runCli([
         "fix",
-        write(`tie-${first}.kumiki`, tied(first, second)),
+        write(`tie-${first}.kumiki`, tiedCounts(first, second)),
       ]);
       expect(stdout).not.toContain('replace "count"');
       expect(stdout).toContain("(no auto-patches available)");
@@ -114,7 +98,7 @@ describe("kumiki fix", () => {
     });
 
     it("writes neither with --apply and exits 1", SPAWN, () => {
-      const source = tied(first, second);
+      const source = tiedCounts(first, second);
       const file = write(`tie-apply-${first}.kumiki`, source);
       const { stdout, code } = runCli(["fix", file, "--apply"]);
       expect(stdout).not.toContain("file now clean");
@@ -127,6 +111,20 @@ describe("kumiki fix", () => {
     const file = write("fix-apply-partial.kumiki", `${FIXABLE}tile Orphan = column(zzz.show)\n`);
     const { stdout, code } = runCli(["fix", file, "--apply"]);
     expect(stdout).toContain("error(s) remain");
+    expect(code).toBe(1);
+  });
+
+  it("writes the repair beside a tie with --apply, leaves the tie, and exits 1", SPAWN, () => {
+    // `countAA` is one edit from `countA` and two from `countB`, so it has one repair.
+    const source = tiedCounts("countA", "countB").replace(
+      "countA := countA + 1",
+      "countA := countAA + 1",
+    );
+    const file = write("fix-apply-beside-tie.kumiki", source);
+    const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
+    expect(readFileSync(file, "utf8")).toBe(tiedCounts("countA", "countB"));
+    expect(stdout).toContain("error(s) remain");
+    expect(stderr).toContain('E0103 Reference to undefined name "count"');
     expect(code).toBe(1);
   });
 

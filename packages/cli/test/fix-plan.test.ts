@@ -4,6 +4,7 @@ import { check, collectTimerNames, lex, parse, variantTagsOf } from "@kumikijs/c
 import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
 import { APP_A, seed, storeOf } from "./helpers/files.ts";
+import { tiedCounts } from "./helpers/tie.ts";
 
 const APP_ONE_LINE = `app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 
@@ -561,15 +562,13 @@ describe("planFixesExplained: skip-reason classification", () => {
   });
 
   describe("close-names-tied: two names equally close, so nothing is written", () => {
-    // Each branch is asked with its two tied definitions in both orders: a branch that keeps the
-    // first name it meets passes one order and fails the other. `defs(a, b)` declares `a` first;
-    // the quoted name is one edit from each.
-    it.each<{
+    // `defs(a, b)` declares `a` first; the quoted name is one edit from each.
+    const TIES: {
       code: string;
       defs: (a: string, b: string) => string[];
       message: string;
       tied: [string, string];
-    }>([
+    }[] = [
       {
         code: "E0102",
         defs: (a, b) => [`slot ${a} : Int = 0`, `slot ${b} : Int = 0`],
@@ -590,7 +589,10 @@ describe("planFixesExplained: skip-reason classification", () => {
       },
       {
         code: "E0107",
-        defs: (a, b) => [`slot ${a} : Int = 0`, `slot ${b} : Int = 0`],
+        defs: (a, b) => [
+          `motion ${a} = {keyframes: {from: {opacity: 0}, to: {opacity: 1}}}`,
+          `motion ${b} = {keyframes: {from: {opacity: 1}, to: {opacity: 0}}}`,
+        ],
         message: 'Reference to undefined motion "fade"',
         tied: ["fadeA", "fadeB"],
       },
@@ -648,29 +650,27 @@ describe("planFixesExplained: skip-reason classification", () => {
         message: 'Variant "Idle" is not a member of scrutinee type "S"',
         tied: ["IdleA", "IdleB"],
       },
-    ])("$code", ({ code, defs, message, tied: [a, b] }) => {
-      for (const order of [defs(a, b), defs(b, a)]) {
-        const store = storeOf(["slot n : Int = 0", ...order, ""].join("\n"));
-        const { patches, skipped } = planFixesExplained(store, [synth(code, message)]);
-        expect(patches).toEqual([]);
-        expect(skipped).toEqual([
-          { code, reason: "close-names-tied", message, candidates: [a, b] },
-        ]);
-      }
+    ];
+
+    // Each branch is asked with its two tied definitions in both orders: a branch that keeps the
+    // first name it meets passes one order and fails the other.
+    it.each(
+      TIES.flatMap((t) => [
+        { ...t, first: t.tied[0], second: t.tied[1] },
+        { ...t, first: t.tied[1], second: t.tied[0] },
+      ]),
+    )("$code, with $first declared first", ({ code, defs, message, tied, first, second }) => {
+      const store = storeOf(["slot n : Int = 0", ...defs(first, second), ""].join("\n"));
+      const { patches, skipped } = planFixesExplained(store, [synth(code, message)]);
+      expect(patches).toEqual([]);
+      expect(skipped).toEqual([{ code, reason: "close-names-tied", message, candidates: tied }]);
     });
 
     it.each([
       ["countA", "countB"],
       ["countB", "countA"],
     ])("plans the program `check` reports the tie in, with %s declared first", (first, second) => {
-      const store = storeOf(`slot ${first} : Int = 0
-slot ${second} : Int = 0
-reducer bumpA on=ui.click(BtnA) do= countA := countA + 1
-reducer bumpB on=ui.click(BtnB) do= countB := countB + 1
-tile BtnA = button(text="a", onClick=bumpA)
-tile BtnB = button(text="b", onClick=bumpB)
-tile App  = column(BtnA, BtnB, text("total: " + count.show))
-${APP_A}`);
+      const store = storeOf(tiedCounts(first, second));
       const errors = check(store.program);
       expect(errors.map((e) => e.code)).toEqual(["E0103"]);
       const { patches, skipped } = planFixesExplained(store, errors);
