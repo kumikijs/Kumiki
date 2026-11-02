@@ -1,0 +1,20 @@
+{
+  "steps": [
+    {
+      "label": "nothing has been loaded yet",
+      "expect": { "noErrors": true, "domIncludes": ["idle"] }
+    },
+    {
+      "label": "the click loads the user, and the answer renders",
+      "do": { "click": "#go" },
+      "expect": {
+        "noErrors": true,
+        "state": { "state": { "_tag": "Loaded", "_0": "Ada" } },
+        "domIncludes": ["got Ada"]
+      }
+    }
+  ],
+  "effects": {
+    "loadUser": [{ "outcome": "ok", "value": "Ada" }]
+  }
+}

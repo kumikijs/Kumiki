@@ -2,6 +2,7 @@ import type { KumikiError } from "@kumikijs/compiler";
 import { formatDiagnostic } from "./diagnostic.ts";
 import { applyFixPlan, type FixApplyResult, planFix } from "./fix/compile.ts";
 import { type FixFromTestOutcome, runFixFromTest } from "./fix/from-test.ts";
+import { failureLines } from "./smoke.ts";
 
 export {
   applyFixPlan,
@@ -119,12 +120,6 @@ export async function fixFromTest(
   return outcome;
 }
 
-function printTestLeaf(t: { expected?: unknown; actual?: unknown; diffAt?: unknown }): void {
-  if (t.expected !== undefined) console.log(`  expected: ${t.expected}`);
-  if (t.actual !== undefined) console.log(`  actual:   ${t.actual}`);
-  if (t.diffAt !== undefined) console.log(`  diff at:  ${t.diffAt}`);
-}
-
 function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path: string): void {
   if (
     outcome.status !== "compile-blocked" &&
@@ -158,7 +153,7 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path: s
       }
       if (outcome.failingTest) {
         console.log(`(no auto-patch available) for failing test "${testName}":`);
-        printTestLeaf(outcome.failingTest);
+        for (const line of failureLines(outcome.failingTest)) console.log(line);
         if (outcome.reason) console.log(`  reason: ${outcome.reason}`);
         return;
       }
@@ -219,8 +214,14 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path: s
         for (const e of b.introduced) console.error(`  ${formatDiagnostic(e)}`);
       else if (b.reason === "parse-error" || b.reason === "test-runner-threw")
         console.error(`  ${b.message}`);
-      else if (b.reason === "regressed") console.log(`  would regress: ${b.regressed.join(", ")}`);
-      else if (b.reason === "still-fails") printTestLeaf(b.failingTest);
+      else if (b.reason === "regressed") {
+        for (const name of b.regressed) {
+          console.log(`  would regress: ${name}`);
+          const after = b.failingTests.find((t) => t.name === name);
+          if (after) for (const line of failureLines(after)) console.log(`  ${line}`);
+        }
+      } else if (b.reason === "still-fails")
+        for (const line of failureLines(b.failingTest)) console.log(line);
       return;
     }
     case "write-failed": {

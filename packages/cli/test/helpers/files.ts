@@ -1,7 +1,7 @@
-import { copyFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { load, type Store } from "@kumikijs/cli";
+import { load, renameDef, type Store } from "@kumikijs/cli";
 import { onTestFinished } from "vitest";
 
 /** The `app` clause block of a fixture whose root tile is `App`. */
@@ -35,6 +35,12 @@ export function seedCopy(src: string, name = "input.kumiki"): string {
   const file = join(tempDir(), name);
   copyFileSync(src, file);
   return file;
+}
+
+/** Rename `qname` to `to` in `file`; return the file's text afterwards. */
+export function renamed(file: string, qname: string, to: string): string {
+  renameDef(file, qname, to);
+  return readFileSync(file, "utf8");
 }
 
 /** Load `source` as the store of a file holding it. */

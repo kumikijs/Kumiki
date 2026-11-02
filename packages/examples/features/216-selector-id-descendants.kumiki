@@ -1,0 +1,53 @@
+# Feature (language.md): `Tile#id` on a container matches the id of the
+# descendant that dispatched the event, in either spelling of the id.
+#
+# A selector on a container is wired onto the descendants that fire the event:
+# `ui.click(Toolbar)` lands on the buttons inside `Toolbar`, not on the `row`,
+# which fires no click. `#id` then filters on the element that dispatched, so
+# `Toolbar#save` picks the Save button out of the toolbar, and
+# `Toolbar#discard` the button `DiscardBtn` renders inside it. The row's own
+# `{id: "toolbar"}` is never what a click dispatches.
+#
+# `id="…"` and `{id: "…"}` are one prop: `Clear#clear` matches
+# `button(text="Clear", id="clear")`.
+#
+# Which descendants a selector reaches depends on the event. In `Search`, a
+# `ui.input` subscription is wired onto the input alone, so `Search#query` is
+# the input's id; the Go button's id is matched by a `ui.click` one.
+#
+# `kumiki check --strict-selector-id` reads the same set: it reports a selector
+# whose `#id` no element it is wired onto carries (E0212). Here that would be
+# `ui.click(Toolbar#toolbar)`, `ui.click(Clear#clr)` or `ui.input(Search#go)`.
+
+slot log   : Text = ""
+slot query : Text = ""
+
+reducer saved     on=ui.click(Toolbar#save)    do= log := log + "save;"
+reducer discarded on=ui.click(Toolbar#discard) do= log := log + "discard;"
+reducer cleared   on=ui.click(Clear#clear)     do= log := log + "clear;"
+reducer searched  on=ui.input(Search#query)    do= log := log + "search;"
+reducer went      on=ui.click(Search#go)       do= log := log + "go;"
+
+tile DiscardBtn = button(text="Discard") {id: "discard"}
+
+tile Toolbar = row(button(text="Save", id="save"), DiscardBtn) {id: "toolbar"}
+
+tile Clear = button(text="Clear", id="clear")
+
+tile Search = row(
+    input(bind=query, placeholder="search", id="query"),
+    button(text="Go", id="go"))
+  {id: "search"}
+
+tile App = column(
+    heading("Tile#id on a container"),
+    Toolbar,
+    Clear,
+    Search,
+    text("log=" + log))
+  {pad: "lg", gap: "md"}
+
+app SelectorIdDescendants
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

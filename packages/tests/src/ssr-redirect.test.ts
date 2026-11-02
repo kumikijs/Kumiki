@@ -1,16 +1,10 @@
 import { app, feature } from "@kumikijs/examples";
 import { renderToString, routing } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { textAt } from "./helpers/dom.ts";
+import { textAt, textOf } from "./helpers/dom.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("154-ssr-redirect");
-
-function textOf(html: string): string {
-  const el = document.createElement("div");
-  el.innerHTML = html;
-  return el.textContent ?? "";
-}
 
 describe("renderToString resolves static redirects", () => {
   it.each([
@@ -66,22 +60,56 @@ app R
     expect(textOf(out.html)).toContain("Home");
     expect(out.snapshot.route).toBe("/");
   });
-});
 
-describe("renderToString reads the requested path as the client does", () => {
-  it.each([["//foo"], ["/a/../b"]])("%s is matched as written", async (path) => {
+  it.each([
+    ["/旧", "home", "/"],
+    ["/%E6%97%A7", "home", "/"],
+    ["/ja/概要", "ja", "/ja/%E6%A6%82%E8%A6%81"],
+    ["/ja/%E6%A6%82%E8%A6%81", "ja", "/ja/%E6%A6%82%E8%A6%81"],
+  ])("serves a non-ASCII pattern asked as %s when no routing module is passed", async (route, heading, served) => {
     const app = await loadSource(`
 tile Home     = page(heading("home"))
-tile B        = page(heading("b"))
+tile Ja       = page(heading("ja"))
 tile NotFound = page(heading("404"))
 app R
     caps   = []
-    routes = {"/" -> Home, "/b" -> B, "/404" -> NotFound}
+    routes = {"/旧" ->> "/", "/" -> Home, "/ja/概要" -> Ja, "/404" -> NotFound}
+    init   = []
+`);
+    const out = await renderToString(app, { route });
+    expect(textOf(out.html)).toBe(heading);
+    expect(out.snapshot.route).toBe(served);
+  });
+});
+
+describe("renderToString reads the requested path as the client does", () => {
+  it.each([
+    ["//foo", "404 //foo"],
+    ["/a/../b", "b at /b"],
+    ["/ja/概要", "ja at /ja/%E6%A6%82%E8%A6%81"],
+    ["/ja/%E6%A6%82%E8%A6%81", "ja at /ja/%E6%A6%82%E8%A6%81"],
+    ["/docs/old", "docs at /docs/moved"],
+  ])("%s lands where a browser's location does", async (path, served) => {
+    const app = await loadSource(`
+tile Home     = page(heading("home"))
+tile B        = page(heading("b at " + route.path))
+tile Ja       = page(heading("ja at " + route.path))
+tile Docs     = page(heading("docs at " + route.path))
+tile NotFound = page(heading("404 " + route.path))
+app R
+    caps   = []
+    routes = {
+        "/"           -> Home,
+        "/b"          -> B,
+        "/ja/概要"    -> Ja,
+        "/docs/old"   ->> "moved",
+        "/docs/:page" -> Docs,
+        "/404"        -> NotFound
+    }
     init   = []
 `);
     const out = await renderToString(app, { route: path, routing });
-    const served = textOf(out.html);
-    expect(served).toBe(textAt(app, path));
-    expect(served).toBe("404");
+    expect(textOf(out.html)).toBe(served);
+    expect(textAt(app, path)).toBe(served);
   });
 });
