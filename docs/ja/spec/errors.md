@@ -46,7 +46,7 @@ type KumikiError = {
 |---|---|---|
 | `E0001` | あり | app 自身の `routes` に `"/404" -> NotFound` を追加する（tile の `sub-routes` には追加しない）。`NotFound` tile は、プログラムがまだ定義していなければ挿入する。app に `routes` 節がないとき、および `/404` がリダイレクトのときはパッチを出さない：E0001 はリダイレクトを数えず、`/404` をもう 1 つ書けば `E0008` になる。 |
 | `E0102` | あり | 既知の reducer 名に対する近傍名の提案（Levenshtein ≤ 2 または ≤ 25%）。 |
-| `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。 |
+| `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。reducer が、その reducer の `if` の枝・`for` の本体・match arm で宣言された名前をその本体の後で読んでいる場合（診断の `endedScope` が設定されている）はパッチを出さない：読み出しは綴りの誤りではなくスコープ外であり、名前を置き換えた読み出しは型検査を通って別の値を読むことがある。宣言と読み出しのどちらを動かすかはユーザの意図である。 |
 | `E0104` | あり | 宣言済みの `effect` 名と、プログラムが宣言しない[標準 effect](./stdlib.md#_2-6-標準-effect) に対する近傍名の提案（スコープ限定 — 名前の近い tile や slot は候補にならない）。 |
 | `E0105` | あり | 既知の tile 名に対する近傍名の提案。 |
 | `E0106` | あり | `on=timer(d, name=N)` から収集したタイマー名に対する近傍名の提案（スコープ限定 — トップレベル定義は候補にならない）。 |
@@ -245,6 +245,18 @@ reducer 名がどの `reducer` 定義も指していない。名指す箇所は 
 
 `let` は書かれたスコープに宣言され（[言語 §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)）、`if` の各枝・`for` の本体・match の各 arm はそれぞれ独立したスコープである。したがって `if` の一方の枝で宣言した名前は、もう一方の枝でも `if` の後のどの文でも未定義であり、`for` の本体や match arm で宣言した名前もその後では未定義である。条件で値を選ぶなら、`if` の前で `if` 式を使って一度だけ宣言する — `let n = if c then "a" else "b"` — か、読み出しを枝の中へ移す。
 
+同じ reducer の中でそれより前に、そうした本体の中で名前が宣言されていた場合 — 本体の中の `let`、`for` の束縛、match arm のパターン — 診断の `endedScope` フィールドがその本体の種類を `if`・`for`・`match` で示し、メッセージはその種類に合った直し方を示す。複数の本体がその名前を宣言していた場合、メッセージは最後に終わった本体を名指す。入れ子の本体なら、読み出しより前に終わったもののうち最も外側の本体である。名前はループの外へ値を持ち出せないので、`for` の後の読み出しはその本体の中へ移すか、本体の中で値を slot に書き込む：
+
+> `Reference to undefined name "idx" — it was declared in a "for" loop, and a name carries no value out of a loop: move the read into the loop's body, or write the value to a slot there (see docs/spec/language.md)`
+
+`if` や match の後では、その前で `if` 式または match 式を使って名前を一度だけ宣言するか、読み出しをその枝・arm の中へ移す。前に `let n = 0` と書いても直らない：本体の中の `n` はそれを隠すだけである。
+
+> `Reference to undefined name "n" — it was declared in an "if" branch, which ended before this read: declare it once before the "if" with an "if" expression (let n = if c then … else …), or move the read into that branch (see docs/spec/language.md)`
+
+同じ `if` のもう一方の枝や、同じ match の後続の arm での読み出しは、すでに枝・arm の中にあるので、メッセージは名前を宣言している側を指す：`if` なら `it was declared in the other branch of this "if"` … `the branch that declares it`、match なら `another arm of this match` … `the arm that declares it` となる。
+
+スコープ内に近い名前がいくらあっても本体は名指される：読み出しは綴りの誤りではなくスコープ外なので、`kumiki fix` は名前の置き換えを提案しない。`for idx in xs` の後の `idx` の読み出しを slot `id` に置き換えると、型検査を通ってその slot を読んでしまう。
+
 **修正**：参照先の slot / 束縛が宣言済みか確認する。
 
 ### E0104 `undef-effect` / `init-not-effect-call`
@@ -421,7 +433,9 @@ builtin tile の名前も候補に含まれない。tile は関数ではなく�
 
 解決できない名前は**不透明型**であり、不透明型はあらゆる値を受理する — したがってこの検査が無い状態では `slot v : NoSuchType = 1` が通り、以降 `v` を使うすべての箇所でも値検査が効かなかった。綴り間違い 1 つが、その下流全体の型検査を無効化していた。
 
-型パラメータはそれを宣言した定義の body の中だけでスコープに入る：`type Box(T) = {v: T}` は正しく、`type Box(T) = {v: U}` は誤り。他の宣言箇所（`slot` / `fn` / `effect` / `tile in=`）は型パラメータを持たないので、そこでの未解決名は常にエラーである。
+誤りは名前 1 つなので、それについての報告も E0117 の 1 つである：それ以降その名前は不透明型であり、それに対して書かれた値も、その値の使用も、存在しない型に対する [E0201](#e0201-type-mismatch) にはならない。名前の**適用**も同じく不透明である — `slot y : Foo(Int) = 1` は E0117 だけで、`1` に E0201 は付かない — `Lst(Int)` のような綴り間違いのコンストラクタの適用も同様であり、適用がどこに書かれていても変わらない：レコードのフィールド、`List(…)`、エイリアス、`nominal`、`where`。標準ライブラリのコンストラクタの適用（`List(Int)` / `Option(Text)`）とプログラム自身のジェネリクスの適用（`type G(T) = …` に対する `G(Int)`）は型であり、値は通常どおりその引数に対して検査される。
+
+型パラメータはそれを宣言した定義の body の中だけでスコープに入る：`type Box(T) = {v: T}` は正しく、`type Box(T) = {v: U}` は誤り。引数付きで書かれた型パラメータ（`T(Int)`）もスコープには入っており、これではなく [E0210](#e0210-type-arity-mismatch) になる。他の宣言箇所（`slot` / `fn` / `effect` / `tile in=`）は型パラメータを持たないので、そこでの未解決名は常にエラーである。
 
 **呼び出しの qualifier** も型名である。`T.fresh()` / `T.parse(t)` / `T.show(v)` は大文字で始まる任意の `T` に対して lowering される——codegen が正規表現で形だけを見ている——ため、どの型も指さない qualifier はここで拒否しなければそのまま lowering される。`parse` は qualifier が解決される基底型によってテキストを読み（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）、どの型にも解決されない名前には読むための基底型がない。`parse` が qualifier の名前で分岐していた頃は、綴り間違いは失敗ではなく分岐の変更になっていた：`Itn.parse("12")` は `Some("12")` を返し、それを `Int` slot が保持して以降の加算はすべて文字列連結になっていた。`fresh` と `show` は qualifier を捨てるので、そこでの綴り間違いは同じ値を返す——それでも名前を報告するのは、どの型も指さない qualifier がそれ自体として誤りだからであり、この 2 つについては検査が lowering より意図的に厳しい。qualifier は他の型名と同じ名前空間（プリミティブを含む）に対して解決され、qualifier として綴られている必要がある：ハイフンを含む名前は qualifier ではなく、それで書かれた呼び出しはこれではなく [E0116](#e0116-undef-call-undef-variant-undef-qualifier) になる。型**コンストラクタ**に解決される qualifier — `List` や `type Box(T)` — は型を指しているが型そのものではなく、[E0124](#e0124-type-constructor-qualifier) になる。
 
@@ -757,12 +771,15 @@ reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
 ユーザ宣言のジェネリック型の型レベル適用 `T(...)` が、宣言側パラメータと異なる数の型引数を受けている。この検査が無いと、後段の型パラメータ置換が短い写像しか作らずペイロードに未解決 `TypeRef` を残し、パターン検査は no-op に劣化する — まさにこの帯（と静的検査全般）が捕まえたい「静かな失敗」形。
 
 > `Type "<name>" expects <m> type argument(s) but got <n>`
+> `Type parameter "<param>" of "<type>" takes no type arguments, but is written "<application>"`
+
+型パラメータは型引数を 1 つも取らない。型パラメータが指すのは型 — そのジェネリックが適用された型 — であって型コンストラクタではないので、`type H(T) = …` の中では裸で書く：`T(Int)`・`T(Int, Text)`・`T()` はいずれも、body のどこに書かれていても — レコードのフィールド、`List(…)`、バリアントのペイロード、`nominal`、`where` — その適用の位置でここに報告される。型パラメータは同名のトップレベル型を覆い隠す（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 5）ので、`type H(List) = …` の body の `List(Int)` もこれになる。報告はこの 1 つである：それ以降その適用は、[E0117](#e0117-undef-type) のもとでの未定義名の適用と同じく不透明であり、`H(Text)` に対して書かれた値がそれについて [E0201](#e0201-type-mismatch) になることはない。
 
 `Tuple` は任意個の型引数を取るが、少なくとも 1 つは要る：裸の `Tuple` はどの型も表さない。
 
 > `Type "Tuple" expects type arguments but got none`
 
-**修正**：呼び出し側で宣言の型引数数に合わせるか、宣言側パラメータリストを変える。
+**修正**：呼び出し側で宣言の型引数数に合わせるか、宣言側パラメータリストを変える。型パラメータは裸（`T`）で書くか、それのコンテナを意図していたならジェネリックをそれに適用する（`List(T)`）。
 
 ### E0211 `undef-tile-in-selector`
 
@@ -1107,6 +1124,26 @@ reducer editTodo on=ui.input(TodoText) do= todos[$el.todoId].text := $event.valu
 
 **修正**：所属を尋ねる — `tags.has(x)` は `Bool` である。`check` でそれを表示するなら `value=tags.has(x)` を与え、そのクリックで動く reducer が `tags := tags.toggle(x)` を書く（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。キーの下に値を保持したいなら、代わりに `Map(K, V)` を宣言する。`error(field=…)` では、Set の失敗を出すために Set の slot そのものを指す：`error(field=tags)`。
 
+### E0233 `policy-key-type`
+
+`policy=latest-per-key(<key>)` の key が、key が値を `==` のとおりに区別しない型を持つ（[言語 §1.5.2](./language.md#_1-5-2-意味)）。
+
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Float, and NaN is one key though NaN == NaN is false (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it holds a Float, and inside it NaN, Infinity and -Infinity are one key (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it holds a File, and two Files with the same name, size and type are one key, while == holds only of a File and itself (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Set, whose == depends on how it was built (see docs/spec/language.md)`
+
+dispatcher は各リクエストをその key で実行し、同じ key で別のリクエストが始まると実行中のリクエストを中断する（[HTTP §6.4](./http.md#_6-4-cancellation)）。key は Map の key が格納されるのと同じ書き方で書かれ（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）、その書き方では 2 つの型を除いて、2 つの key が 1 つの key になるのはそれらが `==` であるときに限られる — ただし宣言された型が何であれ、有限でない数は例外である。`==` が異なるとする 2 つの値を 1 つの key にする key は、プログラムからは見えない理由でリクエストを中断する：
+
+- `Float`：`NaN` は 1 つの key だが `NaN == NaN` は `false` である。また、レコード・タプル・`List`・`Map` の値・バリアントの中では `NaN`、`Infinity`、`-Infinity` がすべて 1 つの key になる
+- `File`：名前・サイズ・型が同じ 2 つの File は 1 つの key になるが、`==` は File とそれ自身の間でしか成り立たない
+
+`Set` の key はその `==` であり、その `==` 自体が Set の作られ方に依存する（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）。したがって Set の key はプログラムが頼れない規則でリクエストを中断するので、これも報告する。
+
+メッセージは、key の型がそのいずれかであれば `it is`、エイリアス・ジェネリクス・`nominal` を通して、レコードのフィールド・バリアントのペイロード・コンテナの要素・`Map` の値にそのいずれかを持つ場合は `it holds` と言う：`$1` で key にした `type Spot = {lat: Float, lng: Float}` は報告され、`List(Set(Text))` も、`type Box(A) = {v: A}` に対する `Box(Box(Float))` も報告される。`Map` 自身の key も同じ書き方で格納されるので、2 つの Map の `==` はその key と一致し、`Map(Float, Text)` は報告しない。型を検査器が決められない key は報告せず、`Int` も報告しない。ただし `Int` も有限でない数（`n % 0`、あふれた `pow`、有限でない Float の `.round`）を持つことがあり、そのときは Float と同じく key になる。
+
+**修正**：別の型の値を key にする — リクエストを識別する入力のフィールド（`latest-per-key($1.id)`）、Float の `.show`、File の `{name: $1.name, size: $1.size}`、あるいはそのようなフィールドのレコード（`latest-per-key({user: $1.user, page: $1.page})`）。
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。
@@ -1190,6 +1227,20 @@ bind していないコントロールが選択状態を読む引数 — `check`
 拒否されるのは宣言だけである。予約された名前を書くことは、プログラムが標準ライブラリの型を使う方法そのものである — 注釈、tile の `in=`、レコードのフィールド、別名（`type Crash = PanicInfo`）、それに対する refinement（`type Short = Duration where between(0, 1000)`）。同じ綴りの型引数はその定義にスコープされる（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 5）。同じ綴りのバリアントタグ・slot・`fn`・tile は別のネームスペースにあり、名前がこれらで始まる、あるいは終わるだけの型（`PanicInfoView`・`AppRoute`）はそれ自身の名前である。
 
 **修正**：プログラムの型を改名する — `type AppPanic = {…}` — とともに、その型を意図していた使用箇所もすべて改める。
+
+### E0234 `reserved-effect-name`
+
+[標準 effect](./stdlib.md#_2-6-標準-effect) — `navigate`・`navigate-replace`・`navigate-back`・`scroll-to`・`toast`・`confirm`・`log` — の名前で `effect` を宣言している。宣言の位置で、宣言ごとに 1 件報告する。
+
+> `Effect "<name>" collides with the built-in effect <name>; emits of it never run this effect`
+
+ランタイムはアプリのマウント時に各標準 effect をそれ自身の名前で登録し、プログラムの宣言からコンパイルされたレコードを上書きする — ケイパビリティもリクエストも `policy` もまとめて。宣言された `effect log cap=http.get …` はリクエストを一度も送らない：`emit log("x")` が実行するのは組み込みの `log` であり、それは `log.write` を必要とし、コンソールに書き出す。宣言した `policy` もレコードごと失われる：emit が返す `EffectId` は組み込みの既定 policy で発行されるので、プログラムが宣言した `latest-per-key` による cancel は起きない。
+
+名前の使用はすべて、引き続き宣言に対して検査される — `emit` の引数はその `in=` に、`.ok` の bind はその `out=` に、ケイパビリティはその `cap=` に。それらはプログラムがその宣言のために書いた使用だからである。したがって使用がすべて宣言のために書かれたプログラムでは、報告はこの 1 件である。組み込みのために書かれた使用も宣言に対して検査され、この報告と並んで報告される（組み込みのレコードを渡す `emit` の `E0202`）。
+
+拒否されるのは `effect` 宣言だけである。標準 effect を emit するのに宣言は要らない。同じ綴りの reducer・slot・`fn` は別のネームスペースにあり、名前がこれらで始まる、あるいは終わるだけの effect（`logger`・`toasts`・`navigate2`）はそれ自身の名前である。
+
+**修正**：effect を、それを意図していたすべての `emit`・`app.init` のエントリ・`on=<name>.ok` / `.err` の reducer とともに改名する — `kumiki rename <file> effect.log logRequest` がそれらをすべて書き換える。組み込みを意図していた箇所では、標準 effect をそれ自身の名前で emit する。`kumiki rename` はどの effect のために書かれたかを問わずすべての使用を書き換えるので、組み込みのために書かれた `emit` は新しい名前のもとでも `E0202` が残り、改名は拒否される。そのようなプログラムは手で改名し、その `emit` はそのまま残す。標準 effect を書き写しただけの宣言（`effect navigate cap=nav.push in={path: Text, …}`）は改名せずに削除する。標準 effect に宣言は要らないからである。削除はその行を直接消して行う：`kumiki remove` は emit を宣言への参照と数えて拒否する。
 
 ## E03xx — ケイパビリティと純粋性
 
@@ -1551,7 +1602,7 @@ test inf-has-no-value =
 
 `one-of` は厳密な所属判定に lower されるので、各リテラルは基底型の値でなければならない：`Text where one-of(1, 2)` はどのテキストとも一致しない候補を並べており、`Bool`・レコード・union にはそもそもリテラルがない。正しいリテラルの中に 1 つだけ誤ったものが混じっている場合も報告される — その候補は決して選ばれない。
 
-基底型は refinement が書かれている連鎖 — 別名・`nominal`・先行する `where` — をたどって読む。したがって `type Handle = nominal Text` に `where positive` を付けると報告され、`nominal Int` に `where between(0, 9)` を付けても報告されない。レコード・union・コンテナはどちらの系統が検査する基底型でもなく、`EffectId` のような不透明な型も同様である：実行時に何で表されていようと、プログラムはその述語が問う対象となる値をその型として持たない。
+基底型は refinement が書かれている連鎖 — 別名・`nominal`・先行する `where` — をたどって読む。したがって `type Handle = nominal Text` に `where positive` を付けると報告され、`nominal Int` に `where between(0, 9)` を付けても報告されない。レコード・union・コンテナはどちらの系統が検査する基底型でもなく、`EffectId` のような抽象的なハンドル型も同様である：実行時に何で表されていようと、プログラムはその述語が問う対象となる値をその型として持たない。
 
 型パラメータはそれ自体では基底型について何も言わないので、定義 `type NonEmpty(T) = T where nonempty` は報告されない。報告されるのはその**適用**である：引数を本体へ代入し — 入れ子の適用・レコードのフィールド・union のペイロードを通して — それによって検査できない基底型の上に置かれた refinement を適用箇所で報告する。`slot n : NonEmpty(Int)` や `type N = NonEmpty(Int)` の `NonEmpty(Int)`、`type W(T) = nominal T where positive` に対する `W(Text)` がそれである。引数によらず定義そのものが持つ問題は、定義で 1 度だけ報告される。引数がもたらす問題は、本体のいくつの経路がその refinement に到達しても、refinement とそれが置かれた基底型の組ごとに適用箇所で 1 度だけ報告される：`type D0(T) = T where nonempty` の上の `type D1(T) = D0(D0(D0(T)))` では、`D1(Int)` の E0804 は 3 つではなく 1 つであり、`type P(T) = {a: T where nonempty, b: T where nonempty}` では、`P(Int)` の E0804 は refinement ごとに 1 つずつ、2 つである。
 

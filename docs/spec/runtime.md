@@ -383,7 +383,8 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
      per loop in the source;
    - the **occurrence**: how many elements up to and including this one have
      the same shown value (1 for the first `7`, 2 for the second);
-   - the **shown value**, `_s.show(<loopVar>)`.
+   - the **shown value**, `_s.show(<loopVar>)` with each record, Map and Set
+     in it written as nothing, at any depth (below).
 
    *Informative:* the implementation names a loop by the tile definition it is
    written in and its ordinal among that definition's loops in source order
@@ -413,14 +414,19 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
    - An insert or remove before a repeated value renumbers its later
      occurrences, so the elements of equal values may trade places, and the
      moves that makes can take a neighbouring row with them.
-   - Where `show` is not injective for the element type, the implicit key
-     **degenerates to position**. Every record shows alike
-     (`[object Object]`), and a variant shows only its tag, so `Done(1)` and
-     `Done(2)` share one shown value. The occurrence is then the element's
-     position, and a reorder, insert or remove patches rows in place instead
-     of moving them: the guarantees above (minimum moves, `<input>` focus and
-     caret, an open `<select>`, IME composition) do not hold for such a list.
-     A reorderable list of records wants an explicit key, `{key: t.id}`.
+   - Elements that share a shown value are told apart by their occurrence
+     alone, so where every element shows alike the implicit key
+     **degenerates to position**. A record, a Map and a Set add nothing to
+     the shown value, at any depth, so every record shows alike; a variant
+     shows only its tag, so `Done(1)` and `Done(2)` show alike too. Editing a
+     record in place therefore keeps its row's key, and the row's DOM
+     elements with it, whether the record is the element or sits inside one,
+     as in an `.entries` pair, whose key still tells its row from the others.
+     Where the key is the position, a reorder, insert or remove patches rows
+     in place instead of moving them: the guarantees above (minimum moves,
+     `<input>` focus and caret, an open `<select>`, IME composition) do not
+     hold for such a list. A reorderable list of records wants an explicit
+     key, `{key: t.id}`.
 
    Explicit keys always win. Nested `for` loops overwrite the enclosing
    implicit key with the inner loop's, so a tile call under `for i in inner` is
@@ -857,7 +863,12 @@ A `panic` step additionally carries:
 
 Reserved `trigger.kind` values: `ui.click`, `ui.submit`, `ui.change`, `ui.input`, `lifecycle`, `route.enter`, `timer`, `effect.ok`, `effect.err`, `init`, and **`ssr.hydrate`** (the SSR bootstrap, see [§10.6.2](#_10-6-2-hydration)). `ssr.hydrate` is asymmetric: the server constructs it during `renderToString`, ships it to the client as JSON, and the client logger ingests it directly — the client MUST NOT open an `ssr.hydrate` episode itself via the usual `beginTrigger` path.
 
-**Deferred-policy effect attribution.** Effects emitted under `policy=debounce(d)` complete their `setTimeout` AFTER the triggering reducer's episode has nominally ended. The dispatcher therefore claims the `effect-start` step (and its episode-token) at *dispatch* time, not at the eventual `launch`, so the deferred `effect-end` and its `.ok` / `.err` reducer chain stay on the originating episode — the causal chain stays whole. A `debounce` timer that is replaced before it fires records an `effect-cancel` step (with `targetId = <effect-name>`) on its originating episode, which then commits as `status="completed"` with no `effect-end`. `policy=throttle(d)` launches synchronously on the leading edge (so the standard sync path attaches `effect-start`); subsequent dispatches within the window are silently suppressed — the originating reducer's `emits` list shows the suppressed effect name, but no `effect-start` follows.
+**Deferred-policy effect attribution.** Effects emitted under `policy=debounce(d)` or `policy=queue` launch AFTER the triggering reducer's episode has nominally ended: a `debounce` launch when its `setTimeout` fires, a `queue` launch when the entries ahead of it have settled. The dispatcher therefore claims the `effect-start` step (and its episode-token) at *dispatch* time, not at the eventual `launch`, so the deferred `effect-end` and its `.ok` / `.err` reducer chain stay on the originating episode — the causal chain stays whole. A claimed launch that is dropped before it runs records an `effect-cancel` step on that episode in place of an `effect-end`; **Cancel attribution** below says when. `policy=throttle(d)` launches synchronously on the leading edge (so the standard sync path attaches `effect-start`); subsequent dispatches within the window are silently suppressed — the originating reducer's `emits` list shows the suppressed effect name, but no `effect-start` follows.
+
+**Cancel attribution.** An `effect-cancel` step records that something was released, and is written in two places:
+
+- An `http.cancel` emit ([http.md §6.4](./http.md#_6-4-cancellation)) that released what its id names records `{"kind": "effect-cancel", "targetId": <EffectId>}` on the episode that emitted it. Released is one of three things: a request in flight was aborted, a `queue` entry still waiting was removed, or a `debounce` timer still pending was cleared. A request is in flight from its launch until its result arrives, the waits between `retry` attempts included; the reducers its result runs come after that, so a cancel they emit for its id finds that request over. `targetId` is the id the cancel named, also when that id reached a request through absorption: a cancel of an emit its policy dropped aborts the request that absorbed it, and the step names the dropped emit's id, while the aborted request's own id appears nowhere in it. A cancel that released nothing records **no** step: an id no request runs under; the id of a request that already completed; `EffectId.none`; the id of an emit its policy dropped, after the request that absorbed it has settled; and the id of a completed `throttle` request whose window is still open — the window marker is not a pending launch, and cancel leaves it. The reducer step's `emits` shows that the cancel effect was emitted, by name; the id it named is not recorded there, so after a cancel that released nothing the log does not say which id it named, and a wrong id, a cancel that came too late and an id that was never captured read alike. The `effect-cancel` step is the record that the cancel took effect, so a log whose cancel released nothing does not claim it did. The aborted request's `.err` (`message: "aborted"`) lands on the episode that started it.
+- A launch that was claimed and then dropped before it ran records `{"kind": "effect-cancel", "targetId": <effect-name>}` on the episode that claimed its `effect-start`, which settles that episode: a `debounce` timer replaced by a newer emit or cleared by a cancel, a `queue` entry a cancel removed, a launch still pending at unmount, and a deferred launch the capability check refused ([§10.4.2](#_10-4-2-capability-check)). A cancel that clears a timer or removes a queue entry therefore writes both steps: one on the episode that claimed the launch and one on the episode that emitted the cancel (the same episode when one reducer did both).
 
 #### 10.5.1.1 Bootstrap episode (SSR hydration)
 
