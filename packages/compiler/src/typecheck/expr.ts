@@ -19,7 +19,7 @@ import {
   checkRecordUpdate,
   getOrResultType,
 } from "./against.ts";
-import { arithmeticHint, checkCallee, reportRunReducerPosition } from "./callee.ts";
+import { arithmeticHint, checkCallee, endedScopeHint, reportRunReducerPosition } from "./callee.ts";
 import {
   bindLocal,
   type Ctx,
@@ -261,6 +261,17 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             ? `"$2" is not bound here — the .${method} fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
             : `"$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
           pos: e.pos,
+        });
+        return;
+      }
+      const ended = ctx.endedScopes?.get(e.name);
+      if (ended !== undefined) {
+        errors.push({
+          code: "E0103",
+          kind: "undef-ref",
+          message: `Reference to undefined name "${e.name}"${endedScopeHint(e.name, ended)}`,
+          pos: e.pos,
+          endedScope: ended.kind,
         });
         return;
       }
