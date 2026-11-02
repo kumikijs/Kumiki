@@ -286,6 +286,21 @@ describe("an episode whose entry reducer is not in the program", () => {
     expect(report.entryReducersMissing).toEqual([{ episodeId: "ep_1", reducer: "inc", message }]);
   });
 
+  it("names every reducer tied at the closest distance, as a `{dispatch}` step does", () => {
+    const app = replayableApp({
+      slots: { count: { value: 0 } },
+      reducers: ["incb", "inca"].map((name) => ({
+        name,
+        event: { kind: "ui", ev: "click" },
+        apply: () => ({ slots: {}, emits: [] }),
+      })),
+    });
+    const message = 'no reducer named "inc" — did you mean "inca" or "incb"?';
+    expect(replayInto(app, [incEpisode(1)]).entryReducersMissing).toEqual([
+      { episodeId: "ep_1", reducer: "inc", message },
+    ]);
+  });
+
   it("reports a renamed `.ok` entry reducer of a bootstrap as not replayed, not as missing its result", () => {
     const bootstrap: EpisodeLogEntry = {
       id: "ep_boot",
