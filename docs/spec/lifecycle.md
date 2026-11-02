@@ -166,7 +166,7 @@ reducer onPanic
         emit toast({kind: "error", text: "Something went wrong"})
 ```
 
-The `PanicInfo` type:
+The `PanicInfo` type, which the [standard library provides](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library) — a program names it and does not declare it ([E0231](./errors.md#e0231-reserved-type-name)):
 
 ```kumiki fragment
 type PanicInfo = {
@@ -184,7 +184,7 @@ type PanicInfo = {
 
 `cause` is the **nearest** `Error.cause` message when the throw carried one, and `None` otherwise. A cause whose message is empty is `None` too: through `.get-or`, a `Some("")` would put a blank where a reason should be, which reads as a reason that is blank rather than as no reason. The chain behind it, and the stack with it, stay in the episode log — `episode-id` is how to reach them.
 
-Every field is supplied on every path a panic reaches a program: an `app.error` reducer, a `route.error` reducer, and an `error-boundary` fallback are handed the same record, built once — `route.error` carries on top of it the `pattern` the reducer names ([Routing §3.4](./routing.md#_3-4-route-lifecycle)), and nothing else differs. `episode-id` is `None` wherever there is no open episode to name, which on the boundary path includes a render that no dispatch is inside, and on the server includes every render: `renderToString` commits its bootstrap episode before it renders. The `location` example in older revisions of this spec used a `"reducer:foo:line:42"` shape; the runtime emits `reducer "foo"` / `render`.
+Every field is supplied on every path a panic reaches a program: an `app.error` reducer, a `route.error` reducer, and an `error-boundary` fallback are handed the same record, built once — `route.error` carries on top of it the `pattern` the reducer names ([Routing §3.4](./routing.md#_3-4-route-lifecycle)), and nothing else differs. The episode `episode-id` names is the one the panic was recorded on, on all three paths, so following the id leads to the `panic` step for it. That includes a panic a boundary caught: it is handled, so it reaches neither the console the verification tiers watch nor `app.error`, but it is still recorded, as a `tile-render` step whose `location` is the one its fallback is handed ([§7.3](#_7-3-error-boundaries-per-tile), [runtime.md §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)). A step is recorded on every render that catches, and nothing is deduplicated: a dispatch whose render runs more than once — over several mounted views, say — records one for each. `episode-id` is `None` wherever there is no open episode to name, and nothing is recorded there either. On the boundary path that includes a render no dispatch is inside, such as the one `mount` ends with — except where that render ends hydration: a fallback it rebuilds names the bootstrap episode, as the served one does, and records nothing ([runtime.md §10.6.2](./runtime.md#_10-6-2-hydration)). On the server the render runs inside the bootstrap episode ([runtime.md §10.5.1.1](./runtime.md#_10-5-1-1-bootstrap-episode-ssr-hydration)), so a fallback served by `renderToString` names it. The `location` example in older revisions of this spec used a `"reducer:foo:line:42"` shape; the runtime emits `reducer "foo"` / `render`.
 
 The dev-tooling fields `stack` (JS `Error.stack`) and the machine-readable `Error.cause` chain are captured in the episode log (`docs/spec/runtime.md` [§10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)) but are deliberately **not** exposed on the user-facing `$event` — leaking raw stacks to production UI would be a footgun. Use `kumiki replay` / `kumiki_episode_tail` to inspect them.
 
@@ -220,7 +220,7 @@ The boundary belongs to the **tile**, not to the place it was written: it holds 
 
 It covers everything that renders **under** the tile, and a child a `sub-routes` entry injects into the tile's `route-outlet` ([Routing §3.6](./routing.md#_3-6-nested-routes)) is under it: a boundary declared on the shell is one fallback for the whole section, children included. The **nearest** boundary wins — a child that declares its own shows its own fallback inside the outlet, and the shell stays up. Where the outlet is in a tile the shell renders, that tile's boundary does not cover the child: the child is filled into the outlet after that tile has rendered, so a panic in the child is caught as though the outlet were in the shell's own body. In the fallback's `PanicInfo`, `location` names the **route target the runtime was building** (the outlet child in particular), and the tile that declares the boundary otherwise. A tile the target renders inside its own body is not distinguished from the target.
 
-What it takes is a **panic** — the controlled signal [§7.2.2](#_7-2-2-unexpected-errors-panic) defines. The fallback receives the whole of `PanicInfo`, the same payload [§7.2.3](#_7-2-3-the-app-error-reducer)'s `app.error` reducer is given, built by the same code so the two cannot drift. Anything else that reaches a boundary is a defect in the generated code or in the runtime rather than a program error, and is re-raised for the top-level display: a fallback that absorbed one would replace a failure with a rendered page, and `smoke` / `scenario` verify through the error channel, so nothing would be left to see.
+What it takes is a **panic** — the controlled signal [§7.2.2](#_7-2-2-unexpected-errors-panic) defines. The fallback receives the whole of `PanicInfo`, the same payload [§7.2.3](#_7-2-3-the-app-error-reducer)'s `app.error` reducer is given, built by the same code so the two cannot drift. A panic the boundary caught is handled — it is not reported to the console and does not fire `app.error` — and recorded when an episode is open around the render: its `episode-id` then names the episode that holds its `panic` step. Otherwise it is `None`, except in the render that ends hydration, where it names the bootstrap episode ([§7.2.3](#_7-2-3-the-app-error-reducer)). Anything else that reaches a boundary is a defect in the generated code or in the runtime rather than a program error, and is re-raised for the top-level display: a fallback that absorbed one would replace a failure with a rendered page, and `smoke` / `scenario` verify through the error channel, so nothing would be left to see.
 
 > **Implementation status.** The live runtime implements the panic model of [Error Handling](#_7-2-error-handling): a panic during a reducer dispatch rolls back that episode's `slot` changes (no partial writes), is surfaced to the verification tiers (`smoke` / scenario), and fires the `app.error` reducer ([The app.error reducer](#_7-2-3-the-app-error-reducer)) with `PanicInfo` as `$event`. A panic during rendering is caught by the nearest enclosing `error-boundary`, which includes a route target's boundary and, for a child in a `sub-routes` parent's `route-outlet`, the parent's. A render panic with **no** boundary above it falls back to a built-in top-level panic display instead of escaping the event handler uncaught. `panic(message)` and the polymorphic `.get` (which panics on `None` / `Err`, consistent with `.get-err`) raise this same controlled signal.
 
@@ -307,6 +307,8 @@ reducer doDelete on=ui.click(_) do= ...     # Note: in practice it's cleaner to 
 reducer noop     on=ui.click(_) do= ()
 ```
 
+`confirm` is a [standard effect](./stdlib.md#_2-6-standard-effects): the `effect` line is its signature, and a program emits it without declaring it ([E0234](./errors.md#e0234-reserved-effect-name)).
+
 In the runtime implementation, this is rendered as a **modal dialog tile** (not the native `confirm`). This keeps the UI style consistent and makes testing easier.
 
 The dialog is always the runtime's own. A host provider registered for `notification.show` replaces the toast ([§7.7](#_7-7-toasts)) and is never handed a `confirm`, because the answer is delivered by dispatching `onYes` or `onNo`, which a provider's `EffectResult` cannot do ([Standard Library §2.5](./stdlib.md#_2-5-standard-capabilities)). Emitted from a `route.leave` guard, the dialog holds the move until it is answered or another navigation replaces it ([Routing §3.5.2](./routing.md#_3-5-2-leave-guard)).
@@ -324,6 +326,8 @@ reducer notifySave
     on=persist.ok(_, _)
     do= emit toast({kind: "success", text: "Saved", duration: Some(Duration.s(3))})
 ```
+
+`toast` is a standard effect as well: the `effect` line is its signature, and a program emits it without declaring it.
 
 `kind` is one of `info` / `success` / `warn` / `error`, and reaches the DOM as `data-level` — the runtime attaches no appearance to it. If `duration` is unspecified, the default per kind applies (info 3s, success 3s, warn 5s, error 0 = stays until dismissed); `Some(Duration.ms(0))` asks for the same thing explicitly.
 

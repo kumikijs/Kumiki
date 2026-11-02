@@ -392,6 +392,14 @@ ${APP_A}`);
     expect(e0209[0]?.description).not.toContain("Grn0");
   });
 
+  it("proposes no tag from a program's own union under a reserved name, which the checker never reads", () => {
+    const file = seed(`type FormValue = Txt(Text) | Num(Float)
+slot v : FormValue = Txtt("a")
+tile App = column(text("x"))
+${APP_A}`);
+    expect(descriptionsOf(file).filter((d) => d.includes('"Txtt"'))).toEqual([]);
+  });
+
   it("E0106 does not fall back to unrelated top-level names (scoped candidate set)", () => {
     const store = storeOf(`slot note  : Int = 0
 slot count : Int = 0
@@ -550,6 +558,62 @@ describe("planFixesExplained: skip-reason classification", () => {
     );
     expect(patches).toHaveLength(1);
     expect(patches[0]?.description).toContain('replace "App" with "Apps"');
+  });
+});
+
+describe("planFixesExplained: a read after the body that declared it (E0103)", () => {
+  // `idx` is one edit from the slot `id`, so a rename would type-check and read `id`.
+  const scoped = (body: string): string => `slot id    : Int = 0
+slot total : Int = 0
+slot count : Int = 0
+slot flag  : Bool = true
+reducer tally on=ui.click(Btn)
+    do= ${body}
+tile Btn = button(text="go")
+tile App = column(Btn, text(total.show))
+${APP_A}`;
+  const FOR_BODY = "for idx in [1] { () }\n        total := idx";
+  const plan = (source: string, reword: (message: string) => string = (m) => m) => {
+    const store = storeOf(source);
+    const errors = check(store.program).map((e) => ({ ...e, message: reword(e.message) }));
+    const { patches, skipped } = planFixesExplained(store, errors);
+    return {
+      messages: errors.map((e) => e.message),
+      patches: patches.map((p) => p.description),
+      skipped: skipped.map((s) => [s.code, s.reason]),
+    };
+  };
+
+  it.each([
+    ["a `for` body", FOR_BODY],
+    ["an `if` branch", "if flag then { let idx = 1 } else { () }\n        total := idx"],
+    [
+      "a match arm",
+      "match Some(1) with\n          | Some(idx) -> { () }\n          | None      -> { () }\n        total := idx",
+    ],
+  ])("proposes no rename for a name %s declared", (_form, body) => {
+    const { patches, skipped } = plan(scoped(body));
+    expect(patches).toEqual([]);
+    expect(skipped).toEqual([["E0103", "e0103-read-after-scope-ended"]]);
+  });
+
+  const withMisspelling = scoped(`${FOR_BODY}\n        count := cont`);
+  const ONE_OF_EACH = {
+    patches: ['replace "cont" with "count" at 8:18'],
+    skipped: [["E0103", "e0103-read-after-scope-ended"]],
+  };
+
+  it("still renames a misspelling beside it", () => {
+    expect(plan(withMisspelling)).toMatchObject(ONE_OF_EACH);
+  });
+
+  it("tells the two apart by the diagnostic's field, not its message", () => {
+    const reworded = plan(withMisspelling, (m) => m.replace(/ — .*/, ""));
+    expect(reworded.messages).toEqual([
+      'Reference to undefined name "idx"',
+      'Reference to undefined name "cont"',
+    ]);
+    expect(reworded).toMatchObject(ONE_OF_EACH);
   });
 });
 

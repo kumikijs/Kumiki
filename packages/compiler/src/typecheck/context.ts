@@ -19,9 +19,20 @@ export type KumikiError = {
   pos: Pos;
   severity?: "error" | "warning";
   unrendered?: "positional" | "text-prop" | "text-shadowed";
+  /**
+   * E0103 only: the kind of nested body that declared the name and ended before this read;
+   * `kumiki fix` reads it to skip the rename.
+   */
+  endedScope?: StatementScope;
   /** E0218 only: the member whose append alone makes the target a List; `kumiki fix` reads it. */
   accessor?: "keys" | "to-list";
 };
+
+/** The nested statement bodies of a reducer, each a scope of its own. */
+export type StatementScope = "if" | "for" | "match";
+
+/** The body a name ended with; `sibling` while a later branch or arm of its statement is checked. */
+export type EndedScope = { kind: StatementScope; sibling: boolean };
 
 export type SymbolTable = {
   types: Map<string, TypeDef>;
@@ -39,6 +50,10 @@ export type SymbolTable = {
   themes: Set<string>;
   iconDomain: Set<string>;
   elementIds: Set<string>;
+  /** The result of each `fn` declared without `->`, read off its body once per check. */
+  fnResults: Map<string, TypeExpr | null>;
+  /** The `fn`s that can reach themselves through the `fn`s they call: those E0006 reports. */
+  fnLoops: ReadonlySet<string>;
   /** The program's own unions, by each tag they declare: `unionsByTag`. */
   unionsByTag: ReadonlyMap<string, readonly TypeExpr[]>;
   app?: AppDef;
@@ -63,6 +78,8 @@ export type Ctx = {
   routeReadsSeen?: { name: string; pos: Pos }[];
   fragmentFnCallsSeen?: { name: string; pos: Pos }[];
   undeclaredInputReads?: Pos[];
+  /** Names a reducer's ended bodies declared and the enclosing scope does not bind. */
+  endedScopes?: Map<string, EndedScope>;
   /** The effect whose own expressions are checked, when it declares `in=Unit` and so binds no `$1`. */
   noInputEffect?: string;
   oneValueFragment?: { method: string; hides: boolean };
@@ -82,7 +99,7 @@ export function bindLocal(
 }
 
 /** A copy of `ctx` whose bindings can be extended without touching the parent. */
-export function innerScope(ctx: Ctx): Ctx {
+export function innerScope<C extends Ctx>(ctx: C): C {
   return {
     ...ctx,
     localBinds: new Set(ctx.localBinds),

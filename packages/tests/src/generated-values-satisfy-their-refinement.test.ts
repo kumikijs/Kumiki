@@ -1,5 +1,5 @@
 import { applyRefine, type GenDescData, refinementToJs } from "@kumikijs/compiler";
-import { _stdlibTest, type GenDesc } from "@kumikijs/runtime";
+import { _stdlibCore, _stdlibTest, type GenDesc } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
 const NO_POS = { line: 0, col: 0 };
@@ -219,5 +219,17 @@ describe("a shrunk value passes every refinement stacked on its type", () => {
     const { refused, settled } = shrinkPath(desc, (v) => checks.every((p) => p(v)));
     expect(refused).toEqual([]);
     expect((settled as string).length).toBe(shortest);
+  });
+});
+
+// Besides the generated values above, the runtime makes up fresh ids, and the compiler's `uuid`
+// predicate accepts them too.
+describe("a fresh id passes the check a uuid refinement applies", () => {
+  it("mints ids the uuid predicate accepts", () => {
+    const accepts = predicate("uuid");
+    for (let i = 0; i < 200; i++) {
+      const id = _stdlibCore.freshId();
+      expect(accepts(id), id).toBe(true);
+    }
   });
 });

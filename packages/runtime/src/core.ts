@@ -67,9 +67,12 @@ export {
   slotAccepts,
 } from "./core/refinement.ts";
 export {
-  currentEpisodeId,
   getRenderingApp,
   getRenderingView,
+  type RenderPanic,
+  type RenderPanicSink,
+  recordInRenderPass,
+  recordRenderPanic,
   resolveApp,
   warnUnresolvedEvent,
   withRenderingApp,
@@ -96,6 +99,8 @@ export { isPlainDataBag } from "./core/tile-equality.ts";
 export {
   type AppShape,
   type BindReader,
+  type BuiltinEffectName,
+  type BuiltinEffects,
   type BuiltinInstaller,
   type CapabilityProvider,
   type CapabilityRegistry,
