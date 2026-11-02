@@ -693,13 +693,13 @@ describe("planFixesExplained: skip-reason classification", () => {
     });
 
     it("lets a declared fn outrank a built-in call at the same distance", () => {
-      // `nox` is one edit from the declared `nov` and from the built-in `now`.
-      const store = storeOf('fn nov(x: Int) -> Int = x\ntile App = heading("hi")\n');
+      // `randm` is one edit from the declared `rando` and from the built-in `random`.
+      const store = storeOf('fn rando(x: Int) -> Int = x\ntile App = heading("hi")\n');
       const { patches, skipped } = planFixesExplained(store, [
-        synth("E0116", 'Call to undefined function "nox"'),
+        synth("E0116", 'Call to undefined function "randm"'),
       ]);
       expect(skipped).toEqual([]);
-      expect(patches.map((p) => p.description)).toEqual(['replace "nox" with "nov" at 1:1']);
+      expect(patches.map((p) => p.description)).toEqual(['replace "randm" with "rando" at 1:1']);
     });
   });
 });

@@ -48,8 +48,8 @@ same distance, as it did for types and effects — `Filtre` is two edits from a
 declared `Filter` and from the built-in `File`, and the repair writes `Filter` —
 but by rule now rather than by being listed first. The rule reaches E0116 too:
 a declared `fn` beside a built-in call one edit away from the same typo
-(`nox` → `nov` / `now`) used to go to the built-in, which was listed first, and
-goes to the `fn`.
+(`randm` → `rando` / `random`) used to go to the built-in, which was listed
+first, and goes to the `fn`.
 
 The verification tiers' unknown-reducer message reads the same ranking and
 names every tied reducer, where it named the first one declared. `kumiki replay`
