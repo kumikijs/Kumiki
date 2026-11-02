@@ -93,15 +93,17 @@ typo` is still caught rather than accepted, because the two differ by code.
 
 Every close-name suggestion above is one ranking. The candidates nearest to the
 name written by Levenshtein distance are kept when that distance is at most 2
-or at most 25% of the name's length. Where a namespace has built-in names
-beside the program's own (`E0104`, `E0116`, `E0117`), a name the program
-declares outranks a built-in one at the same distance: `Filtre` is two edits
-from a declared `Filter` and from the built-in `File`, and the patch writes
-`Filter`. A patch is written only when one candidate is left. Two or more left
-are a **tie** — `count` is one edit from both `countA` and `countB` — and
-nothing in the program says which was meant, so `kumiki fix` writes neither and
-reports the diagnostic as skipped with the reason `close-names-tied`, naming
-the tied candidates in sorted order. A message that only prints a suggestion
+or at most a quarter of the name's length, rounded up. Where a namespace has
+built-in names beside the program's own (`E0104`, `E0116`, `E0117`), a name the
+program declares outranks a built-in one at the same distance: `Filtre` is two
+edits from a declared `Filter` and from the built-in `File`, and the patch
+writes `Filter`. A patch is written only when one candidate is left. Two or
+more left are a **tie** — `count` is one edit from both `countA` and `countB` —
+and nothing in the program says which was meant, so `kumiki fix` writes neither
+and reports the diagnostic as skipped with the reason `close-names-tied`,
+naming the tied candidates in sorted order in the skip's `candidates`. When
+that is the first skip, `kumiki_auto_patch`'s `no-patch` outcome carries the
+same `reason` and `candidates`. The verification tiers' unknown-reducer message
 names every tied candidate instead: a `{dispatch}` step naming no reducer
 ([Testing §8.10](./testing.md#_8-10-the-three-layers-of-tooling-verification))
 fails with `no reducer named "add" — did you mean "addA" or "addB"?`.

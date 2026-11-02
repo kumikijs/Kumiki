@@ -2,6 +2,7 @@
 "@kumikijs/cli": patch
 "@kumikijs/runtime": patch
 "@kumikijs/compiler": patch
+"@kumikijs/mcp": patch
 ---
 
 Refuse to repair a misspelt name that two names are equally close to
@@ -40,7 +41,9 @@ E0103 Reference to undefined name "count"
 
 The skip says why: its reason is `close-names-tied`, and the new
 `SkipReason.candidates` lists the tied names in sorted order (`["countA",
-"countB"]`). A name the program declares still outranks a built-in one at the
+"countB"]`). When the tie is the first error the compile tier skips,
+`kumiki_auto_patch` (and `runFixFromTest`) answers `no-patch` with the same
+`reason` and `candidates`. A name the program declares still outranks a built-in one at the
 same distance, as it did for types and effects — `Filtre` is two edits from a
 declared `Filter` and from the built-in `File`, and the repair writes `Filter` —
 but by rule now rather than by being listed first. The rule reaches E0116 too:
