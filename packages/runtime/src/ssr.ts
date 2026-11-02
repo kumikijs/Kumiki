@@ -13,6 +13,7 @@ import {
   type RedirectEntry,
   type RoutingImpl,
   readStatus,
+  recordRenderPanic,
   reportRefusedEmit,
   reportRejectedBatch,
   reportUnhandledEffectError,
@@ -102,6 +103,13 @@ export async function renderToString(
   try {
     logger.beginTrigger({ kind: "ssr.hydrate", target: servedPath });
     await Promise.all(app.init.map((emit) => dispatchEmit(app, live, emit, caps, logger)));
+    // Before `endTrigger`: the render is the bootstrap chain's last step, so a
+    // panic an `error-boundary` catches in it lands on that episode.
+    const html = withRenderingApp(
+      app,
+      (e, site) => recordRenderPanic(logger, e, site).episodeId,
+      () => renderTileToString(pickRootTile(app, live)),
+    );
     logger.endTrigger();
 
     const list = logger.list();
@@ -109,8 +117,6 @@ export async function renderToString(
     if (!bootstrap) {
       throw new Error("renderToString: bootstrap episode was not committed (in-flight effects?)");
     }
-
-    const html = withRenderingApp(app, () => renderTileToString(pickRootTile(app, live)));
 
     const slots: SsrSnapshot = {};
     for (const [k, meta] of Object.entries(app.slots)) {
