@@ -106,6 +106,27 @@ describe("a name a test body writes", () => {
       expect(errorsOf(after)).toEqual([]);
     });
 
+    it("slot.items, a key written as its own value that is the slot: rename rewrites the token", {
+      timeout: 30_000,
+    }, async () => {
+      // `{items}` is the slot as the key and as the value, so `{todos}` is that same slot renamed.
+      withTest(`test adding-keeps-the-items =
+    reducer-test addItem
+        given  = {slots: {items}, event: {type: ui.submit, target: AddForm}}
+        expect = {slots: {draft: ""}, effects: [persist(<slots.items>)]}`);
+
+      renameDef(path, "slot.items", "todos");
+      const after = readFileSync(path, "utf8");
+      expect(after).toContain(
+        "given  = {slots: {todos}, event: {type: ui.submit, target: AddForm}}",
+      );
+      expect(errorsOf(after)).toEqual([]);
+      expect((await testFile(path)).map((r) => `${r.name}:${r.pass}`)).toEqual([
+        `${TEST}:true`,
+        "adding-keeps-the-items:true",
+      ]);
+    });
+
     it("slot.items, a key written as its own value that is a `for-all` name: rename refuses it", () => {
       // `{items}` is the slot as the key and the generated value as the value, in one token.
       // Rewritten for the slot, `{todos}` would seed the slot with itself and stop reading the
