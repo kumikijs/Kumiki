@@ -69,6 +69,7 @@ export {
   type EventHandler,
   emptyRoute,
   endEnvScope,
+  isPanic,
   KumikiPanic,
   type LocationLike,
   type MountedApp,

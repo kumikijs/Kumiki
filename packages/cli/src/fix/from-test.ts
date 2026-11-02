@@ -97,7 +97,12 @@ export type TestPatchBlock =
   | { reason: "test-runner-threw"; message: string }
   | { reason: "named-test-missing" }
   | { reason: "still-fails"; failingTest: TestResult }
-  | { reason: "regressed"; regressed: string[] };
+  | {
+      reason: "regressed";
+      regressed: string[];
+      /** The patched run's result for each of `regressed` that still ran. */
+      failingTests: TestResult[];
+    };
 
 export type FixFromTestOutcome = FixFromTestStatus & {
   warnings: KumikiError[];
@@ -271,6 +276,7 @@ async function gateTestPatch(
   const regressed = before
     .filter((b) => b.pass && after.find((r) => r.name === b.name)?.pass !== true)
     .map((b) => b.name);
-  if (regressed.length > 0) return { reason: "regressed", regressed };
-  return null;
+  if (regressed.length === 0) return null;
+  const failingTests = after.filter((r) => regressed.includes(r.name));
+  return { reason: "regressed", regressed, failingTests };
 }
