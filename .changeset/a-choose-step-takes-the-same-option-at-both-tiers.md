@@ -1,8 +1,8 @@
 ---
-"@kumikijs/runtime": patch
+"@kumikijs/runtime": minor
 ---
 
-Take the same option for a `{choose}` step at both scenario tiers
+Take the same option for a `{choose}` step at the scenario and browser tiers
 
 An option carries two strings a step could mean, its label and its value, and
 the two tiers asked for them differently. The scenario tier took the first
@@ -29,17 +29,17 @@ $ kumiki run app.kumiki choose.json
 
 The `select` tile writes each value into its option as JSON, so `"b"` is both
 the value of the option labelled Bee and the label of the third option. The
-browser tier took the third option, and the scenario tier took Bee. A `<label>`
-that the browser tier followed to its select, and a selector that matched no
-select at all, both failed with a `TypeError` that named neither.
+browser tier took the third option, and the scenario tier took Bee. At the
+scenario tier, a `<label>` (which the browser tier followed to its select) and a
+selector that matched no select at all both failed with a `TypeError` that
+named neither.
 
-Both tiers now ask one function, `chooseOption`, exported from
-`@kumikijs/runtime`. It takes the option whose label is the step's value,
+Both tiers now apply one rule, `chooseOption`. It finds the option whose label
+is the step's value,
 comparing with whitespace trimmed and runs of it collapsed on both sides. Only
 when no option carries that label does it take the option whose value matches
 exactly. A selector matching a `<label>` drives the select the label is for. A
-step on anything else is refused in the words `{fill}` uses for its own
-refusal:
+step on anything else is refused in the shape of `{fill}`'s refusal:
 
 ```
 [ok] step 0: choose #pick=""b""
@@ -49,7 +49,15 @@ refusal:
 ```
 
 A select with no matching option still fails with
-`no option "Zed" in select #pick`. Every value that chose an option of a `select`
-tile before still chooses one. Only a value that is both one option's label and
-another option's value now lands differently, on the labelled option, which is
-where the browser tier already put it.
+`no option "Zed" in select #pick`. Every value that chose an enabled option of
+a `select` tile before still chooses one. Only a value that is both one
+option's label and another option's value now lands differently, on the
+labelled option, which is where the browser tier already put it.
+
+A step naming a disabled option, such as a select's placeholder, is refused at
+both tiers as `option "Pick one" is disabled`, which `actionErrorIncludes` can
+claim. Before, the scenario tier took it and wrote nothing, and the browser
+tier timed out without naming it.
+
+`@kumikijs/runtime` exports `chooseOption`, `refuseChoice` and `OptionRefusal`,
+and the types `Choice` and `ChosenOption`.

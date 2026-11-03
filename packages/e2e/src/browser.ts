@@ -15,6 +15,7 @@ import {
   type ScenarioStep as RuntimeScenarioStep,
   readControl,
   readInvalidControls,
+  refuseChoice,
   type ScenarioReport,
   type StepOutcome,
   StepRefusal,
@@ -444,8 +445,8 @@ export async function performAction(page: Page, a: Action): Promise<void> {
     return;
   }
   if ("setProperty" in a) {
-    // Through a locator, as every other verb finds its element: a render gets the same 3s to
-    // attach it, and a selector matching nothing fails the step in the same words.
+    // Through a locator, as the element verbs find theirs: a render gets the same 3s to attach
+    // it, and a selector matching nothing fails the step in the same words.
     await page
       .locator(a.setProperty)
       .first()
@@ -465,17 +466,33 @@ export async function performAction(page: Page, a: Action): Promise<void> {
       );
     return;
   }
+  const where = describeAction(a);
   const loc = page.locator(a.choose).first();
-  await refuse(loc, "choose", describeAction(a));
-  // The scenario tier's rule, asked in the page; Playwright gets the index, so a missing option
-  // fails in the same words at both tiers rather than in a timeout that never names the value.
+  await refuse(loc, "choose", where);
+  // The shared rule (`chooseOption`), applied in the page; Playwright gets the index, so a
+  // missing or disabled option fails in the same words at both tiers rather than in a timeout
+  // that never names the value.
   const choice = await loc.evaluate(
     chooseOption,
     { selector: a.choose, value: a.value },
     { timeout: 3000 },
   );
-  if ("fault" in choice) throw new Error(choice.fault);
-  await loc.selectOption({ index: choice.index }, { timeout: 3000 });
+  refuseChoice(choice, where, a.value);
+  const [took] = await loc
+    .selectOption({ index: choice.index }, { timeout: 3000 })
+    .catch((e: unknown) => {
+      const why = (e instanceof Error ? e.message : String(e)).split("\n")[0];
+      throw new Error(`${where}: the select did not take option "${a.value}": ${why}`);
+    });
+  // `.first()` resolves again for `selectOption`, so options re-rendered in between would
+  // move the index onto another option.
+  if (took !== choice.value) {
+    throw new Error(
+      `${where}: the options of select ${a.choose} changed under the step — option ` +
+        `"${a.value}" had the value ${JSON.stringify(choice.value)}, and the select took ` +
+        `${JSON.stringify(took)}`,
+    );
+  }
 }
 
 async function evaluateExpect(

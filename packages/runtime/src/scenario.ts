@@ -1,4 +1,4 @@
-import { chooseOption } from "./choose-check.ts";
+import { chooseOption, refuseChoice } from "./choose-check.ts";
 import {
   type ControlVerb,
   controlFault,
@@ -347,8 +347,12 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     const el = root.querySelector(a.choose);
     if (!el) throw new Error(`no select matching selector ${a.choose}`);
     refuse("choose", el);
-    const choice = chooseOption(el, { selector: a.choose, value: a.value, take: true });
-    if ("fault" in choice) throw new Error(choice.fault);
+    const choice = chooseOption(el, { selector: a.choose, value: a.value });
+    refuseChoice(choice, describeAction(a), a.value);
+    // An option was found, so `el` is the select or a <label> of one.
+    const select = (el instanceof HTMLLabelElement ? el.control : el) as HTMLSelectElement;
+    select.selectedIndex = choice.index;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
     return;
   }
   unhandledAction(a);
