@@ -36,8 +36,8 @@ The shape is the same wherever diagnostics leave the server as JSON:
 `warnings` on apply, and `kumiki_auto_patch`'s `compileErrors` and
 `blocked.introduced`. Those four tools' descriptions now give the shape and say
 what each `severity` means. `kumiki_check` is still flagged `isError` only when
-an entry has `severity` `"error"`. `kumiki_fix`'s dry-run report is text, not
-JSON, and is unchanged.
+an entry has `severity` `"error"`. `kumiki_fix`'s dry-run report is text
+rather than JSON, so it is not covered here.
 
 `kumiki_build` on source that does not parse used to answer
 `{"error": {"kind": "error", "message": "Parse error at …"}}`, unlike
