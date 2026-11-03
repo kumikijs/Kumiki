@@ -19,7 +19,6 @@ import {
 import {
   bindLocal,
   type Ctx,
-  type EndedScope,
   innerScope,
   type KumikiError,
   type StatementScope,
@@ -34,7 +33,6 @@ import { bindsRoute, namedByHandler, subscribedKinds, subscriptionIds } from "./
 
 /** The scope a reducer's statements are checked in. */
 type ReducerCtx = Ctx & {
-  endedScopes: Map<string, EndedScope>;
   /** The names a statement nested in the body being checked ended: they end with the body too. */
   endedInBody: Set<string>;
 };

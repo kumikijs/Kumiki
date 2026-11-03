@@ -20,10 +20,10 @@ export type KumikiError = {
   severity?: "error" | "warning";
   unrendered?: "positional" | "text-prop" | "text-shadowed";
   /**
-   * E0103 only: the kind of nested body that declared the name and ended before this read;
+   * E0103 only: the kind of nested scope that declared the name and ended before this read;
    * `kumiki fix` reads it to skip the rename.
    */
-  endedScope?: StatementScope;
+  endedScope?: NestedScopeKind;
   /** E0218 only: the member whose append alone makes the target a List; `kumiki fix` reads it. */
   accessor?: "keys" | "to-list";
 };
@@ -31,8 +31,14 @@ export type KumikiError = {
 /** The nested statement bodies of a reducer, each a scope of its own. */
 export type StatementScope = "if" | "for" | "match";
 
-/** The body a name ended with; `sibling` while a later branch or arm of its statement is checked. */
-export type EndedScope = { kind: StatementScope; sibling: boolean };
+/**
+ * A reducer's nested statement bodies, and the expressions that bind a name for their own body:
+ * `let … in`, a tile's `for`, an arm of a `match` expression.
+ */
+export type NestedScopeKind = StatementScope | "let-in" | "for-expr" | "match-expr";
+
+/** The scope a name ended with; `sibling` while a later branch or arm of its statement is checked. */
+export type EndedScope = { kind: NestedScopeKind; sibling: boolean };
 
 export type SymbolTable = {
   types: Map<string, TypeDef>;
@@ -78,8 +84,8 @@ export type Ctx = {
   routeReadsSeen?: { name: string; pos: Pos }[];
   fragmentFnCallsSeen?: { name: string; pos: Pos }[];
   undeclaredInputReads?: Pos[];
-  /** Names a reducer's ended bodies declared and the enclosing scope does not bind. */
-  endedScopes?: Map<string, EndedScope>;
+  /** Names the ended scopes declared and the enclosing scope does not bind. */
+  endedScopes: Map<string, EndedScope>;
   /** The effect whose own expressions are checked, when it declares `in=Unit` and so binds no `$1`. */
   noInputEffect?: string;
   oneValueFragment?: { method: string; hides: boolean };
@@ -108,11 +114,23 @@ export function innerScope<C extends Ctx>(ctx: C): C {
   };
 }
 
+/**
+ * End `inner`, an expression's scope of the kind `kind` opened in `ctx`: its names end with it. A
+ * statement body around it does not take them over as it does a nested statement's, because a read
+ * moved into that body would still be after the expression.
+ */
+export function endScope(kind: NestedScopeKind, inner: Ctx, ctx: Ctx): void {
+  for (const name of inner.localBinds) {
+    if (!ctx.localBinds.has(name)) ctx.endedScopes.set(name, { kind, sibling: false });
+  }
+}
+
 export function pureScope(binds: readonly { name: string; type: TypeExpr }[]): Ctx {
   const ctx: Ctx = {
     kind: "slot-init",
     localBinds: new Set(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
     localTypes: new Map(),
     localBinders: new Map(),
   };

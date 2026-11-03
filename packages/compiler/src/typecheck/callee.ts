@@ -221,16 +221,36 @@ const BRANCH_WORDS = {
   },
 };
 
-/** Unlike `arithmeticHint`, kept when a close name is in scope: that the name ended is known. */
-export function endedScopeHint(name: string, { kind, sibling }: EndedScope): string {
-  const see = " (see docs/spec/language.md)";
-  if (kind === "for") {
-    return ` — it was declared in a "for" loop, and a name carries no value out of a loop: move the read into the loop's body, or write the value to a slot there${see}`;
+const NO_VALUE_OUT = "and a name carries no value out of a loop";
+
+function endedScopeWords(name: string, { kind, sibling }: EndedScope, ctx: Ctx): string {
+  switch (kind) {
+    case "for":
+      return `in a "for" loop, ${NO_VALUE_OUT}: move the read into the loop's body, or write the value to a slot there`;
+    case "for-expr":
+      return `in a tile's "for", ${NO_VALUE_OUT}: move the read into the loop's body`;
+    case "let-in": {
+      // Only a reducer has `let` statements to bind it with.
+      const bind =
+        ctx.kind === "reducer"
+          ? 'with a "let" statement where both reads see it'
+          : "once where both reads see it";
+      return `by a "let … in", whose body ended before this read: move the read into that body, or bind it ${bind}`;
+    }
+    case "match-expr":
+      return 'in an arm of a "match" expression, which ended before this read: move the read into that arm';
+    default: {
+      const w = BRANCH_WORDS[kind];
+      const where = sibling ? w.sibling : `${w.ended}, which ended before this read`;
+      const into = sibling ? `the ${w.part} that declares it` : `that ${w.part}`;
+      return `in ${where}: ${w.declare(name)}, or move the read into ${into}`;
+    }
   }
-  const w = BRANCH_WORDS[kind];
-  const where = sibling ? w.sibling : `${w.ended}, which ended before this read`;
-  const into = sibling ? `the ${w.part} that declares it` : `that ${w.part}`;
-  return ` — it was declared in ${where}: ${w.declare(name)}, or move the read into ${into}${see}`;
+}
+
+/** Unlike `arithmeticHint`, kept when a close name is in scope: that the name ended is known. */
+export function endedScopeHint(name: string, ended: EndedScope, ctx: Ctx): string {
+  return ` — it was declared ${endedScopeWords(name, ended, ctx)} (see docs/spec/language.md)`;
 }
 
 function hasCloseName(name: string, sym: SymbolTable, ctx: Ctx): boolean {

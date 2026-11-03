@@ -305,9 +305,9 @@ describe("a nested body's writes count as the reducer's (E0601)", () => {
   });
 });
 
-describe("an E0103 for a name a nested body declared names the body", () => {
+describe("an E0103 for a name read after its scope ended names the scope", () => {
   // A rename to a close name can type-check and read another value, so the diagnostic says which
-  // body ended the name: in `endedScope` for `kumiki fix`, in the message for the author.
+  // scope ended the name: in `endedScope` for `kumiki fix`, in the message for the author.
   const undefinedNames = (source: string) =>
     checkSource(source)
       .filter((e) => e.code === "E0103")
@@ -316,16 +316,28 @@ describe("an E0103 for a name a nested body declared names the body", () => {
         endedScope: e.endedScope,
         message: e.message,
       }));
-  // A phrase of the repair each hint gives, enough to tell the hints apart.
+  // A phrase of the repair each hint gives, enough to tell apart the hints of one kind.
   const REPAIR = {
     for: "a name carries no value out of a loop",
     if: "move the read into that branch",
     match: "move the read into that arm",
     "if sibling": "move the read into the branch that declares it",
     "match sibling": "move the read into the arm that declares it",
+    "let-in": 'bind it with a "let" statement where both reads see it',
+    "let-in outside a reducer": "bind it once where both reads see it",
+    "for-expr": "move the read into the loop's body",
+    "match-expr": "move the read into that arm",
   } as const;
+  type Hint = keyof typeof REPAIR;
+  const hinted = (name: string, hint: Hint) => ({
+    name,
+    endedScope: hint.split(" ")[0],
+    message: expect.stringContaining(REPAIR[hint]),
+  });
+  /** The program with `tile` as its page's body, beside a reducer that reads nothing. */
+  const page = (tile: string) => program("app.start", "()").replace("column(text(seen))", tile);
 
-  it.each<{ reads: string; body: string; name: string; hint: keyof typeof REPAIR }>([
+  it.each<{ reads: string; body: string; name: string; hint: Hint }>([
     {
       reads: "a loop variable after the loop",
       body: "for idx in [1] { () }\n        total := idx",
@@ -419,8 +431,72 @@ describe("an E0103 for a name a nested body declared names the body", () => {
       hint: "for",
     },
   ])("names the body for $reads", ({ body, name, hint }) => {
-    expect(undefinedNames(program("app.start", body))).toEqual([
-      { name, endedScope: hint.split(" ")[0], message: expect.stringContaining(REPAIR[hint]) },
+    expect(undefinedNames(program("app.start", body))).toEqual([hinted(name, hint)]);
+  });
+
+  it.each<{ reads: string; source: string; name: string; hint: Hint }>([
+    {
+      reads: "a `let … in` name in a later statement",
+      source: program("app.start", 'seen := let n = "a" in n\n        after := n'),
+      name: "n",
+      hint: "let-in",
+    },
+    {
+      reads: "a `let … in` name, not a statement body around it",
+      source: program("app.start", 'for x in [1] { seen := let n = "a" in n }\n        after := n'),
+      name: "n",
+      hint: "let-in",
+    },
+    {
+      reads: "a `let … in` name after it in a `fn`",
+      source: program("app.start", "()").replace(
+        "tile Page",
+        "fn twice(x: Int) -> Int = (let n = x in n) + n\n\ntile Page",
+      ),
+      name: "n",
+      hint: "let-in outside a reducer",
+    },
+    {
+      reads: "a `let … in` name in a slot initializer",
+      source: program("app.start", "()").replace(
+        'slot after : Text = ""',
+        'slot after : Text = (let n = "a" in n) + n',
+      ),
+      name: "n",
+      hint: "let-in outside a reducer",
+    },
+    {
+      reads: "a `match` expression's arm variable in a later statement",
+      source: program(
+        "app.start",
+        'seen := match Some("a") with | Some(v) -> v | None -> ""\n        after := v',
+      ),
+      name: "v",
+      hint: "match-expr",
+    },
+    {
+      reads: "a tile `for` variable in a sibling",
+      source: page("column(for idx in [1] text(idx.show), text(idx.show))"),
+      name: "idx",
+      hint: "for-expr",
+    },
+    {
+      reads: "a tile `match` arm's variable in a sibling",
+      source: page(
+        'column(match Some(1) with | Some(v) -> text(v.show) | None -> text("none"), text(v.show))',
+      ),
+      name: "v",
+      hint: "match-expr",
+    },
+  ])("names the expression for $reads", ({ source, name, hint }) => {
+    expect(undefinedNames(source)).toEqual([hinted(name, hint)]);
+  });
+
+  it("keeps the message of a misspelling beside a sibling's read", () => {
+    const src = page("column(for idx in [1] text(idx.show), text(idx.show), text(sen))");
+    expect(undefinedNames(src)).toEqual([
+      hinted("idx", "for-expr"),
+      { name: "sen", endedScope: undefined, message: 'Reference to undefined name "sen"' },
     ]);
   });
 
@@ -443,6 +519,14 @@ describe("an E0103 for a name a nested body declared names the body", () => {
       case: "a read in the branch before the one that declares the name",
       source: program("app.start", "if flag then { total := n } else { let n = 1 }"),
       name: "n",
+    },
+    {
+      case: "an expression's name read in another tile",
+      source: page("column(for idx in [1] text(idx.show))").replace(
+        "app A",
+        "tile Other = text(idx.show)\n\napp A",
+      ),
+      name: "idx",
     },
   ])("keeps the plain message for $case", ({ source, name }) => {
     expect(undefinedNames(source)).toEqual([
