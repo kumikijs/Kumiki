@@ -18,9 +18,9 @@ type KumikiError = {
 
 `code` is a permanent contract; once assigned, its meaning does not change. `kind` is a sub-classification under the same `code`, used to branch diagnostic logic. `severity` defaults to `"error"`: a missing field means the same as `"error"` for backward compatibility with existing diagnostics. The `"warning"` tier is non-fatal — it is surfaced to stderr (CLI) and to Rollup's `this.warn` (Vite) but does not change the exit code or block the build.
 
-A parse error is `throw`n as a `ParseError` (`message` + `pos`), and a lexical one as a `LexError`. Neither carries a `code`: the stage stops at the first error, so there is no set of diagnostics for one to index into. A tool whose output *is* such a set — `kumiki fix`'s rollback report, the MCP tools' JSON envelope — synthesizes [E0000](#e0000-parse-error) so that "no diagnostics" keeps meaning "clean".
+A parse error is `throw`n as a `ParseError` (`message` + `pos`), and a lexical one as a `LexError`. Neither carries a `code`: the stage stops at the first error, so there is no set of diagnostics for one to index into. A tool whose output *is* such a set — `kumiki fix`'s rollback report, the MCP tools' JSON envelope — synthesizes [E0000](#e0000-parse-error) so that "no diagnostics" keeps meaning "clean". Every diagnostic in an MCP tool's JSON carries `severity`, never omitted, so a client never has to know the default above.
 
-The checker's codes come from `packages/compiler/src/typecheck.ts` and the modules under `packages/compiler/src/typecheck/`; `E0000` is assigned by the two tools named above.
+The checker's codes come from `packages/compiler/src/typecheck.ts` and the modules under `packages/compiler/src/typecheck/`; `E0000` is built by `parseFailure` in `packages/compiler/src/compile.ts`, which the two tools named above call.
 
 ## The Code System
 

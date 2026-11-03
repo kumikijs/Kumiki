@@ -12,7 +12,7 @@ export type Diagnostic = {
 };
 
 export const DIAGNOSTIC_SHAPE =
-  'Each diagnostic is `{code, kind, message, line, col, severity}`; `severity` is `"error"` (the file fails `check` and `build`) or `"warning"` (advisory: reported, but fails neither; docs/spec/errors.md).';
+  'Each diagnostic is `{code, kind, message, line, col, severity}`; `severity` is `"error"` (the file fails `check`, and `build` too unless only a `strict*` toggle surfaced it) or `"warning"` (advisory: reported, but fails neither; docs/spec/errors.md).';
 
 export function text(...parts: string[]) {
   return { content: parts.map((s) => ({ type: "text" as const, text: s })) };
