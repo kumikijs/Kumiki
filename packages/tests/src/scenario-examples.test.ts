@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
 import { freshRoot } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
-import { failureDetail } from "./helpers/scenario.ts";
+import { answerConfirm, failureDetail } from "./helpers/scenario.ts";
 
 describe("examples driven by a scenario", () => {
   it("surfaces an unavailable storage backend as a status (20-effect-storage)", async () => {
@@ -118,13 +118,13 @@ describe("examples driven by a scenario under a memory router", () => {
           { do: { clickText: "Back home" } },
           {
             label: "No keeps us on /edit, dirty preserved",
-            do: { click: "[data-kumiki-confirm] button[data-kumiki-confirm-action='no']" },
+            do: answerConfirm("no"),
             expect: { state: { dirty: true } },
           },
           { do: { clickText: "Back home" } },
           {
             label: "Yes commits — continueLeave clears dirty, route.enter('/') runs",
-            do: { click: "[data-kumiki-confirm] button[data-kumiki-confirm-action='yes']" },
+            do: answerConfirm("yes"),
             expect: { state: { dirty: false, visits: 2 }, domIncludes: ["Home"] },
           },
         ],
