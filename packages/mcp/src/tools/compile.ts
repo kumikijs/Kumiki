@@ -1,5 +1,15 @@
 import { HEADLESS_ACTION_KEYS, runScenarioSource, smokeSource } from "@kumikijs/cli";
-import { check, compile, type KumikiError, lex, parse } from "@kumikijs/compiler";
+import {
+  type CompileResult,
+  check,
+  compile,
+  type KumikiError,
+  LexError,
+  lex,
+  ParseError,
+  parse,
+  parseFailure,
+} from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader, resolveBuiltinIcons } from "@kumikijs/compiler/node";
 import { z } from "zod";
 import {
@@ -46,15 +56,7 @@ function validate(
   try {
     reported = check(parse(lex(source)), { capabilities, ...opts });
   } catch (e) {
-    const pe = e as { message?: string; pos?: { line: number; col: number } };
-    reported = [
-      {
-        code: "E0000",
-        kind: "parse-error",
-        message: pe.message ?? String(e),
-        pos: { line: pe.pos?.line ?? 0, col: pe.pos?.col ?? 0 },
-      },
-    ];
+    reported = [parseFailure(e)];
   }
   const diagnostics = toDiagnostics(reported);
   return {
@@ -120,15 +122,22 @@ export function registerCompileTools(tool: RegisterTool): void {
       },
     },
     async (input) => {
-      const result = compile(readSource(input), {
-        runtimeSpecifier: "./runtime.js",
-        bundle: true,
-        readRuntimeBundle: nodeRuntimeBundleReader,
-        capabilities: capsForInput(input),
-      });
-      if (result.kind === "fail") {
-        return failed(`build failed:\n${json(toDiagnostics(result.errors))}`);
+      const fail = (errors: KumikiError[]) =>
+        failed(`build failed:\n${json(toDiagnostics(errors))}`);
+      let result: CompileResult;
+      try {
+        result = compile(readSource(input), {
+          runtimeSpecifier: "./runtime.js",
+          bundle: true,
+          readRuntimeBundle: nodeRuntimeBundleReader,
+          capabilities: capsForInput(input),
+        });
+      } catch (e) {
+        // `compile()` throws on source it cannot parse; that is a diagnostic like any other here.
+        if (e instanceof LexError || e instanceof ParseError) return fail([parseFailure(e)]);
+        throw e;
       }
+      if (result.kind === "fail") return fail(result.errors);
       if (input.includeJs) return text(result.js);
       return text(
         `build ok — ${result.js.length} bytes of JS (pass includeJs=true for the source)`,

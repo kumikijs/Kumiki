@@ -27,6 +27,7 @@ import {
   isBuiltinCall,
   type KumikiError,
   type SymbolTable,
+  severityOf,
   wildcardText,
 } from "./context.ts";
 import { currentFnName } from "./fn.ts";
@@ -74,7 +75,7 @@ export function checkIterationTarget(
   const before = errors.length;
   checkExpr(iter, sym, errors, ctx);
   const atTarget = (p: Pos) => p.line === iter.pos.line && p.col === iter.pos.col;
-  if (errors.slice(before).some((e) => e.severity !== "warning" && atTarget(e.pos))) return;
+  if (errors.slice(before).some((e) => severityOf(e) === "error" && atTarget(e.pos))) return;
   const written = inferType(iter, sym, ctx);
   const target = written && nonListTarget(written, sym);
   if (!target) return;
