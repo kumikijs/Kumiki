@@ -343,7 +343,7 @@ episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
 
 `slots-equal: from-log` は最終 slot をログが記録した値と比較する。レコードを書けば、比較する slot とその期待値をそれで名指す。
 
-`no-panics: true` は replay した reducer が panic したときに、`no-errors: true` は effect の `err` がどの `.err` reducer にも届かないときに（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）テストを失敗させる。どちらも、そのキーが `true` のときにだけ報告される。ランナーはこの順に、どちらも `slots-equal` より先に判定し、最初に失敗したものを報告する。panic した reducer は何も書かず何も emit せず、取りこぼされた `err` はどの reducer も走らせないので、そのどちらかが届くはずだった slot は元の値のままになる。先に比較すれば、slot の差分が原因の代わりにその症状を報告してしまう。
+`no-panics: true` は replay した reducer が panic したときに、`no-errors: true` は effect の `err` がどの `.err` reducer にも届かないときに（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）テストを失敗させる。どちらも、そのキーが `true` のときにだけ報告される。ランナーはまずすべての episode が replay されたことを確かめ（[用途](#_8-6-2-use-cases)）、次にこの 2 つをこの順に、どちらも `slots-equal` より先に判定し、最初に失敗したものを報告する。panic した reducer は何も書かず何も emit せず、取りこぼされた `err` はどの reducer も走らせないので、そのどちらかが届くはずだった slot は元の値のままになる。先に比較すれば、slot の差分が原因の代わりにその症状を報告してしまう。
 
 ```
 FAIL  bug-2026-05-21
@@ -358,7 +358,7 @@ FAIL  bug-2026-05-21
 
 → [ランタイム](./runtime.md) で詳述。
 
-### 8.6.2 用途
+### 8.6.2 用途 {#_8-6-2-use-cases}
 
 - バグ報告に付随した episode log を fixture にして regression test 化
 - モデル / アルゴリズムを変更した後でも同じ入力で同じ結果が出るか確認

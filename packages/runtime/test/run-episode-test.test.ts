@@ -27,6 +27,15 @@ function makeCounterApp(): ReplayableApp {
   });
 }
 
+/** The counter app whose `inc` throws on every replay. */
+function makePanickingCounterApp(): ReplayableApp {
+  const app = makeCounterApp();
+  app.reducers[0]!.apply = () => {
+    throw new Error("kaboom");
+  };
+  return app;
+}
+
 function makeLoadUserApp(): ReplayableApp {
   return replayableApp({
     slots: { user: { value: null as unknown }, error: { value: null as unknown } },
@@ -140,13 +149,9 @@ describe("_stdlibTest.runEpisodeTest", () => {
   });
 
   it("FAILS expect.no-panics when a reducer throws during replay", () => {
-    const app = makeCounterApp();
-    app.reducers[0]!.apply = () => {
-      throw new Error("kaboom");
-    };
     const result = _stdlibTest.runEpisodeTest({
       name: "panic-replay",
-      app,
+      app: makePanickingCounterApp(),
       episodes: [incEpisode(1)],
       mocks: {},
       expect: { noPanics: true },
@@ -178,15 +183,6 @@ describe("_stdlibTest.runEpisodeTest", () => {
     expect(app.live?.user).toBe(null);
   });
 });
-
-/** The counter app whose `inc` throws on every replay. */
-function makePanickingCounterApp(): ReplayableApp {
-  const app = makeCounterApp();
-  app.reducers[0]!.apply = () => {
-    throw new Error("kaboom");
-  };
-  return app;
-}
 
 /**
  * A `loadUser` that failed, recorded while `setError` caught it. Replayed
@@ -236,13 +232,16 @@ describe("_stdlibTest.runEpisodeTest reports the failure behind a slot divergenc
     });
   });
 
-  it("reports a dropped err as the error when `slots-equal` names the slot `.err` would write", () => {
+  it.each([
+    ["a record", { error: "offline" }],
+    ["from-log", "from-log" as const],
+  ])("reports a dropped err as the error when `slots-equal` is %s", (_, slotsEqual) => {
     const result = _stdlibTest.runEpisodeTest({
       name: "dropped-err-and-slots",
       app: makeDroppingLoadUserApp(),
       episodes: [failedLoadEpisode],
       mocks: { loadUser: { policy: "from-log" } },
-      expect: { slotsEqual: "from-log", noErrors: true },
+      expect: { slotsEqual, noErrors: true },
     });
     expect(result).toEqual({
       name: "dropped-err-and-slots",
@@ -281,8 +280,13 @@ describe("_stdlibTest.runEpisodeTest reports the failure behind a slot divergenc
       mocks: { loadUser: { policy: "from-log" } },
       expect: { slotsEqual: "from-log", noPanics: true, noErrors: true },
     });
-    expect(result.diffAt).toBe("panics");
-    expect(result.actual).toBe("ep_ok: kaboom");
+    expect(result).toEqual({
+      name: "panic-and-err",
+      pass: false,
+      expected: "no panics",
+      actual: "ep_ok: kaboom",
+      diffAt: "panics",
+    });
   });
 
   it("reports a divergence with no panic and no dropped err at the slot", () => {
@@ -322,16 +326,27 @@ describe("_stdlibTest.runEpisodeTest reports the failure behind a slot divergenc
     expect(matching).toEqual({ name: "panic-unasserted", pass: true });
   });
 
-  it("leaves a dropped err unreported when `no-errors` is not set", () => {
-    const result = _stdlibTest.runEpisodeTest({
+  it.each([
+    ["`no-errors` is not set", {}],
+    ["`no-errors` is false", { noErrors: false }],
+  ])("leaves a dropped err unreported when %s", (_, flags) => {
+    const diverging = _stdlibTest.runEpisodeTest({
       name: "err-unasserted",
       app: makeDroppingLoadUserApp(),
       episodes: [failedLoadEpisode],
       mocks: { loadUser: { policy: "from-log" } },
-      expect: { slotsEqual: "from-log", noPanics: true },
+      expect: { slotsEqual: { error: "offline" }, ...flags },
     });
-    expect(result.diffAt).toBe("slots.error");
-    expect(result.leaf).toEqual({ expected: "offline", actual: null });
+    expect(diverging.diffAt).toBe("slots.error");
+    expect(diverging.leaf).toEqual({ expected: "offline", actual: null });
+    const matching = _stdlibTest.runEpisodeTest({
+      name: "err-unasserted",
+      app: makeDroppingLoadUserApp(),
+      episodes: [failedLoadEpisode],
+      mocks: { loadUser: { policy: "from-log" } },
+      expect: { slotsEqual: { error: null }, ...flags },
+    });
+    expect(matching).toEqual({ name: "err-unasserted", pass: true });
   });
 });
 
@@ -402,6 +417,31 @@ describe("an episode whose entry reducer is not in the program", () => {
   it("fails an episode-test for an episode whose recorded panic names the reducer", () => {
     const result = episodeTest(renamedApp("bump"), [crashedEpisode], { noPanics: true });
     expect(result).toEqual(failed('ep_crash: no reducer named "inc"'));
+  });
+
+  it("fails it for the missing reducer ahead of a panic in another episode", () => {
+    const app = replayableApp({
+      slots: { count: { value: 0 } },
+      reducers: [
+        {
+          name: "bump",
+          event: { kind: "ui", ev: "click" },
+          apply: () => {
+            throw new Error("kaboom");
+          },
+        },
+      ],
+    });
+    const bumped: EpisodeLogEntry = {
+      ...incEpisode(1),
+      id: "ep_bump",
+      steps: [{ kind: "reducer", name: "bump", "slot-diffs": [], emits: [] }],
+    };
+    const result = episodeTest(app, [incEpisode(1), bumped], { noPanics: true });
+    expect(result).toEqual(failed('ep_1: no reducer named "inc"'));
+    expect(replayInto(app, [incEpisode(1), bumped]).panics.map((p) => p.episodeId)).toEqual([
+      "ep_bump",
+    ]);
   });
 
   it("names each such episode, and still replays the others", () => {

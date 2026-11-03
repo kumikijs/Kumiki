@@ -18,8 +18,8 @@ FAIL  replay-reads-the-route
   diff at:  slots.seen  "/" -> ""
 ```
 
-Now `no-panics` is judged first, then `no-errors`, then `slots-equal`, and the
-first that fails is the report (testing.md §8.6):
+Now `no-panics` is judged ahead of `no-errors`, both ahead of `slots-equal`,
+and the first that fails is the report (Episode replay in testing.md):
 
 ```
 FAIL  replay-reads-the-route
