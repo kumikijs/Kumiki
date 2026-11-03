@@ -7,10 +7,14 @@ export type UiLift = {
   readonly tiles: ReadonlySet<string> | null;
   /**
    * Kinds left out of `tiles` whose element fires `ev` but whose renderer never calls `handler`,
-   * each mapped to the verb phrase W0212 prints after "its renderer". A kind named neither here
-   * nor in `WRAPPED_KIND` gets the "no descendant fires it" wording.
+   * each mapped to the verb phrase W0212 and W0213 print after "its renderer". A kind named
+   * neither here nor in `WRAPPED_KIND` gets the "no descendant fires it" wording, unless the row
+   * sets `everyElementFires`.
    */
   readonly firesUnheard?: Readonly<Record<string, string>>;
+  // Every element fires `ev`, so a kind left out of `tiles` is left out only
+  // because its renderer never calls `handler`.
+  readonly everyElementFires?: true;
 };
 
 const FOCUSABLE_ROOT = [
@@ -98,6 +102,7 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
     handler: "onClick",
     tiles: new Set(["button", "check", "switch", "radio"]),
     firesUnheard: { link: "listens for it only to navigate" },
+    everyElementFires: true,
   },
   { ev: "submit", handler: "onSubmit", tiles: new Set(["form"]) },
   {
@@ -123,24 +128,27 @@ export const UI_LIFTS: ReadonlyArray<UiLift> = [
   { ev: "blur", handler: "onBlur", tiles: rootListenedTiles("blur") },
 ];
 
+function unheardReason(lift: UiLift, kind: string): string | null {
+  if (lift.tiles === null || lift.tiles.has(kind)) return null;
+  const record = lift.firesUnheard ?? {};
+  const instead = Object.hasOwn(record, kind) ? record[kind] : undefined;
+  if (instead !== undefined) return `${instead}, never calling ${lift.handler}`;
+  return lift.everyElementFires ? `never calls ${lift.handler}` : null;
+}
+
 export function firesUnheardIn(
   ev: UiEventKind,
   kinds: Iterable<string>,
-): Array<{ readonly kinds: string[]; readonly instead: string; readonly handler: string }> {
+): Array<{ readonly kinds: string[]; readonly reason: string }> {
   const lift = UI_LIFTS.find((l) => l.ev === ev);
-  const record = lift?.firesUnheard;
-  if (lift === undefined || record === undefined) return [];
-  const byInstead = new Map<string, string[]>();
+  if (lift === undefined) return [];
+  const byReason = new Map<string, string[]>();
   for (const kind of [...kinds].sort()) {
-    const instead = Object.hasOwn(record, kind) ? record[kind] : undefined;
-    if (instead === undefined) continue;
-    byInstead.set(instead, [...(byInstead.get(instead) ?? []), kind]);
+    const reason = unheardReason(lift, kind);
+    if (reason === null) continue;
+    byReason.set(reason, [...(byReason.get(reason) ?? []), kind]);
   }
-  return [...byInstead].map(([instead, grouped]) => ({
-    kinds: grouped,
-    instead,
-    handler: lift.handler,
-  }));
+  return [...byReason].map(([reason, grouped]) => ({ kinds: grouped, reason }));
 }
 
 /** Derived view for the W0212 typecheck — keyed by ui-kind. */
@@ -148,9 +156,13 @@ export const UI_EVENT_TILE_KINDS: Record<string, ReadonlySet<string> | null> = O
   UI_LIFTS.map((l) => [l.ev, l.tiles]),
 );
 
+export function liftForHandler(handler: string): UiLift | undefined {
+  return UI_LIFTS.find((l) => l.handler === handler);
+}
+
 /** The tile set a `ui.<ev>(Tile)` selector lifts to, looked up by handler name. */
 function liftTilesFor(handler: string): ReadonlySet<string> | null {
-  return UI_LIFTS.find((l) => l.handler === handler)?.tiles ?? null;
+  return liftForHandler(handler)?.tiles ?? null;
 }
 
 export const HANDLER_PROP_TILES: Record<string, ReadonlySet<string> | null> = {
