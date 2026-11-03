@@ -319,8 +319,12 @@ describe("codegen refuses what check refuses", () => {
     tile-test Card
         given  = {slots: {}, in: "x"}
         expect = text("x")`);
-    expect(
-      codegen(parse(lex(ok)), { runtimeSpecifier: "@kumikijs/runtime", includeTests: true }).js,
-    ).toContain(`_tilesById["Card"]("x")`);
+    // A lowering that dropped the argument would still apply `_in`, so the bound value carries the assertion.
+    const js = codegen(parse(lex(ok)), {
+      runtimeSpecifier: "@kumikijs/runtime",
+      includeTests: true,
+    }).js;
+    expect(js).toContain(`const _in = "x";`);
+    expect(js).toContain(`_tilesById["Card"](_in)`);
   });
 });

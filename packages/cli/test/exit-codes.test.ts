@@ -51,6 +51,27 @@ test inc-works =
         expect = {slots: {count: 1}, effects: []}
 `;
 
+/** In `first-shows` the list is empty, so `First` panics as it renders. */
+const WITH_RENDER_PANIC = `slot count : Int = 0
+slot items : List(Int) = []
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+tile IncBtn = button(text="+1", onClick=inc)
+tile First = heading("First: " + items[0].show)
+tile App = column(heading("Count: " + count.show), IncBtn)
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+test first-shows =
+    tile-test First
+        given  = {slots: {items: []}}
+        expect = heading("First: 1")
+test inc-works =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: 1}, effects: []}
+`;
+
 /** `[1][3]` indexes past the end of a one-item list, so `expect-panics`' body throws. */
 const WITH_THROWING_TEST = WITH_TESTS.replace(
   "test inc-works =",
@@ -306,6 +327,27 @@ describe("kumiki test", () => {
       /^FAIL {2}expect-panics \(\d+ms\)\n {2}error: {4}Index 3 is out of range for a List of length 1$/m,
     );
     expect(stdout).toMatch(/^PASS {2}inc-works \(\d+ms\)$/m);
+    expect(stdout).toContain("1/2 passed");
+    expect(code).toBe(1);
+  });
+
+  it("reports a tile that panics as it renders as its test's unexpected panic", SPAWN, () => {
+    // The lines a reducer-test prints for a reducer that panics, with the
+    // snapshot as what was expected — and nothing under them, so the panic
+    // reads as the tile's and not as a throw in the test's body.
+    const { stdout, code } = runCli(["test", write("test-render-panic.kumiki", WITH_RENDER_PANIC)]);
+    expect(stdout).toMatch(
+      new RegExp(
+        [
+          "^FAIL {2}first-shows \\(\\d+ms\\)",
+          ' {2}expected: heading\\("First: 1"\\)',
+          ' {2}actual: {3}panic: "Index 0 is out of range for a List of length 0"',
+          " {2}diff at: {2}\\(unexpected panic\\)",
+          "PASS {2}inc-works \\(\\d+ms\\)$",
+        ].join("\n"),
+        "m",
+      ),
+    );
     expect(stdout).toContain("1/2 passed");
     expect(code).toBe(1);
   });
