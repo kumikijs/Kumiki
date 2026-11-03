@@ -122,6 +122,26 @@ tile App = column(Btn, text("todos: " + todos))`);
     expect(fault).not.toContain("did you mean");
   });
 
+  // Naming the first one declared would let declaration order answer what the distance does not.
+  it.each([
+    [["addA", "addB"], '"addA" or "addB"'],
+    [["addB", "addA"], '"addA" or "addB"'],
+    [["addC", "addA", "addB"], '"addA", "addB" or "addC"'],
+  ])("names every reducer equally close (declared %j)", async (names, named) => {
+    const app = await loadSource(
+      withApp(
+        [
+          "slot n : Int = 0",
+          ...names.map((r) => `reducer ${r} on=ui.click(Btn${r}) do= n := n + 1`),
+          ...names.map((r) => `tile Btn${r} = button(text="${r}", onClick=${r})`),
+          `tile App = column(${names.map((r) => `Btn${r}`).join(", ")}, text("n: " + n.show))`,
+        ].join("\n"),
+      ),
+    );
+    const report = await run(app, { steps: [{ do: { dispatch: "add" } }] });
+    expect(report.steps[0]?.actionError).toBe(`no reducer named "add" — did you mean ${named}?`);
+  });
+
   it("still dispatches the reducer that does exist", async () => {
     const report = await run(await loadSource(RENAMED), {
       steps: [{ do: { dispatch: "addTodoItem" }, expect: { state: { todos: "x" } } }],

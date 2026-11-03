@@ -1,0 +1,31 @@
+{
+  "steps": [
+    {
+      "label": "the modal starts closed",
+      "expect": {
+        "noErrors": true,
+        "state": { "shown": false },
+        "visible": ["fruit=apple", "shown=false"],
+        "hidden": ["Keep the pick?"]
+      }
+    },
+    {
+      "label": "Open shows the modal",
+      "do": { "click": "#open" },
+      "expect": {
+        "noErrors": true,
+        "state": { "shown": true },
+        "visible": ["Keep the pick?"]
+      }
+    },
+    {
+      "label": "Close inside the modal hides it again",
+      "do": { "click": "#close" },
+      "expect": {
+        "noErrors": true,
+        "state": { "shown": false },
+        "hidden": ["Keep the pick?"]
+      }
+    }
+  ]
+}

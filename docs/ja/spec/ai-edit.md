@@ -39,7 +39,7 @@ kumiki list <layer>                 # レイヤ内の全定義名
 kumiki list                         # 全定義名（layer prefix 付き）
 ```
 
-参照元とは、checker または lowering がその名前をこの定義として読む位置でこの定義を指す定義であり、型メンバ呼び出しの qualifier もそこに含まれる：`ItemId.fresh()`・`ItemId.parse(t)`・`ItemId.show(v)` は型 `ItemId` を指す（[標準ライブラリ §2.4.1](./stdlib.md#_2-4-1-id-生成)・[§2.4.3](./stdlib.md#_2-4-3-型変換)）。lowering がデコードの型として読む `Decoder.Json(T)` の引数も同じで、`Decoder.Json(Map(ItemId, Item))` の `ItemId` と `Item` は参照である。`ItemId.fresh()` で id を生成する reducer は `type.ItemId` の参照元であり、`rename` は他の参照とともに qualifier も書き換える。`Decoder`・`EffectId`・`Duration`・`Bytes` では、引数を与えた `parse` / `show` だけが型メンバ呼び出しである：プログラムが自前の `type Duration` を宣言していれば `Duration.show(d)` はその参照元だが、名前空間の組み込み呼び出し（`Duration.ms(5)`・`EffectId.none`）は型を指さず、`Duration.fresh()` は E0116 である（[E0117](./errors.md#e0117-undef-type)）。
+参照元とは、checker または lowering がその名前をこの定義として読む位置でこの定義を指す定義であり、型メンバ呼び出しの qualifier もそこに含まれる：`ItemId.fresh()`・`ItemId.parse(t)`・`ItemId.show(v)` は型 `ItemId` を指す（[標準ライブラリ §2.4.1](./stdlib.md#_2-4-1-id-生成)・[§2.4.3](./stdlib.md#_2-4-3-型変換)）。lowering がデコードの型として読む `Decoder.Json(T)` の引数も同じで、`Decoder.Json(Map(ItemId, Item))` の `ItemId` と `Item` は参照である。`ItemId.fresh()` で id を生成する reducer は `type.ItemId` の参照元であり、`rename` は他の参照とともに qualifier も書き換える。`Decoder`・`EffectId`・`Duration`・`Bytes` では、引数を与えた `parse` / `show` だけが型メンバ呼び出しである：プログラムが自前の `type Decoder` を宣言していれば `Decoder.show(d)` はその参照元だが、名前空間の組み込み呼び出し（`Decoder.Text`・`Duration.ms(5)`・`EffectId.none`）は型を指さず、`Decoder.fresh()` は E0116 である（[E0117](./errors.md#e0117-undef-type)）。
 
 ### 9.2.2 書き込み系 {#_9-2-2-write-commands}
 
@@ -248,7 +248,7 @@ hash にはどの定義の名前も含まれない。定義自身の名前は除
 
 2 つの相互再帰する型のように、互いに循環して参照し合う定義は、どれの hash も他より先には計算できないので、まとめて 1 つの単位として hash される。単位の中では、ある要素から別の要素への参照は、参照先の hash ではなく、参照先の要素が述べる内容（その要素自身の単位内の要素への参照は除く）として数えられ、各要素の hash は単位のすべての要素が述べる内容を含む。したがって要素の hash はどの要素から先に辿り着いても同じであり、要素の `depends-on` のダイジェストはその `kumiki view --hash` と一致する。
 
-既知の制限：参照は参照先の定義の hash として数えられ、名前だけが異なる 2 つの定義は同じ hash を持つので、その一方への参照ともう一方への参照は同じに数えられる。`slot a` と `slot b` がどちらも `Int = 0` なら、2 つの slot は別々の状態であるにもかかわらず、`a := b` と `b := a` は同じ hash になる。
+既知の制限：参照は参照先の定義の hash として数えられ、名前だけが異なる 2 つの定義は同じ hash を持つので、その一方への参照ともう一方への参照は同じに数えられる。`slot a` と `slot b` がどちらも `Int = 0` なら、2 つの slot は別々の状態であるにもかかわらず、`a := b` と `b := a` は同じ hash になる。test の `slots` のキーも参照なので、同じ 2 つの slot に対して、`given` が `{slots: {a: 1, b: 2}, …}` の test と `{slots: {b: 1, a: 2}, …}` の test も同じ hash になる。
 
 ### 9.5.2 参照解決
 

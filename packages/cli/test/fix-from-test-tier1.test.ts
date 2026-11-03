@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { fixCmd, fixFromTest, runFixFromTest } from "@kumikijs/cli";
 import { describe, expect, it, vi } from "vitest";
-import { seedLines } from "./helpers/files.ts";
+import { seed, seedLines } from "./helpers/files.ts";
+import { tiedCounts } from "./helpers/tie.ts";
 
 const REPAIR_INTRODUCES_AN_ERROR = [
   "slot n  : Int  = 0",
@@ -101,5 +102,25 @@ describe("tier-1 repair is gated the way every other write is", () => {
       expect(outcome.compileErrors?.map((e) => e.code)).toEqual(["E0103"]);
     }
     expect(readFileSync(file, "utf8")).toContain("seen := route.path");
+  });
+});
+
+describe("a tie between close names at the compile tier", () => {
+  // The compile tier answers before the named test is looked up, so the file needs no test.
+  it.each([
+    false,
+    true,
+  ])("is no-patch with the tied names, and writes nothing (apply: %s)", async (apply) => {
+    const source = tiedCounts("countA", "countB");
+    const file = seed(source);
+
+    const outcome = await runFixFromTest(file, "any", apply);
+
+    expect(outcome).toMatchObject({
+      status: "no-patch",
+      reason: "close-names-tied",
+      candidates: ["countA", "countB"],
+    });
+    expect(readFileSync(file, "utf8")).toBe(source);
   });
 });

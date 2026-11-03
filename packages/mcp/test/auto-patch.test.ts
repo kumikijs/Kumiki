@@ -6,13 +6,17 @@ import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it, vi } from "vitest";
 import { serialiseFixFromTest } from "../src/index.ts";
 import {
+  COUNTER,
+  call,
   callOnce,
   FIX_COUNTER_TESTS,
   FIX_COUNTER_TYPO_WITH_TEST,
   FIX_FAILING_SINGLE,
   FIX_REGRESSION,
+  FIX_TEST_THROWS,
   type ToolResult,
   useWorkdir,
+  withClient,
 } from "./helpers/client.ts";
 
 // A plain-object namespace, so `vi.spyOn(fs, ...)` can replace an export.
@@ -89,6 +93,30 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
     expect(readFileSync(file, "utf8")).toBe(original);
   });
 
+  it.each([
+    false,
+    true,
+  ])("serialises a tie between close names as no-patch with the tied names (apply: %s)", async (apply) => {
+    // `count` is one edit from `countA` and from `countB`, so neither is written.
+    const file = write("tie.kumiki", [
+      "slot countA : Int = 0",
+      "slot countB : Int = 0",
+      'tile App = column(text("total: " + count.show))',
+      "app A",
+      "    caps   = []",
+      '    routes = {"/" -> App, "/404" -> App}',
+      "    init   = []",
+    ]);
+    const original = readFileSync(file, "utf8");
+    const res = await callOnce("kumiki_auto_patch", { path: file, testName: "any", apply });
+    expect(outcome(res)).toMatchObject({
+      status: "no-patch",
+      reason: "close-names-tied",
+      candidates: ["countA", "countB"],
+    });
+    expect(readFileSync(file, "utf8")).toBe(original);
+  });
+
   it("serialises a refusal over unparseable source as compile-blocked, with the parser's message", () => {
     const source = [
       'tile App = column(heading("hi"))',
@@ -154,6 +182,16 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
     expect(outcome(unknown).status).toBe("not-found");
   });
 
+  it("finds no test in a file without any, after kumiki_test ran one that has it", async () => {
+    const file = copy(COUNTER, "counter.kumiki");
+    await withClient(async (client) => {
+      expect((await call(client, "kumiki_test", { path: FIX_COUNTER_TESTS })).isError).toBe(false);
+      const res = await call(client, "kumiki_auto_patch", { path: file, testName: "inc-works" });
+      expect(res.isError).toBe(true);
+      expect(outcome(res)).toMatchObject({ status: "not-found", availableTests: [] });
+    });
+  });
+
   it("applies on a single-test fixture: FAIL → PASS with regressed:[], not flagged", async () => {
     const file = copy(FIX_FAILING_SINGLE, "failing-single.kumiki");
     const res = await callOnce("kumiki_auto_patch", {
@@ -182,9 +220,35 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
       status: "test-blocked",
       ok: false,
       patch: { code: "TEST" },
-      blocked: { reason: "regressed", regressed: ["B"] },
+      blocked: {
+        reason: "regressed",
+        regressed: ["B"],
+        failingTests: [
+          {
+            name: "B",
+            pass: false,
+            diffAt: "slots.message",
+            leaf: { expected: "world", actual: "planet" },
+          },
+        ],
+      },
     });
     expect(readFileSync(file, "utf8")).toBe(original);
+  });
+
+  it("says a test whose body threw has no patch, and not that it passes", async () => {
+    const file = copy(FIX_TEST_THROWS, "test-throws.kumiki");
+    const res = await callOnce("kumiki_auto_patch", { path: file, testName: "expect-panics" });
+    expect(res.isError).toBe(true);
+    expect(outcome(res)).toMatchObject({
+      status: "no-patch",
+      reason: "test-threw",
+      failingTest: {
+        name: "expect-panics",
+        pass: false,
+        error: "Index 3 is out of range for a List of length 1",
+      },
+    });
   });
 
   it("serialises an `introduced` refusal's errors as wire diagnostics", async () => {

@@ -1,4 +1,4 @@
-import { httpFetch } from "@kumikijs/runtime";
+import { type EffectResult, httpFetch } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 type FetchCall = { url: string; init: RequestInit };
@@ -69,10 +69,10 @@ describe("httpFetch", () => {
       });
     }) as unknown as typeof fetch;
     const res = await httpFetch("GET", { url: "/slow" }, { baseUrl: "https://x", timeout: 5 });
-    expect(res.kind).toBe("err");
-    if (res.kind !== "err") return;
-    const v = res.value as { message: string };
-    expect(v.message).toMatch(/aborted/i);
+    expect(res).toEqual({
+      kind: "err",
+      value: { status: 0, message: "aborted", body: { _tag: "None" } },
+    });
   });
 
   it("normalizes external-signal abort to {status:0, message:'aborted'}", async () => {
@@ -96,10 +96,10 @@ describe("httpFetch", () => {
     );
     expect(res.kind).toBe("err");
     if (res.kind !== "err") return;
-    const v = res.value as { status: number; message: string; body: string };
+    const v = res.value as { status: number; message: string; body: unknown };
     expect(v.status).toBe(0);
     expect(v.message).toBe("aborted");
-    expect(v.body).toBe("");
+    expect(v.body).toEqual({ _tag: "None" });
   });
 
   it("returns immediately with aborted when external signal is already aborted", async () => {
@@ -118,7 +118,7 @@ describe("httpFetch", () => {
     expect(v.message).toBe("aborted");
   });
 
-  it("reports a body stream that errors mid-read as status 0", async () => {
+  it("keeps a 2xx's status when its body stream errors mid-read, with no body", async () => {
     stubFetch(
       () =>
         new Response(
@@ -133,36 +133,41 @@ describe("httpFetch", () => {
     const res = await httpFetch("POST", { url: "/orders" });
     expect(res.kind).toBe("err");
     if (res.kind !== "err") return;
-    const v = res.value as { status: number; message: string };
-    expect(v.status).toBe(0);
+    const v = res.value as { status: number; message: string; body: unknown };
+    expect(v.status).toBe(201);
     expect(v.message).toMatch(/stream reset/);
+    expect(v.body).toEqual({ _tag: "None" });
   });
 
-  it("reports an abort during the body read as aborted, not a decode failure", async () => {
-    let body: ReadableStreamDefaultController<Uint8Array> | undefined;
-    stubFetch(
-      () =>
+  it.each<[string, number, { timeout: number } | undefined]>([
+    ["a cancel", 200, undefined],
+    ["a cancel", 503, undefined],
+    ["a timeout", 503, { timeout: 5 }],
+  ])("reports %s during a %i's body read as aborted, not what the response said", async (by, status, cfg) => {
+    // The headers arrive at once; the body only ever fails, when the request's signal aborts.
+    const { calls } = stubFetch(
+      ({ init }) =>
         new Response(
           new ReadableStream<Uint8Array>({
             start(c) {
-              body = c;
+              init.signal?.addEventListener("abort", () => {
+                c.error(new DOMException("The operation was aborted.", "AbortError"));
+              });
             },
           }),
-          { status: 200 },
+          { status },
         ),
     );
     const ctl = new AbortController();
-    const pending = httpFetch("GET", { url: "/q" }, undefined, ctl.signal);
-    while (!body) await new Promise((r) => setTimeout(r, 0));
-    ctl.abort();
-    body.error(new DOMException("The operation was aborted.", "AbortError"));
-    const res = await pending;
-    expect(res.kind).toBe("err");
-    if (res.kind !== "err") return;
-    const v = res.value as { status: number; message: string };
-    expect(v.message).toBe("aborted");
-    expect(v.message).not.toMatch(/^decode failed/);
-    expect(v.status).toBe(0);
+    const pending = httpFetch("GET", { url: "/q" }, cfg, ctl.signal);
+    // One turn lets the headers arrive and the body read begin.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls).toHaveLength(1);
+    if (by === "a cancel") ctl.abort();
+    expect(await pending).toEqual({
+      kind: "err",
+      value: { status: 0, message: "aborted", body: { _tag: "None" } },
+    });
   });
 
   it("reports a body-less 204 under the default decoder as a decode failure with status 204", async () => {
@@ -459,5 +464,72 @@ describe("httpFetch request body", () => {
     const { calls } = stubFetch(() => new Response("null"));
     await httpFetch("GET", { url: "/q", decode });
     expect(calls[0]?.init.headers).toEqual(expected);
+  });
+});
+
+describe("the HttpError's body", () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  const some = (text: string) => ({ _tag: "Some", _0: text });
+  const none = { _tag: "None" };
+
+  /** The `status` and `body` of the HttpError `run` fails with. */
+  async function failure(run: Promise<EffectResult>): Promise<{ status: number; body: unknown }> {
+    const res = await run;
+    if (res.kind !== "err") throw new Error(`expected an err, got ${JSON.stringify(res)}`);
+    const { status, body } = res.value as { status: number; body: unknown };
+    return { status, body };
+  }
+
+  /** A response whose body stream fails as soon as it is read. */
+  const unreadable = (status: number) =>
+    new Response(
+      new ReadableStream({
+        start(c) {
+          c.error(new TypeError("stream reset"));
+        },
+      }),
+      { status },
+    );
+
+  const refuseAll = () => ({ kind: "nonempty", args: [], path: [] });
+  const unsendable = {
+    _tag: "Multipart",
+    _0: { doc: { _tag: "FileV", _0: { name: "a.txt", size: 1, type: "text/plain", _file: {} } } },
+  };
+
+  it.each<[string, () => Response | Promise<Response>, number, unknown, Record<string, unknown>?]>([
+    [
+      "a 404 with a body",
+      () => new Response("report 7 was archived", { status: 404 }),
+      404,
+      some("report 7 was archived"),
+    ],
+    ["a 404 with an empty body", () => new Response("", { status: 404 }), 404, some("")],
+    ["a 401", () => new Response("sign in first", { status: 401 }), 401, some("sign in first")],
+    ["a 503", () => new Response("busy", { status: 503 }), 503, some("busy")],
+    [
+      "a 2xx that does not parse",
+      () => new Response("<html>Created</html>", { status: 201 }),
+      201,
+      some("<html>Created</html>"),
+    ],
+    [
+      "a 2xx whose value the declared type refuses",
+      () => new Response('{"name":""}', { status: 200 }),
+      200,
+      some('{"name":""}'),
+      { decode: refuseAll },
+    ],
+    ["a non-2xx whose body cannot be read", () => unreadable(500), 500, none],
+    ["a network failure", () => Promise.reject(new TypeError("Failed to fetch")), 0, none],
+    ["a request body that cannot be sent", () => new Response("ok"), 0, none, { body: unsendable }],
+  ])("gives %s its status and body", async (_, respond, status, body, input) => {
+    stubFetch(respond);
+    expect(await failure(httpFetch("POST", { url: "/r", ...input }))).toEqual({ status, body });
   });
 });

@@ -1,0 +1,5 @@
+{
+  "GET /api/stamps": {
+    "json": [{ "label": "digit", "at": "1" }, { "label": "iso", "at": "2026-03-07T10:00" }]
+  }
+}
