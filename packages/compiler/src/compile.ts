@@ -1,4 +1,4 @@
-import type { Program } from "./ast.ts";
+import type { Pos, Program } from "./ast.ts";
 import { type CodegenOptions, codegen, RUNTIME_HELPERS } from "./codegen.ts";
 import { lex } from "./lexer.ts";
 import { parse } from "./parser.ts";
@@ -18,6 +18,20 @@ export type CompileFail = {
   warnings: KumikiError[];
 };
 export type CompileResult = CompileOk | CompileFail;
+
+/**
+ * The `E0000` diagnostic a lex or parse throw stands for, so a caller can report it the way it
+ * reports the checker's. A thrown value with no position lands at 0:0.
+ */
+export function parseFailure(e: unknown): KumikiError {
+  const pos = (e as { pos?: Pos } | null)?.pos;
+  return {
+    code: "E0000",
+    kind: "parse-error",
+    message: e instanceof Error ? e.message : String(e),
+    pos: { line: pos?.line ?? 0, col: pos?.col ?? 0 },
+  };
+}
 
 export type ExtendedCodegenOptions = CodegenOptions & {
   /** Inline the runtime source into the output so the generated module needs no external import. */

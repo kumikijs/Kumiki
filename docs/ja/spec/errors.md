@@ -18,9 +18,9 @@ type KumikiError = {
 
 `code` は永続的な契約であり、一度割り当てたら意味を変えない。`kind` は同一 `code` 配下の細分類で、診断ロジックの分岐に使う。`severity` は省略時 `"error"`（既存の診断との後方互換のため、未指定 = error 扱い）。`"warning"` は非致命的で、CLI では stderr、Vite では Rollup の `this.warn` に流れるが、終了コードを変えずビルドも止めない。
 
-パースエラーは `ParseError`（`message` + `pos`）、字句エラーは `LexError` として `throw` される。どちらも `code` を持たない — その段は最初のエラーで停止するので、コードが指し示すべき診断の集合が存在しない。出力そのものが診断の集合であるツール（`kumiki fix` のロールバック報告、MCP ツールの JSON エンベロープ）は、「診断ゼロ = クリーン」が保たれるように [E0000](#e0000-parse-error) を合成する。
+パースエラーは `ParseError`（`message` + `pos`）、字句エラーは `LexError` として `throw` される。どちらも `code` を持たない — その段は最初のエラーで停止するので、コードが指し示すべき診断の集合が存在しない。出力そのものが診断の集合であるツール（`kumiki fix` のロールバック報告、MCP ツールの JSON エンベロープ）は、「診断ゼロ = クリーン」が保たれるように [E0000](#e0000-parse-error) を合成する。MCP ツールの JSON に含まれる診断はすべて `severity` を持ち、省略されない。クライアントは上記の既定値を知らなくてよい。
 
-チェッカのコードは `packages/compiler/src/typecheck.ts` と `packages/compiler/src/typecheck/` 配下のモジュールから発行され、`E0000` は上記 2 つのツールが付与する。
+チェッカのコードは `packages/compiler/src/typecheck.ts` と `packages/compiler/src/typecheck/` 配下のモジュールから発行され、`E0000` は `packages/compiler/src/compile.ts` の `parseFailure` が組み立て、上記 2 つのツールがそれを呼ぶ。
 
 ## コード体系
 

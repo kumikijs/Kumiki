@@ -87,8 +87,10 @@ describe("kumiki_run_scenario", () => {
 
 describe("the diagnostic wire shape", () => {
   const workdir = useWorkdir();
-  type WireDiagnostic = { code: string; severity?: unknown };
-  const pairs = (ds: WireDiagnostic[]) => ds.map((d) => [d.code, d.severity]);
+  type WireDiagnostic = { code: string; severity?: unknown; line?: number; col?: number };
+  // By code: the order the checker reports them in is not what these tests are about.
+  const pairs = (ds: WireDiagnostic[]) =>
+    [...ds].sort((a, b) => a.code.localeCompare(b.code)).map((d) => [d.code, d.severity]);
   const writeMixed = (): string => {
     const file = join(workdir.path, "mixed.kumiki");
     writeFileSync(
@@ -97,7 +99,7 @@ describe("the diagnostic wire shape", () => {
         "slot count : Int = 0",
         "reducer bump on=ui.focus(Card) do= count := count + 1",
         'tile Card = box(heading("Count: " + count.show))',
-        "tile App = column(Card, text(totl.show))",
+        "tile App = column(Card, text(zzz.show))",
         "app Mixed",
         "    caps   = []",
         '    routes = {"/" -> App, "/404" -> App}',
@@ -120,8 +122,29 @@ describe("the diagnostic wire shape", () => {
     const res = await callOnce("kumiki_check", { path: writeMixed() });
     expect(res.isError).toBe(true);
     expect(pairs(JSON.parse(res.body) as WireDiagnostic[])).toEqual([
-      ["W0212", "warning"],
       ["E0103", "error"],
+      ["W0212", "warning"],
+    ]);
+  });
+
+  it.each([
+    { tool: "kumiki_check", head: [] },
+    { tool: "kumiki_build", head: ["build failed:"] },
+  ])("$tool reports unparsable source as an E0000 error, and flags it", async ({ tool, head }) => {
+    const res = await callOnce(tool, { source: "tile App = column(" });
+    expect(res.isError).toBe(true);
+    const lines = res.body.split("\n");
+    expect(lines.slice(0, head.length)).toEqual(head);
+    const diagnostics = JSON.parse(lines.slice(head.length).join("\n")) as WireDiagnostic[];
+    expect(diagnostics).toEqual([
+      {
+        code: "E0000",
+        kind: "parse-error",
+        message: "Parse error at 1:19: Unexpected token in expression",
+        line: 1,
+        col: 19,
+        severity: "error",
+      },
     ]);
   });
 
@@ -131,7 +154,9 @@ describe("the diagnostic wire shape", () => {
       const built = await callTool(client, "kumiki_build", { path: file });
       const [head, ...json] = built.split("\n");
       expect(head).toBe("build failed:");
-      expect(pairs(JSON.parse(json.join("\n")) as WireDiagnostic[])).toEqual([
+      // Not sorted: the description promises the warnings, then the errors.
+      const listed = JSON.parse(json.join("\n")) as WireDiagnostic[];
+      expect(listed.map((d) => [d.code, d.severity])).toEqual([
         ["W0212", "warning"],
         ["E0103", "error"],
       ]);
@@ -144,9 +169,6 @@ describe("the diagnostic wire shape", () => {
       };
       expect(pairs(fixed.remaining)).toEqual([["E0103", "error"]]);
       expect(pairs(fixed.warnings)).toEqual([["W0212", "warning"]]);
-
-      const unparsed = await callTool(client, "kumiki_check", { source: "tile App = column(" });
-      expect(pairs(JSON.parse(unparsed) as WireDiagnostic[])).toEqual([["E0000", "error"]]);
     });
   });
 
