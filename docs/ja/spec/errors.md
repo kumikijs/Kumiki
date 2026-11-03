@@ -102,7 +102,7 @@ type KumikiError = {
   > `app.routes must include a "/404" entry`
 - `404-is-redirect`：`app.routes` の `/404` のエントリがリダイレクト（`"/404" ->> "/"`）である。リダイレクトの位置で報告する。マップに `/404` のエントリはあるが、フォールバックが描画する tile がない。`/404` のエントリをもう 1 つ書けば [E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) になる — そのため `missing-404` ではない。`/404` の tile と並んだ `/404` のリダイレクトは、その E0008 だけになる：tile がフォールバックを担うからである。
   > `Route "/404" is a redirect, but "/404" is the fallback for paths no route matches and has to render a tile — write "/404" -> <Tile>`
-- `404-in-sub-routes`：tile の `sub-routes` マップに `/404` のエントリがある。tile を指名していてもリダイレクトでも同じである。エントリの位置で報告し、それがそのエントリの唯一の報告になる：指名するターゲットを重ねて検査することはない。`/404` に対してマッチされるサブルートはないので、エントリは決して使われない。どのサブルートにもマッチしない子のパスは、親自身のパスにサブルートの tile があればそれを、なければ app の `/404` を描画する（[ルーティング §3.6.3](./routing.md#_3-6-3-matching-rules)）。
+- `404-in-sub-routes`：tile の `sub-routes` マップに `/404` のエントリがある。tile を指名していてもリダイレクトでも同じである。エントリの位置で報告し、それがそのエントリの唯一の報告になる：指名するターゲットも、そのエントリを通るリダイレクトのループも、重ねて検査することはない。1 つのマップに `/404` のエントリが 2 つあれば、それぞれを報告し、その組は [E0112](#e0112-duplicate-sub-route) にもなる。`/404` に対してマッチされるサブルートはないので、エントリは決して使われない。どのサブルートにもマッチしない子のパスは、親自身のパスにサブルートの tile があればそれを、なければ app の `/404` を描画する（[ルーティング §3.6.3](./routing.md#_3-6-3-matching-rules)）。
   > `Tile "<tile>" has a sub-route at "/404", which is reserved for the app's fallback — no sub-route is matched against it. Remove it: a child path that no sub-route matches renders the sub-route tile at the parent's own path if there is one, or else the app's "/404"`
 
 **修正**：app 自身の `routes` で `/404` を tile へ向ける（`"/404" -> NotFound` など）。そこにリダイレクトがあれば置き換える。マッチしないパスを別のページへ送るには、ワイルドカードをリダイレクトし（`"/*" ->> "/"`）、`/404` の tile は残す。`sub-routes` マップの `/404` のエントリは削除する。詳細は [ルーティング](./routing.md)。
@@ -521,7 +521,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 ### E0125 `redirect-unbound-param`
 
-リダイレクトのターゲットが、ソースの束縛しないパラメータ、またはワイルドカード `*` を名指している（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）。ランタイムはソースがマッチしたもの——各 `:name` にはそれがマッチしたセグメント、`*` にはパスの残り——をターゲットに入れ、それ以外のセグメントは書かれたとおりに残すので、ソースが束縛しない名前は書かれたまま URL に届いてしまう：`"/old" ->> "/items/:id"` はパス `/items/:id` に行き着き、`route.params.id` は `":id"` を読む。名前ごとに 1 件、リダイレクトのエントリの位置で報告する。アプリの `routes` でも tile の `sub-routes` でも同じである。`/404` に書かれたエントリは検査しない：それがたどられることはなく、そこでのリダイレクトは [E0001](#e0001-missing-404-404-is-redirect-404-in-sub-routes) が拒否する。
+リダイレクトのターゲットが、ソースの束縛しないパラメータ、またはワイルドカード `*` を名指している（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）。ランタイムはソースがマッチしたもの——各 `:name` にはそれがマッチしたセグメント、`*` にはパスの残り——をターゲットに入れ、それ以外のセグメントは書かれたとおりに残すので、ソースが束縛しない名前は書かれたまま URL に届いてしまう：`"/old" ->> "/items/:id"` はパス `/items/:id` に行き着き、`route.params.id` は `":id"` を読む。名前ごとに 1 件、リダイレクトのエントリの位置で報告する。アプリの `routes` でも tile の `sub-routes` でも同じである。`/404` に書かれたエントリは検査しない：それがたどられることはなく、[E0001](#e0001-missing-404-404-is-redirect-404-in-sub-routes) として、または `app.routes` で `/404` の tile と並ぶときは [E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) として報告される。
 
 > `Redirect "<source>" ->> "<target>" names "<segment>", which "<source>" does not bind`
 

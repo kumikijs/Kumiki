@@ -223,6 +223,30 @@ app A
   });
 });
 
+describe("E0001: each diagnostic of a run is planned by its own kind", () => {
+  it("adds the app's missing /404 and skips a /404 sub-route reported beside it", () => {
+    const source = `tile Landing  = page(heading("Landing"))
+tile NotFound = page(heading("Not found"))
+
+tile SettingsLayout
+    sub-routes = {"/settings" -> Landing, "/404" -> NotFound}
+    = page(heading("Settings"), route-outlet())
+
+app A
+    caps   = []
+    routes = {"/" -> Landing, "/settings/*" -> SettingsLayout}
+    init   = []
+`;
+    const plan = planFix(writeSource(source), undefined);
+    expect(plan.patches.map((p) => [p.code, p.description])).toEqual([
+      ["E0001", 'add "/404" -> NotFound to app.routes'],
+    ]);
+    expect(plan.skipped.map((s) => [s.code, s.reason])).toEqual([
+      ["E0001", "e0001-404-in-sub-routes"],
+    ]);
+  });
+});
+
 describe("E0301: the capability is a new item of app.caps", () => {
   it("as the only item of an empty caps list", () => {
     const { code, program } = fixApply(`${SAVES}

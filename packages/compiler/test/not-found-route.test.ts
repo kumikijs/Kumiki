@@ -41,6 +41,15 @@ describe('a redirect at "/404" in app.routes', () => {
     expect(codesOf(app(routes))).toEqual(["E0008"]);
   });
 
+  // Elsewhere a redirect that comes back to itself is E0010.
+  it.each([
+    '"/404" ->> "/404"',
+    '"/x" ->> "/404", "/404" ->> "/x"',
+  ])("is the entry's one report, so a loop through it is not checked as well: %s", (entries) => {
+    const src = app(`{"/" -> Home, ${entries}}`);
+    expect(checkSource(src).map((d) => [d.code, d.kind])).toEqual([["E0001", "404-is-redirect"]]);
+  });
+
   it("leaves missing-404 to routes with no /404 entry at all", () => {
     expect(checkSource(app('{"/" -> Home, "/home" ->> "/"}'))).toMatchObject([
       { code: "E0001", kind: "missing-404", message: 'app.routes must include a "/404" entry' },
@@ -95,6 +104,24 @@ tile Settings sub-routes={"/settings" -> Home, "/404" -> ${target}} = column(rou
   ])("is the entry's one report, so its redirect target %s is not checked as well", (target) => {
     const src = app(WITH_404, LAYOUT(`{"/settings" -> Home, "/404" ->> ${target}}`));
     expect(checkSource(src).map((d) => [d.code, d.kind])).toEqual([["E0001", "404-in-sub-routes"]]);
+  });
+
+  // Elsewhere a redirect that comes back to itself is E0010.
+  it.each([
+    '"/404" ->> "/404"',
+    '"/x" ->> "/404", "/404" ->> "/x"',
+  ])("is the entry's one report, so a loop through it is not checked as well: %s", (entries) => {
+    const src = app(WITH_404, LAYOUT(`{"/settings" -> Home, ${entries}}`));
+    expect(checkSource(src).map((d) => [d.code, d.kind])).toEqual([["E0001", "404-in-sub-routes"]]);
+  });
+
+  it("reports each of two entries there, and the pair as a duplicate path", () => {
+    const src = app(WITH_404, LAYOUT('{"/settings" -> Home, "/404" -> NotFound, "/404" ->> "/"}'));
+    expect(checkSource(src).map((d) => [d.code, d.kind])).toEqual([
+      ["E0001", "404-in-sub-routes"],
+      ["E0001", "404-in-sub-routes"],
+      ["E0112", "duplicate-sub-route"],
+    ]);
   });
 
   it("is reported beside the app's own missing /404, which keeps its kind", () => {

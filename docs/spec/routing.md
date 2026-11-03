@@ -51,7 +51,7 @@ app M caps=[] routes={"/" -> Home, "/404" ->> "/"} init=[]
 
 To send paths no route matches to another page, redirect a wildcard instead: `"/*" ->> "/"` owns every path that no more specific entry owns ([§3.1.2](#_3-1-2-match-order), [§3.10](#_3-10-redirects-static)). The `/404` tile is still required.
 
-`/404` belongs to `app.routes` alone. A `sub-routes` map ([§3.6.2](#_3-6-2-child-route-map)) has no `/404` of its own, and no sub-route is matched against `/404`, so an entry written there is never used, whether it names a tile or redirects. It is E0001 (`404-in-sub-routes`), reported at the entry. A child path that no sub-route matches renders the sub-route tile at the parent's own path if there is one, or else the app's `/404` ([§3.6.3](#_3-6-3-matching-rules)).
+`/404` belongs to `app.routes` alone. A `sub-routes` map ([§3.6.2](#_3-6-2-child-route-map)) has no `/404` of its own, and no sub-route is matched against `/404`, so an entry written there is never used, whether it names a tile or redirects. It is E0001 (`404-in-sub-routes`), reported at the entry. A child path that no sub-route matches renders the sub-route tile at the parent's own path if there is one, or else the app's `/404` ([§3.6.3](#_3-6-3-matching-rules)). Under a `"/404/*"` parent that own path is `/404`, so the paths it matches and no sub-route does fall through to the app's `/404` as well.
 
 ### 3.1.4 A Route Target Takes No Argument
 

@@ -1,11 +1,12 @@
 ---
 "@kumikijs/compiler": patch
 "@kumikijs/cli": patch
+"@kumikijs/runtime": patch
 ---
 
 A redirect written at `/404` is reported as a redirect, not as a missing `/404`, and a `sub-routes` entry at `/404` is refused.
 
-`/404` is the fallback for paths no route matches. It belongs to `app.routes`, and it renders a tile (routing.md §3.1.3), so `"/404" ->> "/"` is refused. It was refused with the message for a map that has no `/404` at all, which sends the author to add a second one (E0008):
+`/404` is the fallback for paths no route matches. It belongs to `app.routes`, and it renders a tile (docs/spec/routing.md), so `"/404" ->> "/"` is refused. It was refused with the message for a map that has no `/404` at all, which sends the author to add a second one (E0008):
 
 ```
 before: E0001 missing-404 at 2:1: app.routes must include a "/404" entry
@@ -21,6 +22,8 @@ before: (no diagnostic)
 after:  E0001 404-in-sub-routes at 3:48: Tile "Settings" has a sub-route at "/404", which is reserved for the app's fallback — no sub-route is matched against it. Remove it: a child path that no sub-route matches renders the sub-route tile at the parent's own path if there is one, or else the app's "/404"
 ```
 
-It is the entry's one report, whatever it targets: an undefined tile or one that declares `in=` there is not also E0105 or E0213, and a redirect target naming a `:name` or `*` that `/404` does not bind is not also E0125. The same holds for a `/404` redirect in `app.routes`.
+It is the entry's one report, whatever it targets: an undefined tile or one that declares `in=` there is not also E0105 or E0213, a redirect target naming a `:name` or `*` that `/404` does not bind is not also E0125, and a redirect loop through it is not also E0010. The same holds for a `/404` redirect in `app.routes`.
 
-`kumiki fix` offers no patch for either kind, and reads that from the diagnostic's kind rather than scanning the routes a second time. The skip reasons are `e0001-404-is-a-redirect`, as before, and `e0001-404-in-sub-routes`.
+The router now agrees that no sub-route is matched against `/404`. A child path no sub-route matches renders the sub-route tile at the parent's own path, which under a `"/404/*"` parent is `/404`; that one default rendered a `/404` sub-route for `/404` and `/404/x`. Those paths now fall through to the app's `/404`.
+
+`kumiki fix` offers no patch for either kind, and reads that from the diagnostic's kind. The skip reasons are `e0001-404-is-a-redirect` and `e0001-404-in-sub-routes`.

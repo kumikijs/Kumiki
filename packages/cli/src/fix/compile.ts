@@ -220,8 +220,8 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   [
     "E0001",
     (err, store) => {
-      // Adding an entry repairs `missing-404` alone: a redirect at `/404` is replaced (an entry
-      // beside it would be E0008) and a sub-route at `/404` is removed.
+      // Adding an entry repairs `missing-404` alone: a redirect at `/404` has to be replaced by the
+      // author (an entry beside it would be E0008), and a sub-route at `/404` removed.
       if (err.kind === "404-is-redirect") return { reason: "e0001-404-is-a-redirect" };
       if (err.kind === "404-in-sub-routes") return { reason: "e0001-404-in-sub-routes" };
       if (append404Route(store.source) === null) return { reason: "e0001-no-routes-clause" };

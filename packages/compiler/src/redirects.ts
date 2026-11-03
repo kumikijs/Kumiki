@@ -48,7 +48,8 @@ export type UnboundRedirectName = { entry: RouteMapEntry; target: string; name: 
 
 /**
  * The runtime substitutes only what the source bound, so any other `:name` or `*` would land in the
- * URL as written. An entry written at `/404` is never followed, and is E0001 whatever it targets.
+ * URL as written. An entry written at `/404` is never followed: it is reported as E0001, or as E0008
+ * beside a `/404` tile, whatever it targets.
  */
 export function unboundRedirectNames(entries: readonly RouteMapEntry[]): UnboundRedirectName[] {
   const out: UnboundRedirectName[] = [];
