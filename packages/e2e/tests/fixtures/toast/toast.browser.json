@@ -1,0 +1,43 @@
+{
+  "steps": [
+    {
+      "label": "nothing is announced before a click",
+      "expect": { "domExcludes": ["Saved", "Failed"] }
+    },
+    {
+      "label": "an info toast appears with its text, marked with its kind and announced",
+      "do": { "clickText": "Show info" },
+      "expect": {
+        "domIncludes": ["Saved"],
+        "visible": ["Saved"],
+        "elementState": {
+          "[data-kumiki-toast][data-level='info']": {
+            "textContent": "Saved",
+            "role": "status",
+            "ariaLive": "polite"
+          }
+        }
+      }
+    },
+    {
+      "label": "an error toast appears beside it, marked as an error",
+      "do": { "clickText": "Show error" },
+      "expect": {
+        "domIncludes": ["Saved", "Failed"],
+        "elementState": {
+          "[data-kumiki-toast][data-level='error']": { "textContent": "Failed" }
+        }
+      }
+    },
+    {
+      "label": "the info toast is still up halfway through its 3000ms",
+      "do": { "wait": 1500 },
+      "expect": { "domIncludes": ["Saved", "Failed"] }
+    },
+    {
+      "label": "past 3000ms the info toast is gone, and the error toast stays",
+      "do": { "wait": 1700 },
+      "expect": { "domExcludes": ["Saved"], "domIncludes": ["Failed"] }
+    }
+  ]
+}
