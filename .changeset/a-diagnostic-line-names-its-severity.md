@@ -29,11 +29,9 @@ them in the `check` line above, as do the error lists under
 `fix --auto-patch`. Its proposal lines and the `[reason]` lines for an error
 it has no patch for are unchanged.
 
-The MCP `kumiki_fix` dry run listed `E0103 Reference to undefined name "totl"`
+The MCP `kumiki_fix` dry run listed `E0103 Reference to undefined name "zzz"`
 and `W0212 Reducer "bump" subscribes to …` one after the other, after
 `(no auto-patches available)` or the proposals. It now lists them as
 `kumiki check` prints them, `error E0103 …` and `warning W0212 …`.
 
-`@kumikijs/cli` exports `formatDiagnostic`, which builds that line, and
-`parseFailure`, the `E0000` diagnostic for a source that does not parse —
-`fix`'s regression gate and the MCP tools both build it there.
+`@kumikijs/cli` exports `formatDiagnostic`, which builds that line.

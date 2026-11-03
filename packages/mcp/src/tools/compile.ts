@@ -1,5 +1,15 @@
-import { HEADLESS_ACTION_KEYS, parseFailure, runScenarioSource, smokeSource } from "@kumikijs/cli";
-import { check, compile, type KumikiError, lex, parse } from "@kumikijs/compiler";
+import { HEADLESS_ACTION_KEYS, runScenarioSource, smokeSource } from "@kumikijs/cli";
+import {
+  type CompileResult,
+  check,
+  compile,
+  type KumikiError,
+  LexError,
+  lex,
+  ParseError,
+  parse,
+  parseFailure,
+} from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader, resolveBuiltinIcons } from "@kumikijs/compiler/node";
 import { z } from "zod";
 import {
@@ -112,15 +122,22 @@ export function registerCompileTools(tool: RegisterTool): void {
       },
     },
     async (input) => {
-      const result = compile(readSource(input), {
-        runtimeSpecifier: "./runtime.js",
-        bundle: true,
-        readRuntimeBundle: nodeRuntimeBundleReader,
-        capabilities: capsForInput(input),
-      });
-      if (result.kind === "fail") {
-        return failed(`build failed:\n${json(toDiagnostics(result.errors))}`);
+      const fail = (errors: KumikiError[]) =>
+        failed(`build failed:\n${json(toDiagnostics(errors))}`);
+      let result: CompileResult;
+      try {
+        result = compile(readSource(input), {
+          runtimeSpecifier: "./runtime.js",
+          bundle: true,
+          readRuntimeBundle: nodeRuntimeBundleReader,
+          capabilities: capsForInput(input),
+        });
+      } catch (e) {
+        // `compile()` throws on source it cannot parse; that is a diagnostic like any other here.
+        if (e instanceof LexError || e instanceof ParseError) return fail([parseFailure(e)]);
+        throw e;
       }
+      if (result.kind === "fail") return fail(result.errors);
       if (input.includeJs) return text(result.js);
       return text(
         `build ok — ${result.js.length} bytes of JS (pass includeJs=true for the source)`,

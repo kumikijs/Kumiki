@@ -1,7 +1,7 @@
 slot count : Int = 0
 reducer bump on=ui.focus(Card) do= count := count + 1
 tile Card = box(heading("Count: " + count.show))
-tile App = column(Card, text(totl.show))
+tile App = column(Card, text(zzz.show))
 app Mixed
     caps   = []
     routes = {"/" -> App, "/404" -> App}

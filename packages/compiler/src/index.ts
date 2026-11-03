@@ -43,6 +43,7 @@ export {
   compile,
   type ExtendedCodegenOptions,
   inlineRuntime,
+  parseFailure,
 } from "./compile.ts";
 export { generateDts } from "./dts.ts";
 export type { FieldSegment } from "./error-field.ts";

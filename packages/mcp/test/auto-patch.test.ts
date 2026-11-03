@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import { copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gateComposed } from "@kumikijs/cli";
-import { check, lex, parse } from "@kumikijs/compiler";
+import { check, lex, parse, severityOf } from "@kumikijs/compiler";
 import { describe, expect, it, vi } from "vitest";
 import { serialiseFixFromTest } from "../src/index.ts";
 import {
@@ -129,7 +129,7 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
       "    init   = []",
       "",
     ].join("\n");
-    const errors = check(parse(lex(source))).filter((e) => e.severity !== "warning");
+    const errors = check(parse(lex(source))).filter((e) => severityOf(e) === "error");
     const broken = source.replace('{"/" -> App}', '{"/" -> App, "/404" -> NotFound');
     let message = "";
     try {

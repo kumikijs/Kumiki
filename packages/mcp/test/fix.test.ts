@@ -59,7 +59,7 @@ describe("kumiki_fix", () => {
       isError: true,
       lines: [
         "(no auto-patches available)",
-        'error E0103 undef-ref at 4:30: Reference to undefined name "totl"',
+        'error E0103 undef-ref at 4:30: Reference to undefined name "zzz"',
         expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:17: /),
       ],
     },

@@ -8,12 +8,12 @@ import {
   lex,
   nearestNames,
   parse,
+  parseFailure,
   servesNotFound,
   severityOf,
   typeCandidates,
   variantTagsOf,
 } from "@kumikijs/compiler";
-import { parseFailure } from "../diagnostic.ts";
 import { listDefs, load, type Store } from "../store.ts";
 import { messageOf } from "../text.ts";
 import { atomicWriteFileSync } from "../write-lock.ts";
