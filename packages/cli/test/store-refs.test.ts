@@ -66,6 +66,46 @@ ${APP_A}`;
     expect(out).toContain('button(text="label"');
   });
 
+  const SHARED = (body: string): string => `slot leaf : Text = "hello"
+tile leaf = column(text("tile"))
+tile App = ${body}
+${APP_A}`;
+  const sites = (f: string, qname: string): string[] =>
+    findReferences(load(f), qname).map((r) => `${r.qname}:${r.line}`);
+
+  it("lists a tile's name written as a child under the tile, not the slot", () => {
+    const f = seed(SHARED("column(leaf)"));
+    expect(sites(f, "tile.leaf")).toEqual(["tile.App:3"]);
+    expect(sites(f, "slot.leaf")).toEqual([]);
+  });
+
+  it("renames the tile at the child and leaves the slot's read alone", () => {
+    const f = seed(SHARED("column(leaf, text(leaf))"));
+    renameDef(f, "tile.leaf", "twig");
+    const out = readFileSync(f, "utf8");
+    expect(out).toContain(`tile twig = column(text("tile"))`);
+    expect(out).toContain("tile App = column(twig, text(leaf))");
+  });
+
+  it("renames the slot at the read and leaves the child alone", () => {
+    const f = seed(SHARED("column(leaf, text(leaf))"));
+    renameDef(f, "slot.leaf", "greeting");
+    const out = readFileSync(f, "utf8");
+    expect(out).toContain(`slot greeting : Text = "hello"`);
+    expect(out).toContain("tile App = column(leaf, text(greeting))");
+  });
+
+  it("cascades a removal through the definition the child names", () => {
+    const fromSlot = seed(SHARED("column(leaf)"));
+    expect(removeDef(fromSlot, "slot.leaf", true).removed).toEqual(["slot.leaf"]);
+    const fromTile = seed(SHARED("column(leaf)"));
+    expect(removeDef(fromTile, "tile.leaf", true).removed).toEqual([
+      "tile.leaf",
+      "app.A",
+      "tile.App",
+    ]);
+  });
+
   it("does not count a definition as a reference to itself", () => {
     const store = load(COUNTER);
     for (const e of listDefs(store)) {
