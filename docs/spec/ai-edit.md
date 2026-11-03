@@ -246,7 +246,7 @@ No definition's name is part of the hash. The definition's own name is left out,
 
 Definitions that refer to each other in a cycle, such as two mutually recursive types, are hashed as one unit, since none of their hashes can be computed before the others'. Within the unit, a reference from one member to another counts as what that member says, with its own references to members of the unit left out, rather than as its hash, and every member's hash covers what every member of the unit says. So a member's hash is the same whichever member is reached first, and a `depends-on` digest of a member matches its `kumiki view --hash`.
 
-Known limitation: a reference counts as the hash of the definition it names, and two definitions that differ only in their names share a hash, so a reference to one of them counts the same as a reference to the other. `a := b` and `b := a` hash alike when `slot a` and `slot b` are both `Int = 0`, though the two slots are separate state.
+Known limitation: a reference counts as the hash of the definition it names, and two definitions that differ only in their names share a hash, so a reference to one of them counts the same as a reference to the other. `a := b` and `b := a` hash alike when `slot a` and `slot b` are both `Int = 0`, though the two slots are separate state. A test's `slots` keys are references too, so with the same two slots a test whose `given` is `{slots: {a: 1, b: 2}, …}` and one whose `given` is `{slots: {b: 1, a: 2}, …}` also hash alike.
 
 ### 9.5.2 Reference Resolution
 
