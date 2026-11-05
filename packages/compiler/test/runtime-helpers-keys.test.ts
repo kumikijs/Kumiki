@@ -4,13 +4,40 @@ import { RUNTIME_HELPERS } from "../src/codegen/runtime-helpers.ts";
 type Node = { kind: string; key?: string; text?: string };
 type Tree = Node | null | undefined | Tree[];
 
-const { _wk, _children } = new Function(`${RUNTIME_HELPERS}\nreturn { _wk, _children };`)() as {
+const { _wk, _children, _named } = new Function(
+  `${RUNTIME_HELPERS}\nreturn { _wk, _children, _named };`,
+)() as {
   _wk: (node: Tree, key: unknown) => Tree;
   _children: (...xs: Tree[]) => Node[];
+  _named: (node: Tree, name: string) => Tree;
 };
 
 const t = (text: string): Node => ({ kind: "text", text });
 const keys = (tree: Tree): unknown[] => (tree as Node[]).map((n) => n.key);
+
+/** `column(for x1 in xs … for xn in xs text(…))`, wrapped as the codegen wraps it. */
+function nestedFors(loopKeys: string[]): Node[] {
+  const list = (d: number): Tree => {
+    const key = loopKeys[d] as string;
+    return [d === loopKeys.length - 1 ? _wk(t("leaf"), key) : _wk(list(d + 1), key)];
+  };
+  return _children(list(0));
+}
+
+/** `column(L1)` for `tile Li = for x in xs L(i+1)`, wrapped as the codegen wraps it. */
+function forChain(loopKeys: string[]): Node[] {
+  const body = (d: number): Tree => {
+    const key = loopKeys[d] as string;
+    return [
+      d === loopKeys.length - 1 ? _wk(t("leaf"), key) : _wk(_named(body(d + 1), `L${d + 2}`), key),
+    ];
+  };
+  return _children(_named(body(0), "L1"));
+}
+
+// Each shown value holds quotes, so a key re-escaped per level would grow.
+const loopKeysOf = (count: number): string[] =>
+  Array.from({ length: count }, (_, d) => `Page_${d}|1|"${d}"`);
 
 describe("_children", () => {
   it("flattens nested lists to their nodes, in order, however deep", () => {
@@ -92,5 +119,81 @@ describe("_wk", () => {
 
   it("drops a null entry of a list rather than keying it", () => {
     expect(keys(_wk([null, { ...t("a"), key: "a" }], "k"))).toEqual(['["k","a"]']);
+  });
+});
+
+describe("_wk at depth", () => {
+  it("keys a node of twenty nested fors by the array of their twenty keys", () => {
+    const loopKeys = loopKeysOf(20);
+    const nodes = nestedFors(loopKeys);
+    expect(nodes).toHaveLength(1);
+    const [leaf] = nodes;
+    // The length first: a key that doubles per level is megabytes long, and
+    // comparing it as a string would print all of it.
+    expect(leaf?.key?.length).toBe(JSON.stringify(loopKeys).length);
+    expect(leaf?.key).toBe(JSON.stringify(loopKeys));
+  });
+
+  it("keys a node of a chain of twenty for-bodied tiles the same way", () => {
+    const loopKeys = loopKeysOf(20);
+    const nodes = forChain(loopKeys);
+    expect(nodes).toHaveLength(1);
+    const [leaf] = nodes;
+    expect(leaf?.key?.length).toBe(JSON.stringify(loopKeys).length);
+    expect(leaf?.key).toBe(JSON.stringify(loopKeys));
+    expect(leaf?.text).toBe("leaf");
+  });
+
+  it("keys a node 256 fors deep in one element per for", () => {
+    // As deep as the parser lets one definition nest (256 levels).
+    const loopKeys = loopKeysOf(256);
+    for (const tree of [nestedFors(loopKeys), forChain(loopKeys)]) {
+      expect(tree.map((n) => n.key)).toEqual([JSON.stringify(loopKeys)]);
+    }
+  });
+
+  it("keys every node of a nest with two elements at each level apart, by its own path", () => {
+    // `for a in ["0", "1"] for b in ["0", "1"] for c in … for d in … text(…)`.
+    const level = (path: string[], depth: number): Tree =>
+      ["0", "1"].map((i) => {
+        const key = `L${depth}|1|${i}`;
+        return depth === 3
+          ? _wk({ ...t([...path, key].join(" ")), path: [...path, key] } as Node, key)
+          : _wk(level([...path, key], depth + 1), key);
+      });
+    const nodes = _children(level([], 0));
+    expect(nodes).toHaveLength(16);
+    for (const n of nodes) {
+      expect(n.key).toBe(JSON.stringify((n as Node & { path: string[] }).path));
+    }
+    expect(new Set(nodes.map((n) => n.key)).size).toBe(16);
+  });
+
+  it("extends a node's key only when it is an array of two or more, as JSON.stringify writes it", () => {
+    // Each sibling's own key next to the one it would collide with if it were
+    // read back as an array: a spelling JSON.stringify does not write next to
+    // the one it does, a one-element array next to its element, and `[0]`
+    // next to position 0.
+    const own = (key: string): Node => ({ ...t(key), key });
+    const tree = [
+      t("no key"),
+      own("[0]"),
+      own('["a","b"]'),
+      own('[ "a", "b" ]'),
+      own('["a"]'),
+      own("a"),
+      own("[not json"),
+    ];
+    const ks = keys(_wk(tree, "k"));
+    expect(ks).toEqual([
+      '["k",0]',
+      '["k","[0]"]',
+      '["k","a","b"]',
+      '["k","[ \\"a\\", \\"b\\" ]"]',
+      '["k","[\\"a\\"]"]',
+      '["k","a"]',
+      '["k","[not json"]',
+    ]);
+    expect(new Set(ks).size).toBe(ks.length);
   });
 });

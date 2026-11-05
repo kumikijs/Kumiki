@@ -1,0 +1,75 @@
+# Feature: a node of nested `for`s is keyed by every loop over it, one
+# element per loop, however deep the nest goes.
+#
+# `Deep` nests 28 `for`s in one tile. `C1` … `C28` nest 28 across tiles: each
+# is a `for` whose body calls the next. Every list but the outermost and the
+# innermost holds one element, so each of the two columns renders four nodes.
+#
+# A node's key is the JSON array of the keys of the 28 iterations it sits in,
+# so it grows by one element per level of nesting, and nodes from different
+# outer iterations that share an inner value stay apart. Reversing `outer`
+# (the outermost loop) or `inner` (the innermost) moves each node's element
+# rather than rebuilding it. (The reconciler matches by key when every sibling
+# is keyed, so each nest sits in a column of its own.)
+
+slot outer : List(Text) = ["a", "b"]
+slot inner : List(Text) = ["1", "2"]
+slot one   : List(Int)  = [0]
+
+reducer flipOuter on=ui.click(FlipOuter) do= outer := outer.reverse
+reducer flipInner on=ui.click(FlipInner) do= inner := inner.reverse
+
+tile FlipOuter = button(text="flip outer") {id: "flip-outer"}
+tile FlipInner = button(text="flip inner") {id: "flip-inner"}
+
+tile Deep
+    = for o in outer
+      for x2 in one for x3 in one for x4 in one for x5 in one for x6 in one
+      for x7 in one for x8 in one for x9 in one for x10 in one for x11 in one
+      for x12 in one for x13 in one for x14 in one for x15 in one for x16 in one
+      for x17 in one for x18 in one for x19 in one for x20 in one for x21 in one
+      for x22 in one for x23 in one for x24 in one for x25 in one for x26 in one
+      for x27 in one
+      for i in inner text(o + "/" + i)
+
+tile C1 = for o in outer C2(o)
+tile C2 in=Text = for x in one C3($1)
+tile C3 in=Text = for x in one C4($1)
+tile C4 in=Text = for x in one C5($1)
+tile C5 in=Text = for x in one C6($1)
+tile C6 in=Text = for x in one C7($1)
+tile C7 in=Text = for x in one C8($1)
+tile C8 in=Text = for x in one C9($1)
+tile C9 in=Text = for x in one C10($1)
+tile C10 in=Text = for x in one C11($1)
+tile C11 in=Text = for x in one C12($1)
+tile C12 in=Text = for x in one C13($1)
+tile C13 in=Text = for x in one C14($1)
+tile C14 in=Text = for x in one C15($1)
+tile C15 in=Text = for x in one C16($1)
+tile C16 in=Text = for x in one C17($1)
+tile C17 in=Text = for x in one C18($1)
+tile C18 in=Text = for x in one C19($1)
+tile C19 in=Text = for x in one C20($1)
+tile C20 in=Text = for x in one C21($1)
+tile C21 in=Text = for x in one C22($1)
+tile C22 in=Text = for x in one C23($1)
+tile C23 in=Text = for x in one C24($1)
+tile C24 in=Text = for x in one C25($1)
+tile C25 in=Text = for x in one C26($1)
+tile C26 in=Text = for x in one C27($1)
+tile C27 in=Text = for x in one C28($1)
+tile C28 in=Text = for i in inner text($1 + "." + i)
+
+tile App
+    = column(
+        column(Deep),
+        column(C1),
+        FlipOuter,
+        FlipInner)
+      {pad: "lg", gap: "md"}
+
+app DeepNestedFor
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -33,9 +33,23 @@ function _wk(node, key) {
   }
   if (Array.isArray(node)) {
     return _children(node).map((n, i) =>
-      _wk(n, JSON.stringify([key, typeof n.key === "string" ? n.key : i])),
+      _wk(n, JSON.stringify([key, ...(typeof n.key === "string" ? _keySegments(n.key) : [i])])),
     );
   }
   return { ...node, key: key };
+}
+// Only a key spelled as _wk writes a list key (an array of two or more, as
+// JSON.stringify spells it) is split, so no two keys add the same elements.
+function _keySegments(k) {
+  if (k.charAt(0) !== "[") return [k];
+  let segments;
+  try {
+    segments = JSON.parse(k);
+  } catch {
+    return [k];
+  }
+  return Array.isArray(segments) && segments.length > 1 && JSON.stringify(segments) === k
+    ? segments
+    : [k];
 }
 `;
