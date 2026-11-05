@@ -15,7 +15,7 @@ catalog:
   gpt-tokenizer: ^3.4.0
   happy-dom: ^20.10.2
   playwright: ^1.61.1
-  tsx: ^4.22.3
+  tsx: ^4.23.15
   typescript: ^6.0.3
   vite: 8.0.16
   vitepress: ^1.6.4
