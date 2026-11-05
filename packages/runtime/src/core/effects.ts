@@ -86,9 +86,13 @@ export function makeEffectDispatcher(
     | { kind: "throttle"; h: Timer; id: string };
   type QueueEntry = { id: string; token: string };
   type Queue = { tail: Promise<void>; pending: QueueEntry[] };
+  type Run = { name: string; token: string; ctl: AbortController };
   type RunState = {
     // Keyed by `EffectId`: what `http.cancel` names and `latest` replaces.
     inflight: Map<string, AbortController>;
+    // Every launched request whose result has not been delivered, including one a cancel already
+    // took out of `inflight`. Only a run still here delivers its result, so `dispose` empties it.
+    runs: Set<Run>;
     // The id of an emit a policy dropped, to the id of the request that absorbed it, so a cancel
     // through either one reaches that request. An entry goes when that request settles.
     absorbedBy: Map<string, string>;
@@ -100,6 +104,7 @@ export function makeEffectDispatcher(
   };
   const state: RunState = {
     inflight: new Map(),
+    runs: new Set(),
     absorbedBy: new Map(),
     timers: new Map(),
     onceSeen: new Map(),
@@ -138,7 +143,9 @@ export function makeEffectDispatcher(
     }
     const token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
     const ctl = new AbortController();
+    const run: Run = { name: eff.name, token, ctl };
     state.inflight.set(id, ctl);
+    state.runs.add(run);
     let res: EffectResult;
     try {
       res = await runWithRetry(eff, input, caps, ctl.signal);
@@ -151,7 +158,7 @@ export function makeEffectDispatcher(
       state.inflight.delete(id);
       settle(id);
     }
-    onResult(eff.name, res.kind, res.value, input, token);
+    if (state.runs.delete(run)) onResult(eff.name, res.kind, res.value, input, token);
   };
 
   return {
@@ -266,23 +273,31 @@ export function makeEffectDispatcher(
       }
       void launch(eff, input, id);
     },
+    // Ends everything first and records after: recording a cancel can commit an episode, which
+    // runs the logger's `onEpisode`, and nothing that does may leave an effect running.
     dispose(): void {
-      const pendingTimers = [...state.timers];
-      state.timers.clear();
-      for (const [name, t] of pendingTimers) {
+      const cancelled: [token: string, name: string][] = [];
+      for (const [name, t] of state.timers) {
         clearTimeout(t.h);
-        if (t.kind === "debounce" && t.token) onPolicyCancel?.(t.token, name);
+        if (t.kind === "debounce") cancelled.push([t.token, name]);
       }
       for (const [name, q] of state.queues) {
-        const waiting = q.pending.splice(0, q.pending.length);
-        for (const e of waiting) {
-          if (e.token) onPolicyCancel?.(e.token, name);
-        }
+        for (const e of q.pending.splice(0)) cancelled.push([e.token, name]);
       }
+      // A launch is cancelled whether it is running or waiting between retry attempts, and so is
+      // one a cancel already aborted whose result has not come back.
+      for (const run of state.runs) {
+        run.ctl.abort();
+        cancelled.push([run.token, run.name]);
+      }
+      state.timers.clear();
       state.queues.clear();
-      for (const c of state.inflight.values()) c.abort();
+      state.runs.clear();
       state.inflight.clear();
       state.absorbedBy.clear();
+      for (const [token, name] of cancelled) {
+        if (token) onPolicyCancel?.(token, name);
+      }
     },
   };
 }
