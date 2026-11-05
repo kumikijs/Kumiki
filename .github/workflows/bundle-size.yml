@@ -17,7 +17,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 2
@@ -26,7 +26,7 @@ jobs:
         id: base
         run: echo "sha=$(git rev-parse HEAD^1)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ steps.base.outputs.sha }}
           path: .bundle-size-base
