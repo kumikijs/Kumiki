@@ -2,7 +2,7 @@ import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { jsBinding } from "../src/codegen/context.ts";
 import { RESERVED_BIND_NAMES } from "../src/reserved-binds.ts";
-import { checkSource, codesOf, summariesOf } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf, posOf, summariesOf } from "./helpers/diagnostics.ts";
 import { LOADABLE, loadReducer } from "./helpers/module.ts";
 import { withButtonApp, withRoot } from "./helpers/programs.ts";
 
@@ -305,15 +305,18 @@ describe("a nested body's writes count as the reducer's (E0601)", () => {
   });
 });
 
-describe("an E0103 for a name read after its scope ended names the scope", () => {
+describe("an E0103 for a name read outside its scope names the scope", () => {
   // A rename to a close name can type-check and read another value, so the diagnostic says which
-  // scope ended the name: in `endedScope` for `kumiki fix`, in the message for the author.
+  // scope holds the name: in `endedScope` (a read after it) or `laterScope` (a read before it) for
+  // `kumiki fix`, in the message for the author.
   const undefinedNames = (source: string) =>
     checkSource(source)
       .filter((e) => e.code === "E0103")
       .map((e) => ({
         name: /"([^"]+)"/.exec(e.message)?.[1],
         endedScope: e.endedScope,
+        laterScope: e.laterScope,
+        declaredAt: /declared later, at (\d+:\d+)/.exec(e.message)?.[1],
         message: e.message,
       }));
   // A phrase of the repair each hint gives, enough to tell apart the hints of one kind.
@@ -327,6 +330,13 @@ describe("an E0103 for a name read after its scope ended names the scope", () =>
     "let-in outside a reducer": "bind it once where both reads see it",
     "for-expr": "move the read into the loop's body",
     "match-expr": "move the read into that arm",
+    "for later": "move the read into the loop's body, after the declaration",
+    "if later": "move the read into that branch, after the declaration",
+    "match later": "move the read into that arm, after the declaration",
+    "let-in later": 'move the read into its body, or bind it with a "let" statement',
+    "let-in later outside a reducer": "move the read into its body, or bind it once",
+    "for-expr later": "move the read into the loop's body",
+    "match-expr later": "move the read into that arm",
   } as const;
   type Hint = keyof typeof REPAIR;
   const hinted = (name: string, hint: Hint) => ({
@@ -430,6 +440,13 @@ describe("an E0103 for a name read after its scope ended names the scope", () =>
       name: "seed",
       hint: "for",
     },
+    {
+      // The `else` branch's `n` shadows the loop variable and hands it back.
+      reads: "a name two scopes that end together declare, naming the outer one",
+      body: "for n in [1] { if flag then { () } else { let n = 2 } }\n        total := n",
+      name: "n",
+      hint: "for",
+    },
   ])("names the body for $reads", ({ body, name, hint }) => {
     expect(undefinedNames(program("app.start", body))).toEqual([hinted(name, hint)]);
   });
@@ -515,16 +532,18 @@ describe("an E0103 for a name read after its scope ended names the scope", () =>
       name: "idx",
     },
     {
-      // No body has ended yet when the `then` branch is checked.
-      case: "a read in the branch before the one that declares the name",
-      source: program("app.start", "if flag then { total := n } else { let n = 1 }"),
-      name: "n",
-    },
-    {
       case: "an expression's name read in another tile",
       source: page("column(for idx in [1] text(idx.show))").replace(
         "app A",
         "tile Other = text(idx.show)\n\napp A",
+      ),
+      name: "idx",
+    },
+    {
+      case: "a later definition's name read in an earlier one",
+      source: page("column(for idx in [1] text(idx.show))").replace(
+        "tile Page",
+        "tile Other = text(idx.show)\n\ntile Page",
       ),
       name: "idx",
     },
@@ -540,6 +559,171 @@ describe("an E0103 for a name read after its scope ended names the scope", () =>
       "if flag then { let total = 5\n                       seen := total.show } else { () }\n        total := total + 1",
     );
     expect(codesOf(src)).toEqual([]);
+  });
+
+  describe("before the scope that declares it", () => {
+    /** A read ahead of the scope `declaration` opens in `source`, whose message says where. */
+    const ahead = (source: string, name: string, hint: Hint, declaration: string) => {
+      const at = posOf(source, declaration);
+      return {
+        name,
+        laterScope: hint.split(" ")[0],
+        declaredAt: `${at.line}:${at.col}`,
+        message: expect.stringContaining(REPAIR[hint]),
+      };
+    };
+    const plain = (name: string) => ({
+      name,
+      endedScope: undefined,
+      laterScope: undefined,
+      message: `Reference to undefined name "${name}"`,
+    });
+
+    it.each<{ reads: string; source: string; name: string; hint: Hint; declaration: string }>([
+      {
+        reads: "a loop variable before the loop",
+        source: program("app.start", "total := idx\n        for idx in [1] { () }"),
+        name: "idx",
+        hint: "for later",
+        declaration: "for idx",
+      },
+      {
+        reads: "a `let` before the `if`",
+        source: program("app.start", "total := n\n        if flag then { let n = 1 } else { () }"),
+        name: "n",
+        hint: "if later",
+        declaration: "let n",
+      },
+      {
+        reads: "a `let` in the branch before it",
+        source: program("app.start", "if flag then { total := n } else { let n = 1 }"),
+        name: "n",
+        hint: "if later",
+        declaration: "let n",
+      },
+      {
+        reads: "a pattern variable before the match",
+        source: program(
+          "app.start",
+          "total := v\n        match Some(1) with\n          | Some(v) -> { () }\n          | None    -> { () }",
+        ),
+        name: "v",
+        hint: "match later",
+        declaration: "Some(v)",
+      },
+      {
+        reads: "a pattern variable in an earlier arm",
+        source: program(
+          "app.start",
+          "match Some(1) with\n          | None    -> { total := v }\n          | Some(v) -> { () }",
+        ),
+        name: "v",
+        hint: "match later",
+        declaration: "Some(v)",
+      },
+      {
+        reads: "a `let … in` name in an earlier statement",
+        source: program("app.start", 'after := n\n        seen := let n = "a" in n'),
+        name: "n",
+        hint: "let-in later",
+        declaration: "let n",
+      },
+      {
+        reads: "a `match` expression's arm variable in an earlier statement",
+        source: program(
+          "app.start",
+          'after := v\n        seen := match Some("a") with | Some(v) -> v | None -> ""',
+        ),
+        name: "v",
+        hint: "match-expr later",
+        declaration: "Some(v)",
+      },
+      {
+        reads: "a tile `for` variable in an earlier sibling",
+        source: page("column(text(idx.show), for idx in [1] text(idx.show))"),
+        name: "idx",
+        hint: "for-expr later",
+        declaration: "for idx",
+      },
+      {
+        reads: "a tile `match` arm's variable in an earlier sibling",
+        source: page(
+          'column(text(v.show), match Some(1) with | Some(v) -> text(v.show) | None -> text("none"))',
+        ),
+        name: "v",
+        hint: "match-expr later",
+        declaration: "Some(v)",
+      },
+      {
+        reads: "a `let … in` name before it in a `fn`",
+        source: program("app.start", "()").replace(
+          "tile Page",
+          "fn twice(x: Int) -> Int = n + (let n = x in n)\n\ntile Page",
+        ),
+        name: "n",
+        hint: "let-in later outside a reducer",
+        declaration: "let n",
+      },
+      {
+        reads: "a `let … in` name before it in a test",
+        source: `${program("app.start", "()")}
+test probe =
+    property-test
+        for-all   = {k: Int}
+        given     = {slots: {total: k}}
+        invariant = m == (let m = k in m)
+`,
+        name: "m",
+        hint: "let-in later outside a reducer",
+        declaration: "let m",
+      },
+      {
+        reads: "a `let` of the innermost scope, nested in a later one",
+        source: program(
+          "app.start",
+          "total := n\n        for x in [1] {\n          if flag then { let n = x } else { () }\n        }",
+        ),
+        name: "n",
+        hint: "if later",
+        declaration: "let n",
+      },
+    ])("names the scope for $reads", ({ source, name, hint, declaration }) => {
+      expect(undefinedNames(source)).toEqual([ahead(source, name, hint, declaration)]);
+    });
+
+    it("names no scope for a read ahead of its `let` in the same body, or in a `for`'s own list", () => {
+      // The first read is in the body that declares `n`; the second in the `for` that declares
+      // `idx`, which reads its list before the name is in scope.
+      const src = program(
+        "app.start",
+        "for x in [1] { total := n\n                       let n = 1 }\n        for idx in [idx] { () }",
+      );
+      expect(undefinedNames(src)).toEqual([plain("n"), plain("idx")]);
+    });
+
+    it("names the scope that ended when another declares the name later", () => {
+      const src = program(
+        "app.start",
+        "for idx in [1] { () }\n        total := idx\n        for idx in [2] { () }",
+      );
+      expect(undefinedNames(src)).toEqual([hinted("idx", "for")]);
+    });
+
+    it("keeps the message of a misspelling beside it", () => {
+      const src = program(
+        "app.start",
+        "total := idx\n        seen := sen\n        for idx in [1] { () }",
+      );
+      expect(undefinedNames(src)).toEqual([
+        ahead(src, "idx", "for later", "for idx"),
+        plain("sen"),
+      ]);
+    });
+
+    it("reads the slot of the same name before a scope that shadows it", () => {
+      const src = page('column(text(seen), for seen in ["a"] text(seen))');
+      expect(codesOf(src)).toEqual([]);
+    });
   });
 });
 

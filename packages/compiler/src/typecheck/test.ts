@@ -32,6 +32,7 @@ import {
 import { effectOutcomeType } from "./effect.ts";
 import { checkExpr } from "./expr.ts";
 import { walkExpr } from "./expr-walk.ts";
+import { nestedScopes } from "./nested-scopes.ts";
 import { checkRouteSeed, isTestSlot } from "./slot.ts";
 import { checkTileExpr } from "./tile.ts";
 import { reachesBrokenDefinition, resolveType } from "./types.ts";
@@ -207,6 +208,7 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
     localBinders: new Map(),
     routeBind: "no-payload",
     endedScopes: new Map(),
+    nestedScopes: nestedScopes(t.expect),
   });
 }
 
@@ -225,6 +227,7 @@ function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[])
         localBinders: new Map(),
         routeBind: "no-payload",
         endedScopes: new Map(),
+        nestedScopes: nestedScopes(written.value),
         wildcardsReportedElsewhere: true,
       });
     }
@@ -259,6 +262,7 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     localBinders: new Map(),
     routeBind: "no-payload",
     endedScopes: new Map(),
+    nestedScopes: nestedScopes(t.given, t.invariant, t.expect, t.mocks),
   };
   for (const f of t.forAll ?? []) bindLocal(base, f.name, f.type);
   const owned: Ctx = { ...base, wildcardsReportedElsewhere: true };

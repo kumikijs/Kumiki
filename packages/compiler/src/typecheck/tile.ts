@@ -44,6 +44,7 @@ import {
   refuseRenderedEffectId,
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
+import { nestedScopes } from "./nested-scopes.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
 import { collectRenderedBuiltinKinds, collectTileBuiltinKinds } from "./tile-collect.ts";
 import { checkA11y, checkBuiltinProp, checkButtonType, checkIconName } from "./tile-props.ts";
@@ -57,6 +58,7 @@ export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]
     localBinders: new Map(),
     routeBind: "no-payload",
     endedScopes: new Map(),
+    nestedScopes: nestedScopes(tile.body),
   };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
@@ -108,6 +110,7 @@ function readsUndeclaredInput(tile: TileDef, sym: SymbolTable): boolean {
     localBinders: new Map(),
     routeBind: "no-payload",
     endedScopes: new Map(),
+    nestedScopes: nestedScopes(tile.body),
     undeclaredInputReads: seen,
   };
   checkTileExpr(tile.body, sym, [], ctx);

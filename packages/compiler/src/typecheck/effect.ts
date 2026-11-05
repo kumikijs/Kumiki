@@ -87,11 +87,11 @@ export function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   checkTextFailure(eff, sym, errors);
-  if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, effectScope(eff, sym));
+  if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, effectScope(eff, sym, eff.mapRequest));
   // The key runs at dispatch time, so a name unchecked here fails on the first
   // dispatch rather than at check time.
   if (eff.policy?.kind === "PolLatestKey") {
-    const scope = effectScope(eff, sym);
+    const scope = effectScope(eff, sym, eff.policy.key);
     checkExpr(eff.policy.key, sym, errors, scope);
     checkPolicyKeyType(eff.policy.key, sym, scope, errors);
   }
@@ -127,9 +127,9 @@ function checkPolicyKeyType(key: Expr, sym: SymbolTable, scope: Ctx, errors: Kum
 }
 
 /** `$1` is the effect's input, and an effect declared `in=Unit` is emitted with none. */
-function effectScope(eff: EffectDef, sym: SymbolTable): Ctx {
-  if (declaresNoInput(eff.inType, sym)) return { ...pureScope([]), noInputEffect: eff.name };
-  return pureScope([{ name: "$1", type: eff.inType }]);
+function effectScope(eff: EffectDef, sym: SymbolTable, expr: Expr): Ctx {
+  if (declaresNoInput(eff.inType, sym)) return { ...pureScope([], expr), noInputEffect: eff.name };
+  return pureScope([{ name: "$1", type: eff.inType }], expr);
 }
 
 function checkTextFailure(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): void {

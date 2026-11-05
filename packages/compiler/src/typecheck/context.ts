@@ -11,6 +11,7 @@ import type {
   TypeExpr,
 } from "../ast.ts";
 import { callsBuiltin } from "../builtin-calls.ts";
+import { type NestedScopes, nestedScopes } from "./nested-scopes.ts";
 
 export type KumikiError = {
   code: string;
@@ -24,6 +25,8 @@ export type KumikiError = {
    * `kumiki fix` reads it to skip the rename.
    */
   endedScope?: NestedScopeKind;
+  /** E0103 only: the kind of nested scope that declares the name and begins after this read. */
+  laterScope?: NestedScopeKind;
   /** E0218 only: the member whose append alone makes the target a List; `kumiki fix` reads it. */
   accessor?: "keys" | "to-list";
 };
@@ -86,6 +89,8 @@ export type Ctx = {
   undeclaredInputReads?: Pos[];
   /** Names the ended scopes declared and the enclosing scope does not bind. */
   endedScopes: Map<string, EndedScope>;
+  /** Built before the check: a read can come before the scope that declares its name. */
+  nestedScopes: NestedScopes;
   /** The effect whose own expressions are checked, when it declares `in=Unit` and so binds no `$1`. */
   noInputEffect?: string;
   oneValueFragment?: { method: string; hides: boolean };
@@ -125,12 +130,17 @@ export function endScope(kind: NestedScopeKind, inner: Ctx, ctx: Ctx): void {
   }
 }
 
-export function pureScope(binds: readonly { name: string; type: TypeExpr }[]): Ctx {
+/** `exprs` are the expressions checked in this scope, whose nested scopes it knows. */
+export function pureScope(
+  binds: readonly { name: string; type: TypeExpr }[],
+  ...exprs: (Expr | undefined)[]
+): Ctx {
   const ctx: Ctx = {
     kind: "slot-init",
     localBinds: new Set(),
     routeBind: "no-payload",
     endedScopes: new Map(),
+    nestedScopes: nestedScopes(...exprs),
     localTypes: new Map(),
     localBinders: new Map(),
   };

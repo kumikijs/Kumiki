@@ -3,6 +3,7 @@ import { type FnScopeBind, fnScope } from "../fn-scope.ts";
 import type { Ctx, SymbolTable } from "./context.ts";
 import { checkExpr } from "./expr.ts";
 import { walkExpr } from "./expr-walk.ts";
+import { nestedScopes } from "./nested-scopes.ts";
 
 function routeChainText(name: string, chain?: readonly string[]): string {
   return chain === undefined ? "" : ` through "${chain[0]}" (${[...chain, name].join(" → ")})`;
@@ -54,6 +55,7 @@ function preMountProbe(
     localBinders: new Map(),
     routeBind: "no-payload",
     endedScopes: new Map(),
+    nestedScopes: nestedScopes(e),
     routeReadsSeen: routeReads,
     fragmentFnCallsSeen: fragmentFnCalls,
   };
