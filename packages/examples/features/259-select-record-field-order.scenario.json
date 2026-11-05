@@ -1,0 +1,47 @@
+{
+  "steps": [
+    {
+      "label": "each slot starts on its record, written in another field order than its option",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["dims: 2 x 3", "dims is 2 x 3: true", "crop: 4 x 4"]
+      }
+    },
+    {
+      "label": "choosing another record writes that record",
+      "do": { "choose": "#dims", "value": "4 x 4" },
+      "expect": {
+        "noErrors": true,
+        "state": { "dims": { "w": 4, "h": 4 } },
+        "domIncludes": ["dims: 4 x 4", "dims is 2 x 3: false"]
+      }
+    },
+    {
+      "label": "choosing the record option back writes the option's record, equal to the first",
+      "do": { "choose": "#dims", "value": "2 x 3" },
+      "expect": {
+        "noErrors": true,
+        "state": { "dims": { "w": 2, "h": 3 } },
+        "domIncludes": ["dims: 2 x 3", "dims is 2 x 3: true"]
+      }
+    },
+    {
+      "label": "choosing a record inside a variant writes that variant",
+      "do": { "choose": "#crop", "value": "Crop 1 x 1" },
+      "expect": {
+        "noErrors": true,
+        "state": { "crop": { "_tag": "Some", "_0": { "w": 1, "h": 1 } } },
+        "domIncludes": ["crop: 1 x 1"]
+      }
+    },
+    {
+      "label": "choosing the option without a payload writes None",
+      "do": { "choose": "#crop", "value": "No crop" },
+      "expect": {
+        "noErrors": true,
+        "state": { "crop": { "_tag": "None" } },
+        "domIncludes": ["crop: none"]
+      }
+    }
+  ]
+}
