@@ -5,6 +5,7 @@ import {
   type ReducerDef,
   type TileDef,
   type TileExpr,
+  writtenProp,
 } from "../ast.ts";
 import { BUILTIN_TILES, CHILD_RENDERING_BUILTINS } from "../builtins.ts";
 import { boundaryTarget, expansionTargets } from "../def-graph.ts";
@@ -69,7 +70,7 @@ function renderedTree(
   for (const edge of expansionTargets(def.body)) {
     const here = edge.root ? root : inner;
     if (BUILTIN_TILES.has(edge.to)) {
-      const id = edge.call ? writtenValue(edge.call, "id") : undefined;
+      const id = edge.call ? writtenProp(edge.call, "id")?.value : undefined;
       addElement(here, { kind: edge.to, id: id?.kind === "Str" ? id.value : null });
       continue;
     }
@@ -105,7 +106,7 @@ type Imposed = string | null | undefined;
 // replaces theirs. What a call site that writes no id but another prop leaves the dispatch
 // payload holding is not followed, so the id is unknown then. Handlers and `key` are not props.
 function callSiteId(call: TileExpr & { kind: "TileCall" }): Imposed {
-  const id = writtenValue(call, "id");
+  const id = writtenProp(call, "id")?.value;
   if (id !== undefined) return id.kind === "Str" ? id.value : null;
   const names = [...call.props.map((p) => p.name), ...call.args.map((a) => a.name)];
   const writesProp = names.some((n) => n !== undefined && n !== "key" && !HANDLER_NAMES.has(n));
@@ -321,13 +322,6 @@ export function collectPrefetchTargets(expr: TileExpr, out: Set<string>): void {
   }
 }
 
-export function writtenValue(t: TileExpr & { kind: "TileCall" }, name: string): Expr | undefined {
-  const fromProp = t.props.find((p) => p.name === name)?.value;
-  if (fromProp !== undefined) return fromProp;
-  const fromArg = t.args.find((a) => a.name === name)?.value;
-  return fromArg === undefined || isTileExpr(fromArg) ? undefined : fromArg;
-}
-
 export function collectElementIds(expr: TileExpr, out: Set<string>): void {
   switch (expr.kind) {
     case "TileFor":
@@ -342,7 +336,7 @@ export function collectElementIds(expr: TileExpr, out: Set<string>): void {
       for (const arm of expr.arms) collectElementIds(arm.body, out);
       return;
     case "TileCall": {
-      const id = writtenValue(expr, "id");
+      const id = writtenProp(expr, "id")?.value;
       if (id?.kind === "Str") out.add(id.value);
       for (const a of expr.args) if (isTileExpr(a.value)) collectElementIds(a.value, out);
       return;
