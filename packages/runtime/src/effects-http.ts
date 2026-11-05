@@ -1,5 +1,5 @@
 import { abortedHttpError, type EffectResult, type HttpError, NONE, someOf } from "./core.ts";
-import { type Decode, decodeRefusal, decodesJson } from "./effects-decode.ts";
+import { type Decode, decodeOf, decodeRead, decodesJson } from "./effects-decode.ts";
 
 export type HttpCfg = {
   baseUrl?: string;
@@ -25,7 +25,7 @@ export async function httpFetch(
     headers?: Record<string, string>;
     query?: Record<string, string>;
     body?: unknown;
-    decode?: Decode;
+    decode?: unknown;
     key?: string;
     value?: unknown;
   };
@@ -34,7 +34,12 @@ export async function httpFetch(
   const url = withQuery(joinBase(base, String(x.url ?? "")), x.query);
   // Under a base, the program's own headers and credentials stay on the base's origin.
   const global = base === "" || sameOrigin(url, base);
-  const decode = x.decode ?? "json";
+  let decode: Decode;
+  try {
+    decode = decodeOf(x.decode);
+  } catch (e) {
+    return { kind: "err", value: httpError(0, errorText(e)) };
+  }
   let encoded: Encoded = {};
   if (x.body !== undefined && method !== "GET" && method !== "HEAD") {
     try {
@@ -91,18 +96,13 @@ export async function httpFetch(
       }
       return { kind: "err", value: httpError(res.status, res.statusText, body) };
     }
-    if (decode === "none") return { kind: "ok", value: null };
-    const text = await res.text();
-    if (!decodesJson(decode)) return { kind: "ok", value: text };
-    let value: unknown;
-    try {
-      value = JSON.parse(text);
-    } catch (e) {
-      return { kind: "err", value: httpError(res.status, `decode failed: ${String(e)}`, text) };
-    }
-    const refused = decodeRefusal(decode, value);
-    if (refused) return { kind: "err", value: httpError(res.status, refused, text) };
-    return { kind: "ok", value };
+    const response = res;
+    const decoded = await decodeRead(decode, {
+      text: () => response.text(),
+      bytes: async () => new Uint8Array(await response.arrayBuffer()),
+    });
+    if (decoded.ok) return { kind: "ok", value: decoded.value };
+    return { kind: "err", value: httpError(res.status, decoded.message, decoded.text) };
   } catch (e) {
     const aborted = externallyAborted || isAbortError(e);
     if (aborted) return { kind: "err", value: abortedHttpError() };
