@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import type { Command } from "commander";
 import { patchApplyFile, patchRevert } from "../mutate.ts";
+import { WARN_SKIPPED } from "./_shared/op-log.ts";
 import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
 const APPLY_USAGE = "Usage: kumiki patch apply <file> <ops.jsonl>";
@@ -23,7 +24,11 @@ export function registerPatch(program: Command): string {
     .action((file: string | undefined, opsFile: string | undefined) => {
       if (!file || !opsFile) exitWithUsage(APPLY_USAGE);
       printOrExit(() => {
-        const ids = patchApplyFile(resolve(process.cwd(), file), resolve(process.cwd(), opsFile));
+        const ids = patchApplyFile(
+          resolve(process.cwd(), file),
+          resolve(process.cwd(), opsFile),
+          WARN_SKIPPED,
+        );
         return `applied ${ids.length} ops: ${ids.join(", ")}`;
       });
     });
@@ -37,7 +42,7 @@ export function registerPatch(program: Command): string {
     .action((file: string | undefined, opId: string | undefined) => {
       if (!file || !opId) exitWithUsage(REVERT_USAGE);
       printOrExit(() => {
-        const newId = patchRevert(resolve(process.cwd(), file), opId);
+        const newId = patchRevert(resolve(process.cwd(), file), opId, WARN_SKIPPED);
         return `reverted ${opId}  (${newId})`;
       });
     });
