@@ -253,6 +253,13 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
           bindPath: [{ get: true }, "plan"],
         },
       ],
+      ["radio (a variant)", { kind: "radio", group: "size", value: { _tag: "M" }, selected: true }],
+      [
+        "radio (a variant with a payload)",
+        { kind: "radio", group: "status", value: { _tag: "Some", _0: { _tag: "B" } } },
+      ],
+      ["radio (a record)", { kind: "radio", group: "dims", value: { w: 2, h: 3 } }],
+      ["radio (no value)", { kind: "radio", group: "plan" }],
     ],
   },
   select: {

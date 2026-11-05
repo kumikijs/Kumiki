@@ -13,9 +13,7 @@ describe("the server pass on its own", () => {
     expect(unchecked.querySelector("input")?.hasAttribute("checked")).toBe(false);
 
     const radio = serverElement({ kind: "radio", group: "plan", value: "pro", selected: true });
-    const radioInput = radio.querySelector("input");
-    expect(radioInput?.getAttribute("value")).toBe("pro");
-    expect(radioInput?.hasAttribute("checked")).toBe(true);
+    expect(radio.querySelector("input")?.hasAttribute("checked")).toBe(true);
 
     expect(serverElement({ kind: "textarea", value: "note" }).textContent).toBe("note");
 
@@ -99,6 +97,18 @@ describe("the server pass on its own", () => {
     ],
   ])("marks the option a select holds selected (%s)", (_, node, want) => {
     expect(selectedLabels(node)).toEqual(want);
+  });
+
+  // The key a select's option carries, so a variant or a record radio is not `[object Object]`.
+  it.each<[string, unknown, string | null]>([
+    ["a Text", "pro", '"pro"'],
+    ["a nullary variant", { _tag: "M" }, "M"],
+    ["a variant with a payload", { _tag: "Some", _0: { _tag: "B" } }, "Some|B"],
+    ["a record", { h: 3, w: 2 }, '{"h":3,"w":2}'],
+    ["no value", undefined, null],
+  ])("serves a radio's value as its structural key (%s)", (_, value, want) => {
+    const radio = serverElement({ kind: "radio", group: "g", value });
+    expect(radio.querySelector("input")?.getAttribute("value") ?? null).toBe(want);
   });
 
   it("escapes what it puts in text and in an attribute", () => {

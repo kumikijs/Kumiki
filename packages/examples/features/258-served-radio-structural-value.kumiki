@@ -1,0 +1,42 @@
+# Feature (runtime.md): a `radio` whose value is a `Text`, a variant, a variant
+# with a payload, or a record, served the way it mounts.
+#
+# A radio's `value` attribute is the structural key of its value, the same key
+# a `select` gives an option: a variant's tag and payload, and the JSON text of
+# anything else. The server and the client write the same key, so the served
+# page tells the radios of a group apart, where a variant or a record radio was
+# served as `value="[object Object]"`. The radio the slot holds is `checked`
+# on both paths, and choosing a radio still writes its value, not its key. The
+# scenario drives the mounted radios; what the server serves, and what hydrating
+# it picks up, is pinned by an integration test in `packages/tests`.
+
+type Size   = S | M | L
+type Status = Backlog | InProgress | Done
+type Dims   = {w: Int, h: Int}
+
+slot plan   : Text           = "pro"
+slot size   : Size           = M
+slot status : Option(Status) = Some(InProgress)
+slot dims   : Dims           = {w=2, h=3}
+
+tile App = column(
+             radio(group="plan", bind=plan, value="free") {label: "Free", id: "planFree"},
+             radio(group="plan", bind=plan, value="pro")  {label: "Pro", id: "planPro"},
+             radio(group="size", bind=size, value=S) {label: "Small", id: "sizeS"},
+             radio(group="size", bind=size, value=M) {label: "Medium", id: "sizeM"},
+             radio(group="size", bind=size, value=L) {label: "Large", id: "sizeL"},
+             radio(group="status", bind=status, value=None)             {label: "Any", id: "statusAny"},
+             radio(group="status", bind=status, value=Some(Backlog))    {label: "Backlog", id: "statusBacklog"},
+             radio(group="status", bind=status, value=Some(InProgress)) {label: "In progress", id: "statusInProgress"},
+             radio(group="dims", bind=dims, value={w=1, h=1}) {label: "1 x 1", id: "dims11"},
+             radio(group="dims", bind=dims, value={w=2, h=3}) {label: "2 x 3", id: "dims23"},
+             text("plan: " + plan),
+             text("size: " + size.show),
+             text("status: " + status.map($1.show).get-or("any")),
+             text("dims: " + dims.w.show + " x " + dims.h.show))
+           {pad: "lg", gap: "md"}
+
+app ServedRadio
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
