@@ -73,7 +73,10 @@ type ByKey = { withKey: readonly string[]; withoutKey: readonly string[] };
  * custom capability. A capability not listed has no request schema: a custom one, a standard one
  * whose effects reach only a host provider, and `http.cancel`, which takes no `map-request` at all.
  */
-const REQUEST_FIELDS: ReadonlyMap<string, readonly string[] | ByKey> = new Map([
+const REQUEST_FIELDS: ReadonlyMap<string, readonly string[] | ByKey> = new Map<
+  string,
+  readonly string[] | ByKey
+>([
   ["http.get", HTTP_READ],
   ["http.post", HTTP_SEND],
   ["http.put", HTTP_SEND],
