@@ -1,5 +1,5 @@
 import { abortedHttpError, type EffectResult, type HttpError, NONE, someOf } from "./core.ts";
-import { type Decode, decodeRefusal, decodesJson } from "./effects-decode.ts";
+import { type Decode, decodeOf, decodeRead, decodesJson } from "./effects-decode.ts";
 
 export type HttpCfg = {
   baseUrl?: string;
@@ -25,23 +25,26 @@ export async function httpFetch(
     headers?: Record<string, string>;
     query?: Record<string, string>;
     body?: unknown;
-    decode?: Decode;
-    key?: string;
-    value?: unknown;
+    decode?: unknown;
   };
   const base = httpCfg?.baseUrl ?? "";
   // `map-request` is not checked against the request type, so a url can be any value.
   const url = withQuery(joinBase(base, String(x.url ?? "")), x.query);
   // Under a base, the program's own headers and credentials stay on the base's origin.
   const global = base === "" || sameOrigin(url, base);
-  const decode = x.decode ?? "json";
+  // Each failure before the request is `final`: nothing was sent, so a retry would fail the same
+  // way.
+  const decode = decodeOf(x.decode);
+  if (typeof decode === "object") {
+    return { kind: "err", value: httpError(0, decode.refused), final: true };
+  }
   let encoded: Encoded = {};
   if (x.body !== undefined && method !== "GET" && method !== "HEAD") {
     try {
       encoded = encodeBody(x.body);
     } catch (e) {
       // A body that cannot be sent as written fails the effect, before any request.
-      return { kind: "err", value: httpError(0, errorText(e)) };
+      return { kind: "err", value: httpError(0, errorText(e)), final: true };
     }
   }
   const headers: Record<string, string> = {};
@@ -91,18 +94,13 @@ export async function httpFetch(
       }
       return { kind: "err", value: httpError(res.status, res.statusText, body) };
     }
-    if (decode === "none") return { kind: "ok", value: null };
-    const text = await res.text();
-    if (!decodesJson(decode)) return { kind: "ok", value: text };
-    let value: unknown;
-    try {
-      value = JSON.parse(text);
-    } catch (e) {
-      return { kind: "err", value: httpError(res.status, `decode failed: ${String(e)}`, text) };
-    }
-    const refused = decodeRefusal(decode, value);
-    if (refused) return { kind: "err", value: httpError(res.status, refused, text) };
-    return { kind: "ok", value };
+    const response = res;
+    const decoded = await decodeRead(decode, {
+      text: () => response.text(),
+      bytes: async () => new Uint8Array(await response.arrayBuffer()),
+    });
+    if (decoded.ok) return { kind: "ok", value: decoded.value };
+    return { kind: "err", value: httpError(res.status, decoded.message, decoded.text) };
   } catch (e) {
     const aborted = externallyAborted || isAbortError(e);
     if (aborted) return { kind: "err", value: abortedHttpError() };
