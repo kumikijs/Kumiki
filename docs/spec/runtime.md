@@ -796,6 +796,8 @@ A request cancelled during the wait between attempts ends the wait at once and m
 
 On effect completion, the result is notified to the runtime as an `<effect-name>.ok($value, $key)` / `<effect-name>.err($error, $key)` event. The matching reducer is executed.
 
+The server pass ([§10.6.1](#_10-6-1-ssr)) delivers the result of an effect in the `app.init` chain the same way: the effect runs under the same `retry` ([§10.4.4](#_10-4-4-retry)), an invoke that throws fails with the same `.err` value, and the matching reducer is handed the same `$value` / `$error` and the same `$key`. Hydration does not run `app.init` again ([§10.6.2](#_10-6-2-hydration)), so what the server computed is what the hydrated page keeps, and it is what a mount computes.
+
 ### 10.4.6 Implementation of Standard Capabilities
 
 | capability | Implementation |

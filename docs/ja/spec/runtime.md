@@ -750,6 +750,8 @@ step が付く episode は、いま開いている episode ではなく、その
 
 effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.err($error, $key)` イベントとしてランタイムに通知。マッチする reducer が実行される。
 
+サーバパス（[§10.6.1](#_10-6-1-ssr)）も、`app.init` の連鎖にある effect の結果を同じように配送する：effect は同じ `retry`（[§10.4.4](#_10-4-4-retry)）のもとで走り、throw した invoke は同じ `.err` の値で失敗し、マッチする reducer には同じ `$value` / `$error` と同じ `$key` が渡される。hydration は `app.init` を再実行しない（[§10.6.2](#_10-6-2-hydration)）ので、サーバが計算したものが hydrate されたページに残り、それはマウントが計算するものと同じである。
+
 ### 10.4.6 標準 capability の実装
 
 | capability | 実装 |
