@@ -410,6 +410,10 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
   リクエストを走らせる。`Map` 自身の key も同じ書き方で格納されるので、`Map(Float, V)`
   はその値が key になるなら key になる。`Float` は `.show` を、`File` は
   `{name: $1.name, size: $1.size}` を通して key にする
+- effect は[標準 effect](./stdlib.md#_2-6-標準-effect)の名前（`navigate`・`navigate-replace`・
+  `navigate-back`・`scroll-to`・`toast`・`confirm`・`log`）を名乗れない：ランタイムはマウント時に
+  それぞれをそれ自身の名前で登録するため、その名前の宣言は決して実行されない
+  （[E0234](./errors.md#e0234-reserved-effect-name)）
 
 ### 1.5.3 例
 

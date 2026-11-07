@@ -163,6 +163,23 @@ tile App = column(
     expect(errorText(root, "n")).toBe("Must be a whole number");
   });
 
+  // Before, the reader wrote the rounded number past 2^53, and Infinity past the largest finite one.
+  it.each([
+    ["digits past 2^53", "9007199254740993"],
+    ["digits too large to be finite", `1${"0".repeat(400)}`],
+  ])("refuses %s in an Int field, keeping the slot", async (_what, digits) => {
+    const app = await loadSource(
+      withApp(`
+slot n : Int = 0
+tile App = column(input(bind=n, type="number", id="n"), error(field=n))`),
+    );
+    const root = mountInto(app);
+    fill(root, "#n", "7");
+    fill(root, "#n", digits);
+    expect(app.live?.n).toBe(7);
+    expect(errorText(root, "n")).toBe("Must be a whole number");
+  });
+
   it("speaks for a path bind's field, on the slot it binds through", async () => {
     const app = await loadSource(
       withApp(`

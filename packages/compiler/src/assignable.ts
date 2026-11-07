@@ -535,7 +535,7 @@ function headName(t: TypeExpr | null): string {
   return t.kind === "TypeRef" || t.kind === "TypeApp" ? t.name : `#${t.kind}`;
 }
 
-function typeSize(t: TypeExpr | null): number {
+export function typeSize(t: TypeExpr | null): number {
   if (t === null) return 0;
   switch (t.kind) {
     case "TypePrim":

@@ -51,7 +51,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | コード | kind | 層 | 機能 |
 |---|---|---|---|
 | [E0000](./errors.md#e0000-parse-error) | `parse-error` | all | コア |
-| [E0001](./errors.md#e0001-missing-404) | `missing-404` | app | ルーティング |
+| [E0001](./errors.md#e0001-missing-404-404-is-redirect-404-in-sub-routes) | `missing-404` / `404-is-redirect` / `404-in-sub-routes` | app / tile | ルーティング |
 | [E0002](./errors.md#e0002-duplicate-timer-name) | `duplicate-timer-name` | app | ライフサイクル |
 | [E0003](./errors.md#e0003-missing-app) | `missing-app` | app | コア |
 | [E0004](./errors.md#e0004-duplicate-app) | `duplicate-app` | app | コア |
@@ -113,6 +113,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0227](./errors.md#e0227-non-exhaustive-match) | `non-exhaustive-match` | type | コア |
 | [E0229](./errors.md#e0229-bind-target-not-slot) | `bind-target-not-slot` | tile | フォーム |
 | [E0231](./errors.md#e0231-reserved-type-name) | `reserved-type-name` | type | コア |
+| [E0234](./errors.md#e0234-reserved-effect-name) | `reserved-effect-name` | effect | 標準ライブラリ |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | フォーム |

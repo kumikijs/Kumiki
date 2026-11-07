@@ -411,6 +411,11 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
   and page. A `Map`'s own keys are stored the same way, so a `Map(Float, V)`
   is a key when its values are. A `Float` is keyed through `.show`, and a
   `File` through `{name: $1.name, size: $1.size}`
+- An effect may not take the name of a [standard effect](./stdlib.md#_2-6-standard-effects)
+  (`navigate`, `navigate-replace`, `navigate-back`, `scroll-to`, `toast`,
+  `confirm`, `log`): the runtime registers each of those under its own name at
+  mount, so a declaration under one would never run
+  ([E0234](./errors.md#e0234-reserved-effect-name))
 
 ### 1.5.3 Examples
 
