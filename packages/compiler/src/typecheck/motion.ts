@@ -1,4 +1,5 @@
 import type { MotionDef, ThemeValue } from "../ast.ts";
+import { isPositiveInt } from "../positive-int.ts";
 import type { KumikiError } from "./context.ts";
 
 const MOTION_KEYFRAME_PROPS = new Set(["opacity", "translate-x", "translate-y", "scale", "rotate"]);
@@ -10,10 +11,6 @@ const MOTION_DURATION_TOKENS = new Set(["fast", "normal", "slow"]);
 const MOTION_DIRECTIONS = new Set(["normal", "reverse", "alternate", "alternate-reverse"]);
 
 const MOTION_TIMING_KEYS = new Set(["duration", "easing", "iteration", "direction"]);
-
-/** `duration` (ms) and `iteration` are spec'd as positive integers (no 0 / negative / float). */
-const isPositiveInt = (v: unknown): boolean =>
-  typeof v === "number" && Number.isInteger(v) && v > 0;
 
 type MotionBody = { [k: string]: ThemeValue };
 

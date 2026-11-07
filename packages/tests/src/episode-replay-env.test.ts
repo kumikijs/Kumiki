@@ -1,53 +1,22 @@
 import { readFileSync } from "node:fs";
 import { feature } from "@kumikijs/examples";
-import type { AppShape, EpisodeLogEntry, EpisodeStep } from "@kumikijs/runtime";
-import { createEpisodeLogger, replayEpisodes, runScenario } from "@kumikijs/runtime";
+import type { EpisodeLogEntry } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { withRoot } from "./helpers/dom.ts";
+import { afterValues, recordOne, reducerStep, replayEpisode } from "./helpers/episodes.ts";
 import { loadApp } from "./helpers/load.ts";
-import { failureDetail } from "./helpers/scenario.ts";
 
 const EXAMPLE = feature("87-replayed-environment-read");
 const FIXTURE = EXAMPLE.replace(/\.kumiki$/, ".fixture.jsonl");
+const QUALIFIED_NOW = feature("201-qualified-time-now");
 
-type ReducerStep = Extract<EpisodeStep, { kind: "reducer" }>;
-
-function reducerStep(ep: EpisodeLogEntry): ReducerStep {
-  const step = ep.steps.find((s) => s.kind === "reducer");
-  if (!step) throw new Error("episode has no reducer step");
-  return step as ReducerStep;
-}
-
-/** The slot values the recorded reducer produced — what a replay must land on. */
-function afterValues(ep: EpisodeLogEntry): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const d of reducerStep(ep)["slot-diffs"] ?? []) out[d.name] = d.after;
-  return out;
-}
+const loadOf = (example: string) => () => loadApp(example);
 
 /** Drive one click through the live runtime and return the episode it wrote. */
-async function recordOneClick(): Promise<EpisodeLogEntry> {
-  const app = await loadApp(EXAMPLE);
-  const logger = createEpisodeLogger({ memoryMax: 10 });
-  const report = await withRoot((root) =>
-    runScenario(app, root, { steps: [{ do: { clickText: "stamp" } }] }, { episodeLogger: logger }),
-  );
-  expect(report.ok, failureDetail(report)).toBe(true);
-  const eps = logger.list();
-  expect(eps).toHaveLength(1);
-  // Through JSON, because that is how an episode reaches `kumiki replay`.
-  return JSON.parse(JSON.stringify(eps[0])) as EpisodeLogEntry;
-}
+const recordOneClick = (example = EXAMPLE) =>
+  recordOne(loadOf(example), { do: { clickText: "stamp" } });
 
-async function replayOnce(ep: EpisodeLogEntry): Promise<Record<string, unknown>> {
-  const app = (await loadApp(EXAMPLE)) as AppShape & { live: Record<string, unknown> };
-  return replayEpisodes({
-    app: { live: app.live, slots: app.slots, reducers: app.reducers, effects: app.effects },
-    episodes: [ep],
-    mocks: {},
-    observer: () => "continue",
-  }).finalSlots;
-}
+const replayOnce = async (ep: EpisodeLogEntry, example = EXAMPLE) =>
+  (await replayEpisode(loadOf(example), ep)).finalSlots;
 
 describe("an episode that read the environment", () => {
   it("records what `random()` and `now` answered", async () => {
@@ -83,5 +52,25 @@ describe("an episode that read the environment", () => {
     expect(slots.roll).toBe(4);
     expect(slots.stamped).toBe("1718700000000");
     expect(slots.inRange).toBe(true);
+  });
+});
+
+describe("`Time.now` in a reducer", () => {
+  // The example's reducer reads `Time.now`, `Time.now()` and `now`, in that order.
+  it("records each spelling as a `now` read", async () => {
+    const ep = await recordOneClick(QUALIFIED_NOW);
+    const reads = reducerStep(ep)["env-reads"] ?? [];
+    expect(reads.map((r) => r.kind)).toEqual(["now", "now", "now"]);
+    expect(reads.every((r) => typeof r.value === "number")).toBe(true);
+  });
+
+  it("replays the recorded instants into the slots that read them", async () => {
+    const ep = await recordOneClick(QUALIFIED_NOW);
+    // Instants no live clock answers, so a replay that read the clock instead
+    // of the journal cannot land on them.
+    const recorded = [1718700000000, 1718700000001, 1718700000002];
+    reducerStep(ep)["env-reads"] = recorded.map((value) => ({ kind: "now" as const, value }));
+    const slots = await replayOnce(ep, QUALIFIED_NOW);
+    expect([slots.stamped, slots.called, slots.bare]).toEqual(recorded);
   });
 });

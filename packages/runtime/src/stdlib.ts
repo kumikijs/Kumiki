@@ -1,17 +1,18 @@
 import {
   _setPathHelper,
-  currentEpisodeId,
+  emitId,
   entryKey,
   isEntryOf,
   isPanic,
   isPlainDataBag,
   KumikiPanic,
   listPosition,
+  newId,
   type PathSegment,
-  panicInfo,
   type RefinementNaming,
   type RefinementRejection,
   readEnv,
+  recordInRenderPass,
   refinementRejectionOf,
   type SlotGate,
   slotAccepts,
@@ -20,6 +21,21 @@ import {
 } from "./core.ts";
 
 export type KeyKind = "number" | "bool" | "value";
+
+// What the type says and the value does not: a record and a Map are both plain objects, a Set
+// is an object of its keys, and a Tuple is an array like a List.
+export type ShowShape = 0 | RecordShape | Descriptor;
+
+type RecordShape = { readonly [field: string]: ShowShape };
+
+type Descriptor =
+  | readonly ["l", ShowShape]
+  | readonly ["t", ...ShowShape[]]
+  | readonly ["m", KeyKind | 0, ShowShape, ShowShape]
+  | readonly ["s", KeyKind | 0, ShowShape];
+
+// A List's, Tuple's, Map's or Set's shape is an array; a record's is an object of its fields.
+const isDescriptor = (s: ShowShape | undefined): s is Descriptor => Array.isArray(s);
 
 /** A stored object key, restored to the kind of value it was written from. */
 function restoreKey(key: string, kind: KeyKind | undefined): unknown {
@@ -52,6 +68,20 @@ function assertNeverKind(kind: never): never {
   throw new Error(`unknown key kind ${String(kind)}`);
 }
 
+// Object.fromEntries defines each key as an own entry; assigning "__proto__" into a fresh object
+// goes to the inherited __proto__ setter and makes no entry.
+function setKeep(
+  a: Record<string, true> | undefined | null,
+  b: Record<string, true> | undefined | null,
+  inB: boolean,
+): Record<string, true> {
+  return Object.fromEntries(
+    Object.keys(a ?? {})
+      .filter((k) => isEntryOf(b, k) === inB)
+      .map((k) => [k, true]),
+  );
+}
+
 export function valueEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
@@ -77,14 +107,24 @@ export function valueEqual(a: unknown, b: unknown): boolean {
   return ak.every((k) => Object.hasOwn(bo, k) && valueEqual(ao[k], bo[k]));
 }
 
+// Asks `<` rather than subtracting: two `Text`s subtract to a number or to `NaN`, neither of
+// which is their code-unit order. An absent or `NaN` value sorts last; "equal" to every value,
+// a single one would stop the rest from sorting.
+function ascending(a: unknown, b: unknown): number {
+  const na = a == null || Number.isNaN(a);
+  const nb = b == null || Number.isNaN(b);
+  if (na || nb) return na === nb ? 0 : na ? 1 : -1;
+  const x = a as number | string;
+  const y = b as number | string;
+  return x < y ? -1 : x > y ? 1 : 0;
+}
+
 function instantOf(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (typeof value !== "string") return Number.NaN;
   // Trimmed here, not in `Time.parse`: the reading refuses padded text, but a
   // `Time` that arrived as padded text still renders as the instant it names.
-  const raw = String(value ?? "").trim();
-  if (raw === "") return Number.NaN;
-  const n = Number(raw);
-  if (Number.isFinite(n)) return n;
-  const parsed = _stdlibCore.parseTime(raw);
+  const parsed = _stdlibCore.parseTime(value.trim());
   return parsed._tag === "Some" ? (parsed._0 as number) : Number.NaN;
 }
 
@@ -98,19 +138,21 @@ function isCalendarDate(y: number, m: number, d: number): boolean {
   return m >= 1 && m <= 12 && d >= 1 && d <= days;
 }
 
-type PlatformCrypto = {
-  randomUUID?: () => string;
-  getRandomValues?: (bytes: Uint8Array) => Uint8Array;
-};
+const INT_TEXT = /^[+-]?[0-9]+$/;
+const FLOAT_TEXT = /^[+-]?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$/;
 
-function uuidV4(c: PlatformCrypto | undefined): string {
-  const bytes = new Uint8Array(16);
-  if (c?.getRandomValues) c.getRandomValues(bytes);
-  else for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+/**
+ * `Number` also reads blank text as 0, `0x` / `0o` / `0b`, `.5` and `1.`, so the form decides
+ * which text reads and `Number` only its value.
+ */
+function readNumber(
+  text: unknown,
+  form: RegExp,
+  holds: (n: number) => boolean,
+): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+  if (typeof text !== "string" || !form.test(text)) return _stdlibCore.None;
+  const n = Number(text);
+  return holds(n) ? _stdlibCore.Some(n) : _stdlibCore.None;
 }
 
 export const _stdlibCore = {
@@ -187,7 +229,7 @@ export const _stdlibCore = {
     return m ? Object.entries(m).map(([k, v]) => [restoreKey(k, kind), v]) : [];
   },
   mapGet(m: Record<string, unknown> | undefined | null, k: unknown): unknown {
-    return m ? m[entryKey(k)] : undefined;
+    return isEntryOf(m, k) ? (m as Record<string, unknown>)[entryKey(k)] : undefined;
   },
   /** Polymorphic `.get-or(default)` for Option-like values. */
   getOr(v: unknown, fallback: unknown): unknown {
@@ -203,18 +245,16 @@ export const _stdlibCore = {
     return v ?? fallback;
   },
   mapGetOr(m: Record<string, unknown> | undefined | null, k: unknown, def: unknown): unknown {
-    const key = entryKey(k);
-    if (m && key in m) return m[key];
-    return def;
+    return isEntryOf(m, k) ? (m as Record<string, unknown>)[entryKey(k)] : def;
   },
   mapInsert(m: Record<string, unknown>, k: unknown, v: unknown): Record<string, unknown> {
     return { ...m, [entryKey(k)]: v };
   },
-  /** `Map.remove(k)` and `Set.remove(x)`: every entry but the one `k` is stored under. */
-  mapRemove(m: Record<string, unknown>, k: unknown): Record<string, unknown> {
-    const key = entryKey(k);
-    const out: Record<string, unknown> = {};
-    for (const [kk, vv] of Object.entries(m ?? {})) if (kk !== key) out[kk] = vv;
+  // `Map.remove(k)` and `Set.remove(x)`. Copy-and-delete keeps a "__proto__" entry, which
+  // assigning into a fresh object would hand to the inherited __proto__ setter.
+  mapRemove<V>(m: Record<string, V> | undefined | null, k: unknown): Record<string, V> {
+    const out = { ...m };
+    delete out[entryKey(k)];
     return out;
   },
   filter(coll: unknown, pred: (x: unknown) => boolean, kind?: KeyKind): unknown {
@@ -225,11 +265,9 @@ export const _stdlibCore = {
     }
     if (_stdlibCore.variantIs(coll, "None")) return coll;
     if (coll && typeof coll === "object") {
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(coll as Record<string, unknown>)) {
-        if (pred([restoreKey(k, kind), v])) out[k] = v;
-      }
-      return out;
+      return Object.fromEntries(
+        Object.entries(coll).filter(([k, v]) => pred([restoreKey(k, kind), v])),
+      );
     }
     return [];
   },
@@ -276,11 +314,9 @@ export const _stdlibCore = {
     }
     if (_stdlibCore.variantIs(coll, "None") || _stdlibCore.variantIs(coll, "Err")) return coll;
     if (coll && typeof coll === "object") {
-      const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(coll as Record<string, unknown>)) {
-        out[k] = fn([restoreKey(k, kind), v]);
-      }
-      return out;
+      return Object.fromEntries(
+        Object.entries(coll).map(([k, v]) => [k, fn([restoreKey(k, kind), v])]),
+      );
     }
     return coll == null ? [] : fn(coll);
   },
@@ -294,26 +330,23 @@ export const _stdlibCore = {
     return _stdlibCore.None;
   },
   listSortBy<T>(xs: T[], keyOf: (x: T) => unknown): T[] {
-    const absent = (k: unknown): boolean => k == null || Number.isNaN(k);
-    return [...(xs ?? [])].sort((a, b) => {
-      const ka = keyOf(a) as number | string;
-      const kb = keyOf(b) as number | string;
-      const na = absent(ka);
-      const nb = absent(kb);
-      if (na || nb) return na === nb ? 0 : na ? 1 : -1;
-      return ka < kb ? -1 : ka > kb ? 1 : 0;
-    });
+    // Sorts each element boxed with its key: `Array.prototype.sort` moves an `undefined`
+    // element to the end without asking the comparator, past a later `null` or `NaN`, where an
+    // absent value keeps the order it had among them.
+    return (xs ?? [])
+      .map((x) => ({ x, key: keyOf(x) }))
+      .sort((a, b) => ascending(a.key, b.key))
+      .map((e) => e.x);
   },
   listSort(xs: unknown[] | undefined | null): unknown[] {
-    const arr = [...(xs ?? [])];
-    if (arr.length === 0) return arr;
-    const allNumbers = arr.every((x) => typeof x === "number" && Number.isFinite(x));
-    if (allNumbers) return (arr as number[]).sort((a, b) => a - b);
-    return arr.sort((a, b) => {
-      const sa = String(a);
-      const sb = String(b);
-      return sa < sb ? -1 : sa > sb ? 1 : 0;
-    });
+    const arr = xs ?? [];
+    // Judged by each present element's runtime type: all numbers or all `Text`, the elements are
+    // ordered as `sort-by` orders the same values as keys. A list mixing the two is ordered by
+    // each element's text instead, since `<` between a number and a `Text` is no order: `10`
+    // and `"a"` compare equal while `10` and `"9"` compare as numbers.
+    const only = (type: "number" | "string") => arr.every((x) => x == null || typeof x === type);
+    if (only("number") || only("string")) return _stdlibCore.listSortBy(arr, (x) => x);
+    return _stdlibCore.listSortBy(arr, (x) => (x == null ? x : String(x)));
   },
   /** List(T).fold(init, expr): left fold with $1=acc, $2=elem. */
   listFold<T, A>(xs: T[], init: A, fn: (acc: A, x: T) => A): A {
@@ -321,18 +354,9 @@ export const _stdlibCore = {
     for (const x of xs ?? []) acc = fn(acc, x);
     return acc;
   },
-  setHas(s: Record<string, true> | undefined, x: unknown): boolean {
-    return !!s && entryKey(x) in s;
-  },
+  setHas: isEntryOf,
   setToggle(s: Record<string, true> | undefined, x: unknown): Record<string, true> {
-    const k = entryKey(x);
-    const cur = { ...(s ?? {}) };
-    if (k in cur) {
-      delete cur[k];
-      return cur;
-    }
-    cur[k] = true;
-    return cur;
+    return isEntryOf(s, x) ? _stdlibCore.mapRemove(s, x) : _stdlibCore.setAdd(s, x);
   },
   add(a: unknown, b: unknown): unknown {
     if (typeof a === "string" || typeof b === "string") {
@@ -340,22 +364,49 @@ export const _stdlibCore = {
     }
     return (a as number) + (b as number);
   },
+  // A record, Map or Set adds no shown value, at any depth, so among elements that differ only
+  // there the key is positional: a row edited in place keeps its key, and its element.
   loopKeys(xs: readonly unknown[], loop: string): string[] {
     const seen = new Map<string, number>();
     return xs.map((x) => {
-      const shown = _stdlibCore.show(x);
+      const shown = _stdlibCore.show(x, 0, true);
       const n = (seen.get(shown) ?? 0) + 1;
       seen.set(shown, n);
       return `${loop}|${n}|${shown}`;
     });
   },
-  show(v: unknown): string {
+  show(v: unknown, shape?: ShowShape, keyOnly?: boolean): string {
     if (v === null || v === undefined) return "";
-    if (typeof v === "object" && v && "_tag" in v) {
-      const obj = v as { _tag: string };
-      return obj._tag;
+    if (v instanceof Uint8Array) {
+      let bin = "";
+      for (const byte of v) bin += String.fromCharCode(byte);
+      return btoa(bin);
     }
-    return String(v);
+    if (typeof v !== "object") return String(v);
+    // A descriptor's tag, then its slots; what a slot holds depends on the tag.
+    const d = isDescriptor(shape) ? shape : ([0] as const);
+    const tag = d[0];
+    if (!tag && "_tag" in v) return v._tag as string;
+    const at = (x: unknown, s?: ShowShape): string =>
+      typeof x === "string" ? JSON.stringify(x) : _stdlibCore.show(x, s, keyOnly);
+    const list = Array.isArray(v);
+    if (keyOnly && !list && isPlainDataBag(v)) return "";
+    const o = v as Record<string, unknown>;
+    // A Map's or Set's key kind reads its stored keys back: a Set is the Map of its members to
+    // `true`. A Tuple's slots past its tag are all shapes, which its type cannot say by index.
+    // A record's shape is read for its own entries: an inherited `constructor` is no field's.
+    const items = list
+      ? v.map((x, i) => at(x, tag === "l" ? d[1] : tag === "t" ? (d[i + 1] as ShowShape) : 0))
+      : tag === "m" || tag === "s"
+        ? (_stdlibCore.mapEntries(o, d[1] || undefined) as [unknown, unknown][]).map(
+            ([k, x]) => at(k, d[2]) + (tag === "m" ? `: ${at(x, d[3])}` : ""),
+          )
+        : Object.keys(o).map(
+            (k) =>
+              `${k}: ${at(o[k], shape && !isDescriptor(shape) && Object.hasOwn(shape, k) ? shape[k] : 0)}`,
+          );
+    const [open, close] = tag === "t" ? "()" : list || tag === "s" ? "[]" : "{}";
+    return open + items.join(", ") + close;
   },
   fmt(template: unknown, ...args: unknown[]): string {
     return _stdlibCore.show(template).replace(/\{(\d+)\}/g, (placeholder, digits: string) => {
@@ -367,12 +418,9 @@ export const _stdlibCore = {
     return valueEqual(a, b);
   },
   freshId(): string {
-    return readEnv("fresh-id", () => {
-      const c = (globalThis as { crypto?: PlatformCrypto }).crypto;
-      if (c?.randomUUID) return c.randomUUID();
-      return uuidV4(c);
-    });
+    return readEnv("fresh-id", newId);
   },
+  emitId,
   now(): number {
     return readEnv("now", () => Date.now());
   },
@@ -409,8 +457,10 @@ export const _stdlibCore = {
   },
   boundaryPanic(e: unknown, location: string): Record<string, unknown> {
     if (!isPanic(e)) throw e;
-    const rec = panicInfo(e, "tile-render");
-    return userPanicInfo(rec, rec.location || location, currentEpisodeId());
+    // Recorded at the location the fallback shows, so the step and the fallback agree.
+    const at = e.location || location;
+    const { rec, episodeId } = recordInRenderPass(e, at);
+    return userPanicInfo(rec, at, episodeId);
   },
   optionGetOr(opt: unknown, def: unknown): unknown {
     if (opt && typeof opt === "object" && "_tag" in opt) {
@@ -466,7 +516,7 @@ export const _stdlibCore = {
   ): Record<string, unknown> {
     const obj = m ?? {};
     const key = entryKey(k);
-    if (!(key in obj)) return obj;
+    if (!isEntryOf(obj, k)) return obj;
     return { ...obj, [key]: fn(obj[key]) };
   },
   setOf(xs: readonly unknown[]): Record<string, true> {
@@ -490,20 +540,14 @@ export const _stdlibCore = {
     a: Record<string, true> | undefined | null,
     b: Record<string, true> | undefined | null,
   ): Record<string, true> {
-    const bb = b ?? {};
-    const out: Record<string, true> = {};
-    for (const k of Object.keys(a ?? {})) if (k in bb) out[k] = true;
-    return out;
+    return setKeep(a, b, true);
   },
   /** Set(T).diff(other) — keys in a not in b. */
   setDiff(
     a: Record<string, true> | undefined | null,
     b: Record<string, true> | undefined | null,
   ): Record<string, true> {
-    const bb = b ?? {};
-    const out: Record<string, true> = {};
-    for (const k of Object.keys(a ?? {})) if (!(k in bb)) out[k] = true;
-    return out;
+    return setKeep(a, b, false);
   },
   /** Option(T).or / Result(T,E).or — receiver when Some/Ok, else `other`. */
   or(v: unknown, other: unknown): unknown {
@@ -522,10 +566,10 @@ export const _stdlibCore = {
     }
     return r;
   },
-  /** Polymorphic `.diff`: numeric magnitude (Time/Duration) or Set difference. */
+  /** Polymorphic `.diff`: the receiver minus the argument (Time) or Set difference. */
   diff(a: unknown, b: unknown): unknown {
     if (typeof a === "number" || typeof b === "number") {
-      return Math.abs((a as number) - (b as number));
+      return (a as number) - (b as number);
     }
     return _stdlibCore.setDiff(a as Record<string, true>, b as Record<string, true>);
   },
@@ -574,15 +618,13 @@ export const _stdlibCore = {
     }
     return _stdlibCore.None;
   },
-  parseIntOpt(s: unknown): unknown {
-    const n = Number(s);
-    return String(s).trim() !== "" && Number.isFinite(n)
-      ? _stdlibCore.Some(Math.trunc(n))
-      : _stdlibCore.None;
+  // Every text-to-Int / Float reading codegen emits calls these, so no two spellings can read a
+  // text differently. An Int past ±(2^53 - 1) would be another number than the one spelt.
+  parseIntOpt(text: unknown): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+    return readNumber(text, INT_TEXT, Number.isSafeInteger);
   },
-  parseFloatOpt(s: unknown): unknown {
-    const n = Number(s);
-    return String(s).trim() !== "" && Number.isFinite(n) ? _stdlibCore.Some(n) : _stdlibCore.None;
+  parseFloatOpt(text: unknown): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+    return readNumber(text, FLOAT_TEXT, Number.isFinite);
   },
   fileUrl(file: unknown): string {
     if (!file || typeof file !== "object") return "";
