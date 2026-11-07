@@ -1,3 +1,4 @@
+import { chooseOption, refuseChoice } from "./choose-check.ts";
 import {
   type ControlVerb,
   controlFault,
@@ -5,6 +6,7 @@ import {
   readControl,
   StepRefusal,
 } from "./control-check.ts";
+import { standInValue } from "./core.ts";
 import { dispatchFault } from "./dispatch-check.ts";
 import type { EpisodeLogger } from "./episode.ts";
 import type { AppShape, EffectResult, RuntimeDiagnostic } from "./index.ts";
@@ -20,7 +22,6 @@ import {
   validateScenario,
 } from "./scenario/vocabulary.ts";
 import { submitFault } from "./submit-check.ts";
-import { standInValue } from "./testkit.ts";
 
 export type EffectScript = { outcome: "ok" | "err"; value?: unknown };
 
@@ -343,15 +344,15 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     return;
   }
   if ("choose" in a) {
-    const sel = root.querySelector<HTMLSelectElement>(a.choose);
-    if (!sel) throw new Error(`no select matching selector ${a.choose}`);
-    refuse("choose", sel);
-    const opt = Array.from(sel.options).find(
-      (o) => o.value === a.value || (o.textContent ?? "").trim() === a.value,
-    );
-    if (!opt) throw new Error(`no option "${a.value}" in select ${a.choose}`);
-    sel.value = opt.value;
-    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    const el = root.querySelector(a.choose);
+    if (!el) throw new Error(`no select matching selector ${a.choose}`);
+    refuse("choose", el);
+    const choice = chooseOption(el, { selector: a.choose, value: a.value });
+    refuseChoice(choice, describeAction(a), a.value);
+    // An option was found, so `el` is the select or a <label> of one.
+    const select = (el instanceof HTMLLabelElement ? el.control : el) as HTMLSelectElement;
+    select.selectedIndex = choice.index;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
     return;
   }
   unhandledAction(a);
@@ -396,12 +397,13 @@ function snapshotState(app: AppShape): Record<string, unknown> {
 function sanitize(v: unknown): unknown {
   if (v === null || typeof v !== "object") return typeof v === "function" ? "[fn]" : v;
   if (Array.isArray(v)) return v.map(sanitize);
-  const out: Record<string, unknown> = {};
-  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-    if (typeof val === "function") continue;
-    out[k] = sanitize(val);
-  }
-  return out;
+  // Object.fromEntries defines each key as an own entry, so a Map's "__proto__" key stays an entry
+  // rather than going to the inherited __proto__ setter.
+  return Object.fromEntries(
+    Object.entries(v as Record<string, unknown>)
+      .filter(([, val]) => typeof val !== "function")
+      .map(([k, val]) => [k, sanitize(val)]),
+  );
 }
 
 function errStr(e: unknown): string {

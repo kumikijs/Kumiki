@@ -1,4 +1,4 @@
-export { levenshtein, nearestName } from "@kumikijs/runtime/text-distance";
+export { levenshtein, nearestName, nearestNames } from "@kumikijs/runtime/text-distance";
 export type * from "./ast.ts";
 export { calleeCandidates, isBuiltinCallee } from "./builtin-calls.ts";
 export {
@@ -21,7 +21,6 @@ export {
   parseCapabilityManifest,
   STANDARD_CAPABILITIES,
 } from "./capabilities.ts";
-export { applyRefine, type GenDescData } from "./codegen/emit-type.ts";
 export {
   type BindSegment,
   indexSegmentJs,
@@ -44,8 +43,11 @@ export {
   compile,
   type ExtendedCodegenOptions,
   inlineRuntime,
+  parseFailure,
 } from "./compile.ts";
 export { generateDts } from "./dts.ts";
+export type { FieldSegment } from "./error-field.ts";
+export { applyRefine, type GenDescData } from "./for-all-generator.ts";
 export { LexError, lex } from "./lexer.ts";
 export { ParseError, parse } from "./parser.ts";
 export {
@@ -64,5 +66,7 @@ export {
   check,
   type KumikiError,
   ROUTE_SLOT_FIELDS,
+  type Severity,
   servesNotFound,
+  severityOf,
 } from "./typecheck.ts";

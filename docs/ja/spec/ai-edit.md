@@ -39,6 +39,8 @@ kumiki list <layer>                 # レイヤ内の全定義名
 kumiki list                         # 全定義名（layer prefix 付き）
 ```
 
+参照元とは、checker または lowering がその名前をこの定義として読む位置でこの定義を指す定義であり、型メンバ呼び出しの qualifier もそこに含まれる：`ItemId.fresh()`・`ItemId.parse(t)`・`ItemId.show(v)` は型 `ItemId` を指す（[標準ライブラリ §2.4.1](./stdlib.md#_2-4-1-id-生成)・[§2.4.3](./stdlib.md#_2-4-3-型変換)）。lowering がデコードの型として読む `Decoder.Json(T)` の引数も同じで、`Decoder.Json(Map(ItemId, Item))` の `ItemId` と `Item` は参照である。`ItemId.fresh()` で id を生成する reducer は `type.ItemId` の参照元であり、`rename` は他の参照とともに qualifier も書き換える。`Decoder`・`EffectId`・`Duration`・`Bytes` では、引数を与えた `parse` / `show` だけが型メンバ呼び出しである：プログラムが自前の `type Decoder` を宣言していれば `Decoder.show(d)` はその参照元だが、名前空間の組み込み呼び出し（`Decoder.Text`・`Duration.ms(5)`・`EffectId.none`）は型を指さず、`Decoder.fresh()` は E0116 である（[E0117](./errors.md#e0117-undef-type)）。
+
 ### 9.2.2 書き込み系 {#_9-2-2-write-commands}
 
 ```bash
@@ -57,6 +59,8 @@ kumiki patch revert <op-id>                 # 特定 op を取り消し
 複数行の body（reducer の `do=` ブロック、fn の複数行 RHS 等）は `--body-file` を使うこと — 位置引数の形は空白1つで join されるため、改行やタブ幅は失われる。`--body-file` と位置引数 body を同時指定すると相互排他エラーとして拒否される。
 
 `add` の `<layer>` は `kumiki list` が受け付けるラベルのいずれか（`type`・`slot`・`effect`・`reducer`・`tile`・`fn`・`app`・`theme`・`motion`・`test`）で、それ以外の語に対して `kumiki add` はファイルを読む前に `2` で終了する。`<name>` は識別子 1 つであり、`add` はそれ以外を拒否する。body は定義から `<layer> <name>` とその後の区切りを除いたもので、`slot count : Int = 0` なら `Int = 0`、`tile Greeting = heading("Hi")` なら `heading("Hi")` である。tile の節（`in=`・`error-boundary=`・`scroll-restoration=`・`sub-routes=`）と type のパラメータは名前と `=` の間に置かれるので、それらを持つ body はそれらで始まり `=` も含む。`in=Text = heading($1)` は `tile Greet in=Text = heading($1)` を書き、`(T) = {v: T}` は `type Box(T) = {v: T}` を書く。節やパラメータで始まらない `replace` の body は、定義が持つものを残す。`tile Greeting error-boundary=Oops = …` に対して body `heading("Hello")` は `tile Greeting error-boundary=Oops = heading("Hello")` を書く。変えるには残すものを body に書き、すべて外すには body を `=` から始める。`replace` は `replaced` の行の後に、定義から無くなった節やパラメータごとに 1 行（`  dropped error-boundary`、`  dropped parameter T`）を出力する。検証を通る書き込みで、それらが気づかれずに失われることはない。
+
+`rename` は定義自身の名前と、それへの参照をすべて書き換える。文字列リテラルで定義を指す prop は 2 つあり、その名前も参照である：tile の `motion: "Spin"`（[§4.9.1](./style.md#_4-9-1-the-motion-definition)）と link の `prefetch: "loadTodo"`（[§3.8](./routing.md#_3-8-prefetch)）。そこでは引用符の間の文字列が書き換わり、引用符はそのまま残るので、`kumiki rename motion.Spin Whirl` は `{motion: "Spin"}` を `{motion: "Whirl"}` にする。たまたま同じ綴りの、コメント中の語や他の文字列リテラルには触れない。
 
 書き込み系 op はファイルの再パース・再型検査で検証され、`severity: "error"` の診断が 1 つでも出ればロールバックする。ただし例外が 1 つある。プログラムは定義を 1 つずつ積み上げて構築されるため `app` が入るまでは app 不在の状態が続く。したがって **`E0003 missing-app` は書き込み op をロールバックさせない**。完成したアプリケーションかどうかは `kumiki check` が報告するものであり、編集途中のグラフが既に満たしているべき条件ではない。
 
@@ -115,7 +119,7 @@ verb ごとに、`1` が意味するのは以下である。
 | `list` | ファイルが存在しない、またはフィルタがどの種類の定義も指していない。実在するがその下に定義が無い場合は何も出力せず `0` |
 | `add` / `replace` / `remove` / `rename` / `edit` / `patch` | 書き込みが拒否されロールバックされた |
 | `lock` / `unlock` | `lock` が求めたパターンと重なるパターンを他のエージェントが保持している、または `unlock` が名指したエージェントが解放すべきロックを保持していない（[§9.8.3](#_9-8-3-task-boundaries)） |
-| `replay` | ログが読めない、指定した episode がログに無い、または再生した episode が panic した |
+| `replay` | ログが読めない、指定した episode がログに無い、再生した episode が panic したか未処理の effect エラーを出した、または episode の入口の reducer がプログラムに無い、あるいはログがそれを名指さないか記録していないため再生されなかった（[§10.5.3](./runtime.md#_10-5-3-replay)） |
 | `dev` | サーバを起動できなかった。起動後は中断されるまで動き続けるので何も報告しない |
 
 警告が終了コードを変えることはない。2 つの段階を分けているのはまさにそこで、`error` は「プログラムが誤っている」という主張、`warning` は「怪しい」という主張であり、パイプラインを止めてよいのは前者だけである。
@@ -245,7 +249,7 @@ hash にはどの定義の名前も含まれない。定義自身の名前は除
 
 2 つの相互再帰する型のように、互いに循環して参照し合う定義は、どれの hash も他より先には計算できないので、まとめて 1 つの単位として hash される。単位の中では、ある要素から別の要素への参照は、参照先の hash ではなく、参照先の要素が述べる内容（その要素自身の単位内の要素への参照は除く）として数えられ、各要素の hash は単位のすべての要素が述べる内容を含む。したがって要素の hash はどの要素から先に辿り着いても同じであり、要素の `depends-on` のダイジェストはその `kumiki view --hash` と一致する。
 
-既知の制限：参照は参照先の定義の hash として数えられ、名前だけが異なる 2 つの定義は同じ hash を持つので、その一方への参照ともう一方への参照は同じに数えられる。`slot a` と `slot b` がどちらも `Int = 0` なら、2 つの slot は別々の状態であるにもかかわらず、`a := b` と `b := a` は同じ hash になる。
+既知の制限：参照は参照先の定義の hash として数えられ、名前だけが異なる 2 つの定義は同じ hash を持つので、その一方への参照ともう一方への参照は同じに数えられる。`slot a` と `slot b` がどちらも `Int = 0` なら、2 つの slot は別々の状態であるにもかかわらず、`a := b` と `b := a` は同じ hash になる。test の `slots` のキーも参照なので、同じ 2 つの slot に対して、`given` が `{slots: {a: 1, b: 2}, …}` の test と `{slots: {b: 1, a: 2}, …}` の test も同じ hash になる。
 
 ### 9.5.2 参照解決
 
@@ -336,7 +340,7 @@ kumiki mcp serve --store ./project.kumiki-store
 | `kumiki_edit` | `qname, patch` | op-id |
 | `kumiki_rename` | `qname, new_name` | op-id |
 | `kumiki_remove` | `qname, cascade?: bool` | op-id + 削除された定義名（[§9.4.1](#_9-4-1-pre-check-at-op-issuance)） |
-| `kumiki_check` | `scope?: string` | error list (JSON) |
+| `kumiki_check` | `scope?: string` | 診断リスト（JSON）。各要素の `severity` は `"error"` か `"warning"` で、省略されない |
 | `kumiki_fix` | `error_code, apply?: bool` | patch (JSON) |
 | `kumiki_refs` | `qname` | 参照元リスト |
 | `kumiki_history` | `qname` | op 履歴 |

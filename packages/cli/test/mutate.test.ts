@@ -23,7 +23,7 @@ import { app } from "@kumikijs/examples";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addDefs, removeSet } from "../src/mutate/verbs.ts";
 import { writeLockPath } from "../src/write-lock.ts";
-import { seedCopy } from "./helpers/files.ts";
+import { renamed, seed, seedCopy } from "./helpers/files.ts";
 
 const COUNTER = app("01-counter");
 const TODOMVC = app("02-todomvc");
@@ -61,6 +61,27 @@ describe("kumiki mutate: add / replace / rename / remove", () => {
     const store = load(path);
     expect(store.byQName.has("slot.matchFilter")).toBe(true);
     expect(store.byQName.has("fn.matchFilter")).toBe(true);
+  });
+
+  it("refuses a rename of an effect onto a standard effect's name", () => {
+    const before = readFileSync(path, "utf8");
+    expect(() => renameDef(path, "effect.saveTodos", "log")).toThrowError(/E0234/);
+    expect(readFileSync(path, "utf8")).toBe(before);
+  });
+
+  it("renames an effect declared under a standard effect's name together with every use", () => {
+    const file = seed(`slot got : Text = ""
+effect log cap=http.get in=Text out=Result(Text, HttpError)
+    map-request={url: "/api/" + $1, decode: Decoder.Text}
+reducer go     on=ui.click(B)    do= emit log("x")
+reducer done   on=log.ok($r, _)  do= got := $r
+reducer failed on=log.err($e, _) do= got := $e.message
+tile B = button(text="b", onClick=go)
+app A caps=[http.get] routes={"/" -> B, "/404" -> B} init=[log("x")]
+`);
+    const after = renamed(file, "effect.log", "logRequest");
+    expect(after.match(/\blog\b/g)).toBeNull();
+    expect(check(load(file).program)).toEqual([]);
   });
 
   it("rename updates the def and every reference", () => {
