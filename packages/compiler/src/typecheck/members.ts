@@ -1,6 +1,6 @@
-import { isOpaque, recordFieldType, unaliasType } from "../assignable.ts";
+import { isOpaque, recordFieldType, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, KeyKind, Pos, TypeExpr } from "../ast.ts";
-import { FIELD_ACCESS_SHORTCUTS, METHOD_MIN_ARGS } from "../codegen.ts";
+import { FIELD_ACCESS_SHORTCUTS, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
 import { keyRepresentation } from "../key-representation.ts";
 import {
   type FragmentArgument,
@@ -29,12 +29,38 @@ export function classifyMember(raw: TypeExpr | null, field: string, sym: SymbolT
     return UNIVERSAL_MEMBERS.has(field) ? "member" : "unknown";
   }
 
+  if (t.kind === "TypeUnion") return unionMember(t, field, sym);
+
   const receivers = memberReceivers(raw, t, sym);
   if (receivers === null) return "undecidable";
 
   if (t.kind === "TypePrim" && primFieldType(t.name, field) !== null) return "field";
 
   return receivers.some((r) => hasMember(r, field)) ? "member" : "unknown";
+}
+
+/**
+ * A union has no fields, and a member dispatches by name on the variant the value holds: a
+ * program's own union may name one `Ok` or `Some`, which `.is-ok` or `.get` reads by its tag. A
+ * name the runtime has no member for can only be a field, so no variant answers it, unless a
+ * variant's payload declares it — a step left undecided, since it reads the variant and not the
+ * payload.
+ */
+function unionMember(
+  t: TypeExpr & { kind: "TypeUnion" },
+  field: string,
+  sym: SymbolTable,
+): MemberClass {
+  if (KNOWN_METHODS.has(field)) return "undecidable";
+  const declared = t.variants.some((v) => v.payloads.some((p) => payloadDeclares(p, field, sym)));
+  return declared ? "undecidable" : "unknown";
+}
+
+function payloadDeclares(payload: TypeExpr, field: string, sym: SymbolTable): boolean {
+  const t = unaliasType(payload, sym);
+  // A payload whose type is not known could declare anything.
+  if (t === null || t.kind === "TypeRef") return true;
+  return t.kind !== "TypeUnion" && classifyMember(payload, field, sym) === "field";
 }
 
 export function memberReceivers(
@@ -81,7 +107,9 @@ export function undefMemberError(
   const head =
     t.kind === "TypeRecord"
       ? `Record type has no field or method ".${field}"`
-      : `Type "${receiverName(raw, t, sym)}" has no member ".${field}"`;
+      : t.kind === "TypeUnion"
+        ? `Type "${typeToString(raw ?? t)}" has no member ".${field}" — a union has no fields; read a variant's payload with a match`
+        : `Type "${receiverName(raw, t, sym)}" has no member ".${field}"`;
   const owners = receiversOf(field);
   return {
     code: "E0108",
