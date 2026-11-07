@@ -14,10 +14,26 @@ export const CLI_ARGV: readonly string[] = [
   CLI_PATH,
 ];
 
-// spawnSync blocks the worker, so vitest's timeout cannot interrupt a hung child; the child's own limit must fire first.
+/**
+ * One CLI process (node and tsx start, compile, run) measures 1–2.5 s on a quiet machine and
+ * 16–23 s on one shared, loaded core; this limit is over twice the slowest.
+ */
 export const CHILD_TIMEOUT_MS = 60_000;
-export const SPAWN = { timeout: CHILD_TIMEOUT_MS + 10_000 };
-export const TWO_SPAWNS = { timeout: 2 * CHILD_TIMEOUT_MS + 10_000 };
+
+/**
+ * The budget of a test that runs `n` CLI processes one after another. spawnSync blocks the worker,
+ * so vitest's timeout cannot interrupt a hung child: each child's own limit must fire first.
+ */
+export const spawns = (n: number): { timeout: number } => ({
+  timeout: n * CHILD_TIMEOUT_MS + 10_000,
+});
+export const SPAWN = spawns(1);
+
+/** The last lines a child wrote to stderr, for the message that says it was stopped. */
+function stderrTail(stderr: string, lines = 20): string {
+  const tail = stderr.trimEnd().split("\n").slice(-lines).join("\n");
+  return tail === "" ? "" : `\n--- last ${lines} lines of stderr\n${tail}`;
+}
 
 export type CliResult = { stdout: string; stderr: string; out: string; code: number };
 
@@ -43,17 +59,18 @@ export function runCli(
     timeout: CHILD_TIMEOUT_MS,
     env: childEnv(options.env),
   });
-  if ((res.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+  if (res.error && "code" in res.error && res.error.code === "ETIMEDOUT") {
     throw new Error(
-      `\`kumiki ${args.join(" ")}\` was stopped after ${CHILD_TIMEOUT_MS} ms, the time a test allows one CLI process`,
+      `\`kumiki ${args.join(" ")}\` was stopped after ${CHILD_TIMEOUT_MS} ms, the time a test allows one CLI process${stderrTail(res.stderr)}`,
     );
   }
-  // A child that never started or was killed has no status; reporting it as a failure exit would satisfy `code: 1` assertions without the CLI having run.
+  // A child that never started has no status; reporting it as a failure exit would satisfy `code: 1` assertions without the CLI having run.
   if (res.error) throw res.error;
   return {
     stdout: res.stdout,
     stderr: res.stderr,
     out: `${res.stdout}${res.stderr}`,
+    // A child killed by a signal from outside has no status and no error: NaN equals no exit code.
     code: res.status ?? Number.NaN,
   };
 }
