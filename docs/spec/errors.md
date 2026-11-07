@@ -18,9 +18,9 @@ type KumikiError = {
 
 `code` is a permanent contract; once assigned, its meaning does not change. `kind` is a sub-classification under the same `code`, used to branch diagnostic logic. `severity` defaults to `"error"`: a missing field means the same as `"error"` for backward compatibility with existing diagnostics. The `"warning"` tier is non-fatal — it is surfaced to stderr (CLI) and to Rollup's `this.warn` (Vite) but does not change the exit code or block the build.
 
-A parse error is `throw`n as a `ParseError` (`message` + `pos`), and a lexical one as a `LexError`. Neither carries a `code`: the stage stops at the first error, so there is no set of diagnostics for one to index into. A tool whose output *is* such a set — `kumiki fix`'s rollback report, the MCP tools' JSON envelope — synthesizes [E0000](#e0000-parse-error) so that "no diagnostics" keeps meaning "clean".
+A parse error is `throw`n as a `ParseError` (`message` + `pos`), and a lexical one as a `LexError`. Neither carries a `code`: the stage stops at the first error, so there is no set of diagnostics for one to index into. A tool whose output *is* such a set — `kumiki fix`'s rollback report, the MCP tools' JSON envelope — synthesizes [E0000](#e0000-parse-error) so that "no diagnostics" keeps meaning "clean". Every diagnostic in an MCP tool's JSON carries `severity`, never omitted, so a client never has to know the default above.
 
-The checker's codes come from `packages/compiler/src/typecheck.ts` and the modules under `packages/compiler/src/typecheck/`; `E0000` is assigned by the two tools named above.
+The checker's codes come from `packages/compiler/src/typecheck.ts` and the modules under `packages/compiler/src/typecheck/`; `E0000` is built by `parseFailure` in `packages/compiler/src/compile.ts`, which the two tools named above call.
 
 ## The Code System
 
@@ -59,9 +59,9 @@ typo` is still caught rather than accepted, because the two differ by code.
 
 | Code | Auto-patch | Strategy |
 |---|---|---|
-| `E0001` | yes | Add `"/404" -> NotFound` to the app's own `routes` (never to a tile's `sub-routes`), and inject a `NotFound` tile unless the program already defines one. No patch when the app has no `routes` clause, or when `/404` is a redirect: E0001 does not count a redirect, and a second `/404` entry would be `E0008`. |
+| `E0001` | yes | Add `"/404" -> NotFound` to the app's own `routes` (never to a tile's `sub-routes`), and inject a `NotFound` tile unless the program already defines one. Only `missing-404` is patched. No patch when the app has no `routes` clause; for `404-is-redirect`, which is repaired by replacing the redirect (an entry added beside it would be a second `/404`, `E0008`); or for `404-in-sub-routes`, which is repaired by removing the entry. |
 | `E0102` | yes | Close-name suggestion (Levenshtein ≤ 2 or ≤ 25%) against known reducer names. |
-| `E0103` | yes | Close-name suggestion against known slot / binding names. |
+| `E0103` | yes | Close-name suggestion against known slot / binding names. No patch for a name a reducer reads after the `if` branch, `for` body or match arm of that reducer that declared it (the diagnostic's `endedScope` is set): the read is out of scope, not misspelled, and a renamed read can type-check and read a different value. Whether to move the declaration or the read is user intent. |
 | `E0104` | yes | Close-name suggestion against declared `effect` names plus the [standard effects](./stdlib.md#_2-6-standard-effects), which no program declares (scoped — a tile or slot whose name is close is not a candidate). |
 | `E0105` | yes | Close-name suggestion against known tile names. |
 | `E0107` | yes | Close-name suggestion against declared motion names. |
@@ -91,6 +91,23 @@ typo` is still caught rather than accepted, because the two differ by code.
 | `E0306` | no | Rewriting `E` to `Text` is mechanical, but every `.err` read written to the old `E` (`$e.message`, `$e.code`) then needs rewriting to the message, and what the program wanted from those fields is user intent. |
 | Others | no | Not currently auto-repairable (open an issue if a common shape emerges). |
 
+Every close-name suggestion above is one ranking. The candidates nearest to the
+name written by Levenshtein distance are kept when that distance is at most 2
+or at most a quarter of the name's length, rounded up. Where a namespace has
+built-in names beside the program's own (`E0104`, `E0116`, `E0117`), a name the
+program declares outranks a built-in one at the same distance: `Filtre` is two
+edits from a declared `Filter` and from the built-in `File`, and the patch
+writes `Filter`. A patch is written only when one candidate is left. Two or
+more left are a **tie** — `count` is one edit from both `countA` and `countB` —
+and nothing in the program says which was meant, so `kumiki fix` writes neither
+and reports the diagnostic as skipped with the reason `close-names-tied`,
+naming the tied candidates in sorted order in the skip's `candidates`. When
+that is the first skip, `kumiki_auto_patch`'s `no-patch` outcome carries the
+same `reason` and `candidates`. The verification tiers' unknown-reducer message
+names every tied candidate instead: a `{dispatch}` step naming no reducer
+([Testing §8.10](./testing.md#_8-10-the-three-layers-of-tooling-verification))
+fails with `no reducer named "add" — did you mean "addA" or "addB"?`.
+
 Behavioral repair from a failing `test` (`kumiki fix --auto-patch <test-name>`)
 is a separate tier and works whenever the failing leaf can be traced to a
 unique source position:
@@ -114,13 +131,18 @@ The source could not be lexed or parsed. Not produced by the checker: the parser
 
 **Fix**: Correct the syntax at the reported position. Every other code in this document presumes a file that parses.
 
-### E0001 `missing-404`
+### E0001 `missing-404` / `404-is-redirect` / `404-in-sub-routes`
 
-An app that declares `app.routes` must include a route for the `/404` pattern. Unmatched paths fall back here.
+`/404` is the fallback for paths no route matches. It belongs to `app.routes`, and it renders a tile ([Routing §3.1.3](./routing.md#_3-1-3-404-is-reserved)).
 
-> `app.routes must include a "/404" entry`
+- `missing-404`: `app.routes` has no `/404` entry. Reported at the app.
+  > `app.routes must include a "/404" entry`
+- `404-is-redirect`: the `/404` entry of `app.routes` is a redirect (`"/404" ->> "/"`). Reported at the redirect. The map has a `/404` entry, but not the tile the fallback renders, and a second `/404` entry would be [E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) — so this is not `missing-404`. A `/404` redirect beside a `/404` tile is that E0008 alone: the tile serves the fallback.
+  > `Route "/404" is a redirect, but "/404" is the fallback for paths no route matches and has to render a tile — write "/404" -> <Tile>`
+- `404-in-sub-routes`: a tile's `sub-routes` map has an entry at `/404`, whether it names a tile or redirects. Reported at the entry, and the entry's only report: a target it names is not checked as well, nor is a redirect loop through it. Two entries at `/404` in one map are each reported, and the pair is also [E0112](#e0112-duplicate-sub-route). No sub-route is matched against `/404`, so the entry is never used; a child path that no sub-route matches renders the sub-route tile at the parent's own path if there is one, or else the app's `/404` ([Routing §3.6.3](./routing.md#_3-6-3-matching-rules)).
+  > `Tile "<tile>" has a sub-route at "/404", which is reserved for the app's fallback — no sub-route is matched against it. Remove it: a child path that no sub-route matches renders the sub-route tile at the parent's own path if there is one, or else the app's "/404"`
 
-**Fix**: Add a route to a 404 tile, such as `route "/404" -> NotFound`. See [Routing](./routing.md) for details.
+**Fix**: Route `/404` to a tile in the app's own `routes`, such as `"/404" -> NotFound`, in place of a redirect there. To send unmatched paths to another page, redirect a wildcard (`"/*" ->> "/"`) and keep the `/404` tile. Remove a `/404` entry from a `sub-routes` map. See [Routing](./routing.md) for details.
 
 ### E0002 `duplicate-timer-name`
 
@@ -266,6 +288,18 @@ That holds anywhere inside the fragment, a `$2` in another method's argument inc
 > `"$2" is not bound here — the .map fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
 
 A `let` is declared for the scope it is written in ([Language §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)), and each branch of an `if`, a `for` body and each match arm is a scope of its own. So a name one `if` branch declares is undefined in the other branch and on every statement after the `if`, just as one a `for` body or match arm declares is undefined after it. To choose the value by the condition, declare it once before the `if` with an `if` expression — `let n = if c then "a" else "b"` — or move the read into the branch.
+
+When the name was declared in such a body earlier in the same reducer — a `let` in it, a `for` bind, a match-arm pattern — the diagnostic's `endedScope` field says which kind of body it was, `if`, `for` or `match`, and the message gives the repair for that kind. Where several bodies declared it, the message names the one that ended last: of nested bodies, the outermost one that ended before the read. A name carries no value out of a loop, so a read after a `for` moves into its body, or the body writes the value to a slot:
+
+> `Reference to undefined name "idx" — it was declared in a "for" loop, and a name carries no value out of a loop: move the read into the loop's body, or write the value to a slot there (see docs/spec/language.md)`
+
+After an `if` or a match, the name is declared once before it with an `if` or match expression, or the read moves into the branch or arm. A `let n = 0` before it would not do: the body's own `n` only shadows it.
+
+> `Reference to undefined name "n" — it was declared in an "if" branch, which ended before this read: declare it once before the "if" with an "if" expression (let n = if c then … else …), or move the read into that branch (see docs/spec/language.md)`
+
+A read in a later branch or arm of the same `if` or match is already in one, so the message points at the one that declares the name: `it was declared in the other branch of this "if"` … `the branch that declares it`, and for a match `another arm of this match` … `the arm that declares it`.
+
+The body is named however close another name in scope is: the read is out of scope, not misspelled, so `kumiki fix` proposes no rename for it. A read of `idx` after `for idx in xs` renamed to a slot `id` would type-check and read the slot.
 
 **Fix**: Confirm that the referenced slot / binding is declared.
 
@@ -423,7 +457,9 @@ A type name resolves to nothing: it names no `type` definition, no [standard-lib
 
 An unresolved name is *opaque*, and an opaque type accepts every value — so before this check `slot v : NoSuchType = 1` was accepted, and so was every subsequent use of `v`. One misspelling turned off value checking for everything downstream of it.
 
-Type parameters are in scope inside the body of the definition that declares them, and only there: `type Box(T) = {v: T}` is fine, `type Box(T) = {v: U}` is not. No other declaration site (`slot`, `fn`, `effect`, `tile in=`) has type parameters, so an unresolved name at one of those is always an error.
+The name is the one mistake, so E0117 is the one report of it: past it the name is opaque, and neither a value written against it nor a use of that value is an [E0201](#e0201-type-mismatch) against a type that does not exist. An **application** of the name is opaque the same way — `slot y : Foo(Int) = 1` is E0117 alone, with no E0201 on the `1` — and so is an application of a misspelt constructor such as `Lst(Int)`, wherever the application is written: a record field, a `List(…)`, an alias, a `nominal`, a `where`. An application of a standard-library constructor (`List(Int)`, `Option(Text)`) or of a program's own generic (`G(Int)` for a `type G(T) = …`) is a type, and a value is checked against its arguments as usual.
+
+Type parameters are in scope inside the body of the definition that declares them, and only there: `type Box(T) = {v: T}` is fine, `type Box(T) = {v: U}` is not. A parameter written with arguments (`T(Int)`) is in scope too, and is [E0210](#e0210-type-arity-mismatch) rather than this. No other declaration site (`slot`, `fn`, `effect`, `tile in=`) has type parameters, so an unresolved name at one of those is always an error.
 
 A **call's qualifier** is a type name too. `T.fresh()`, `T.parse(t)` and `T.show(v)` are lowered on any capitalised `T` — codegen matches the shape by regex — so a qualifier that names no type is lowered anyway unless it is refused here. `parse` reads its text by the base the qualifier resolves to ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)), and a name that resolves to no type has no base to read by. When `parse` branched on the qualifier's name instead, a misspelling did not fail, it changed which branch ran: `Itn.parse("12")` answered `Some("12")`, which an `Int` slot then held and every later sum concatenated. `fresh` and `show` discard the qualifier, so a misspelling there produces the same value — and the name is reported because a qualifier that resolves to no type is wrong on its own terms, which makes this check deliberately stricter than the lowering for those two. The qualifier resolves against the same namespace as any other type name, primitives included, and must be spelled as one: a name with a hyphen is not a qualifier, and a call written with one is [E0116](#e0116-undef-call) rather than this. A qualifier that resolves to a type **constructor** — `List`, or a `type Box(T)` — names a type and is not one; that is [E0124](#e0124-type-constructor-qualifier).
 
@@ -522,7 +558,7 @@ The name is a type's, so [E0117](#e0117-undef-type) does not apply; the callee i
 
 ### E0125 `redirect-unbound-param`
 
-A redirect's target names a parameter, or the wildcard `*`, that its source does not bind ([Routing §3.10](./routing.md#_3-10-redirects-static)). The runtime puts into the target what the source matched — for each `:name`, the segment it matched, and for `*`, the rest of the path — and leaves every other segment as written, so a name the source does not bind would reach the URL as written: `"/old" ->> "/items/:id"` would land on the path `/items/:id`, where `route.params.id` reads `":id"`. Reported once per name, at the redirect entry, in the app's `routes` and in a tile's `sub-routes` alike.
+A redirect's target names a parameter, or the wildcard `*`, that its source does not bind ([Routing §3.10](./routing.md#_3-10-redirects-static)). The runtime puts into the target what the source matched — for each `:name`, the segment it matched, and for `*`, the rest of the path — and leaves every other segment as written, so a name the source does not bind would reach the URL as written: `"/old" ->> "/items/:id"` would land on the path `/items/:id`, where `route.params.id` reads `":id"`. Reported once per name, at the redirect entry, in the app's `routes` and in a tile's `sub-routes` alike. An entry written at `/404` is not checked: it is never followed, and is reported as [E0001](#e0001-missing-404-404-is-redirect-404-in-sub-routes), or as [E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) beside a `/404` tile in `app.routes`.
 
 > `Redirect "<source>" ->> "<target>" names "<segment>", which "<source>" does not bind`
 
@@ -759,12 +795,15 @@ A `match` arm names a variant tag that is not declared by the scrutinee's union 
 A type-level application `T(...)` of a user-declared generic type passes a different number of type arguments than the declaration's parameters. Without this check, downstream type-param substitution would silently produce a short map and leave unresolved `TypeRef`s in payloads, which would then turn pattern checking into a no-op — exactly the silent-failure shape this error band is meant to catch.
 
 > `Type "<name>" expects <m> type argument(s) but got <n>`
+> `Type parameter "<param>" of "<type>" takes no type arguments, but is written "<application>"`
+
+A type parameter takes none. It names a type — the one its generic is applied to — not a type constructor, so inside `type H(T) = …` it is written bare: `T(Int)`, `T(Int, Text)` and `T()` are each reported here, at the application, wherever in the body it is written — a record field, a `List(…)`, a variant payload, a `nominal`, a `where`. The parameter shadows a top-level type of the same name ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 5), so `List(Int)` in the body of `type H(List) = …` is this too. This is the one report: past it the application is opaque, as an application of an undefined name is under [E0117](#e0117-undef-type), and a value written against `H(Text)` is not an [E0201](#e0201-type-mismatch) for it.
 
 `Tuple` takes any number of arguments, but at least one: a bare `Tuple` names no type.
 
 > `Type "Tuple" expects type arguments but got none`
 
-**Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list.
+**Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list. Write a type parameter bare (`T`), or apply a generic to it (`List(T)`) where a container of it was meant.
 
 ### E0211 `undef-tile-in-selector`
 
@@ -1107,6 +1146,26 @@ The read has no type, so the one mistake is reported once: a position that expec
 
 **Fix**: Ask for membership — `tags.has(x)` is a `Bool`. A `check` shows it with `value=tags.has(x)`, and a reducer on its click writes `tags := tags.toggle(x)` ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)). For a value stored under a key, declare a `Map(K, V)` instead. In `error(field=…)`, name the Set slot itself, `error(field=tags)`, for the failure of the Set.
 
+### E0233 `policy-key-type`
+
+A `policy=latest-per-key(<key>)` key has a type whose values the key does not tell apart by `==` ([Language §1.5.2](./language.md#_1-5-2-semantics)).
+
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Float, and NaN is one key though NaN == NaN is false (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it holds a Float, and inside it NaN, Infinity and -Infinity are one key (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it holds a File, and two Files with the same name, size and type are one key, while == holds only of a File and itself (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Set, whose == depends on how it was built (see docs/spec/language.md)`
+
+The dispatcher runs each request under its key and aborts an in-flight request when another starts under the same one ([HTTP §6.4](./http.md#_6-4-cancellation)). The key is written the way a Map key is stored ([Stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)), which makes two keys one key exactly when they are `==` but for two types — and, whatever its declared type, not for a non-finite number. A key that is one key for two values `==` calls different aborts a request for no reason the program can see:
+
+- a `Float`: `NaN` is one key, yet `NaN == NaN` is `false`; and inside a record, a tuple, a `List`, a `Map`'s value or a variant, `NaN`, `Infinity` and `-Infinity` are all one key
+- a `File`: two Files with the same name, size and type are one key, while `==` holds only of a File and itself
+
+A `Set`'s key is its `==`, which itself depends on how the Set was built ([Language §1.9.4](./language.md#_1-9-4-operator-types)), so a Set key aborts requests by a rule the program cannot rely on, and is reported too.
+
+The message says `it is` when the key's type is one of them, and `it holds` when it holds one in a record field, a variant payload, a container element or a `Map`'s value, through any alias, generic or `nominal`: `type Spot = {lat: Float, lng: Float}` keyed by `$1` is reported, and so are a `List(Set(Text))` and a `Box(Box(Float))` for a `type Box(A) = {v: A}`. A `Map`'s own keys are stored the same way, so `==` on two Maps agrees with their key, and a `Map(Float, Text)` is not reported. A key whose type the checker cannot decide is not reported, and neither is an `Int`, though one can hold a non-finite number (`n % 0`, an overflowing `pow`, a `.round` of a non-finite Float) and is then keyed as a Float is.
+
+**Fix**: Key on a value of another type — a field of the input that identifies the request (`latest-per-key($1.id)`), a Float's `.show`, a File's `{name: $1.name, size: $1.size}`, or a record of such fields (`latest-per-key({user: $1.user, page: $1.page})`).
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 A handler prop is written on a tile whose renderer never reads it — `row(text("card"), onClick=open)`, `card(...) {onChange: r}`. Only the tiles that own the matching DOM event wire these: `onClick` on `button` / `check` / `radio` / `switch`, `onChange` on the input tiles, `onInput` on the input tiles and `editable`, `onSubmit` on `form`, `onClose` on the overlay tiles. Everything else drops the handler with no trace, so the reducer is dead code.
@@ -1190,6 +1249,20 @@ The other domain types the standard library declares — `Url`, `Email`, `Uuid`,
 Only a declaration is refused. Writing a reserved name is how a program uses the standard library's type — an annotation, a tile's `in=`, a record field, an alias (`type Crash = PanicInfo`), a refinement over it (`type Short = Duration where between(0, 1000)`). A type parameter of that spelling is scoped to its definition ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 5); a variant tag, a slot, a `fn` or a tile spelled the same way is in another namespace; and a type whose name merely starts or ends with one (`PanicInfoView`, `AppRoute`) is a name of its own.
 
 **Fix**: Rename the program's type — `type AppPanic = {…}` — along with every use that meant it.
+
+### E0234 `reserved-effect-name`
+
+An `effect` is declared under the name of a [standard effect](./stdlib.md#_2-6-standard-effects) — `navigate`, `navigate-replace`, `navigate-back`, `scroll-to`, `toast`, `confirm` or `log`. Reported at the declaration, once per declaration.
+
+> `Effect "<name>" collides with the built-in effect <name>; emits of it never run this effect`
+
+The runtime registers each standard effect under its own name when the app mounts, over the record the program's declaration compiled to — its capability, its request and its `policy` alike. A declared `effect log cap=http.get …` would never make its request: `emit log("x")` runs the built-in `log`, which needs `log.write` and writes to the console. The declared `policy` goes with the rest of the record: the `EffectId` the emit returns is minted under the built-in's default policy, so a `latest-per-key` cancellation the program declared never happens.
+
+Every use of the name is still checked against the declaration — an `emit`'s argument against its `in=`, a `.ok` bind against its `out=`, the capability against its `cap=` — because those are the uses the program wrote for it. So a program whose uses were all written for the declaration gets this one report. A use written for the built-in is held to the declaration and is reported beside it (an `E0202` on an `emit` with the built-in's record).
+
+Only an `effect` declaration is refused. Emitting a standard effect needs no declaration. A reducer, a slot or a `fn` spelled the same way is in another namespace, and an effect whose name merely starts or ends with one (`logger`, `toasts`, `navigate2`) is a name of its own.
+
+**Fix**: Rename the effect together with every `emit`, `app.init` entry and `on=<name>.ok` / `.err` reducer that meant it — `kumiki rename <file> effect.log logRequest` rewrites them all — and emit the standard effect under its own name where the built-in is what was meant. `kumiki rename` rewrites every use, whichever effect it was written for, so an `emit` written for the built-in keeps its `E0202` under the new name and the rename is refused; such a program is renamed by hand, leaving that `emit` as it is. A declaration that restates a standard effect (`effect navigate cap=nav.push in={path: Text, …}`) is deleted instead, since the standard effect needs none. Delete its line directly: `kumiki remove` counts the emits as references to the declaration and refuses.
 
 ## E03xx — Capabilities and Purity
 
@@ -1551,7 +1624,7 @@ The base is the other half of the same rule. Every predicate tests one shape of 
 
 `one-of` lowers to a strict membership test, so each literal has to be a value of the base: `Text where one-of(1, 2)` lists choices no text equals, and a `Bool`, a record or a union has no literal at all. A list with one wrong literal among right ones is reported too — that choice can never be taken.
 
-The base is read through the chain the refinement is written on — an alias, a `nominal`, an earlier `where` — so `type Handle = nominal Text` under `where positive` is reported and a `nominal Int` under `where between(0, 9)` is not. A record, a union or a container is not a base either family tests, and neither is an opaque type such as `EffectId`: whatever represents it at runtime, a program has no value of it the predicate is a question about.
+The base is read through the chain the refinement is written on — an alias, a `nominal`, an earlier `where` — so `type Handle = nominal Text` under `where positive` is reported and a `nominal Int` under `where between(0, 9)` is not. A record, a union or a container is not a base either family tests, and neither is an abstract handle type such as `EffectId`: whatever represents it at runtime, a program has no value of it the predicate is a question about.
 
 A type parameter says nothing about the base on its own, so the definition `type NonEmpty(T) = T where nonempty` is not reported. Its **application** is: the arguments are substituted into the body — through nested applications, record fields and union payloads — and a refinement they put over a base it cannot test is reported at the application, `NonEmpty(Int)` in `slot n : NonEmpty(Int)` or in `type N = NonEmpty(Int)`, and `W(Text)` for `type W(T) = nominal T where positive`. A problem the definition has whatever its arguments are is reported once, at the definition. A problem the arguments bring is reported at the application once for each refinement and base it is put over, however many paths through the body reach that refinement: `type D1(T) = D0(D0(D0(T)))` over `type D0(T) = T where nonempty` gives `D1(Int)` one E0804, not three, while `type P(T) = {a: T where nonempty, b: T where nonempty}` gives `P(Int)` two, one for each refinement.
 
