@@ -1,8 +1,8 @@
-import type { Program } from "./ast.ts";
+import type { Pos, Program } from "./ast.ts";
 import { type CodegenOptions, codegen, RUNTIME_HELPERS } from "./codegen.ts";
 import { lex } from "./lexer.ts";
 import { parse } from "./parser.ts";
-import { check, type KumikiError } from "./typecheck.ts";
+import { check, type KumikiError, severityOf } from "./typecheck.ts";
 
 export type CompileOk = {
   kind: "ok";
@@ -18,6 +18,20 @@ export type CompileFail = {
   warnings: KumikiError[];
 };
 export type CompileResult = CompileOk | CompileFail;
+
+/**
+ * The `E0000` diagnostic a lex or parse throw stands for, so a caller can report it the way it
+ * reports the checker's. A thrown value with no position lands at 0:0.
+ */
+export function parseFailure(e: unknown): KumikiError {
+  const pos = (e as { pos?: Pos } | null)?.pos;
+  return {
+    code: "E0000",
+    kind: "parse-error",
+    message: e instanceof Error ? e.message : String(e),
+    pos: { line: pos?.line ?? 0, col: pos?.col ?? 0 },
+  };
+}
 
 export type ExtendedCodegenOptions = CodegenOptions & {
   /** Inline the runtime source into the output so the generated module needs no external import. */
@@ -55,8 +69,8 @@ export function compile(source: string, opts: ExtendedCodegenOptions): CompileRe
     ...(opts.strictSelectorId ? { strictSelectorId: true } : {}),
     ...(opts.iconNames ? { iconNames: opts.iconNames } : {}),
   });
-  const errors = diags.filter((d) => d.severity !== "warning");
-  const warnings = diags.filter((d) => d.severity === "warning");
+  const errors = diags.filter((d) => severityOf(d) === "error");
+  const warnings = diags.filter((d) => severityOf(d) === "warning");
   if (errors.length > 0) return { kind: "fail", errors, warnings };
 
   const generated = codegen(program, opts);

@@ -357,11 +357,14 @@ effect loadUser cap=http.get
 | `http.post`, `http.put`, `http.patch`, `http.delete` | `url`, `headers`, `query`, `body`, `decode` |
 | `storage.read`, `session.read` | `key`, `decode` |
 | `storage.write`, `session.write` | `key`, `value` |
-| `indexed.read` | `store`, `key`, `decode`, `index`, `range` |
+| `key` を持つ `indexed.read`（`indexed-read`） | `store`, `key`, `decode` |
+| `key` を持たない `indexed.read`（`indexed-query`） | `store`, `index`, `range` |
 | `indexed.write` | `store`, `key`, `value` |
 | `indexed.delete` | `store`, `key` |
 
-`map-request` が書いたフィールドのうち、その capability の行に無いものは [E0215](./errors.md#e0215-unknown-record-field) になり、そのフィールドの位置に、行にある最も近いフィールドの名前を添えて報告される：`http.get` の `headrs: {"X": "1"}` は決して送られない header である。メソッドは capability が決め、`timeout` と `credentials` は `app.http` のもの（[6.3.1](#_6-3-1-injecting-global-headers)）なので、3 つともリクエストのフィールドではない。これらの capability に登録したホスト provider（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）も同じリクエストを受け取るので、同じフィールドに従う。
+`key` を名指す `indexed.read` のリクエストはそのキーでレコードを 1 つ読み、名指さないものは `index` と `range` でクエリを実行する（[6.7.4](#_6-7-4-sessionstorage-indexeddb)）。したがってそのフィールドは、どちらであるかに応じた行のものになる：`key` と並ぶ `index` は読まれず、`key` の無い `decode` も読まれない。
+
+`map-request` が書いたフィールドのうち、その capability の行に無いものは [E0215](./errors.md#e0215-unknown-record-field) になり、そのフィールドの位置に報告される。行に近いフィールドがあればその名前を添え、行が受け付けるフィールドを列挙する：`http.get` の `headrs: {"X": "1"}` は決して送られない header である。メソッドは capability が決め、`timeout` と `credentials` は `app.http` のもの（[6.3.1](#_6-3-1-injecting-global-headers)）なので、3 つともリクエストのフィールドではない。これらの capability に登録したホスト provider（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）も同じリクエストを受け取るので、同じフィールドに従う。
 
 フィールドが検査されるのは、リテラルがそれを名指す位置である：`map-request` のレコードそのもの、または `if` の分岐・`match` の腕・`let` の本体がそこに返すレコード（入れ子の深さは問わない）。テキストをキーに持つ map リテラルも同じオブジェクトになるので、その `Text` のキーも検査される。それ以外の方法で計算されるリクエスト — `fn` が返すもの、slot から読むもの、`$1` そのもの — はフィールドが実行時に決まるので検査されない。
 

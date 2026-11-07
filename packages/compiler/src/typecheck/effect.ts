@@ -5,8 +5,8 @@ import {
   BUILTIN_EFFECTS,
   declaresNoInput,
   failsWithText,
-  requestFields,
   requestFieldType,
+  requestSchema,
 } from "../capabilities.ts";
 import { type UnkeyedPart, unkeyedPart } from "../unkeyed-part.ts";
 import { checkAgainst } from "./against.ts";
@@ -99,8 +99,7 @@ export function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiErro
   if (eff.mapRequest) {
     const scope = effectScope(eff, sym);
     checkExpr(eff.mapRequest, sym, errors, scope);
-    const fields = requestFields(eff.cap);
-    if (fields) checkRequestFields(eff.mapRequest, { cap: eff.cap, fields, sym, errors }, scope);
+    checkRequestFields(eff.mapRequest, { cap: eff.cap, sym, errors }, scope);
   }
   // The key runs at dispatch time, so a name unchecked here fails on the first
   // dispatch rather than at check time.
@@ -148,7 +147,6 @@ function effectScope(eff: EffectDef, sym: SymbolTable): Ctx {
 
 type RequestCheck = {
   readonly cap: string;
-  readonly fields: readonly string[];
   readonly sym: SymbolTable;
   readonly errors: KumikiError[];
 };
@@ -159,30 +157,43 @@ type RequestCheck = {
  * in, so a name a `let` or a `match` arm binds has its type there.
  */
 function checkRequestFields(e: Expr, req: RequestCheck, ctx: Ctx): void {
-  const { cap, fields, sym, errors } = req;
-  const field = (name: string, pos: Pos, value: Expr): void => {
-    if (fields.includes(name)) {
-      const type = requestFieldType(name);
-      if (type) checkAgainst(value, type, sym, errors, ctx);
-      return;
+  const { cap, sym, errors } = req;
+  // Each literal is held to its own schema: whether it names `key` decides `indexed.read`'s.
+  const check = (named: readonly { name: string; pos: Pos; value: Expr }[]): void => {
+    const schema = requestSchema(
+      cap,
+      named.map((n) => n.name),
+    );
+    if (!schema) return;
+    const { request, fields } = schema;
+    for (const { name, pos, value } of named) {
+      if (fields.includes(name)) {
+        const type = requestFieldType(name);
+        if (type) checkAgainst(value, type, sym, errors, ctx);
+        continue;
+      }
+      const nearest = nearestName(name, fields);
+      const hint = nearest === null ? "" : ` — did you mean "${nearest}"?`;
+      errors.push({
+        code: "E0215",
+        kind: "unknown-record-field",
+        message: `The ${request} has no field "${name}"${hint} (accepted: ${fields.join(", ")})`,
+        pos,
+      });
     }
-    const nearest = nearestName(name, fields);
-    const hint = nearest === null ? "" : ` — did you mean "${nearest}"?`;
-    errors.push({
-      code: "E0215",
-      kind: "unknown-record-field",
-      message: `The ${cap} request has no field "${name}"${hint} (accepted: ${fields.join(", ")})`,
-      pos,
-    });
   };
   switch (e.kind) {
     case "RecordLit":
-      for (const f of e.fields) field(f.name, f.pos, f.value);
+      check(e.fields);
       return;
     case "MapLit":
-      for (const ent of e.entries) {
-        if (ent.key.kind === "Str") field(ent.key.value, ent.key.pos, ent.value);
-      }
+      check(
+        e.entries.flatMap((ent) =>
+          ent.key.kind === "Str"
+            ? [{ name: ent.key.value, pos: ent.key.pos, value: ent.value }]
+            : [],
+        ),
+      );
       return;
     case "IfExpr":
       checkRequestFields(e.consequent, req, ctx);

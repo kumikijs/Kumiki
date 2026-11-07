@@ -24,13 +24,13 @@ After, `check` reports **E0215** at `headrs`:
 The http.get request has no field "headrs" — did you mean "headers"? (accepted: url, headers, query, decode)
 ```
 
-The fields each capability's request has now live in one table,
-`REQUEST_FIELDS` in `capabilities.ts`, published in http.md on both tracks:
-`url` / `headers` / `query` /
+The fields each capability's request has now live in one table in the
+compiler, published in http.md on both tracks: `url` / `headers` / `query` /
 `decode` on `http.get`, plus `body` on `http.post` / `put` / `patch` /
 `delete`; `key` / `decode` on `storage.read` and `session.read`; `key` /
-`value` on `storage.write` and `session.write`; `store` / `key` / `decode` /
-`index` / `range` on `indexed.read`; `store` / `key` / `value` on
+`value` on `storage.write` and `session.write`; `store` / `key` / `decode` on
+an `indexed.read` that names `key` (a read by key) and `store` / `index` /
+`range` on one that does not (a query); `store` / `key` / `value` on
 `indexed.write`; `store` / `key` on `indexed.delete`. The checker reads it, and
 so does the codegen that hands a storage read its fields. The method is the
 capability's and `timeout` / `credentials` are `app.http`'s, so none of them is
@@ -44,8 +44,9 @@ effects reach only a host provider (`log.write`, `nav.*`, …), has no row and
 is not checked.
 
 Upgrade note: a program whose `map-request` writes a field outside its
-capability's row now fails `check` — including `body` on `http.get`, which GET
-never sent, and a field a host provider registered for a listed standard
-capability read. Such a provider can move to a custom capability, whose request
-is the provider's to define. The examples and benchmark corpus produce no new
-diagnostic.
+capability's row now fails `check`. That includes `body` on `http.get`, which
+GET never sent; `index` or `range` beside a `key` on `indexed.read`, and
+`decode` on one without, which its handler never read; and a field a host
+provider registered for a listed standard capability read. Such a provider can
+move to a custom capability, whose request is the provider's to define. The
+examples and benchmark corpus produce no new diagnostic.

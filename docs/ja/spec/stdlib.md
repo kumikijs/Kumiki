@@ -56,7 +56,7 @@ let id = emit fetchQuote()
 | `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — [ルーティング §3.2](./routing.md#_3-2-current-route-state) 参照 |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
-| `File` | `{name: Text, size: Int, type: Text}` — ファイル入力が、選ばれたファイル 1 つについて報告する値。名前、バイト単位のサイズ、MIME タイプ（ブラウザが判別できなければ `""`）を持つ。ファイルのバイト列はフィールドではない: ブラウザはそれを非同期にしか読み出せないため、`change` イベントが届けるレコードには入らない。サーバーへは `Multipart` ボディの `FileV` パートとして送る（[HTTP §6.1.3](./http.md#_6-1-3-httpbody-型)、[フォーム §5.10](./forms.md#_5-10-file-upload)） |
+| `File` | `{name: Text, size: Int, type: Text}` — ファイル入力が、選ばれたファイル 1 つについて報告する値。名前、バイト単位のサイズ、MIME タイプ（ブラウザが判別できなければ `""`）を持つ。ファイルのバイト列はフィールドではない: ブラウザはそれを非同期にしか読み出せないため、`change` イベントが届けるレコードには入らない。サーバーへは `Multipart` ボディの `FileV` パートとして送る（[HTTP §6.1.3](./http.md#_6-1-3-httpbody-型)、[フォーム §5.10](./forms.md#_5-10-file-upload)）。このレコードは、選ばれたファイルへのランタイムのハンドル `_file` も持つ。これには表示するフィールドがないため、`File` の `show`（[§2.2.7](#_2-2-7-int-float)）は `{name: "a.txt", size: 3, type: "text/plain", _file: {}}` である |
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — `app.error` と `error-boundary` tile の `in=` に渡る値（[ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)） |
 | `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — `route.error(<pattern>)` に渡る値：`PanicInfo` のフィールドと、その reducer が指す `pattern` |
 
@@ -261,6 +261,8 @@ parse-float                 : Option(Float)
 
 `replace(from, to)` は、プレーンテキストとして照合した `from` の出現箇所をすべて、書かれたとおりの `to` に置き換える：`"a-b-c".replace("-", "+")` は `"a+b+c"`、`"a.b.c".replace(".", "/")` は `"a/b/c"` である。`to` に置換構文はない。`to` の中の `$` は後に何が続いてもただの文字であり、`"cost: X".replace("X", "$$5")` は `"cost: $$5"`、`"a-b".replace("-", "$&")` は `"a$&b"` になる。`to` がリテラルでも slot から読んだ値でも同じである。出現箇所は左から重ならないように探すので、`"aaa".replace("aa", "b")` は `"ba"` になる。空の `from` は末尾を含む UTF-16 コード単位のすべての位置に一致し、`"abc".replace("", "-")` は `"-a-b-c-"` になる。
 
+`text.parse-int` は [`Int.parse(text)`](#_2-4-3-型変換) と、`text.parse-float` は `Float.parse(text)` と同じように `text` を読む。読み方は一つなので、2 つの綴りが同じテキストから違う値を作ることはない。読むのは 10 進のテキストだけで、しかもその全体である：`"3.7".parse-int`・`"1e3".parse-int`・`"0x10".parse-int`・`" 12 ".parse-int` はいずれも `None` であり、`"3.7".parse-float` は `Some(3.7)`、`"1e3".parse-float` は `Some(1000)` である。小数は `Int` に切り捨てられない——切り捨てたいなら `text.parse-float.map($1.to-int)` と書く。前後の空白も読み飛ばさない：空白があり得るテキストは `text.trim.parse-int` で読む。
+
 ### 2.2.7 Int / Float
 
 ```
@@ -277,6 +279,20 @@ Kumiki の算術はこれで全部である。`math` 名前空間は存在しな
 定義域の外を渡せばプラットフォームの答えがそのまま出る——`(-1.0).sqrt` は `NaN`、`(0.0).log` は `-Infinity`——そして `.show` はそれぞれ `"NaN"` / `"-Infinity"` と描画する。有限でない `Float` の値——これらの関数が定義域の外で与える値と、`/` が 0 の除数に与える値（`1.0 / 0.0` は `Infinity`。[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）——もほかと同じ数値である：`sort` は `-Infinity` をすべての有限値の前に、`Infinity` を後ろに、`NaN` を他のすべての要素の後ろに並べる（[§2.2.3](#_2-2-3-list-t)）。Kumiki に非数を表す別の型はない。上の `Int` は型であって値の保証ではない：`(-1.0).sqrt.floor` は `Int` に型付けされ、値は `NaN` である。slot がそれを拒むための道具は refinement（`where between(…)`）である。
 
 `x.show` は **全型共通**の文字列化メソッド。Int / Float / Bool / variant / nominal すべて `.show : Text` を返す。Kumiki には `to-text` という名前は存在しない。`EffectId` に対する `.show` は [E0204](./errors.md#e0204-effect-id-misuse) になる。不透明なハンドルであり、その文字列表現はランタイムが決めるからである（[§2.1.1.1](#_2-1-1-1-effectid)）。
+
+値をテキストに入れる形もこの1つである：`Text` との `+`（[§2.4.5](#_2-4-5-文字列フォーマット)）、`fmt`、`TypeName.show(v)`（[§2.4.3](#_2-4-3-型変換)）、tile のテキストは、どれも値をその `show` で描画する。null 相当は空文字、バリアントはタグ、数値・`Bool`・`Text` はその文字列である。record とコレクションは、プログラムがそれを書くリテラルの形で書かれる：
+
+| 値 | `show` |
+|---|---|
+| record | `{name: "ada", age: 3}` — 各フィールドを `name: value` として、record が保持している順に |
+| `List(T)` | `[1, 2]` |
+| `Tuple(T1, …, Tn)` | `(1, "a")` |
+| `Map(K, V)` | `{"a": 1}` — 各エントリを `key: value` として、`keys` が答える順に |
+| `Set(T)` | `[1, 2]` — Set リテラルが並べるとおりにメンバーを、`to-list` が答える順に（[§2.2.2](#_2-2-2-set-t)） |
+
+その各部分も同じ規則で書かれるが、違いが1つある：record やコレクションの中の `Text` は引用符で囲まれ、JSON が文字列をエスケープするとおりにエスケープされる（`["a", "say \"hi\""]`）。単独の `Text` はその文字列のままである。中のバリアントはタグ（`[Some, None]`、`{role: Admin}`）、空の List と Set は `[]`、空の Map は `{}` である。Map のキーと Set のメンバーは `keys` / `to-list` が返す値である：`Map(Int, Text)` なら `{3: "c"}`、`Map(Pt, Text)` なら <code v-pre>{{x: 0, y: 0}: "o"}</code>。`Bytes` はその base64（`aGk=`、[§2.2.10](#_2-2-10-bytes)）、`Time` と `Duration` は保持しているミリ秒の数（[§2.2.9](#_2-2-9-duration)）であり、単独でも構造の中でも同じである。
+
+実行時の Map は record と同じくオブジェクト、Set はメンバーをキーとするオブジェクト、Tuple は List と同じく配列なので、値をそのどれとして書くかを決めるのは**型**である。checker は、Map・Set・Tuple を含む型の式を show するすべての箇所で、その型を `show` に渡す——エイリアス、ジェネリクス、自分自身を含む型を通しても同じである。checker が型を決められない場所——`{}` から始める `fold` のアキュムレータ `$1`、本体の型を checker が決められない、`->` のない `fn` の結果、ジェネリック型がそれより小さくない引数で自分自身を最初に繰り返す箇所より下の部分（`type N(T) = {v: T, kids: List(N(List(T)))}`）——では、Map は格納されたキーの record として、Set は `true` の record として、Tuple は List として書かれ、`_tag` キーを持つ Map はバリアントとして読まれて、そのキーの値として書かれる。これは checker が解決できる範囲の穴であり、プログラムが頼ってよい規則ではない。
 
 ### 2.2.8 Time
 
@@ -355,6 +371,8 @@ Bytes.from-text(text)       : Bytes        ; UTF-8 エンコード
 Bytes.from-base64(text)     : Bytes        ; 標準 base64 デコード
 Bytes.from-bytes(list)      : Bytes        ; List(Int) から（各値は下位 8bit にマスク）
 ```
+
+`b.show`（すべての値が持つ `show`、[§2.2.7](#_2-2-7-int-float)）は、バイト列を `=` パディング付きの**標準 base64** で表したテキスト、つまり `Bytes.from-base64` がデコードするテキストである。したがって UTF-8 でないバイト列や空の `Bytes` も含め、すべての `Bytes` について `Bytes.from-base64(b.show) == b` が成り立つ。`Bytes.from-text("hi").show` は `"aGk="`、`Bytes.from-bytes([255, 0, 128]).show` は `"/wCA"` であり、空の `Bytes` は `""` と表示される。`show` を通して値を描画するものはすべて `Bytes` をこの形で描画する：`Bytes.show(b)`、片側が `Text` の `+` と `fmt`（[§2.4.5](#_2-4-5-文字列フォーマット)）、タイルのテキスト。`Bytes.parse` は `show` の逆ではない。テキストを UTF-8 として読む（[§2.4.3](#_2-4-3-型変換)）ので、表示した `Bytes` は `Bytes.from-base64` で読み戻す。
 
 ---
 
@@ -542,6 +560,8 @@ TypeName.fresh()           : T            ; nominal 型の新 ID（UUIDv7）
 
 id は uuid の `Text` なので、`TypeName` は `Text` が入る型である：`Text` 自身、またはその上の `nominal` / `where` — `PostId`、標準ライブラリの `Url` / `Email` / `Uuid`。それ以外の `TypeName` — `Int`、`nominal Int`、レコード、ユニオン — は [E0802](./errors.md#e0802-unimplemented-function) になる：数値である uuid は存在せず、こうして生成された `nominal Int` の id はどこへ行っても文字列であり、それを要素とする `Set` はそれを `NaN` として読み戻していた。
 
+この uuid は小文字 16 進で書かれたバージョン 7（[RFC 9562 §5.7](https://www.rfc-editor.org/rfc/rfc9562#section-5.7)）である：先頭 48 ビットはミリ秒単位の Unix 時刻、3 番目のグループはバージョン `7` で始まり、4 番目のグループはバリアント（`8`、`9`、`a`、`b` のいずれか）で始まり、残りはカウンタとランダムビットである。どの uuid とも同じく `uuid` refinement（[言語 §1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）を通る。実行中の 1 つのアプリが生成した id は、`Text` として（[§2.2.3](#_2-2-3-list-t)）並べ替えると生成した順になる：同じミリ秒に生成した複数の id も、時計が巻き戻った後に生成した id もそうである。この順序を保つため、id が時計のミリ秒を持つのは時計が直前の id のミリ秒を過ぎているときだけであり、そうでなければ直前の id のミリ秒を、少なくとも 2,049 個の id がそれを共有した後はその次のミリ秒を持つ。2 回の実行や 2 つのアプリ — リロードの前後、2 つのタブ、2 台の端末、またはページを描画したサーバーとそれを hydrate するクライアント — の id の間には、それぞれが読んだ時計のほかに順序を決めるものはない。replay される episode は、新たに生成する代わりに記録した id を返す（[ランタイム §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）。
+
 ### 2.4.2 時刻
 
 ```
@@ -565,14 +585,16 @@ TypeName.show(value)       : Text         ; 値の文字列表現
 
 | 基底型 | `Some` の中身 | `None` になるテキスト |
 |---|---|---|
-| `Int` | 表す数値: 省略可能な `+` / `-` と 10 進数字 | それ以外 — 小数、指数、`0x` / `0b` 接頭辞、前後の空白、空 |
+| `Int` | 表す数値: 省略可能な `+` / `-` と 10 進数字 | それ以外 — 小数、指数、`0x` / `0b` 接頭辞、前後の空白、空 — または `Int` が正確に保持できる範囲 ±(2^53 − 1) の外の数値（リテラルも [E0217](./errors.md#e0217-int-literal-precision) で同じ範囲に制限される） |
 | `Float` | 表す数値: 省略可能な `+` / `-`、10 進数字、省略可能な `.` と数字、省略可能な `e` / `E` 指数 | それ以外 — `.5`、`1.`、`0x10`、`Infinity`、前後の空白、空 — または有限に収まらない大きさの数値 |
 | `Time` | [`Time.parse`](#_2-2-8-time) が読む時刻 | [`Time.parse`](#_2-2-8-time) の文法から外れる、または暦にない日付（`2026-02-30`）を指す — `2026/02/30`、`+002026-08-14`、`2026-08-14T24:00`、前後の空白、空 |
 | `Bool` | `"true"` なら `true`、`"false"` なら `false` — `.show` が生成する 2 つの綴り | それ以外 |
 | `Text` | テキストそのもの | 空 |
 | `Bytes` | `Bytes.from-text` と同じ UTF-8 バイト列 | 空 |
 
-読み方は `Bool` と同じく厳密である: `Int.parse(" 12 ")` や `Int.parse("0x10")` は `Some(12)` / `Some(16)` ではなく `None` になる。空白があり得るならテキストを先に trim する。
+読み方は `Bool` と同じく厳密である: `Int.parse(" 12 ")` や `Int.parse("0x10")` は `Some(12)` / `Some(16)` ではなく `None` になる。空白があり得るならテキストを先に trim する。`Int` と `Float` の読み方は、`text.parse-int` と `text.parse-float`（[§2.2.6](#_2-2-6-text)）が読む読み方でもあり、`Int` や `Float` に bind された `input` がテキストを読む読み方（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）でもある。
+
+`Bytes` では `parse` は `show` の逆ではない。`b.show` は base64（[§2.2.10](#_2-2-10-bytes)）で、`Bytes.parse` は UTF-8 として読むので、`Bytes.parse(b.show)` が `Some(b)` になることはない。その base64 テキストのバイト列の `Some` であり、`show` が `""` である空の `Bytes` では `None` になる。`Bytes` の `show` の逆は `Bytes.from-base64` であり、`Bytes.from-base64(b.show)` は `b` である。
 
 読んだ値はその後 `T` が持つすべての `where` refinement（[言語 §1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）に照らされ、どれかを満たさない値は `None` になる: `type Cents = nominal Int where positive` なら `Cents.parse("-5")` は `None` である。したがって `parse` は自身の型が拒否する値を決して生成しない — `Option(Cents)` は slot 書き込みのガードを通らないので、その検査ができるのは parse の時点だけである。
 
@@ -596,7 +618,7 @@ random()                   : Float        ; 0 <= x < 1
 fmt(template, ...args)     : Text         ; "Hello {0}, you have {1}"
 ```
 
-**プレースホルダ**は `{`・10進数字1文字以上・`}` である。各プレースホルダは、その番号の引数——`{0}` はテンプレートの次の第1引数——で置き換えられる。描画は `+` と同じ（下で触れる `show` 相当：バリアントはタグ、null 相当は空文字、それ以外はその文字列表現）で、`fmt("{0}-{1}", "a", "b")` は `"a-b"` になる。同じ番号を繰り返してよく、番号の並び順も自由である：`fmt("{1} {0} {1}", "a", "b")` は `"b a b"` になる。置換はテンプレートを左から右へ1回走査するだけである：置き換えた値の*中*に現れた `{0}` はテキストであり、もう一度埋める対象にはならない。
+**プレースホルダ**は `{`・10進数字1文字以上・`}` である。各プレースホルダは、その番号の引数——`{0}` はテンプレートの次の第1引数——で置き換えられる。描画は `+` と同じ（その `show`、[§2.2.7](#_2-2-7-int-float)：バリアントはタグ、null 相当は空文字、record やコレクションはそのリテラル、`Bytes` はその base64（[§2.2.10](#_2-2-10-bytes)）、それ以外はその文字列表現）で、`fmt("{0}-{1}", "a", "b")` は `"a-b"` になる。同じ番号を繰り返してよく、番号の並び順も自由である：`fmt("{1} {0} {1}", "a", "b")` は `"b a b"` になる。置換はテンプレートを左から右へ1回走査するだけである：置き換えた値の*中*に現れた `{0}` はテキストであり、もう一度埋める対象にはならない。
 
 数字は10進の番号としてまとめて読むので、先頭の 0 は桁としてのみ意味を持つ：`{01}` は番号 1 である。
 
@@ -610,7 +632,7 @@ fmt(template, ...args)     : Text         ; "Hello {0}, you have {1}"
 
 個数の検査（[E0213](./errors.md#e0213-call-arity-mismatch)）は上のシグネチャに対して行われる。必須なのはテンプレートだけである——プレースホルダの無いテンプレートは引数を取らないからだ。
 
-`+` で `Text` と他型を結合した場合、自動で `show` 相当が呼ばれる。
+`+` で `Text` と他型を結合した場合、自動で `show` 相当が呼ばれる（[§2.2.7](#_2-2-7-int-float)）：`"p: " + {name: "ada"}` は `p: {name: "ada"}` である。
 
 ### 2.4.6 デバッグ補助
 

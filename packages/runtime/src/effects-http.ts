@@ -30,7 +30,8 @@ export async function httpFetch(
     value?: unknown;
   };
   const base = httpCfg?.baseUrl ?? "";
-  // `map-request` is not checked against the request type, so a url can be any value.
+  // The checker holds a `map-request` literal's field names to the request, not their values, so
+  // a url can be any value.
   const url = withQuery(joinBase(base, String(x.url ?? "")), x.query);
   // Under a base, the program's own headers and credentials stay on the base's origin.
   const global = base === "" || sameOrigin(url, base);

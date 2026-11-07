@@ -57,29 +57,54 @@ export function failsWithText(cap: string): boolean {
 const HTTP_READ = ["url", "headers", "query", "decode"];
 const HTTP_SEND = ["url", "headers", "query", "body", "decode"];
 
+/** What the built-in `storage.read` / `session.read` handler reads, which codegen hands it. */
+export const STORAGE_READ_FIELDS = ["key", "decode"] as const;
+
+/**
+ * A request whose fields depend on whether it names `key`: the built-in `indexed.read` handler
+ * reads one record by key when it does, and runs a query when it does not.
+ */
+type ByKey = { withKey: readonly string[]; withoutKey: readonly string[] };
+
 /**
  * The fields each capability's built-in handler reads, as http.md publishes them. A field outside
- * the set is a value no handler reads. A capability not listed has no request schema: a custom one,
- * a standard one whose effects reach only a host provider, and `http.cancel`, which takes no
- * `map-request` at all.
+ * them is one the built-in handler never reads; a host provider registered for the capability is
+ * handed the same request and held to the same fields, and one that reads others belongs on a
+ * custom capability. A capability not listed has no request schema: a custom one, a standard one
+ * whose effects reach only a host provider, and `http.cancel`, which takes no `map-request` at all.
  */
-export const REQUEST_FIELDS: ReadonlyMap<string, readonly string[]> = new Map([
+const REQUEST_FIELDS: ReadonlyMap<string, readonly string[] | ByKey> = new Map<
+  string,
+  readonly string[] | ByKey
+>([
   ["http.get", HTTP_READ],
   ["http.post", HTTP_SEND],
   ["http.put", HTTP_SEND],
   ["http.patch", HTTP_SEND],
   ["http.delete", HTTP_SEND],
-  ["storage.read", ["key", "decode"]],
+  ["storage.read", STORAGE_READ_FIELDS],
   ["storage.write", ["key", "value"]],
-  ["session.read", ["key", "decode"]],
+  ["session.read", STORAGE_READ_FIELDS],
   ["session.write", ["key", "value"]],
-  ["indexed.read", ["store", "key", "decode", "index", "range"]],
+  [
+    "indexed.read",
+    { withKey: ["store", "key", "decode"], withoutKey: ["store", "index", "range"] },
+  ],
   ["indexed.write", ["store", "key", "value"]],
   ["indexed.delete", ["store", "key"]],
 ]);
 
-export function requestFields(cap: string): readonly string[] | undefined {
-  return REQUEST_FIELDS.get(cap);
+/** The request a literal names, as a message calls it, and the fields it may have. */
+export type RequestSchema = { request: string; fields: readonly string[] };
+
+/** The schema of a request on `cap` whose literal names `names`; `undefined` when `cap` has none. */
+export function requestSchema(cap: string, names: readonly string[]): RequestSchema | undefined {
+  const row = REQUEST_FIELDS.get(cap);
+  if (row === undefined) return undefined;
+  if (!("withKey" in row)) return { request: `${cap} request`, fields: row };
+  return names.includes("key")
+    ? { request: `${cap} request with a key`, fields: row.withKey }
+    : { request: `${cap} request with no key`, fields: row.withoutKey };
 }
 
 // The handler decodes the answer by `decode`, so a value no decoder built names no decoding. The

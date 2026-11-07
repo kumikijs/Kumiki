@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import { copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gateComposed } from "@kumikijs/cli";
-import { check, lex, parse } from "@kumikijs/compiler";
+import { check, lex, parse, severityOf } from "@kumikijs/compiler";
 import { describe, expect, it, vi } from "vitest";
 import { serialiseFixFromTest } from "../src/index.ts";
 import {
@@ -13,6 +13,7 @@ import {
   FIX_COUNTER_TYPO_WITH_TEST,
   FIX_FAILING_SINGLE,
   FIX_REGRESSION,
+  FIX_TEST_THROWS,
   type ToolResult,
   useWorkdir,
   withClient,
@@ -80,15 +81,42 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
     ]);
     const original = readFileSync(file, "utf8");
     const res = await callOnce("kumiki_auto_patch", { path: file, testName: "bumps", apply: true });
+    type Wire = { code: string; severity: string };
     const parsed = outcome(res) as Outcome & {
-      compileErrors?: { code: string }[];
-      blocked?: { reason: string; introduced?: { code: string }[] };
+      compileErrors?: Wire[];
+      blocked?: { reason: string; introduced?: Wire[] };
     };
     expect(parsed.status).toBe("compile-blocked");
     expect(parsed.blocked?.reason).toBe("introduced");
-    expect(parsed.blocked?.introduced?.map((d) => d.code)).toEqual(["E0201"]);
-    expect(parsed.compileErrors?.map((d) => d.code)).toEqual(["E0103"]);
+    expect(parsed.blocked?.introduced?.map((d) => [d.code, d.severity])).toEqual([
+      ["E0201", "error"],
+    ]);
+    expect(parsed.compileErrors?.map((d) => [d.code, d.severity])).toEqual([["E0103", "error"]]);
     expect(parsed.compileFixes).toBeUndefined();
+    expect(readFileSync(file, "utf8")).toBe(original);
+  });
+
+  it.each([
+    false,
+    true,
+  ])("serialises a tie between close names as no-patch with the tied names (apply: %s)", async (apply) => {
+    // `count` is one edit from `countA` and from `countB`, so neither is written.
+    const file = write("tie.kumiki", [
+      "slot countA : Int = 0",
+      "slot countB : Int = 0",
+      'tile App = column(text("total: " + count.show))',
+      "app A",
+      "    caps   = []",
+      '    routes = {"/" -> App, "/404" -> App}',
+      "    init   = []",
+    ]);
+    const original = readFileSync(file, "utf8");
+    const res = await callOnce("kumiki_auto_patch", { path: file, testName: "any", apply });
+    expect(outcome(res)).toMatchObject({
+      status: "no-patch",
+      reason: "close-names-tied",
+      candidates: ["countA", "countB"],
+    });
     expect(readFileSync(file, "utf8")).toBe(original);
   });
 
@@ -101,7 +129,7 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
       "    init   = []",
       "",
     ].join("\n");
-    const errors = check(parse(lex(source))).filter((e) => e.severity !== "warning");
+    const errors = check(parse(lex(source))).filter((e) => severityOf(e) === "error");
     const broken = source.replace('{"/" -> App}', '{"/" -> App, "/404" -> NotFound');
     let message = "";
     try {
@@ -129,6 +157,7 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
           message: 'app.routes must include a "/404" entry',
           line: 2,
           col: 1,
+          severity: "error",
         },
       ],
       blocked: { reason: "parse-error", message },
@@ -195,9 +224,35 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
       status: "test-blocked",
       ok: false,
       patch: { code: "TEST" },
-      blocked: { reason: "regressed", regressed: ["B"] },
+      blocked: {
+        reason: "regressed",
+        regressed: ["B"],
+        failingTests: [
+          {
+            name: "B",
+            pass: false,
+            diffAt: "slots.message",
+            leaf: { expected: "world", actual: "planet" },
+          },
+        ],
+      },
     });
     expect(readFileSync(file, "utf8")).toBe(original);
+  });
+
+  it("says a test whose body threw has no patch, and not that it passes", async () => {
+    const file = copy(FIX_TEST_THROWS, "test-throws.kumiki");
+    const res = await callOnce("kumiki_auto_patch", { path: file, testName: "expect-panics" });
+    expect(res.isError).toBe(true);
+    expect(outcome(res)).toMatchObject({
+      status: "no-patch",
+      reason: "test-threw",
+      failingTest: {
+        name: "expect-panics",
+        pass: false,
+        error: "Index 3 is out of range for a List of length 1",
+      },
+    });
   });
 
   it("serialises an `introduced` refusal's errors as wire diagnostics", async () => {
@@ -230,8 +285,13 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
       "kind",
       "line",
       "message",
+      "severity",
     ]);
-    expect(parsed.blocked.introduced[0]).toMatchObject({ code: "E0804", line: 1 });
+    expect(parsed.blocked.introduced[0]).toMatchObject({
+      code: "E0804",
+      line: 1,
+      severity: "error",
+    });
     expect(readFileSync(file, "utf8")).toBe(original);
   });
 

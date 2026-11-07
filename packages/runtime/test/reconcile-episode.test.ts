@@ -205,7 +205,9 @@ describe("binds-updated when the walk bails", () => {
     app._dispatch("advance", {});
 
     expect(lastBindsUpdated(committed)).toEqual([]);
-    expect(panics(committed.slice(-1))).not.toEqual([]);
+    expect(panics(committed.slice(-1))).toMatchObject([
+      { kind: "panic", location: "reconcile", category: "tile-render" },
+    ]);
     dispose();
   });
 
