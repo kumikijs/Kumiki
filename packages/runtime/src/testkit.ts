@@ -288,7 +288,7 @@ export const _stdlibTest = {
       for (const [k, m] of Object.entries(app.slots)) expectedSlots[k] = m.value;
       for (const ep of episodes) {
         for (const s of ep.steps) {
-          if (s.kind === "reducer") {
+          if (s.kind === "reducer" || s.kind === "bind") {
             const diffs = (s as EpisodeReducerStep)["slot-diffs"] ?? [];
             for (const d of diffs) expectedSlots[d.name] = d.after;
           }

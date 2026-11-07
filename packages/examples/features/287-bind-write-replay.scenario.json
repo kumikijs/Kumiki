@@ -1,0 +1,18 @@
+{
+  "steps": [
+    {
+      "label": "typing into the bound field writes draft, with no reducer behind it",
+      "do": { "fill": "input", "value": "milk" },
+      "expect": { "noErrors": true, "state": { "draft": "milk", "items": [] } }
+    },
+    {
+      "label": "submitting adds what was typed and clears the field",
+      "do": { "submit": "form" },
+      "expect": {
+        "noErrors": true,
+        "state": { "draft": "", "items": ["milk"] },
+        "domIncludes": ["milk"]
+      }
+    }
+  ]
+}

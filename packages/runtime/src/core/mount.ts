@@ -547,8 +547,9 @@ export function mountCore(
     };
     applyReducer(r, { $route: syntheticRoute });
   };
-  seams._setSlot = (name, value, at) => {
+  seams._setSlot = (name, value, at, written, control) => {
     if (!slotAccepts(app.slots[name], value, at)) return false;
+    episode?.recordBind(control, app, name, value, at, written);
     slotValues[name] = value;
     render();
     return true;

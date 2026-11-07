@@ -25,6 +25,8 @@ export function replayableApp(overrides: Partial<AppShape>): ReplayableApp {
 /** A mount with an episode logger. `dispose` tears it down and takes its root out of the page. */
 export type LoggedMount = {
   logger: EpisodeLogger;
+  /** The element the app is mounted on, to find its controls by. */
+  root: HTMLElement;
   dispatch: MountedApp["_dispatch"];
   dispose: () => void;
 };
@@ -36,6 +38,7 @@ export function mountLogged(app: AppShape, memoryMax = 10): LoggedMount {
   const mounted = mount(app, root, { episodeLogger: logger });
   return {
     logger,
+    root,
     dispatch: (app as MountedApp)._dispatch,
     dispose: () => {
       mounted.dispose();
