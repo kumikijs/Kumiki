@@ -118,7 +118,11 @@ describe("httpFetch", () => {
     expect(v.message).toBe("aborted");
   });
 
-  it("keeps a 2xx's status when its body stream errors mid-read, with no body", async () => {
+  it.each([
+    undefined,
+    "text",
+    "bytes",
+  ])("keeps a 2xx's status when its body stream errors mid-read under %s, with no body", async (decode) => {
     stubFetch(
       () =>
         new Response(
@@ -130,7 +134,7 @@ describe("httpFetch", () => {
           { status: 201 },
         ),
     );
-    const res = await httpFetch("POST", { url: "/orders" });
+    const res = await httpFetch("POST", { url: "/orders", decode });
     expect(res.kind).toBe("err");
     if (res.kind !== "err") return;
     const v = res.value as { status: number; message: string; body: unknown };
@@ -139,11 +143,24 @@ describe("httpFetch", () => {
     expect(v.body).toEqual({ _tag: "None" });
   });
 
-  it.each<[string, number, { timeout: number } | undefined]>([
-    ["a cancel", 200, undefined],
-    ["a cancel", 503, undefined],
-    ["a timeout", 503, { timeout: 5 }],
-  ])("reports %s during a %i's body read as aborted, not what the response said", async (by, status, cfg) => {
+  // Each decoder reads the body its own way (`Decoder.Bytes` through `arrayBuffer()`).
+  it.each(
+    (["a cancel", "a timeout"] as const).flatMap((by) =>
+      [200, 503].flatMap((status) =>
+        [undefined, "text", "bytes"].map((decode) => ({
+          by,
+          status,
+          decode,
+          cfg: by === "a timeout" ? { timeout: 5 } : undefined,
+        })),
+      ),
+    ),
+  )("reports $by during a $status's body read under $decode as aborted, not what the response said", async ({
+    by,
+    status,
+    decode,
+    cfg,
+  }) => {
     // The headers arrive at once; the body only ever fails, when the request's signal aborts.
     const { calls } = stubFetch(
       ({ init }) =>
@@ -159,7 +176,7 @@ describe("httpFetch", () => {
         ),
     );
     const ctl = new AbortController();
-    const pending = httpFetch("GET", { url: "/q" }, cfg, ctl.signal);
+    const pending = httpFetch("GET", { url: "/q", decode }, cfg, ctl.signal);
     // One turn lets the headers arrive and the body read begin.
     await new Promise((r) => setTimeout(r, 0));
     expect(calls).toHaveLength(1);
@@ -368,37 +385,31 @@ describe("httpFetch: what each decoder delivers", () => {
   const NIHONGO = "日本語";
   const NIHONGO_UTF8 = [0xe6, 0x97, 0xa5, 0xe6, 0x9c, 0xac, 0xe8, 0xaa, 0x9e];
 
-  async function ok(decode: unknown, body: BodyInit | null): Promise<unknown> {
+  it.each<[string, unknown, BodyInit, unknown]>([
+    [
+      "`Decoder.Bytes`: the body's bytes, not its text",
+      "bytes",
+      NIHONGO,
+      new Uint8Array(NIHONGO_UTF8),
+    ],
+    // Read as text, 0xff becomes U+FFFD, so bytes taken from the text would be different bytes.
+    [
+      "`Decoder.Bytes`: bytes that are not UTF-8, as received",
+      "bytes",
+      new Uint8Array([0xff, 0x00, 0x80]),
+      new Uint8Array([0xff, 0x00, 0x80]),
+    ],
+    ["`Decoder.Text`: the body's text", "text", NIHONGO, NIHONGO],
+    ["`Decoder.None`: Unit, without the body", "none", NIHONGO, null],
+    ["`Decoder.Json`: the parsed body", "json", JSON.stringify({ n: NIHONGO }), { n: NIHONGO }],
+    ["no decoder: the parsed body", undefined, JSON.stringify([1]), [1]],
+    ["a `null` decoder: the parsed body", null, JSON.stringify([1]), [1]],
+  ])("%s", async (_, decode, body, delivered) => {
     stubFetch(() => new Response(body, { status: 200 }));
-    const res = await httpFetch("GET", { url: "/r", decode });
-    expect(res.kind).toBe("ok");
-    return res.value;
-  }
-
-  it("`Decoder.Bytes` delivers the body's bytes, not its text", async () => {
-    const value = await ok("bytes", NIHONGO);
-    expect(value).toBeInstanceOf(Uint8Array);
-    expect(Array.from(value as Uint8Array)).toEqual(NIHONGO_UTF8);
-  });
-
-  // A body that is not UTF-8 at all: read as text, 0xff becomes U+FFFD, so
-  // bytes taken from the text would be different bytes.
-  it("`Decoder.Bytes` delivers the bytes as received, whatever they encode", async () => {
-    const value = await ok("bytes", new Uint8Array([0xff, 0x00, 0x80]));
-    expect(Array.from(value as Uint8Array)).toEqual([0xff, 0x00, 0x80]);
-  });
-
-  it("`Decoder.Text` delivers the body's text", async () => {
-    expect(await ok("text", NIHONGO)).toBe(NIHONGO);
-  });
-
-  it("`Decoder.None` delivers Unit without the body", async () => {
-    expect(await ok("none", NIHONGO)).toBeNull();
-  });
-
-  it("`Decoder.Json`, and a request with no decoder, deliver the parsed body", async () => {
-    expect(await ok("json", JSON.stringify({ n: NIHONGO }))).toEqual({ n: NIHONGO });
-    expect(await ok(undefined, JSON.stringify([1]))).toEqual([1]);
+    expect(await httpFetch("GET", { url: "/r", decode })).toStrictEqual({
+      kind: "ok",
+      value: delivered,
+    });
   });
 
   // `HttpError.body` is `Text` whatever the request asked to decode a 2xx as.
@@ -416,9 +427,13 @@ describe("httpFetch: what each decoder delivers", () => {
     const { calls } = stubFetch(() => new Response(NIHONGO, { status: 200 }));
     const res = await httpFetch("GET", { url: "/r", decode: "TEXT" });
     expect(calls).toHaveLength(0);
-    expect(res).toEqual({
+    expect(res).toMatchObject({
       kind: "err",
-      value: { status: 0, message: expect.stringContaining('"TEXT"'), body: { _tag: "None" } },
+      value: {
+        status: 0,
+        message: 'decode is "TEXT", which is not a Decoder',
+        body: { _tag: "None" },
+      },
     });
   });
 });

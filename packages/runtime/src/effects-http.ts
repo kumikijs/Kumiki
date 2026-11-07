@@ -34,11 +34,11 @@ export async function httpFetch(
   const url = withQuery(joinBase(base, String(x.url ?? "")), x.query);
   // Under a base, the program's own headers and credentials stay on the base's origin.
   const global = base === "" || sameOrigin(url, base);
-  let decode: Decode;
-  try {
-    decode = decodeOf(x.decode);
-  } catch (e) {
-    return { kind: "err", value: httpError(0, errorText(e)) };
+  // Each failure before the request is `final`: nothing was sent, so a retry would fail the same
+  // way.
+  const decode = decodeOf(x.decode);
+  if (typeof decode === "object") {
+    return { kind: "err", value: httpError(0, decode.refused), final: true };
   }
   let encoded: Encoded = {};
   if (x.body !== undefined && method !== "GET" && method !== "HEAD") {
@@ -46,7 +46,7 @@ export async function httpFetch(
       encoded = encodeBody(x.body);
     } catch (e) {
       // A body that cannot be sent as written fails the effect, before any request.
-      return { kind: "err", value: httpError(0, errorText(e)) };
+      return { kind: "err", value: httpError(0, errorText(e)), final: true };
     }
   }
   const headers: Record<string, string> = {};

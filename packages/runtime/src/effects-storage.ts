@@ -1,5 +1,5 @@
 import type { EffectResult } from "./core.ts";
-import { decodeOf, decodeRead, decodeRefusal, decodesJson } from "./effects-decode.ts";
+import { decodeOf, decodeRead } from "./effects-decode.ts";
 import { _stdlibCore } from "./stdlib.ts";
 
 type Backend = "localStorage" | "sessionStorage";
@@ -79,33 +79,38 @@ function decodeStored(raw: string): unknown {
   return raw.startsWith(TAGGED) ? JSON.parse(raw.slice(TAGGED.length), untag) : JSON.parse(raw);
 }
 
+// What `storage-write` stores for a `Bytes` is that one value in the tagged form, so
+// `Decoder.Bytes` reads it back as those bytes. Any other text, tagged or not, is its UTF-8.
+function bytesOf(raw: string): Uint8Array {
+  const stored = raw.startsWith(TAGGED) ? decodedOrUndefined(raw) : undefined;
+  return stored instanceof Uint8Array ? stored : _stdlibCore.bytesFromText(raw);
+}
+
+function decodedOrUndefined(raw: string): unknown {
+  try {
+    return decodeStored(raw);
+  } catch {
+    return undefined;
+  }
+}
+
 async function readFrom(backend: Backend, input: unknown): Promise<EffectResult> {
   try {
     const req = input as { key: string; decode?: unknown };
     const decode = decodeOf(req.decode);
+    if (typeof decode === "object") return failed(decode.refused);
     const raw = globalThis[backend].getItem(req.key);
     if (raw === null) return { kind: "ok", value: _stdlibCore.None };
-    // The tagged form is JSON's, so only a JSON decoding reads it; `Decoder.Text` delivers the
+    // The tagged form is JSON's, so a JSON decoding reads it, and `Decoder.Text` delivers the
     // stored text as it is.
-    if (decodesJson(decode)) {
-      let value: unknown;
-      try {
-        value = decodeStored(raw);
-      } catch (e) {
-        const at = JSON.stringify(req.key);
-        return failed(
-          `decode failed: the text under ${at} in ${backend} is not a stored value (${String(e)})`,
-        );
-      }
-      const refused = decodeRefusal(decode, value);
-      if (refused) return { kind: "err", value: refused };
-      return { kind: "ok", value: _stdlibCore.Some(value) };
-    }
     const decoded = await decodeRead(decode, {
       text: async () => raw,
-      bytes: async () => _stdlibCore.bytesFromText(raw),
+      bytes: async () => bytesOf(raw),
+      parse: decodeStored,
+      unparsed: (e) =>
+        `the text under ${JSON.stringify(req.key)} in ${backend} is not a stored value (${String(e)})`,
     });
-    if (!decoded.ok) return { kind: "err", value: decoded.message };
+    if (!decoded.ok) return failed(decoded.message);
     return { kind: "ok", value: _stdlibCore.Some(decoded.value) };
   } catch (e) {
     return { kind: "err", value: String(e) };

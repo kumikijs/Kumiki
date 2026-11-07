@@ -31,10 +31,10 @@ describe("a stdlib constant written without parentheses", () => {
 
       expect(live.note).toBe("kumiki");
       expect(live.pinged).toBe(true);
-      // `日本語` arrives as its nine UTF-8 bytes, which `show` renders one number each; the text
+      // `日本語` arrives as its nine UTF-8 bytes, which `show` renders as their base64; the text
       // would show its three characters.
-      expect(live.raw).toBe("230,151,165,230,156,172,232,170,158");
-      expect(root.textContent).toContain("raw: 230,151,165,230,156,172,232,170,158");
+      expect(live.raw).toBe("5pel5pys6Kqe");
+      expect(root.textContent).toContain("raw: 5pel5pys6Kqe");
     } finally {
       handle.dispose();
     }

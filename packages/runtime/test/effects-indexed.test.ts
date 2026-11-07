@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { EffectResult } from "../src/core.ts";
 import {
   type IndexedDbCfg,
   indexedDelete,
@@ -152,13 +153,52 @@ describe("indexed-* happy path with in-memory mock", () => {
     });
   });
 
-  it("a point read whose decode is no decoder is an err naming it", async () => {
-    const localCfg: IndexedDbCfg = { ...cfg, name: "happy-db-unknown-decoder" };
+  // A record is no text: `Decoder.Text` and `Decoder.Bytes` cannot read one, and `Decoder.None`
+  // answers only whether it is there. Each holds whether or not the key is.
+  it.each<[string, unknown, EffectResult, EffectResult]>([
+    [
+      "`Decoder.Text` is an err",
+      "text",
+      {
+        kind: "err",
+        value: "decode failed: indexed.read holds records, which Decoder.Text cannot read",
+      },
+      {
+        kind: "err",
+        value: "decode failed: indexed.read holds records, which Decoder.Text cannot read",
+      },
+    ],
+    [
+      "`Decoder.Bytes` is an err",
+      "bytes",
+      {
+        kind: "err",
+        value: "decode failed: indexed.read holds records, which Decoder.Bytes cannot read",
+      },
+      {
+        kind: "err",
+        value: "decode failed: indexed.read holds records, which Decoder.Bytes cannot read",
+      },
+    ],
+    [
+      "`Decoder.None` is Some(Unit), or None",
+      "none",
+      { kind: "ok", value: { _tag: "Some", _0: null } },
+      { kind: "ok", value: { _tag: "None" } },
+    ],
+    [
+      "a decode that is no decoder is an err naming it",
+      "TEXT",
+      { kind: "err", value: 'decode is "TEXT", which is not a Decoder' },
+      { kind: "err", value: 'decode is "TEXT", which is not a Decoder' },
+    ],
+  ])("on a point read, %s", async (name, decode, stored, missing) => {
+    const localCfg: IndexedDbCfg = { ...cfg, name: `happy-db-decoder-${name}` };
     await indexedWrite({ store: "notes", key: "a", value: { body: "hello" } }, localCfg);
-    expect(await indexedRead({ store: "notes", key: "a", decode: "TEXT" }, localCfg)).toEqual({
-      kind: "err",
-      value: expect.stringContaining('"TEXT"'),
-    });
+    expect(await indexedRead({ store: "notes", key: "a", decode }, localCfg)).toStrictEqual(stored);
+    expect(await indexedRead({ store: "notes", key: "b", decode }, localCfg)).toStrictEqual(
+      missing,
+    );
   });
 
   it("delete removes a previously written value", async () => {

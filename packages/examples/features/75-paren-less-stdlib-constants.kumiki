@@ -12,8 +12,9 @@
 # unit test.
 #
 # `Decoder.Bytes` delivers the body's bytes, as `Bytes`. `日本語` is three
-# characters and nine UTF-8 bytes, and `raw` shows the value one number per
-# byte: nine numbers, where a text would show its three characters.
+# characters and nine UTF-8 bytes: `raw` shows the value's base64,
+# `5pel5pys6Kqe`, which encodes nine bytes, where a text would show its three
+# characters.
 
 slot handle : EffectId = EffectId.none
 slot note   : Text     = "idle"
