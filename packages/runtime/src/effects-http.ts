@@ -26,8 +26,6 @@ export async function httpFetch(
     query?: Record<string, string>;
     body?: unknown;
     decode?: unknown;
-    key?: string;
-    value?: unknown;
   };
   const base = httpCfg?.baseUrl ?? "";
   // `map-request` is not checked against the request type, so a url can be any value.
