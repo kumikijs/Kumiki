@@ -17,7 +17,7 @@ Or `kumiki_check` via `@kumikijs/mcp`. Each diagnostic has a stable `code` (E0xx
 
 | code | meaning | usual fix |
 |---|---|---|
-| `E0001` | `app.routes` missing `/404` | add `"/404" -> NotFound` |
+| `E0001` | `app.routes` missing `/404` (`missing-404`), its `/404` written as a redirect (`404-is-redirect`), or a `sub-routes` entry at `/404` (`404-in-sub-routes`) | route `/404` to a tile in `app.routes`: `"/404" -> NotFound`; remove a `/404` entry from `sub-routes` — the app's `/404` is the only one |
 | `E0003` | no `app` definition (an empty file counts) | add the `app` entry point; expected while a program is still being assembled with the editing verbs, which do not enforce it |
 | `E0004` | more than one `app` definition — codegen keeps the first and drops the rest | remove or merge the extra; `replace` the app instead of adding a second |
 | `E0005` | a tile expands into itself, directly or through other tiles | break the loop — repetition belongs in `for`, alternatives in `when` / `match` |
@@ -79,6 +79,8 @@ For name-resolution errors, the compiler can suggest the closest existing name. 
 - a `let` in an `if` branch or match arm, or an arm's pattern: declare it once before the statement with an `if` / match expression (`let n = if c then … else …`; a `let n = 0` there is only shadowed by the body's own `n`), or move the read into the branch or arm that declares it;
 - a `let … in` name: make it a `let` statement, or move the read into the expression after `in`;
 - a read before the body that declares the name: move the read into that body, after the declaration.
+
+When two or more names are equally close (`count` beside `countA` and `countB`), `fix` proposes none — picking one would be a guess — and leaves the error for you to resolve: its skip reason is `close-names-tied`, with the tied names in the skip's `candidates`. A name the program declares does outrank a built-in one at the same distance (`Filtre` → the declared `Filter`, not the built-in `File`).
 
 ```sh
 pnpm kumiki fix <file>          # show planned fixes

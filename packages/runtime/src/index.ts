@@ -30,6 +30,13 @@ import { statusPatchers, statusTiles } from "./tiles-status.ts";
 import { textPatchers, textTiles } from "./tiles-text.ts";
 
 export {
+  type Choice,
+  type ChosenOption,
+  chooseOption,
+  OptionRefusal,
+  refuseChoice,
+} from "./choose-check.ts";
+export {
   CONTROL_DEMANDS,
   type ControlDemand,
   ControlRefusal,
@@ -224,7 +231,7 @@ export {
   replayEpisodes,
   type TestResult,
 } from "./testkit.ts";
-export { levenshtein, nearestName } from "./text-distance.ts";
+export { levenshtein, nearestName, nearestNames } from "./text-distance.ts";
 export { collectionPatchers, collectionTiles } from "./tiles-collection.ts";
 export { inputPatchers, inputTiles } from "./tiles-input.ts";
 export { layoutPatchers, layoutTiles } from "./tiles-layout.ts";
