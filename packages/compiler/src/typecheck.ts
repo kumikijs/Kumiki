@@ -14,6 +14,7 @@ import { checkApp } from "./typecheck/app.ts";
 import type { KumikiError, SymbolTable } from "./typecheck/context.ts";
 import { checkEffect } from "./typecheck/effect.ts";
 import { checkFn } from "./typecheck/fn.ts";
+import { checkUndeclaredIntLiterals } from "./typecheck/int-literal.ts";
 import { checkMotion } from "./typecheck/motion.ts";
 import { checkReducer } from "./typecheck/reducer.ts";
 import { routeChainResolver } from "./typecheck/route-chain.ts";
@@ -101,6 +102,7 @@ function checkAll(
     fnResults: new Map(),
     fnLoops: new Set(),
     unionsByTag: unionsByTag(program.defs),
+    numberLiterals: { met: new Set(), judged: new Set() },
   };
 
   for (const def of program.defs) {
@@ -170,6 +172,7 @@ function checkAll(
     if (def.kind === "MotionDef") checkMotion(def, errors);
     if (def.kind === "TestDef") checkTest(def, sym, errors);
   }
+  checkUndeclaredIntLiterals(sym, errors);
   checkCycles(program, sym, index, errors);
   checkDuplicateNames(program, errors);
 
