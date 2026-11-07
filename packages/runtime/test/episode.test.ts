@@ -1,4 +1,4 @@
-import { createEpisodeLogger, type EpisodeLogger } from "@kumikijs/runtime";
+import { createEpisodeLogger, type Episode, type EpisodeLogger } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { memoryStorage } from "./helpers/episode-apps.ts";
 
@@ -198,5 +198,79 @@ describe("EpisodeLogger", () => {
     expect(raw).toBeDefined();
     const parsed = JSON.parse(raw!) as { trigger: { target: string } }[];
     expect(parsed.map((e) => e.trigger.target)).toEqual(["n2", "n3"]);
+  });
+});
+
+describe("the order the logger keeps episodes in", () => {
+  /** A logger, and the trigger targets one of its outlets holds, in the order it holds them. */
+  type Outlet = { logger: EpisodeLogger; targets: () => (string | undefined)[] };
+
+  // Each row: the outlet, what it holds while the first episode still waits on its effect, and how
+  // to build it. `onEpisode` feeds append-only files, so it gets nothing ahead of an earlier
+  // trigger; the two stores take a committed episode at once, at its trigger's place.
+  const outlets: [string, string[], () => Outlet][] = [
+    [
+      "list()",
+      ["BBtn"],
+      () => {
+        const { logger } = makeLogger();
+        return { logger, targets: () => logger.list().map((ep) => ep.trigger.target) };
+      },
+    ],
+    [
+      "the localStorage mirror",
+      ["BBtn"],
+      () => {
+        const { impl, backing } = memoryStorage();
+        const { logger } = makeLogger({ localStorage: true, localStorageImpl: impl });
+        const targets = () =>
+          (JSON.parse(backing.get("kumiki.episodes") ?? "[]") as Episode[]).map(
+            (ep) => ep.trigger.target,
+          );
+        return { logger, targets };
+      },
+    ],
+    [
+      "onEpisode",
+      [],
+      () => {
+        const seen: (string | undefined)[] = [];
+        const { logger } = makeLogger({ onEpisode: (ep) => seen.push(ep.trigger.target) });
+        return { logger, targets: () => seen.slice() };
+      },
+    ],
+  ];
+
+  it.each(
+    outlets,
+  )("%s holds %j while the first episode waits on its effect, then both in trigger order", (_, whileWaiting, make) => {
+    const { logger, targets } = make();
+    logger.beginTrigger({ kind: "ui.click", target: "ABtn" });
+    logger.recordReducer("pickA", [{ name: "x", before: "", after: "a" }], ["save"]);
+    const save = logger.recordEffectStart("save", "a");
+    logger.endTrigger();
+    logger.beginTrigger({ kind: "ui.click", target: "BBtn" });
+    logger.recordReducer("pickB", [{ name: "x", before: "a", after: "b" }], []);
+    logger.endTrigger();
+    expect(targets()).toEqual(whileWaiting);
+
+    const exit = logger.recordEffectEnd(save, "save", "ok", null);
+    logger.recordReducer("savedOk", [{ name: "saved", before: "", after: "b" }], []);
+    exit();
+    expect(targets()).toEqual(["ABtn", "BBtn"]);
+  });
+
+  it.each(
+    outlets,
+  )("%s gets an episode once it is done, while one begun after it waits", (_, _w, make) => {
+    const { logger, targets } = make();
+    logger.beginTrigger({ kind: "ui.click", target: "ABtn" });
+    const save = logger.recordEffectStart("save", "a");
+    logger.endTrigger();
+    logger.recordEffectEnd(save, "save", "ok", null)();
+    logger.beginTrigger({ kind: "ui.click", target: "BBtn" });
+    logger.recordEffectStart("save", "b");
+    logger.endTrigger();
+    expect(targets()).toEqual(["ABtn"]);
   });
 });
