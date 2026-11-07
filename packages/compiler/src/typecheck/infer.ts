@@ -16,6 +16,7 @@ import { getOrResultType, indexStep, unwrappedType } from "./against.ts";
 import { type Ctx, isBuiltinCall, type SymbolTable } from "./context.ts";
 import { binOpResult, letInScope } from "./expr.ts";
 import { fnResultType } from "./fn.ts";
+import { isIntLiteral } from "./int-literal.ts";
 import { memberReceivers } from "./members.ts";
 import { armScope, matchedType } from "./patterns.ts";
 import { RESERVED_SLOT_NAMES } from "./slot.ts";
@@ -318,7 +319,7 @@ function routeType(name: string, ctx: Ctx): TypeExpr | null {
 export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
   switch (e.kind) {
     case "Num":
-      return prim(Number.isInteger(e.value) ? "Int" : "Float", e.pos);
+      return prim(isIntLiteral(e) ? "Int" : "Float", e.pos);
     case "Str":
       return { kind: "TypePrim", name: "Text", pos: e.pos };
     case "Bool":

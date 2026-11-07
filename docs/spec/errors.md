@@ -967,7 +967,7 @@ The literal is named as written. The first message is for a literal that was rou
 
 The sign is part of the literal ([§1.2](./language.md#_1-2-lexical)), so a negative literal is held to the same bound in every position a positive one is, reported at its `-`, and named with its sign: `-9007199254740993` is reported as rounded to `-9007199254740992`, and `-9007199254740992` as held exactly.
 
-A literal with a fractional part is [E0201](#e0201-type-mismatch) instead — that is a type mistake, not a precision one.
+A literal written with a point is a `Float` ([§1.2](./language.md#_1-2-lexical)), whatever number it is read as — `1.0`, and `0.99999999999999999`, which is read as `1` — so where an `Int` is required it is [E0201](#e0201-type-mismatch) instead: that is a type mistake, not a precision one.
 
 **Fix**: Use a value inside the safe range, or carry the number as `Text`.
 
