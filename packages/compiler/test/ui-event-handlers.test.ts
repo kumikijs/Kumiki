@@ -301,6 +301,7 @@ app A
     { kind: "check", tile: "check(value=done)", evs: ["key"] },
     { kind: "radio", tile: 'radio(group="g", selected=done)', evs: ["key"] },
     { kind: "switch", tile: "switch(value=done)", evs: ["key"] },
+    { kind: "scroll", tile: "scroll(text(note))", evs: ["focus", "blur"] },
   ];
 
   for (const { kind, tile, evs } of kinds) {
@@ -371,6 +372,23 @@ app A
     expect(codesOf(source("key", details))).toEqual([]);
     expect(lifted(details)).toBeGreaterThan(0);
     expect(lifted(details)).toBe(lifted(`box(${inner})`));
+  });
+
+  it("reports ui.key on a scroll with what keeps it away, and lifts nothing onto it", () => {
+    const tile = "scroll(text(note))";
+    const reported = checkSource(source("key", tile));
+    expect(reported.map((e) => e.code)).toEqual(["W0212"]);
+    expect(reported[0]?.message).toContain("a scroll takes no");
+    expect(loweredOf(source("key", tile))).not.toContain(`onKeyDown: _h("hit")`);
+  });
+
+  // The input's keydown bubbles to the scroll's <div>, so a listener there as
+  // well would run the reducer twice for each key pressed in the input.
+  it("lifts ui.key on a scroll onto the input in it, and onto nothing else", () => {
+    const scroll = "scroll(input(bind=note))";
+    expect(codesOf(source("key", scroll))).toEqual([]);
+    expect(lifted(scroll)).toBeGreaterThan(0);
+    expect(lifted(scroll)).toBe(lifted("box(input(bind=note))"));
   });
 
   it("leaves ui.change on an editable alone, which is the rule rather than the same gap", () => {

@@ -28,15 +28,17 @@ const FOCUSABLE_ROOT = [
   "video",
 ] as const;
 
-// The runtime's listeners sit on `wrapper`, not on the `focused` element. A
-// wrapper that holds children also hears every bubbling event from the tiles
-// inside it, and a control there already carries the lifted listener, so one
-// on the wrapper as well would run the reducer twice for a key pressed in it.
+// The runtime's listeners sit on `wrapper`, which is the `focused` element itself only for a
+// `scroll`: Chromium puts an overflowing `<div style="overflow: auto">` that holds nothing
+// focusable in the tab order. A wrapper that holds children also hears every bubbling event from
+// the tiles inside it, and a control there already carries the lifted listener, so one on the
+// wrapper as well would run the reducer twice for a key pressed in it.
 const WRAPPED_KIND = {
   check: { wrapper: "label", focused: "input" },
   radio: { wrapper: "label", focused: "input" },
   switch: { wrapper: "label", focused: "input" },
   details: { wrapper: "details", focused: "summary" },
+  scroll: { wrapper: "div", focused: "div" },
 } as const satisfies Record<string, { wrapper: string; focused: string }>;
 
 type WrappedKind = keyof typeof WRAPPED_KIND;
@@ -56,7 +58,9 @@ function isRootListened(ev: UiEventKind): ev is RootListened {
 }
 
 function wrapperHears(ev: RootListened, kind: WrappedKind): boolean {
-  return ROOT_LISTENED_BUBBLES[ev] && !CHILD_RENDERING_BUILTINS.has(kind);
+  if (ROOT_LISTENED_BUBBLES[ev]) return !CHILD_RENDERING_BUILTINS.has(kind);
+  const { wrapper, focused } = WRAPPED_KIND[kind];
+  return wrapper === focused;
 }
 
 function rootListenedTiles(ev: RootListened): ReadonlySet<string> {

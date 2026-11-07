@@ -272,6 +272,7 @@ It need not be written in the parent's own body. A tile the body renders — a l
 - If that also fails, fall through to the global `/404`
 - Multiple `route-outlet()` calls in the tree a single parent tile renders are **undefined** — the runtime renders the matched child into the first outlet it encounters and leaves the rest empty. Design tiles with exactly one outlet.
 - The child renders **under** the parent: an `error-boundary` on the parent covers it, and a boundary the child declares itself wins ([Lifecycle §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)).
+- A `ui.<ev>(<Parent>)` subscription is not lifted onto the child: the route picks the child at runtime and renders it on its own, so the subscription reaches only what the parent renders itself. Subscribe to the child tile (`ui.click(<Child>)`), which runs wherever the route shows it ([W0212](./errors.md#w0212-ui-event-tile-mismatch-warning)).
 
 ---
 
