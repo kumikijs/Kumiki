@@ -52,6 +52,7 @@ The only operations defined on `EffectId` are equality (`==`, `!=`), storage in 
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |
 | `Duration` | `nominal Int` (nanoseconds) |
+| `Decoder` | opaque: what `Decoder.Json(T)`, `Decoder.Text`, `Decoder.Bytes` and `Decoder.None` build, and nothing else — no literal is one, its only member is `show`, and a text has no reading as one. A request's `decode` is one ([HTTP §6.1.4](./http.md#_6-1-4-the-decoder-type)) |
 | `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — see [Routing §3.2](./routing.md#_3-2-current-route-state) |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
@@ -59,7 +60,7 @@ The only operations defined on `EffectId` are equality (`==`, `!=`), storage in 
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — the payload of `app.error` and of an `error-boundary` tile's `in=` ([Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)) |
 | `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — the payload of `route.error(<pattern>)`: a `PanicInfo`'s fields and the `pattern` the reducer names |
 
-A program uses these names without declaring them. `PanicInfo`, `RouteErrorInfo`, `Route`, `HttpError`, `HttpStatus`, `Duration` and `FormValue` are **reserved**: the runtime or the standard library builds or reads their values, so a `type` declared under one of them is [E0231](./errors.md#e0231-reserved-type-name) and the name keeps the definition above. `Url`, `Email`, `Uuid` and `FormData` name types only a program builds values of; a program may declare its own type under one of them, and its uses of the name then mean that type ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 6). `File` is a primitive rather than a declared type, and is in neither group.
+A program uses these names without declaring them. `PanicInfo`, `RouteErrorInfo`, `Route`, `HttpError`, `HttpStatus`, `Duration`, `FormValue` and `Decoder` are **reserved**: the runtime or the standard library builds or reads their values, so a `type` declared under one of them is [E0231](./errors.md#e0231-reserved-type-name) and the name keeps the definition above. `Url`, `Email`, `Uuid` and `FormData` name types only a program builds values of; a program may declare its own type under one of them, and its uses of the name then mean that type ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 6). `File` is a primitive rather than a declared type, and is in neither group.
 
 ---
 
@@ -578,7 +579,7 @@ The value read is then held to every `where` refinement `T` carries ([Language �
 
 The argument is a `Text`; anything else is [E0201](./errors.md#e0201-type-mismatch).
 
-Any other base — a record, a union, a container, `File`, `EffectId`, `Unit`, or a `nominal` over one of them — has no reading of a text, and `T.parse` on one is [E0802](./errors.md#e0802-unimplemented-function). A type constructor written without its arguments (`List`, or `Box` for a `type Box(T) = …`) is not a type at all, and `T.parse` on one is [E0124](./errors.md#e0124-type-constructor-qualifier) instead. Those used to answer the raw text wrapped in `Some`, which the call's own type claims is a `T`.
+Any other base — a record, a union, a container, `File`, `EffectId`, `Decoder`, `Unit`, or a `nominal` over one of them — has no reading of a text, and `T.parse` on one is [E0802](./errors.md#e0802-unimplemented-function). A type constructor written without its arguments (`List`, or `Box` for a `type Box(T) = …`) is not a type at all, and `T.parse` on one is [E0124](./errors.md#e0124-type-constructor-qualifier) instead. Those used to answer the raw text wrapped in `Some`, which the call's own type claims is a `T`.
 
 ### 2.4.4 Randomness
 

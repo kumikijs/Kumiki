@@ -586,18 +586,6 @@ describe("a qualified stdlib member is read the same way without its parentheses
     expect(codesOf(inReducer("t := (Decoder.if(a)).show"))).toEqual(["E0116"]);
   });
 
-  it("claims the qualifier position and not the name", () => {
-    const src = `type Decoder = Short | Long
-slot d : Decoder = Short
-slot t : Text = ""
-reducer pick on=ui.click(B) do= d := Long
-tile B = button(text="b")
-tile App = column(B, text(t), text(d.show))
-app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
-`;
-    expect(codesOf(src)).toEqual([]);
-  });
-
   it("leaves a listed name usable as a value and as a pattern", () => {
     const src = `type Span = Duration | Instant
 slot p : Span = Duration
@@ -983,8 +971,8 @@ describe("the qualifier of a type-member call", () => {
     expect(codesOf(inReducer("t := Probe.frish()"))).toEqual(["E0116"]);
   });
 
-  it("reports a namespace that is not a type either", () => {
-    expect(codesOf(inReducer('t := Decoder.parse(t).get-or("")'))).toEqual(["E0117"]);
+  it("reports a namespace whose type has no reading of a text", () => {
+    expect(codesOf(inReducer("t := Decoder.parse(t).show"))).toEqual(["E0802"]);
   });
 
   it("keeps a qualified E0116's message shape readable too", () => {

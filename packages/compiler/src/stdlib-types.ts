@@ -82,6 +82,10 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   def("Email", nominal(prim("Text"), "email")),
   def("Uuid", nominal(prim("Text"), "uuid")),
   def("Duration", nominal(prim("Int"))),
+  // A decoder runs as a sentinel or a check, which no literal spells, so its body is a primitive
+  // only `Decoder.*` produces. The parser leaves the name to this entry, so a type parameter of
+  // that name is still the parameter.
+  def("Decoder", prim("Decoder")),
   def("Route", ROUTE_TYPE),
   def("FormData", app("Map", prim("Text"), ref("FormValue"))),
   def("PanicInfo", PANIC_INFO_TYPE),
@@ -110,6 +114,7 @@ export const RESERVED_TYPE_NAMES: ReadonlySet<string> = new Set([
   "HttpStatus",
   "Duration",
   "FormValue",
+  "Decoder",
 ]);
 
 export function isReservedTypeName(name: string): boolean {

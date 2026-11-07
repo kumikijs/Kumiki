@@ -18,6 +18,7 @@ const RESERVED = [
   "HttpStatus",
   "Duration",
   "FormValue",
+  "Decoder",
 ];
 
 // Each use is one the standard library's definition would refuse, so a row
@@ -102,6 +103,17 @@ describe("a use of a reserved name keeps the standard library's type", () => {
     expect(locatedSummariesOf(`type Route = Text\nslot r : Route = "x"\n${TAIL}`)).toEqual([
       `E0231 1:1 ${reservedTypeNameMessage("Route")}`,
       "E0201 2:18 Expected Route but got Text",
+    ]);
+  });
+
+  it("checks a map-request's decode against the standard library's Decoder, not the declared Text", () => {
+    const src = `type Decoder = Text
+effect load cap=storage.read in=Unit out=Result(Option(Text), Text) map-request={key: "k", decode: "TEXT"}
+tile App = column(text("x"))
+app A caps=[storage.read] routes={"/" -> App, "/404" -> App} init=[]`;
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("Decoder")}`,
+      "E0201 2:100 Expected Decoder but got Text",
     ]);
   });
 

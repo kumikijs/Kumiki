@@ -82,6 +82,17 @@ export function requestFields(cap: string): readonly string[] | undefined {
   return REQUEST_FIELDS.get(cap);
 }
 
+// The handler decodes the answer by `decode`, so a value no decoder built names no decoding. The
+// other fields are read as the handler finds them.
+const REQUEST_FIELD_TYPES: ReadonlyMap<string, TypeExpr> = new Map([
+  ["decode", refType("Decoder")],
+]);
+
+/** The type a request field's value must have, for a field the checker holds to one. */
+export function requestFieldType(field: string): TypeExpr | undefined {
+  return REQUEST_FIELD_TYPES.get(field);
+}
+
 /** An effect declared `in=Unit`, through any alias or nominal over it, is emitted with no argument. */
 export function declaresNoInput(inType: TypeExpr | null, env: TypeEnv): boolean {
   const u = unaliasType(inType, env);
