@@ -68,7 +68,10 @@ export function withRenderingView<T>(view: Element, fn: () => T): T {
 /** `episodeId` is the episode the `panic` step landed on; `undefined` with no logger, no open episode, or a logger that threw. */
 export type RenderPanic = { rec: PanicRecord; episodeId: string | undefined };
 
-/** Records a panic caught in a render pass as a `panic` step at `site`; the id of the episode it landed on. */
+/**
+ * Records a panic an `error-boundary` caught in a render pass as a handled `panic` step at
+ * `site`; the id of the episode it landed on.
+ */
 export type RenderPanicSink = (e: unknown, site: string) => string | undefined;
 
 let warnedLogger = false;
@@ -93,12 +96,13 @@ export function recordRenderPanic(
   logger: EpisodeLogger | null | undefined,
   e: unknown,
   site: string,
+  handled?: boolean,
 ): RenderPanic {
   const rec = panicInfo(e, "tile-render");
   // A host logger's `recordPanic` may record the step and return no id, so fall back to the
   // open episode as `fireAppError` does.
   const episodeId = fromLogger(
-    () => logger?.recordPanic({ ...rec, location: site }) ?? logger?.currentId(),
+    () => logger?.recordPanic({ ...rec, location: site, handled }) ?? logger?.currentId(),
   );
   return { rec, episodeId };
 }

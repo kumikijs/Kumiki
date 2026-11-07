@@ -174,7 +174,7 @@ export function mountCore(
   const ownView = newView(target, options.hydrate === true);
   const views: MountView[] = [ownView];
   const boundaryPanics: RenderPanicSink = (e, site) =>
-    recordRenderPanic(episode, e, site).episodeId;
+    recordRenderPanic(episode, e, site, true).episodeId;
   const attach = (into: HTMLElement): MountHandle => {
     const view = newView(into, false);
     views.push(view);
