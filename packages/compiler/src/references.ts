@@ -17,7 +17,12 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { assertNever, isTileExpr } from "./ast.ts";
-import { callsBuiltin, decodedType, RUN_REDUCER, typeMemberQualifier } from "./builtin-calls.ts";
+import {
+  callDecodedType,
+  callsBuiltin,
+  RUN_REDUCER,
+  typeMemberQualifier,
+} from "./builtin-calls.ts";
 import { eventParts, type RecordField, recordFieldsOf, testSections } from "./test-sections.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
@@ -205,10 +210,9 @@ class Walker {
           return;
         }
         // Codegen decodes by this argument, so its names are types, though it parses as a value.
-        if (e.callee === "Decoder.Json") {
-          const t = decodedType(e.args[0]);
-          if (t) this.typeExpr(t);
-          else for (const a of e.args) this.expr(a, locals);
+        const decoded = callDecodedType(e.callee, e.args);
+        if (decoded) {
+          this.typeExpr(decoded);
           return;
         }
         const qualifier = typeMemberQualifier(e.callee, e.args.length);

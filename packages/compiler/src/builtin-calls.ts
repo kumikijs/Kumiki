@@ -123,8 +123,8 @@ export function typeMemberQualifier(callee: string, argCount: number): string | 
 
 /**
  * The type a `Decoder.Json(T)` argument spells, which parses as a value (`Map(ItemId, Item)` is a
- * `Variant`). Codegen decodes by it and the reference walker reads its names as types, so both
- * take it from here. Each node keeps its source position.
+ * `Variant`). Codegen decodes by it, the checker resolves it and the reference walker reads its
+ * names as types, so all three take it from here. Each node keeps its source position.
  */
 export function decodedType(e: Expr | undefined): TypeExpr | undefined {
   if (e?.kind === "Variant") {
@@ -145,6 +145,11 @@ export function decodedType(e: Expr | undefined): TypeExpr | undefined {
     return { kind: "TypeRecord", fields, pos: e.pos };
   }
   return undefined;
+}
+
+/** The type a call decodes by: `T` of `Decoder.Json(T)`, when its argument spells one. */
+export function callDecodedType(callee: string, args: readonly Expr[]): TypeExpr | undefined {
+  return callee === "Decoder.Json" ? decodedType(args[0]) : undefined;
 }
 
 export function builtinArity(callee: string): BuiltinArity | undefined {

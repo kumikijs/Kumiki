@@ -1,6 +1,6 @@
 import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
-import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
+import { callDecodedType, isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
 import { fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
 import { showShapeOf } from "../show-shape.ts";
 import {
@@ -57,6 +57,7 @@ import {
   matchedType,
 } from "./patterns.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
+import { resolveType } from "./types.ts";
 
 /** The type one iteration of `for x in iter` binds, given the iterated expression. */
 export function elementTypeOf(iter: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
@@ -336,15 +337,19 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkIndexStep(inferType(e.base, sym, ctx), e.index, "read", e.index.pos, sym, errors, ctx);
       return;
     }
-    case "Call":
+    case "Call": {
       if (ctx.kind === "test" && e.callee === RUN_REDUCER && isBuiltinCall(e.callee, sym)) {
         reportRunReducerPosition(ctx, e.pos, errors);
         return;
       }
-      for (const a of e.args) checkExpr(a, sym, errors, ctx);
+      // Codegen decodes by this argument, so it is resolved as a type, though it parses as a value.
+      const decoded = callDecodedType(e.callee, e.args);
+      if (decoded) resolveType(decoded, sym, errors);
+      for (const a of decoded ? e.args.slice(1) : e.args) checkExpr(a, sym, errors, ctx);
       checkCallee(e.callee, e.args, e.pos, sym, errors, ctx);
       for (const a of shownArgs(e)) noteShown(a, sym, ctx);
       return;
+    }
     case "MethodCall": {
       // The chained spelling of the same thing: `run-reducer(inc).run-reducer(dec)`.
       if (ctx.kind === "test" && e.method === RUN_REDUCER && isBuiltinCall(e.method, sym)) {
