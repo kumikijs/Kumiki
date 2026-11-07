@@ -3,6 +3,9 @@ import type { Pos } from "@kumikijs/compiler";
 export type PatchAnchor =
   | { kind: "span"; pos: Pos }
   | { kind: "line"; pos: Pos }
+  // Composed after every other tier, in the plan's order, which no patch may rely on: its `apply`
+  // finds where to write in the text it is handed. A test-repair splice keeps its plan-time
+  // offsets because it is applied alone, to the source it was planned on.
   | { kind: "region" };
 
 export type AutoPatch = {
@@ -17,6 +20,8 @@ export type SkipReason = {
   code: string;
   reason: string;
   message: string;
+  /** The tied names of a `close-names-tied` skip, sorted. */
+  candidates?: string[];
 };
 
 export type PatchOrReason = { patch: AutoPatch } | { patch: null; reason: string };

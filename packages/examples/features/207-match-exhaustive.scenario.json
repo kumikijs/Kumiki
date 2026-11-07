@@ -1,0 +1,84 @@
+{
+  "steps": [
+    {
+      "label": "every arm's value as declared",
+      "expect": {
+        "noErrors": true,
+        "state": { "color": { "_tag": "Red" }, "code": 0, "label": "-" },
+        "domIncludes": ["color: red", "picked: nothing", "code: 0", "label: -"]
+      }
+    },
+    {
+      "label": "the Red arm, and the tuple's (None, _) arm",
+      "do": { "click": "#score" },
+      "expect": {
+        "noErrors": true,
+        "state": { "code": 1, "label": "none" },
+        "domIncludes": ["code: 1", "label: none"]
+      }
+    },
+    {
+      "label": "every variant has an arm: Red goes to Green",
+      "do": { "click": "#next-color" },
+      "expect": {
+        "noErrors": true,
+        "state": { "color": { "_tag": "Green" } },
+        "domIncludes": ["color: green"]
+      }
+    },
+    {
+      "label": "`_` covers Green",
+      "do": { "click": "#score" },
+      "expect": {
+        "noErrors": true,
+        "state": { "code": 0, "label": "none" },
+        "domIncludes": ["code: 0"]
+      }
+    },
+    {
+      "label": "the reducer's None arm writes Some(1), which the tile's Some arm shows",
+      "do": { "click": "#pick" },
+      "expect": {
+        "noErrors": true,
+        "state": { "picked": { "_tag": "Some", "_0": 1 } },
+        "domIncludes": ["picked: 1"]
+      }
+    },
+    {
+      "label": "the tuple's (Some(n), _) arm",
+      "do": { "click": "#score" },
+      "expect": {
+        "noErrors": true,
+        "state": { "label": "1" },
+        "domIncludes": ["label: 1"]
+      }
+    },
+    {
+      "label": "Green goes to Blue",
+      "do": { "click": "#next-color" },
+      "expect": {
+        "noErrors": true,
+        "state": { "color": { "_tag": "Blue" } },
+        "domIncludes": ["color: blue"]
+      }
+    },
+    {
+      "label": "the tuple's (Some(n), Blue) arm",
+      "do": { "click": "#score" },
+      "expect": {
+        "noErrors": true,
+        "state": { "code": 0, "label": "blue 1" },
+        "domIncludes": ["label: blue 1"]
+      }
+    },
+    {
+      "label": "Blue goes back to Red",
+      "do": { "click": "#next-color" },
+      "expect": {
+        "noErrors": true,
+        "state": { "color": { "_tag": "Red" } },
+        "domIncludes": ["color: red"]
+      }
+    }
+  ]
+}

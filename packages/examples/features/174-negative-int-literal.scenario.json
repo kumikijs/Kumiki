@@ -1,0 +1,51 @@
+{
+  "steps": [
+    {
+      "label": "every literal at the negative bound runs as written",
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "floor": -9007199254740991,
+          "span": { "lo": -9007199254740991, "hi": 9007199254740991 },
+          "ends": [-9007199254740991, 9007199254740991]
+        },
+        "domIncludes": [
+          "floor: -9007199254740991",
+          "span: -9007199254740991 to 9007199254740991",
+          "ends: -9007199254740991, 9007199254740991",
+          "picked: none"
+        ]
+      }
+    },
+    {
+      "label": "negating a name is arithmetic, and the bound negates exactly",
+      "do": { "click": "#flip" },
+      "expect": {
+        "noErrors": true,
+        "state": { "floor": 9007199254740991 },
+        "domIncludes": ["floor: 9007199254740991"]
+      }
+    },
+    {
+      "label": "a payload and an argument at the negative bound are written as they read",
+      "do": { "click": "#pick" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "picked": { "_tag": "Some", "_0": -9007199254740991 },
+          "passed": -9007199254740991
+        },
+        "domIncludes": ["picked: -9007199254740991", "passed: -9007199254740991"]
+      }
+    },
+    {
+      "label": "a write of the negative bound restores it",
+      "do": { "click": "#reset" },
+      "expect": {
+        "noErrors": true,
+        "state": { "floor": -9007199254740991, "picked": { "_tag": "None" }, "passed": 0 },
+        "domIncludes": ["floor: -9007199254740991", "picked: none", "passed: 0"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+slot count : Int = 0
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+tile IncBtn = button(text="+1", onClick=inc)
+tile App = column(heading("Count: " + count.show), IncBtn)
+app ThrowingTest
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+test expect-panics =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: [1][3]}, effects: []}
+test inc-works =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: 1}, effects: []}

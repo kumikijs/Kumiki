@@ -129,6 +129,7 @@ export function planTestPatchExplained(
     debugSkip("planTestPatch", reason, r.name);
     return { patch: null, reason };
   };
+  if (r.error !== undefined) return bail("test-threw");
   if (r.pass || !r.leaf) return bail("test-passes-or-no-leaf");
   const { expected, actual } = r.leaf;
   if (actual === expected) return bail("leaf-equal-no-diff");

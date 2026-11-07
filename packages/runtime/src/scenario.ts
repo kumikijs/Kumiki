@@ -1,3 +1,4 @@
+import { chooseOption, refuseChoice } from "./choose-check.ts";
 import {
   type ControlVerb,
   controlFault,
@@ -5,11 +6,12 @@ import {
   readControl,
   StepRefusal,
 } from "./control-check.ts";
+import { standInValue } from "./core.ts";
 import { dispatchFault } from "./dispatch-check.ts";
 import type { EpisodeLogger } from "./episode.ts";
 import type { AppShape, EffectResult, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
-import { RUNTIME_OVERLAY_SELECTORS } from "./overlays.ts";
+import { RUNTIME_OVERLAY_SELECTORS, TOAST_SELECTOR } from "./overlays.ts";
 import { stateMismatches, textMismatches } from "./scenario/expect.ts";
 import {
   type Action,
@@ -21,7 +23,6 @@ import {
   validateScenario,
 } from "./scenario/vocabulary.ts";
 import { submitFault } from "./submit-check.ts";
-import { standInValue } from "./testkit.ts";
 
 export type EffectScript = { outcome: "ok" | "err"; value?: unknown };
 
@@ -159,7 +160,7 @@ export async function runScenario(
       let fault: { message: string; refusal?: StepRefusal } | undefined;
       if (step.do) {
         try {
-          performAction(step.do, root, dispatchable);
+          performAction(step.do, root, opened, dispatchable);
         } catch (e) {
           fault =
             e instanceof StepRefusal ? { message: e.message, refusal: e } : { message: errStr(e) };
@@ -171,7 +172,7 @@ export async function runScenario(
       );
       const unexpected = errorBuf.filter((e) => !expected.includes(e));
       const verdict = judgeRefusal(step.expect?.actionErrorIncludes ?? [], fault);
-      // Read once, so the assertions and the trace's `domText` see one text.
+      // Read once: the assertions match this text, and the trace's `domText` shows it with whitespace collapsed.
       const text = rendered();
       const result = mkStep(
         step.label,
@@ -198,8 +199,8 @@ export async function runScenario(
     } catch {
       // The report is already built. A fault on the way out is worth less than the run it would replace, and the same choice `smoke` makes.
     }
-    // A toast's timer may still be running and a confirm may be unanswered; neither may outlive the report in a shared document.
-    for (const el of opened()) el.remove();
+    // Disposing closed every confirm the app left open. A toast leaves only when its timer fires, which may be seconds away, and it may not outlive the report in a shared document.
+    for (const el of opened()) if (el.matches(TOAST_SELECTOR)) el.remove();
     console.error = origConsoleError;
     w.removeEventListener?.("error", onError);
     w.removeEventListener?.("unhandledrejection", onRejection);
@@ -261,7 +262,21 @@ const WITHOUT_SEAM = {
   _submitHeldBy: "nothing can say whether the form held the submit back",
 } as const satisfies Record<"_dispatch" | "_navigate" | "_submitHeldBy", string>;
 
-function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
+/** The first element `selector` matches in `overlays`, an overlay itself included. */
+function inOverlays(overlays: Element[], selector: string): HTMLElement | null {
+  for (const o of overlays) {
+    const hit = o.matches(selector) ? o : o.querySelector(selector);
+    if (hit) return hit as HTMLElement;
+  }
+  return null;
+}
+
+function performAction(
+  a: Action,
+  root: HTMLElement,
+  overlays: () => Element[],
+  app: Dispatchable,
+): void {
   const refuse = (verb: ControlVerb, el: Element): void => {
     const fault = controlFault(verb, describeAction(a), readControl(el));
     if (fault) throw fault;
@@ -304,8 +319,8 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     return;
   }
   if ("click" in a) {
-    const el =
-      root.querySelector<HTMLElement>(a.click) ?? document.querySelector<HTMLElement>(a.click);
+    // Past the root, only the overlays this run reads: one left by an earlier run is another app's.
+    const el = root.querySelector<HTMLElement>(a.click) ?? inOverlays(overlays(), a.click);
     if (!el) throw new Error(`no element matching selector ${a.click}`);
     refuse("click", el);
     el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
@@ -359,15 +374,15 @@ function performAction(a: Action, root: HTMLElement, app: Dispatchable): void {
     return;
   }
   if ("choose" in a) {
-    const sel = root.querySelector<HTMLSelectElement>(a.choose);
-    if (!sel) throw new Error(`no select matching selector ${a.choose}`);
-    refuse("choose", sel);
-    const opt = Array.from(sel.options).find(
-      (o) => o.value === a.value || (o.textContent ?? "").trim() === a.value,
-    );
-    if (!opt) throw new Error(`no option "${a.value}" in select ${a.choose}`);
-    sel.value = opt.value;
-    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    const el = root.querySelector(a.choose);
+    if (!el) throw new Error(`no select matching selector ${a.choose}`);
+    refuse("choose", el);
+    const choice = chooseOption(el, { selector: a.choose, value: a.value });
+    refuseChoice(choice, describeAction(a), a.value);
+    // An option was found, so `el` is the select or a <label> of one.
+    const select = (el instanceof HTMLLabelElement ? el.control : el) as HTMLSelectElement;
+    select.selectedIndex = choice.index;
+    select.dispatchEvent(new Event("change", { bubbles: true }));
     return;
   }
   unhandledAction(a);
@@ -412,12 +427,13 @@ function snapshotState(app: AppShape): Record<string, unknown> {
 function sanitize(v: unknown): unknown {
   if (v === null || typeof v !== "object") return typeof v === "function" ? "[fn]" : v;
   if (Array.isArray(v)) return v.map(sanitize);
-  const out: Record<string, unknown> = {};
-  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-    if (typeof val === "function") continue;
-    out[k] = sanitize(val);
-  }
-  return out;
+  // Object.fromEntries defines each key as an own entry, so a Map's "__proto__" key stays an entry
+  // rather than going to the inherited __proto__ setter.
+  return Object.fromEntries(
+    Object.entries(v as Record<string, unknown>)
+      .filter(([, val]) => typeof val !== "function")
+      .map(([k, val]) => [k, sanitize(val)]),
+  );
 }
 
 function errStr(e: unknown): string {
