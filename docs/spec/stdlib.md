@@ -585,7 +585,7 @@ As in [§2.4.1](#_2-4-1-id-generation), `TypeName` is a type that takes no argum
 
 | Base | `Some` of | `None` when the text |
 |---|---|---|
-| `Int` | the number it spells: an optional `+` / `-` and decimal digits | is anything else — a fraction, an exponent, a `0x` / `0b` prefix, surrounding blanks, empty — or spells a number outside ±(2^53 − 1), the range an `Int` holds exactly, which [E0217](./errors.md#e0217-int-literal-precision) holds a literal to as well |
+| `Int` | the number it spells: an optional `+` / `-` and decimal digits | is anything else — a fraction, an exponent, a `0x` / `0b` prefix, surrounding blanks, empty — or spells a number outside ±(2^53 − 1), the safe range in which an `Int` holds every integer exactly, and the range [E0217](./errors.md#e0217-int-literal-precision) holds a literal to as well |
 | `Float` | the number it spells: an optional `+` / `-`, decimal digits, an optional `.` and digits, an optional `e` / `E` exponent | is anything else — `.5`, `1.`, `0x10`, `Infinity`, surrounding blanks, empty — or spells a number too large to be finite |
 | `Time` | the instant, as [`Time.parse`](#_2-2-8-time) reads it | is outside the [`Time.parse`](#_2-2-8-time) grammar, or names a date off the calendar (`2026-02-30`) — `2026/02/30`, `+002026-08-14`, `2026-08-14T24:00`, surrounding blanks, empty |
 | `Bool` | `true` for `"true"`, `false` for `"false"` — the two spellings `.show` produces | is anything else |
