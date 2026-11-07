@@ -1,9 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { requireSourceFile } from "../store.ts";
 import { escapeRegExp } from "../text.ts";
 import { atomicWriteFileSync, withWriteLock } from "../write-lock.ts";
 import { authorOf } from "./op-log.ts";
 
+// Fields `lock` does not write are ignored, and kept when the file is rewritten.
 type LockFile = { entries: Array<{ agent: string; patterns: string[] }> };
 
 function lockPath(path: string): string {
@@ -13,7 +15,45 @@ function lockPath(path: string): string {
 function readLocks(path: string): LockFile {
   const p = lockPath(path);
   if (!existsSync(p)) return { entries: [] };
-  return JSON.parse(readFileSync(p, "utf8")) as LockFile;
+  const text = readFileSync(p, "utf8");
+  let locks: unknown;
+  try {
+    locks = JSON.parse(text);
+  } catch {
+    throw unreadableLockFile(p, "it is not JSON");
+  }
+  const problem = lockFileProblem(locks);
+  if (problem !== undefined) throw unreadableLockFile(p, problem);
+  return locks as LockFile;
+}
+
+function unreadableLockFile(lockFile: string, problem: string): Error {
+  return new Error(
+    `Lock file "${resolve(lockFile)}" is unreadable: ${problem}. Fix it to the shape \`lock\` writes, {"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}]}, or delete it to release every lock.`,
+  );
+}
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+const misshapen = (field: string, value: unknown, shape: string): string =>
+  value === undefined ? `${field} is missing` : `${field} is not ${shape}`;
+
+/** The first field of a parsed lock file that is not the shape `LockFile` describes, by its path. */
+function lockFileProblem(locks: unknown): string | undefined {
+  if (!isObject(locks)) return "the top level is not an object";
+  const { entries } = locks;
+  if (!Array.isArray(entries)) return misshapen("entries", entries, "a list");
+  for (const [i, entry] of entries.entries()) {
+    const at = `entries[${i}]`;
+    if (!isObject(entry)) return misshapen(at, entry, "an object");
+    const { agent, patterns } = entry;
+    if (typeof agent !== "string") return misshapen(`${at}.agent`, agent, "text");
+    if (!Array.isArray(patterns)) return misshapen(`${at}.patterns`, patterns, "a list");
+    const j = patterns.findIndex((p) => typeof p !== "string");
+    if (j !== -1) return `${at}.patterns[${j}] is not text`;
+  }
+  return undefined;
 }
 
 function writeLocks(path: string, locks: LockFile): void {

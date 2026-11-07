@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CASCADE_HELP, lockDef } from "@kumikijs/cli";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -197,6 +197,33 @@ describe("ownership locks", () => {
     expect(res.isError).toBe(true);
     expect(res.body).toMatch(/lock violation: slot\.todosX is locked by agent:a/);
     expect(readFileSync(file, "utf8")).toBe(source);
+    expect(existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
+  });
+
+  it("each editing tool refuses a lock file not in the shape `lock` writes, writing nothing", async () => {
+    const file = join(workdir.path, "c.kumiki");
+    copyFileSync(COUNTER, file);
+    const locks = `${file}.kumiki-locks.json`;
+    const held = '{"entries":[{"agent":"agent:a","patterns":"slot.*"}]}\n';
+    writeFileSync(locks, held);
+    const source = readFileSync(file, "utf8");
+    const message = `Lock file "${locks}" is unreadable: entries[0].patterns is not a list. Fix it to the shape \`lock\` writes, {"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}]}, or delete it to release every lock.`;
+    const calls: ReadonlyArray<readonly [tool: string, args: Record<string, unknown>]> = [
+      ["kumiki_add", { path: file, layer: "tile", name: "Spare", body: 'text("s")' }],
+      ["kumiki_replace", { path: file, name: "tile.IncBtn", body: 'button(text="++")' }],
+      ["kumiki_remove", { path: file, name: "reducer.reset", cascade: true }],
+      ["kumiki_rename", { path: file, name: "tile.ResetBtn", newName: "ClearBtn" }],
+      ["kumiki_edit", { path: file, name: "tile.IncBtn", patch: { find: '"+"', replace: '"++"' } }],
+    ];
+    await withClient(async (client) => {
+      for (const [tool, args] of calls) {
+        const res = await call(client, tool, args);
+        expect(res.isError, tool).toBe(true);
+        expect(res.body, tool).toBe(JSON.stringify({ error: { kind: "error", message } }, null, 2));
+      }
+    });
+    expect(readFileSync(file, "utf8")).toBe(source);
+    expect(readFileSync(locks, "utf8")).toBe(held);
     expect(existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
   });
 });
