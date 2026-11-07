@@ -18,8 +18,18 @@ export function text(...parts: string[]) {
   return { content: parts.map((s) => ({ type: "text" as const, text: s })) };
 }
 
-export function failed(s: string) {
-  return { ...text(s), isError: true };
+export function failed(...parts: string[]) {
+  return { ...text(...parts), isError: true };
+}
+
+export const RUN_WARNINGS =
+  "When the compile it runs first succeeds with warnings, a second content item holds them as a JSON list of diagnostics, whether the run then passed or failed; a warning does not fail it. A compile that fails runs nothing: the result is `isError` and its one item is the `{error: {kind, message}}` envelope, whose message lists every diagnostic, the warnings first.";
+
+// A second item rather than a suffix, so the first stays what the tool answers for a file
+// with no warning and a client can use it as it stands: the `includeJs` module, the test report's JSON.
+export function withWarnings(head: string, warnings: KumikiError[]): string[] {
+  if (warnings.length === 0) return [head];
+  return [head, json(toDiagnostics(warnings))];
 }
 
 export function errText(e: unknown) {
