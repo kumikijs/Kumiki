@@ -402,8 +402,9 @@ export function checkArmsAfterNestedMatch(
   const arm = patterns[reached];
   if (arm === undefined) return;
   errors.push({
-    code: "E0239",
+    code: "W0219",
     kind: "unreachable-nested-arm",
+    severity: "warning",
     message:
       `The arm \`${patternText(arm)}\` can never be reached: it belongs to the match at ` +
       `${at(m.pos)}, whose arms above it already match every value. That match ends an arm of ` +

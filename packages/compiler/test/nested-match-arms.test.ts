@@ -1,6 +1,11 @@
 import { lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { pointedErrorsOf, posOf } from "./helpers/diagnostics.ts";
+import {
+  builtSummariesOf,
+  checkSource,
+  pointedDiagnosticsOf,
+  posOf,
+} from "./helpers/diagnostics.ts";
 import { withButtonApp } from "./helpers/programs.ts";
 
 const DEFS = `type Color = Red | Green | Blue
@@ -28,9 +33,9 @@ const at = (src: string, needle: string) => {
   return `${line}:${col}`;
 };
 
-/** E0239 for the arm `arm`, where `inner` and `outer` are the text each `match` starts with. */
+/** W0219 for the arm `arm`, where `inner` and `outer` are the text each `match` starts with. */
 const unreachable = (src: string, form: Form, arm: string, inner: string, outer: string) => ({
-  code: "E0239",
+  code: "W0219",
   message:
     `The arm \`${arm}\` can never be reached: it belongs to the match at ${at(src, inner)}, ` +
     "whose arms above it already match every value. That match ends an arm of the match at " +
@@ -67,9 +72,9 @@ describe("a match that ends an arm takes the arms written after it", () => {
   it.each([
     ["`_`", "_", "| _ -> 3"],
     ["a binding name", "other", "| other -> 3"],
-  ])("reports %s that a value match takes after its arms cover every value", (_, arm, written) => {
+  ])("warns at %s that a value match takes after its arms cover every value", (_, arm, written) => {
     const src = fnOf(`match x with | Red -> match y with | Small -> 1 | Large -> 2 ${written}`);
-    expect(pointedErrorsOf(src)).toEqual([
+    expect(pointedDiagnosticsOf(src)).toEqual([
       { ...unreachable(src, "value", arm, "match y", "match x"), text: `${arm} -> 3` },
       {
         code: "E0227",
@@ -79,22 +84,22 @@ describe("a match that ends an arm takes the arms written after it", () => {
     ]);
   });
 
-  it("reports the arm of a statement match laid out for the outer one", () => {
+  it("warns at the arm of a statement match laid out for the outer one", () => {
     const src = reducerOf(`match c with
         | Red -> match s with
             | Small -> n := 1
             | Large -> n := 2
         | _ -> n := 3`);
-    expect(pointedErrorsOf(src)).toEqual([
+    expect(pointedDiagnosticsOf(src)).toEqual([
       { ...unreachable(src, "statement", "_", "match s", "match c"), text: "_ -> n := 3" },
     ]);
   });
 
-  it("reports the arm of a tile match laid out for the outer one", () => {
+  it("warns at the arm of a tile match laid out for the outer one", () => {
     const src = tileOf(
       `match c with | Red -> match s with | Small -> text("1") | Large -> text("2") | _ -> text("3")`,
     );
-    expect(pointedErrorsOf(src)).toEqual([
+    expect(pointedDiagnosticsOf(src)).toEqual([
       { ...unreachable(src, "tile", "_", "match s", "match c"), text: '_ -> text("3")' },
     ]);
   });
@@ -136,24 +141,43 @@ describe("a match that ends an arm takes the arms written after it", () => {
       ),
       "match s",
     ],
-  ] as const)("reports a match that ends the arm as %s", (_, form, src, inner) => {
+  ] as const)("warns where a match ends the arm as %s", (_, form, src, inner) => {
     const outer = form === "value" ? "match x" : "match c";
     // Only a value match is held to cover its scrutinee.
     const uncovered =
       form === "value"
         ? [{ code: "E0227", message: missingPast(src, "Color", "Green, Blue", inner) }]
         : [];
-    expect(pointedErrorsOf(src).map(({ code, message }) => ({ code, message }))).toEqual([
+    expect(pointedDiagnosticsOf(src).map(({ code, message }) => ({ code, message }))).toEqual([
       unreachable(src, form, "_", inner, outer),
       ...uncovered,
     ]);
+  });
+
+  // A statement or tile match may leave values out (language.md), so the program runs as parsed.
+  it.each([
+    [
+      "statement",
+      reducerOf(
+        "match c with | Red -> match s with | Small -> n := 1 | Large -> n := 2 | _ -> n := 3",
+      ),
+    ],
+    [
+      "tile",
+      tileOf(
+        'match c with | Red -> match s with | Small -> text("1") | Large -> text("2") | _ -> text("3")',
+      ),
+    ],
+  ])("is a warning, so a %s match that takes the arm still builds", (_, src) => {
+    expect(checkSource(src).map((d) => [d.code, d.severity])).toEqual([["W0219", "warning"]]);
+    expect(builtSummariesOf(src)).toEqual([]);
   });
 
   it("names the match the arm belongs to and the one it ends, a level at a time", () => {
     const src = fnOf(
       "match x with | Red -> match y with | Small -> match z with | Small -> 1 | Large -> 2 | _ -> 3",
     );
-    expect(pointedErrorsOf(src).filter((e) => e.code === "E0239")).toEqual([
+    expect(pointedDiagnosticsOf(src).filter((e) => e.code === "W0219")).toEqual([
       { ...unreachable(src, "value", "_", "match z", "match y"), text: "_ -> 3" },
     ]);
   });
@@ -174,12 +198,12 @@ describe("a nested match that leaves the arms after it to the outer one", () => 
 tile T = match c with | Red -> BySize | _ -> text("3")`),
     ],
   ])("checks clean as a %s closed off before the next arm", (_, src) => {
-    expect(pointedErrorsOf(src)).toEqual([]);
+    expect(pointedDiagnosticsOf(src)).toEqual([]);
   });
 
   it("checks clean when every arm the nested match takes can be reached", () => {
     expect(
-      pointedErrorsOf(
+      pointedDiagnosticsOf(
         fnOf("match x with | Red -> 0 | _ -> match y with | Small -> 1 | Large -> 2"),
       ),
     ).toEqual([]);
@@ -187,21 +211,21 @@ tile T = match c with | Red -> BySize | _ -> text("3")`),
 
   it("leaves a covered arm inside a match closed off in parentheses", () => {
     expect(
-      pointedErrorsOf(
+      pointedDiagnosticsOf(
         fnOf("match x with | Red -> (match y with | Small -> 1 | Large -> 2 | _ -> 3) | _ -> 4"),
       ),
     ).toEqual([]);
   });
 
   it("leaves a covered arm of a match that ends no other match's arm", () => {
-    expect(pointedErrorsOf(fnOf("match x with | Red -> 1 | _ -> 2 | Green -> 3"))).toEqual([]);
+    expect(pointedDiagnosticsOf(fnOf("match x with | Red -> 1 | _ -> 2 | Green -> 3"))).toEqual([]);
   });
 });
 
 describe("E0227 on a match whose last arm ends in a nested match", () => {
   it("says the arms after the nested match are its own", () => {
     const src = fnOf("match x with | Red -> match y with | Small -> 1 | other -> 3");
-    expect(pointedErrorsOf(src)).toEqual([
+    expect(pointedDiagnosticsOf(src)).toEqual([
       {
         code: "E0227",
         message: missingPast(src, "Color", "Green, Blue", "match y"),
@@ -212,7 +236,7 @@ describe("E0227 on a match whose last arm ends in a nested match", () => {
 
   it("keeps its message when the nested match is in parentheses", () => {
     const src = fnOf("match x with | Red -> (match y with | Small -> 1 | Large -> 2)");
-    expect(pointedErrorsOf(src)).toEqual([
+    expect(pointedDiagnosticsOf(src)).toEqual([
       {
         code: "E0227",
         message: missing("Color", "Green, Blue"),

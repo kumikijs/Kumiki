@@ -5,8 +5,8 @@
 #   match x with | Red -> match y with | Small -> 1 | Large -> 2 | _ -> 3
 #
 # Here `| _ -> 3` is the third arm of `match y`, whatever the layout, and
-# `check` reports it (E0239): it can never be reached after `Small` and
-# `Large`, and the message says how to give it to `match x`. Each form is
+# `check` warns at it (W0219): it can never be reached after `Small` and
+# `Large`, and the warning says how to give it to `match x`. Each form is
 # closed off its own way:
 #
 #   value      | Red -> (match y with | Small -> 1 | Large -> 2) | _ -> 3
