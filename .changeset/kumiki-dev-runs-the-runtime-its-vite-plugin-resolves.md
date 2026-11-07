@@ -2,12 +2,13 @@
 "@kumikijs/cli": patch
 ---
 
-`kumiki dev` runs the runtime its Vite plugin resolves, and starts without an optimizer warning
+`kumiki dev` starts when installed from npm, and without an optimizer warning
 
 `kumiki dev` asked Vite to pre-bundle `@kumikijs/runtime`, resolved from the
-`.kumiki` file's directory. A directory without the package installed — any
-project that installed only the CLI, a file in a temp directory, every example
-in this repository — started with:
+`.kumiki` file's directory. A directory without the package installed — a
+project using a globally installed CLI, or a strict `node_modules` layout such
+as pnpm's, a file in a temp directory, every example in this repository —
+started with:
 
 ```
 Failed to resolve dependency: @kumikijs/runtime, present in client 'optimizeDeps.include'

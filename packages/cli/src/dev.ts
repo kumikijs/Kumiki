@@ -155,9 +155,9 @@ function kumikiDevPlugin(opts: InternalOptions): Plugin {
       };
     },
 
-    // The client's bare `@kumikijs/runtime` import is not answered here: a
-    // virtual importer has no directory, so Vite resolves it from the root,
-    // and @kumikijs/vite answers it exactly as it answers the compiled app's.
+    // Not answered here: @kumikijs/vite dedupes `@kumikijs/runtime`, so Vite
+    // resolves it from the root — the `.kumiki` file's directory — for any
+    // importer, and the plugin answers the client's import as it answers the app's.
     resolveId(id) {
       if (id === VIRTUAL_CLIENT_ID || id === VIRTUAL_PANEL_ID) return id;
       return null;

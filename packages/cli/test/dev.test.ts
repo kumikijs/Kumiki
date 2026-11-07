@@ -4,7 +4,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  rmSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -13,7 +12,7 @@ import { connect } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { app } from "@kumikijs/examples";
 import { normalizePath, type ViteDevServer } from "vite";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { startDevServer } from "../src/dev.ts";
 import { runCli, SPAWN, spawnCli, waitFor } from "./helpers/cli.ts";
 import { tempDir } from "./helpers/files.ts";
@@ -239,9 +238,14 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 describe("the runtime kumiki dev serves", () => {
   const RUNTIME = "@kumikijs/runtime";
   const requireHere = createRequire(import.meta.url);
-  const PLUGIN_RUNTIME = normalizePath(
-    createRequire(requireHere.resolve("@kumikijs/vite")).resolve(RUNTIME),
-  );
+  // Resolved per describe, not at collection, so a runtime that stops resolving fails these
+  // cases alone rather than the whole file.
+  let pluginRuntime: string;
+  beforeAll(() => {
+    pluginRuntime = normalizePath(
+      createRequire(requireHere.resolve("@kumikijs/vite")).resolve(RUNTIME),
+    );
+  });
   /** The workspace links the runtime into this package, so a project here resolves the link. */
   const WORKSPACE_TMP = resolve(import.meta.dirname, "../test-tmp");
 
@@ -259,9 +263,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
   function workspaceDir(): string {
     mkdirSync(WORKSPACE_TMP, { recursive: true });
-    const dir = mkdtempSync(join(WORKSPACE_TMP, "kumiki-dev-runtime-"));
-    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
-    return dir;
+    return tempDir(WORKSPACE_TMP);
   }
 
   function project(where: "tmp" | "workspace" = "tmp"): string {
@@ -303,7 +305,10 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     return m[1];
   }
 
-  /** Loads the page's modules over HTTP the way a browser does. */
+  /**
+   * Requests the client, its app and the app's runtime as a browser would, then asks the server
+   * which file and pre-bundle served the runtime.
+   */
   async function loadPage(server: ViteDevServer, url: string) {
     const get = async (path: string) => {
       const res = await fetch(new URL(path, url));
@@ -320,20 +325,23 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     const env = server.environments.client;
     const served = (await env.moduleGraph.getModuleByUrl(appRuntime))?.file;
     const meta = env.depsOptimizer?.metadata;
+    expect(meta, "the client environment has a deps optimizer").toBeDefined();
     const prebundle = meta?.optimized[RUNTIME] ?? meta?.discovered[RUNTIME];
     return { clientRuntime, appRuntime, served, prebundle };
   }
 
   it("serves the plugin's runtime, without a warning, where the root cannot resolve one", async () => {
     const dir = project();
-    expect(runtimeAbove(dir)).toBe(false);
+    expect(runtimeAbove(dir), "a directory above the OS temp dir holds @kumikijs/runtime").toBe(
+      false,
+    );
 
     const { server, url, warned } = await serve(dir);
     expect(warned).not.toContain("Failed to resolve dependency");
 
     const page = await loadPage(server, url);
     expect(page.appRuntime).toBe(page.clientRuntime);
-    expect(page.served).toBe(PLUGIN_RUNTIME);
+    expect(page.served).toBe(pluginRuntime);
     expect(page.prebundle).toBeUndefined();
   });
 
@@ -346,10 +354,10 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
       join(installed, "package.json"),
       JSON.stringify({ name: RUNTIME, type: "module", exports: { ".": "./index.js" } }),
     );
-    // The runtime's single-file build, as the published package's entry is.
+    // `./bundle` is the published `.` entry: one file that imports nothing.
     copyFileSync(requireHere.resolve(`${RUNTIME}/bundle`), join(installed, "index.js"));
     const own = runtimeFrom(dir);
-    expect(own).not.toBe(PLUGIN_RUNTIME);
+    expect(own).not.toBe(pluginRuntime);
 
     const { server, url } = await serve(dir);
     const page = await loadPage(server, url);
@@ -358,12 +366,13 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     expect(page.served).toBe(page.prebundle?.file);
   });
 
-  it("serves a runtime linked from the workspace from its source, once, for the client and the app", async () => {
-    // A project inside the workspace resolves the runtime through the
-    // workspace link, and Vite serves a linked package from its source.
+  it("does not pre-bundle a runtime linked from the workspace, and serves its source once, for the client and the app", async () => {
+    // Vite serves a linked package from its source.
     const dir = project("workspace");
     writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "p", private: true }));
     const linked = runtimeFrom(dir);
+    // So this case cannot tell the link's answer from the plugin's: what it pins is the pre-bundle.
+    expect(linked, "the workspace link is the plugin's own copy").toBe(pluginRuntime);
 
     const { server, url } = await serve(dir);
     const page = await loadPage(server, url);
