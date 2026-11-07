@@ -543,7 +543,7 @@ A handler written for that same event on a *call site* of the descendant tile (`
 
 An lvalue is a **path**, and you can directly mutate nested fields or the contents of an Option. The compiler expands this into an immutable update.
 
-The steps a path may take are a **closed set**: a field (`.name`), an index (`[key]`), and `.get` on an `Option` / `Result`. Nothing else is an lvalue — in particular a stdlib member is not one, and `name.length := 9` is [E0602](./errors.md#e0602-unassignable-member) rather than a write. There is nothing for such a write to mean: a member derives a value from the receiver, so there is no place in the receiver for the assignment to land.
+The steps a path may take are a **closed set**: a field (`.name`), an index (`[key]`), and `.get` on an `Option` / `Result`. Nothing else is an lvalue — in particular a stdlib member is not one, and `name.length := 9` is [E0602](./errors.md#e0602-unassignable-member) rather than a write. There is nothing for such a write to mean: a member derives a value from the receiver, so there is no place in the receiver for the assignment to land. A union has no fields either, since a variant carries its payloads by position. So a field step into a union names nothing: with `type U = A(Int) | Z`, `u.a := v` is [E0108](./errors.md#e0108-undef-member), as the read `u.a` is. A payload is read with a `match`, and the union is written whole (`u := A(n)`).
 
 ```kumiki snippet
 # These reducer statements:

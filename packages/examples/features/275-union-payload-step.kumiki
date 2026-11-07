@@ -1,0 +1,33 @@
+# Feature (language.md): a union's payload is read with a match, and the
+# union is written whole, as the variant it now holds.
+#
+#   c := match c with | Counting(n) -> Counting(n + 1) | Idle -> Counting(1)
+#
+# A union has no fields: a variant carries its payloads by position. So a
+# field step into one names nothing, read or written — `c.n`, `c.n := v`,
+# `c.n["k"] := v` and `c.n[0] := v` are each E0108 at `.n`, since no
+# variant of `Counter` answers it. A member the runtime has, such as `.show`,
+# still dispatches on the variant the value holds.
+
+type Counter = Counting(Int) | Idle
+
+slot c : Counter = Idle
+
+reducer bump on=ui.click(Bump)
+    do= c := match c with | Counting(n) -> Counting(n + 1) | Idle -> Counting(1)
+
+reducer stop on=ui.click(Stop)
+    do= c := Idle
+
+tile Bump = button(text="bump") {id: "bump"}
+tile Stop = button(text="stop") {id: "stop"}
+
+tile App = column(
+  row(Bump, Stop),
+  text("count: " + match c with | Counting(n) -> n.show | Idle -> "idle"),
+  text("shown: " + c.show))
+
+app UnionPayloadStep
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

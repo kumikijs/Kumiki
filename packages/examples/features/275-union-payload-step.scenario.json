@@ -1,0 +1,35 @@
+{
+  "steps": [
+    {
+      "label": "a variant with no payload reads as itself through the match",
+      "expect": { "noErrors": true, "domIncludes": ["count: idle", "shown: Idle"] }
+    },
+    {
+      "label": "the match writes the next variant whole",
+      "do": { "click": "#bump" },
+      "expect": {
+        "noErrors": true,
+        "state": { "c": { "_tag": "Counting", "_0": 1 } },
+        "domIncludes": ["count: 1"]
+      }
+    },
+    {
+      "label": "and reads the payload it carries",
+      "do": { "click": "#bump" },
+      "expect": {
+        "noErrors": true,
+        "state": { "c": { "_tag": "Counting", "_0": 2 } },
+        "domIncludes": ["count: 2"]
+      }
+    },
+    {
+      "label": "a write of another variant replaces the payload with nothing",
+      "do": { "click": "#stop" },
+      "expect": {
+        "noErrors": true,
+        "state": { "c": { "_tag": "Idle" } },
+        "domIncludes": ["count: idle", "shown: Idle"]
+      }
+    }
+  ]
+}
