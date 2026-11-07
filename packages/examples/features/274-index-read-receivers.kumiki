@@ -1,0 +1,42 @@
+# Feature (language.md): an index reads a List or a Map, and a value with no
+# places is read by its own member.
+#
+#   word.slice(0, 1)         not word[0]
+#   (score.get-or(0) + 1)    not score[0] + 1
+#
+# An index names a place — an entry of a Map, a position of a List — so
+# `xs[0]` and `ages["ada"]` read a value, and so does a record through a
+# literal key, `cfg["label"]`, which is the field the key names. A Text, an
+# Int, an Option, a Result, a Tuple and a union have no place an index
+# names: reading `word[0]` on a Text is E0238, and writing through it E0602.
+# Each is read by the member that answers what the index was meant to: part
+# of a Text through `.slice`, an Option's payload through `.get-or`, the
+# members of a Tuple through a `match` that takes it apart.
+
+type Cfg = { label: Text }
+
+slot word  : Text             = "abc"
+slot score : Option(Int)      = Some(1)
+slot pair  : Tuple(Text, Int) = ("ada", 36)
+slot xs    : List(Int)        = [10, 20]
+slot ages  : Map(Text, Int)   = {"ada": 36}
+slot cfg   : Cfg              = { label: "go" }
+
+reducer bump on=ui.click(Bump)
+    do= score := Some(score.get-or(0) + 1)
+        xs[0] := xs[0] + 1
+
+tile Bump = button(text="bump") {id: "bump"}
+
+tile App = column(
+  Bump,
+  text("first: " + word.slice(0, 1)),
+  text("next score: " + (score.get-or(0) + 1).show),
+  text("pair: " + match pair with | (name, age) -> name + " is " + age.show),
+  text("xs: " + xs[0].show + " ada: " + ages["ada"].show),
+  text("label: " + cfg["label"]))
+
+app IndexReadReceivers
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

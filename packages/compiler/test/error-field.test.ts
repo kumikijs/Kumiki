@@ -135,11 +135,6 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
       `error(field=…) cannot step through an index into "Contact": a path's index names a List element or a Map entry ${SEE}`,
     ],
     [
-      "an index into a Tuple",
-      `tile App = error(field=r.pair[0])`,
-      `error(field=…) cannot step through an index into "Tuple(Text, Int)": a path's index names a List element or a Map entry ${SEE}`,
-    ],
-    [
       "no field at all",
       `tile App = error()`,
       `error() names no field, so it has no failure to show: ${ROOT_TAIL} ${SEE}`,
@@ -210,6 +205,8 @@ describe("a path another code reports is not E0230 as well", () => {
     ["a List index that is not an Int", `xs["a"]`, "E0201"],
     ["a Map key of another type", `m[3]`, "E0201"],
     ["an index into a Set", `tags[0]`, "E0232"],
+    ["an index into a Tuple", `r.pair[0]`, "E0238"],
+    ["an index into an Int", `i[0]`, "E0238"],
     ["a call to a name no fn defines, such as a tile written as a value", `text("form")`, "E0116"],
   ])("leaves %s to %s", (_label, field, code) => {
     expect(codesOf(program(`tile App = error(field=${field})`))).toEqual([code]);
