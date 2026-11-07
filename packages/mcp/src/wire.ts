@@ -23,10 +23,10 @@ export function failed(...parts: string[]) {
 }
 
 export const RUN_WARNINGS =
-  "When the compile it runs first reported warnings, a second content item holds them as a JSON list of diagnostics, whether the run then passed or failed; a warning does not fail it.";
+  "When the compile it runs first succeeds with warnings, a second content item holds them as a JSON list of diagnostics, whether the run then passed or failed; a warning does not fail it. A compile that fails runs nothing: the result is `isError` and its one item is the `{error: {kind, message}}` envelope, whose message lists every diagnostic, the warnings first.";
 
-// A second item rather than a suffix, so the first stays what the tool answers
-// for a file with no warning: with `includeJs`, the module a client writes out.
+// A second item rather than a suffix, so the first stays what the tool answers for a file
+// with no warning and a client can use it as it stands: the `includeJs` module, the test report's JSON.
 export function withWarnings(head: string, warnings: KumikiError[]): string[] {
   if (warnings.length === 0) return [head];
   return [head, json(toDiagnostics(warnings))];

@@ -305,6 +305,29 @@ describe("the diagnostic wire shape", () => {
       expect(report(clean)).toMatchObject({ passed: 2, failed: 0 });
       expect(clean.items).toHaveLength(1);
     });
+
+    it.each([
+      { tool: "kumiki_smoke", args: {} },
+      {
+        tool: "kumiki_run_scenario",
+        args: { scenario: { steps: [{ expect: { noErrors: true } }] } },
+      },
+      { tool: "kumiki_test", args: {} },
+    ])("$tool runs nothing when the compile fails, and answers the one error envelope, warnings first", {
+      timeout: 30000,
+    }, async ({ tool, args }) => {
+      const res = await callOnce(tool, { path: writeMixed(), ...args });
+      expect(res.isError).toBe(true);
+      expect(res.items).toHaveLength(1);
+      expect(JSON.parse(res.items[0] ?? "")).toEqual({
+        error: {
+          kind: "error",
+          message: expect.stringMatching(
+            /^compile failed[^\n]*:\n[^\n]*\bW0212 [^\n]+\n[^\n]*\bE0103 [^\n]+$/,
+          ),
+        },
+      });
+    });
   });
 
   it.each([
@@ -325,6 +348,10 @@ describe("the diagnostic wire shape", () => {
     ...["kumiki_build", "kumiki_smoke", "kumiki_run_scenario", "kumiki_test"].map((name) => [
       name,
       "a second content item holds them as a JSON list of diagnostics",
+    ]),
+    ...["kumiki_smoke", "kumiki_run_scenario", "kumiki_test"].map((name) => [
+      name,
+      "A compile that fails runs nothing",
     ]),
     ["kumiki_build", "the warnings, then the errors that failed it"],
     ["kumiki_auto_patch", "Every outcome carries `warnings`"],

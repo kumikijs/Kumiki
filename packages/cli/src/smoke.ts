@@ -93,15 +93,21 @@ async function compileForLoad(
 }
 
 function compileFailure(source: string, diagnostics: KumikiError[], sourcePath?: string): string {
+  const lines = diagnosticLines(source, diagnostics);
+  return `compile failed${sourcePath ? ` (${sourcePath})` : ""}:\n${lines.join("\n")}`;
+}
+
+/** Each diagnostic of a `compile` of `source`, with the `test` it sits in when there is one. */
+function diagnosticLines(source: string, diagnostics: KumikiError[]): string[] {
+  if (diagnostics.length === 0) return [];
   // `compile` returned diagnostics rather than throwing, so the source parsed.
   const tests = loadSource(source).defs.filter((e) => e.layer === "test");
-  const lines = diagnostics.map((d) => {
+  return diagnostics.map((d) => {
     const test = tests.find(
       ({ range }) => d.pos.line >= range.startLine && d.pos.line <= range.endLine,
     );
     return `${formatDiagnostic(d)}${test ? ` (in test "${test.name}")` : ""}`;
   });
-  return `compile failed${sourcePath ? ` (${sourcePath})` : ""}:\n${lines.join("\n")}`;
 }
 
 /** Compile + mount + exercise a Kumiki source string; return the smoke report. */
@@ -155,8 +161,8 @@ export async function smokeFile(
   return smokeSource(readFileSync(path, "utf8"), capabilities, { ...opts, sourcePath: path });
 }
 
-function printWarnings(warnings: KumikiError[]): void {
-  for (const w of warnings) console.error(formatDiagnostic(w));
+function printWarnings(source: string, warnings: KumikiError[]): void {
+  for (const line of diagnosticLines(source, warnings)) console.error(line);
 }
 
 /** CLI entry: print a human-readable report and exit non-zero on failure. */
@@ -165,8 +171,9 @@ export async function smokeCmd(
   capabilities: string[] = [],
   opts: { diagnosticsAsIssues?: boolean } = {},
 ): Promise<void> {
-  const report = await smokeFile(path, capabilities, opts);
-  printWarnings(report.warnings);
+  const source = readFileSync(path, "utf8");
+  const report = await smokeSource(source, capabilities, { ...opts, sourcePath: path });
+  printWarnings(source, report.warnings);
   if (report.ok) {
     console.log(`ok — mounted, rendered, ${report.interactions} interaction(s), no runtime errors`);
     printDiagnostics(report, console.log);
@@ -294,12 +301,13 @@ export async function runCmd(
     }
   }
   const log = logFile ? fileEpisodeLogger(logFile) : null;
-  const report = await runScenarioSource(readFileSync(kumikiPath, "utf8"), scenario, capabilities, {
+  const source = readFileSync(kumikiPath, "utf8");
+  const report = await runScenarioSource(source, scenario, capabilities, {
     episodeLogger: log?.logger ?? null,
     sourcePath: kumikiPath,
   });
   const logFailure = log?.close() ?? null;
-  printWarnings(report.warnings);
+  printWarnings(source, report.warnings);
   for (let i = 0; i < report.steps.length; i++) {
     const s = report.steps[i];
     if (!s) continue;
@@ -431,11 +439,19 @@ export async function runTests(
   capabilities: string[] = [],
   opts: { coverage?: boolean } = {},
 ): Promise<TestReport> {
-  const { results: all, warnings } = await compileAndRunTests(
-    readFileSync(path, "utf8"),
-    capabilities,
-    { sourcePath: path },
-  );
+  return testReportOf(readFileSync(path, "utf8"), path, filter, capabilities, opts);
+}
+
+async function testReportOf(
+  source: string,
+  path: string,
+  filter: string | undefined,
+  capabilities: string[],
+  opts: { coverage?: boolean },
+): Promise<TestReport> {
+  const { results: all, warnings } = await compileAndRunTests(source, capabilities, {
+    sourcePath: path,
+  });
   const results = all.filter((r) => matchesFilter(r.name, filter));
   const passed = results.filter((r) => r.pass).length;
   const cov =
@@ -488,8 +504,12 @@ export async function testCmd(
   opts: { coverage?: boolean; watch?: boolean } = {},
 ): Promise<void> {
   const runOnce = async (): Promise<number> => {
-    const report = await runTests(path, filter, capabilities, { coverage: opts.coverage ?? false });
-    printWarnings(report.warnings);
+    // Read once, so the lines the warnings are placed by are the lines that were compiled.
+    const source = readFileSync(path, "utf8");
+    const report = await testReportOf(source, path, filter, capabilities, {
+      coverage: opts.coverage ?? false,
+    });
+    printWarnings(source, report.warnings);
     return printTestReport(report);
   };
   if (opts.watch) {

@@ -105,7 +105,7 @@ export function registerRepairTools(tool: RegisterTool): void {
     "kumiki_test",
     {
       title: "Run in-language tests",
-      description: `Compile a Kumiki program with \`test\` definitions included, mount it in a headless DOM, run every \`test\`, and return a structured pass/fail report. Pass \`filter\` to restrict by exact name or a \`prefix*\` wildcard. This is the substrate for the fix loop: on failure, feed the failing test's name to \`kumiki_auto_patch\` to close the loop. The report is the first content item, as JSON. ${RUN_WARNINGS} ${DIAGNOSTIC_SHAPE}`,
+      description: `Compile a Kumiki program with \`test\` definitions included, mount it in a headless DOM, run every \`test\`, and return a structured pass/fail report. Pass \`filter\` to restrict by exact name or a \`prefix*\` wildcard. This is the substrate for the fix loop: on failure, feed the failing test's name to \`kumiki_auto_patch\` to close the loop. When the compile succeeds, the report is the first content item, as JSON. ${RUN_WARNINGS} ${DIAGNOSTIC_SHAPE}`,
       inputSchema: {
         path: z.string(),
         filter: z
