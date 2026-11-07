@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
-import { applyFixPlan, fixCmd, planFix } from "@kumikijs/cli";
-import { type AppDef, lex, type Program, parse, type TileDef } from "@kumikijs/compiler";
+import { applyFixPlan, fixCmd, planFix, planFixesExplained } from "@kumikijs/cli";
+import { type AppDef, check, lex, type Program, parse, type TileDef } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { seed as writeSource } from "./helpers/files.ts";
+import { storeOf, seed as writeSource } from "./helpers/files.ts";
 
 /** Run `kumiki fix <file> --apply` on `source`; the exit code and the file it left. */
 function fixApply(source: string): { code: number; after: string; program: Program } {
@@ -287,5 +287,46 @@ app A
     ]);
     const [layout] = tilesNamed(program, "SettingsLayout");
     expect(layout?.subRoutes?.map((r) => r.path)).toEqual(["/settings"]);
+  });
+
+  it("compose in either order the diagnostics arrive in", () => {
+    // Both are region patches: E0001 prepends a tile, which moves every line of the app, and
+    // E0301 lengthens the caps clause, which moves every offset after it.
+    const store = storeOf(`${SAVES}
+app A
+    caps   = []
+    routes = {"/" -> App}
+    init   = []
+`);
+    const errors = check(store.program);
+    expect(errors.map((e) => e.code).sort()).toEqual(["E0001", "E0301"]);
+    for (const arrived of [errors, [...errors].reverse()]) {
+      const order = arrived.map((e) => e.code).join(" then ");
+      const { patches } = planFixesExplained(store, arrived);
+      expect(
+        patches.map((p) => p.code),
+        order,
+      ).toEqual(arrived.map((e) => e.code));
+      expect(
+        patches.map((p) => p.anchor.kind),
+        order,
+      ).toEqual(["region", "region"]);
+      const composed = patches.reduce((text, p) => p.apply(text), store.source);
+      expect(() => parse(lex(composed)), order).not.toThrow();
+      const program = parse(lex(composed));
+      const app = appOf(program);
+      expect(app.caps, order).toEqual(["storage.write"]);
+      expect(
+        app.routes.map((r) => [r.path, r.tile]),
+        order,
+      ).toEqual([
+        ["/", "App"],
+        ["/404", "NotFound"],
+      ]);
+      expect(
+        check(program).map((e) => `${e.code} ${e.message}`),
+        order,
+      ).toEqual([]);
+    }
   });
 });
