@@ -80,7 +80,7 @@ Decoder.Bytes        # バイト列のまま
 Decoder.None         # レスポンス本文を捨てる
 ```
 
-`Decoder.Text` は本文を UTF-8 として読んだ `Text` を渡す。`Decoder.Bytes` は本文のバイトを届いたまま `Bytes` として渡すので、UTF-8 のテキストでない本文も損なわれずに届く。`Decoder.None` は `Unit` を渡し、本文を読まない。`decode` を持たない、または `decode` が `null` のリクエストは、述語を持たない `T` の `Decoder.Json(T)` と同じく JSON として parse される。`map-request` が組み立てるのは普通のレコードなので、その `decode` にはどんな値でも入りうる。これらのどの decoder でもない値は、リクエストを送る前に effect を失敗させる。`HttpError` の `status` は `0`、`message` はその値を示す（`decode is "TEXT", which is not a Decoder` など）。decoder が何であっても、2xx 以外のレスポンスが生む `HttpError` の `body` は、本文を読めたときはレスポンスのテキストの `Some` である。
+`Decoder.Text` は本文を UTF-8 として読んだ `Text` を渡す。`Decoder.Bytes` は本文のバイトを届いたまま `Bytes` として渡すので、UTF-8 のテキストでない本文も損なわれずに届く。`Decoder.None` は `Unit` を渡し、本文を読まない。`decode` を持たない、または `decode` が `null` のリクエストは、述語を持たない `T` の `Decoder.Json(T)` と同じく JSON として parse される。`map-request` に書いた `decode` は `Decoder` に照らして検査されるが（下記）、`fn` が返すリクエストの中のように実行時に組み立てられたものは検査されない。これらのどの decoder でもない値は、リクエストを送る前に effect を失敗させる。`HttpError` の `status` は `0`、`message` はその値を示す（`decode is "TEXT", which is not a Decoder` など）。decoder が何であっても、2xx 以外のレスポンスが生む `HttpError` の `body` は、本文を読めたときはレスポンスのテキストの `Some` である。
 
 レスポンスの decode は型としてはコンパイル時に検査され、実行時に検査されるのは JSON の構文と、宣言した型が持つ述語。JSON として壊れている 2xx の本文は、レスポンス自身の `status`、`decode failed:` で始まる `message`、`body` にレスポンス本文（`Some(text)`）を持つ `HttpError` になる。レスポンスは届いているので接続エラー（`status: 0`）ではなく、リトライもされない（[6.5](#_6-5-リトライ)）。本文のない 2xx（204 など）には `Decoder.None` が必要で、そうしないとデフォルトの decoder がその status で `decode failed:` を報告する。
 
