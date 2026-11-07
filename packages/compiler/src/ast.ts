@@ -58,10 +58,15 @@ export type TestDef = {
 
 export type ThemeValue = string | number | { [k: string]: ThemeValue };
 
+/** A string or number a `theme` body holds: the keys that lead to it, and where it is written. */
+export type ThemeLeaf = { path: readonly string[]; value: string | number; pos: Pos };
+
 export type ThemeDef = {
   kind: "ThemeDef";
   name: string;
   body: { [k: string]: ThemeValue };
+  /** Every string and number the body is written with, in source order, a duplicate key's included. */
+  leaves: ThemeLeaf[];
   /** Keys seen more than once in the body, at any nesting depth. */
   duplicateKeys?: DuplicateName[];
   pos: Pos;

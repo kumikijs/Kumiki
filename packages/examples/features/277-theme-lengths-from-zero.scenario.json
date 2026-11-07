@@ -1,0 +1,8 @@
+{
+  "steps": [
+    {
+      "label": "the app mounts under a theme whose spacing starts at 0 and whose md starts at 500px",
+      "expect": { "noErrors": true, "domIncludes": ["flush", "nudged"] }
+    }
+  ]
+}

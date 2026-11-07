@@ -1222,6 +1222,20 @@ bind していないコントロールが選択状態を読む引数 — `check`
 
 **修正**：effect を、それを意図していたすべての `emit`・`app.init` のエントリ・`on=<name>.ok` / `.err` の reducer とともに改名する — `kumiki rename <file> effect.log logRequest` がそれらをすべて書き換える。組み込みを意図していた箇所では、標準 effect をそれ自身の名前で emit する。`kumiki rename` はどの effect のために書かれたかを問わずすべての使用を書き換えるので、組み込みのために書かれた `emit` は新しい名前のもとでも `E0202` が残り、改名は拒否される。そのようなプログラムは手で改名し、その `emit` はそのまま残す。標準 effect を書き写しただけの宣言（`effect navigate cap=nav.push in={path: Text, …}`）は改名せずに削除する。標準 effect に宣言は要らないからである。削除はその行を直接消して行う：`kumiki remove` は emit を宣言への参照と数えて拒否する。
 
+### E0239 `negative-theme-length`
+
+`theme` が、`spacing` トークンまたは `breakpoints` の幅として負の数値を書いている（[スタイル §4.2](./style.md#_4-2-design-tokens)）。その数値の位置（`-` から始まる）で、数値ごとに 1 件報告する。
+
+> `theme "<name>": spacing "<key>" is <n>, and padding and gap cannot be negative, so it has no effect — write a length of 0 or more (see docs/spec/style.md)`
+>
+> `theme "<name>": breakpoint "<key>" is <n>, and a minimum viewport width cannot be negative, so "<key>" is not a breakpoint at all — write a width of 0 or more (see docs/spec/style.md)`
+
+どちらのセクションでも数値は px である。`nudge: -4` は `pad: "nudge"` に `padding: -4px` という宣言を与えるが、これは正しい CSS ではない：ブラウザはそれを捨て、タイルにはパディングが付かない。`gap` も同じように捨てられる。負のブレイクポイント幅はブレイクポイントではない（[スタイル §4.5](./style.md#_4-5-responsive)）。それでもそのキーでは既定値に取って代わるので、`md: -500` は `md` を動かすのではなく消し、`{base: …, md: …}` のマップは `md` の値に解決されることがなくなる。どちらも実行時のエラーではなく、ページが少しずれて見えるだけなので、`check` 以外にこれを名指すものは無い。
+
+検査するのは `spacing` または `breakpoints` の直下の数値だけである。それより深く入れ子になった数値はトークンでも幅でもない。この検査は文字列を読まないので、`nudge: "-4px"` と `md: "-500px"` は同じ誤りだが報告されない。アプリが名指しているかどうかにかかわらず、すべての `theme` を検査する。`app.theme` の slot は実行中にそのどれでも選べるからである（[スタイル §4.6](./style.md#_4-6-dark-mode)）。
+
+**修正**：長さや幅を 0 以上で書く（`nudge: 4`、`md: 500`）か、キーを省いて既定値を残す。外側へ引き寄せたいタイルは、負の長さを自身の `style` ブロックに書く（`style: {margin-top: -4}`）。そこではそれはトークンではなく、CSS プロパティそのものの値である。
+
 ## E03xx — ケイパビリティと純粋性
 
 ### E0301 `missing-capability`
