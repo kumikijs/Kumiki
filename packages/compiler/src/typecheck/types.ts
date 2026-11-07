@@ -19,12 +19,14 @@ import {
 import { aliasTarget } from "../def-graph.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "../refinement-positions.ts";
 import {
+  isCountArgument,
   type RefinementProblem,
   refinementBaseProblem,
   refinementProblem,
 } from "../refinements.ts";
 import { isReservedTypeName } from "../stdlib-types.ts";
 import type { KumikiError, SymbolTable } from "./context.ts";
+import { intLiteralPrecision } from "./int-literal.ts";
 
 export function resolveType(
   t: TypeExpr,
@@ -106,6 +108,7 @@ function checkRefinement(
   errors: KumikiError[],
 ): void {
   if (!r) return;
+  checkArgPrecision(r, refinedBase(inner, sym, typeParams), errors);
   const problem = refinementProblem(r) ?? baseProblem(r, inner, sym, typeParams);
   if (!problem) return;
   if (problem.kind === "unimplemented-refinement") {
@@ -125,6 +128,29 @@ function checkRefinement(
   });
 }
 
+// A number argument over an `Int` stands for an `Int`, and so does a count over any base: the check
+// is built from the number each literal was read as. Over a `Float` it is a `Float`, which holds an
+// approximation by nature, and over a type parameter its type is not decided.
+function checkArgPrecision(r: Refinement, base: TypeExpr | null, errors: KumikiError[]): void {
+  const overInt = base?.kind === "TypePrim" && base.name === "Int";
+  for (const [i, arg] of r.args.entries()) {
+    const at = r.written?.[i];
+    if (typeof arg !== "number" || at === undefined) continue;
+    if (!overInt && !isCountArgument(r.pred, i)) continue;
+    const imprecise = intLiteralPrecision({ value: arg, raw: at.raw }, at.pos);
+    if (imprecise) errors.push(imprecise);
+  }
+}
+
+/** The type a refinement over `inner` is written over, with each type parameter left opaque. */
+function refinedBase(
+  inner: TypeExpr,
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+): TypeExpr | null {
+  return unaliasType(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
+}
+
 /** {@link refinementBaseProblem} for `r` over `inner`, as a checker problem. */
 function baseProblem(
   r: Refinement,
@@ -132,7 +158,7 @@ function baseProblem(
   sym: SymbolTable,
   typeParams: ReadonlySet<string>,
 ): RefinementProblem | undefined {
-  const base = unaliasType(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
+  const base = refinedBase(inner, sym, typeParams);
   const message = base ? refinementBaseProblem(r, base) : undefined;
   return message ? { kind: "refinement-args-invalid", message } : undefined;
 }
