@@ -166,9 +166,10 @@ function primDesc(name: PrimName): GenDesc {
       return { t: "Bool" };
     case "Unit":
       return { t: "Unit" };
-    // A `File` comes from the platform and an `EffectId` from `emit`.
+    // A `File` comes from the platform, an `EffectId` from `emit` and a `Decoder` from `Decoder.*`.
     case "File":
     case "EffectId":
+    case "Decoder":
       throw new NoGenerator(`"${name}" has none`);
     default:
       assertNever(name);

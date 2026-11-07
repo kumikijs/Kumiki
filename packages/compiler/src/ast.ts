@@ -200,7 +200,17 @@ export type AppDef = {
 export type TypeExpr =
   | {
       kind: "TypePrim";
-      name: "Int" | "Text" | "Bool" | "Unit" | "Float" | "Time" | "Bytes" | "File" | "EffectId";
+      name:
+        | "Int"
+        | "Text"
+        | "Bool"
+        | "Unit"
+        | "Float"
+        | "Time"
+        | "Bytes"
+        | "File"
+        | "EffectId"
+        | "Decoder";
       pos: Pos;
     }
   | { kind: "TypeRef"; name: string; pos: Pos }
