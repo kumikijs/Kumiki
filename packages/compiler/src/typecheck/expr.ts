@@ -1,7 +1,8 @@
 import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
-import { RUN_REDUCER } from "../builtin-calls.ts";
+import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
 import { fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
+import { showShapeOf } from "../show-shape.ts";
 import {
   type FragmentArgument,
   fragmentArgument,
@@ -18,7 +19,7 @@ import {
   checkRecordUpdate,
   getOrResultType,
 } from "./against.ts";
-import { arithmeticHint, checkCallee, reportRunReducerPosition } from "./callee.ts";
+import { arithmeticHint, checkCallee, endedScopeHint, reportRunReducerPosition } from "./callee.ts";
 import {
   bindLocal,
   type Ctx,
@@ -26,6 +27,7 @@ import {
   isBuiltinCall,
   type KumikiError,
   type SymbolTable,
+  severityOf,
   wildcardText,
 } from "./context.ts";
 import { currentFnName } from "./fn.ts";
@@ -73,7 +75,7 @@ export function checkIterationTarget(
   const before = errors.length;
   checkExpr(iter, sym, errors, ctx);
   const atTarget = (p: Pos) => p.line === iter.pos.line && p.col === iter.pos.col;
-  if (errors.slice(before).some((e) => e.severity !== "warning" && atTarget(e.pos))) return;
+  if (errors.slice(before).some((e) => severityOf(e) === "error" && atTarget(e.pos))) return;
   const written = inferType(iter, sym, ctx);
   const target = written && nonListTarget(written, sym);
   if (!target) return;
@@ -263,6 +265,17 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         });
         return;
       }
+      const ended = ctx.endedScopes?.get(e.name);
+      if (ended !== undefined) {
+        errors.push({
+          code: "E0103",
+          kind: "undef-ref",
+          message: `Reference to undefined name "${e.name}"${endedScopeHint(e.name, ended)}`,
+          pos: e.pos,
+          endedScope: ended.kind,
+        });
+        return;
+      }
       errors.push({
         code: "E0103",
         kind: "undef-ref",
@@ -292,6 +305,10 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkExpr(e.lhs, sym, errors, ctx);
       checkExpr(e.rhs, sym, errors, ctx);
       if (!effectIdMisuse) checkBinOpOperands(e, sym, errors, ctx);
+      if (e.op === "+" && isPrimNamed(binOpResult(e, sym, ctx), sym, "Text")) {
+        noteShown(e.lhs, sym, ctx);
+        noteShown(e.rhs, sym, ctx);
+      }
       return;
     }
     case "UnaryOp": {
@@ -311,6 +328,8 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
     case "FieldAccess":
       checkExpr(e.base, sym, errors, ctx);
       classifyFieldAccess(e, sym, errors, ctx);
+      // The member, not a record's own field that happens to be named `show`.
+      if (e.field === "show" && e.accessKind !== "field") noteShown(e.base, sym, ctx);
       return;
     case "Index": {
       checkExpr(e.base, sym, errors, ctx);
@@ -325,6 +344,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       }
       for (const a of e.args) checkExpr(a, sym, errors, ctx);
       checkCallee(e.callee, e.args, e.pos, sym, errors, ctx);
+      for (const a of shownArgs(e)) noteShown(a, sym, ctx);
       return;
     case "MethodCall": {
       // The chained spelling of the same thing: `run-reducer(inc).run-reducer(dec)`.
@@ -367,6 +387,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       }
       checkExpr(e.receiver, sym, errors, ctx);
       if (e.method === "copy") checkRecordUpdate(e, sym, errors, ctx);
+      if (e.method === "show") noteShown(e.receiver, sym, ctx);
       {
         const recvType =
           e.args.length > 0 || KEY_READER_NAMES.has(e.method)
@@ -567,6 +588,19 @@ function checkSortKey(
     message: `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is ${typeToString(t as TypeExpr)}`,
     pos,
   });
+}
+
+export function noteShown(e: Expr, sym: SymbolTable, ctx: Ctx): void {
+  const shape = showShapeOf(inferType(e, sym, ctx), sym);
+  if (shape !== 0) e.showShape = shape;
+}
+
+function shownArgs(e: Expr & { kind: "Call" }): Expr[] {
+  if (e.callee === "fmt") return e.args;
+  const dot = e.callee.indexOf(".");
+  return dot > 0 && isQualifierName(e.callee.slice(0, dot)) && e.callee.slice(dot + 1) === "show"
+    ? e.args
+    : [];
 }
 
 export function binOpResult(

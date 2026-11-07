@@ -1,25 +1,24 @@
 # Feature: the names a test body writes are references like any other, so
-# `kumiki refs` lists the test, and `kumiki rename` rewrites a name the test
-# wrote as an identifier: a call, an `expect.effects` entry, a `<slots.X>`. A
-# name written as a record key has no position of its own, and `rename`
-# refuses it.
+# `kumiki refs` lists the test, and `kumiki rename` rewrites each one where the
+# test wrote it: a call, an `expect.effects` entry, a `<slots.X>`, a record key.
 #
-#   given  = {slots: {draft: shout("Buy")}, …}      `shout` is the fn
+#   given  = {slots: {draft: shout("Buy")}, …}      `draft` is the slot,
+#                                                   `shout` is the fn
 #   expect = {effects: [persist(<slots.items>)]}    `persist` is the effect,
 #                                                   `items` is the slot
 #
-# The test body is read section by section, as the checker reads it. A call in
-# a slot's value is read the way the expression layer reads it, so
-# `shout("Buy")` calls the fn. Only an `expect.effects` entry and a `mocks` key
-# name an effect, and `<slots.items>` names the slot. Each of the three is an
-# identifier of its own, so
+# The test body is read section by section, as the checker reads it. A key of
+# a `slots` section (or of an episode-test's `slots-equal`) names a slot, at
+# the key. A call in a slot's value is read the way the expression layer reads
+# it, so `shout("Buy")` calls the fn. Only an `expect.effects` entry and a
+# `mocks` key name an effect, and `<slots.items>` names the slot. So
 #
 #   kumiki rename <file> effect.persist save    ->  save(<slots.items>)
 #   kumiki rename <file> fn.shout yell          ->  draft: yell("Buy")
 #   kumiki rename <file> slot.items todos       ->  persist(<slots.todos>)
+#   kumiki rename <file> slot.draft text        ->  slots: {text: shout("Buy")}
 #
-# each leave a file that checks, with a test that still passes. `draft` is
-# written as a `slots` key, so `kumiki rename <file> slot.draft …` is refused.
+# each leave a file that checks, with a test that still passes.
 
 slot draft : Text       = ""
 slot items : List(Text) = []
