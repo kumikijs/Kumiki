@@ -153,6 +153,8 @@ A `Handle` is longer than 3 characters **and** shorter than 7. The predicates ar
 
 A value that fails is reported against the **first predicate it fails**, taking them **in the order the chain is read, from the base outward**. Inside one type expression that is the order they are written; across names it is the order the declarations lead through — `Short`'s `len-lt(7)` comes before `Handle`'s own `len-gt(3)` because `Short` is what `Handle` is declared over, wherever in the file either definition sits. That is the predicate the rejection names when a write discards a reducer's batch ([batching](./runtime.md#a-batch-commits-all-or-nothing)) and the one whose message the `error` tile renders ([Error Display](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)).
 
+A `type-param` names a type, not a type constructor, so it takes no type arguments: `T(Int)` in the body of `type H(T) = …` is [E0210](./errors.md#e0210-type-arity-mismatch). A parameter shadows a top-level name of the same spelling ([§1.3.6](#_1-3-6-invariants), inv. 5), so `List(Int)` in the body of `type H(List) = …` is the same mistake.
+
 ### 1.3.2 Built-in Generic Types
 
 ```
@@ -409,6 +411,11 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
   and page. A `Map`'s own keys are stored the same way, so a `Map(Float, V)`
   is a key when its values are. A `Float` is keyed through `.show`, and a
   `File` through `{name: $1.name, size: $1.size}`
+- An effect may not take the name of a [standard effect](./stdlib.md#_2-6-standard-effects)
+  (`navigate`, `navigate-replace`, `navigate-back`, `scroll-to`, `toast`,
+  `confirm`, `log`): the runtime registers each of those under its own name at
+  mount, so a declaration under one would never run
+  ([E0234](./errors.md#e0234-reserved-effect-name))
 
 ### 1.5.3 Examples
 
@@ -643,7 +650,7 @@ A name declared over one already in scope **shadows** it: every read below the d
 
 The scopes are the reducer body and every nested statement body inside it: a `for` body, each branch of an `if`, and each match arm including a catch-all `_`. A binding declared in one of those ends with it.
 
-An expression that binds a name is a scope of its own, wherever it is written: the body of a `let … in`, each arm of a `match` expression — a value's or a tile's — and the body of a tile's `for`. The binding ends with the expression, so a read after it — in a later statement or operand, or in a sibling argument of a tile — is [E0103](./errors.md#e0103-undef-ref-undef-slot). Move the read into the expression. The value a `let … in` binds can instead be bound where both reads see it: with a `let` statement in a reducer, one `let … in` around both reads in a `fn`, a tile's input in a tile.
+An expression that binds a name is a scope of its own, wherever it is written: the body of a `let … in`, each arm of a `match` expression — a value's or a tile's — and the body of a tile's `for`. The binding ends with the expression, so a read after it — in a later statement or operand, or in a sibling argument of a tile — is [E0103](./errors.md#e0103-undef-ref-undef-slot). Move the read into the expression. The value a `let … in` binds can instead be bound where both reads see it: with a `let` statement in a reducer; with one `let … in` around both reads in a `fn` or a slot initializer; in a tile, by moving both reads into a tile that declares `in=` and passing it the value. The entries of `app.init` share no expression, so there the read can only move into the `let … in`.
 
 A declaration's own right-hand side is evaluated **before** the name it declares is in scope, so `let n = n + 1` reads the binding it shadows rather than the one being declared.
 

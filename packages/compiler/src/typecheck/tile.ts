@@ -30,6 +30,7 @@ import {
 import {
   bindLocal,
   type Ctx,
+  checkArms,
   endScope,
   innerScope,
   type KumikiError,
@@ -40,6 +41,7 @@ import {
   checkExpr,
   checkIterationTarget,
   elementTypeOf,
+  noteShown,
   refuseRenderedEffectId,
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
@@ -245,13 +247,11 @@ export function checkTileExpr(
     case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
       const scrutType = matchedType(inferType(t.scrutinee, sym, ctx), t.arms, sym);
-      for (const arm of t.arms) {
-        const inner = innerScope(ctx);
+      checkArms(t.arms, ctx, (arm, inner) => {
         checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkTileExpr(arm.body, sym, errors, inner);
-        endScope("match-expr", inner, ctx);
-      }
+      });
       return;
     }
     case "TileCall":
@@ -463,6 +463,8 @@ function checkTileCall(
       continue;
     }
     checkExpr(v, sym, errors, ctx);
+    // Only codegen knows which of a builtin's arguments it renders as text.
+    if (BUILTIN_TILES.has(t.name)) noteShown(v, sym, ctx);
     if (arg.name !== undefined) checkBuiltinProp(t.name, arg.name, v, sym, errors, ctx);
   }
   for (const prop of t.props) {
@@ -501,6 +503,7 @@ function checkTileCall(
       checkAgainst(prop.value, PREFETCH_ARGS_TYPE, sym, errors, ctx);
     } else {
       checkExpr(prop.value, sym, errors, ctx);
+      if (prop.name === "key" || BUILTIN_TILES.has(t.name)) noteShown(prop.value, sym, ctx);
       checkBuiltinProp(t.name, prop.name, prop.value, sym, errors, ctx);
     }
   }

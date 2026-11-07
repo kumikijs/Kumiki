@@ -1,3 +1,5 @@
+import type { EpisodeLogger } from "../episode.ts";
+import { type PanicRecord, panicInfo } from "./panic.ts";
 import type { AppShape, MountedApp } from "./types.ts";
 
 const ROOT_ATTR = "data-kumiki-root";
@@ -63,26 +65,68 @@ export function withRenderingView<T>(view: Element, fn: () => T): T {
   }
 }
 
-type RenderEpisodeHost = {
-  __kumikiRenderEpisode__?: (() => string | undefined) | null | undefined;
-};
+/** `episodeId` is the episode the `panic` step landed on; `undefined` with no logger, no open episode, or a logger that threw. */
+export type RenderPanic = { rec: PanicRecord; episodeId: string | undefined };
 
-export function currentEpisodeId(): string | undefined {
-  return (globalThis as RenderEpisodeHost).__kumikiRenderEpisode__?.();
+/** Records a panic caught in a render pass as a `panic` step at `site`; the id of the episode it landed on. */
+export type RenderPanicSink = (e: unknown, site: string) => string | undefined;
+
+let warnedLogger = false;
+
+/**
+ * `read` against a host logger, or `undefined` once it throws: a boundary records from inside
+ * the tile's own catch, so a logger that throws costs the episode id rather than the fallback.
+ */
+export function fromLogger<T>(read: () => T): T | undefined {
+  try {
+    return read();
+  } catch (e) {
+    if (!warnedLogger) {
+      warnedLogger = true;
+      console.warn("kumiki: the episode logger threw; episode-id will be None", e);
+    }
+    return undefined;
+  }
 }
 
-export function withRenderingApp<T>(app: AppShape, fn: () => T): T {
+export function recordRenderPanic(
+  logger: EpisodeLogger | null | undefined,
+  e: unknown,
+  site: string,
+): RenderPanic {
+  const rec = panicInfo(e, "tile-render");
+  // A host logger's `recordPanic` may record the step and return no id, so fall back to the
+  // open episode as `fireAppError` does.
+  const episodeId = fromLogger(
+    () => logger?.recordPanic({ ...rec, location: site }) ?? logger?.currentId(),
+  );
+  return { rec, episodeId };
+}
+
+// On globalThis because a `bundle: true` app carries its own inlined runtime: the
+// `_s.boundaryPanic` that reports belongs to that copy, the `mount` that renders to the tool's,
+// and a module-local would record the panic nowhere. Shared with other runtime copies: keep the
+// signature primitive, and change the key when it changes.
+const PANICS = "__kumikiRenderPanic__";
+const host = globalThis as { [PANICS]?: RenderPanicSink | null | undefined };
+
+export function recordInRenderPass(e: unknown, site: string): RenderPanic {
+  const id = host[PANICS]?.(e, site);
+  return { rec: panicInfo(e, "tile-render"), episodeId: typeof id === "string" ? id : undefined };
+}
+
+// `panics` is the caller's rather than the app's: `renderToString` renders the same AppShape a
+// mount does, into its own bootstrap log.
+export function withRenderingApp<T>(app: AppShape, panics: RenderPanicSink, fn: () => T): T {
   const prev = renderingApp;
-  const host = globalThis as RenderEpisodeHost;
-  const prevEpisode = host.__kumikiRenderEpisode__;
-  // Renders only run from mountCore, after the imperative seams are attached.
+  const prevPanics = host[PANICS];
   renderingApp = app as MountedApp;
-  host.__kumikiRenderEpisode__ = (app as MountedApp)._episodeId;
+  host[PANICS] = panics;
   try {
     return fn();
   } finally {
     renderingApp = prev;
-    host.__kumikiRenderEpisode__ = prevEpisode;
+    host[PANICS] = prevPanics;
   }
 }
 

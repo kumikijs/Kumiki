@@ -233,26 +233,38 @@ const BRANCH_WORDS = {
 
 const NO_VALUE_OUT = "and a name carries no value out of a loop";
 
-// Only a reducer has `let` statements to bind it with.
-const bindForBoth = (ctx: Ctx): string =>
-  ctx.kind === "reducer"
-    ? 'bind it with a "let" statement where both reads see it'
-    : "bind it once where both reads see it";
+/** Where else the value a `let … in` binds can be bound so both reads see it, by what reads it. */
+function letInRebind(ctx: Ctx): string {
+  switch (ctx.kind) {
+    case "reducer":
+      return ', or bind it with a "let" statement where both reads see it';
+    // A tile's body has no `let … in` around its arguments.
+    case "tile":
+      return ', or move both reads into a tile that declares "in=" and pass it the value';
+    // Each entry is an expression of its own, so no `let … in` encloses two of them.
+    case "app-init":
+      return "";
+    default:
+      return ', or bind it with one "let … in" around both reads';
+  }
+}
 
-function endedScopeWords(name: string, { kind, sibling }: EndedScope, ctx: Ctx): string {
-  const where = DECLARED[kind];
-  switch (kind) {
+function endedScopeWords(name: string, ended: EndedScope, ctx: Ctx): string {
+  const where = DECLARED[ended.kind];
+  switch (ended.kind) {
     case "for":
       return `${where}, ${NO_VALUE_OUT}: move the read into the loop's body, or write the value to a slot there`;
     case "for-expr":
       return `${where}, ${NO_VALUE_OUT}: move the read into the loop's body`;
     case "let-in":
-      return `${where}, whose body ended before this read: move the read into that body, or ${bindForBoth(ctx)}`;
+      return `${where}, whose body ended before this read: move the read into that body${letInRebind(ctx)}`;
     case "match-expr":
-      return `${where}, which ended before this read: move the read into that arm`;
+      return ended.sibling
+        ? 'in another arm of this "match" expression: move the read into the arm that declares it'
+        : `${where}, which ended before this read: move the read into that arm`;
     default: {
-      const w = BRANCH_WORDS[kind];
-      if (sibling) {
+      const w = BRANCH_WORDS[ended.kind];
+      if (ended.sibling) {
         return `in ${w.sibling}: ${w.declare(name)}, or move the read into the ${w.part} that declares it`;
       }
       return `${where}, which ended before this read: ${w.declare(name)}, or move the read into that ${w.part}`;
@@ -270,7 +282,7 @@ function laterScopeRepair(kind: NestedScopeKind, ctx: Ctx): string {
     case "match":
       return "move the read into that arm, after the declaration";
     case "let-in":
-      return `move the read into its body, or ${bindForBoth(ctx)}`;
+      return `move the read into its body${letInRebind(ctx)}`;
     case "for-expr":
       return "move the read into the loop's body";
     case "match-expr":

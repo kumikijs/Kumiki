@@ -153,6 +153,8 @@ type Handle = nominal Text where len-gt(3) where len-lt(7)
 
 違反した値は、**連鎖を基底型の側から外側へ読む順**で**最初に失敗した述語**に対して報告される。1 つの型式の中ではそれが書かれた順であり、名前をまたぐ場合は宣言がたどる順である——`Handle` が `Short` の上に宣言されている以上、ファイル内でどちらの定義が先にあろうと `Short` の `len-lt(7)` が `Handle` 自身の `len-gt(3)` より先に来る。書き込みが reducer のバッチを破棄したときに拒否が名指すのはその述語であり（[batching](./runtime.md#a-batch-commits-all-or-nothing)）、`error` tile が描画するのもその述語のメッセージである（[エラー表示](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)）。
 
+`type-param` が指すのは型であって型コンストラクタではないので、引数を取らない：`type H(T) = …` の body の `T(Int)` は [E0210](./errors.md#e0210-type-arity-mismatch) である。型パラメータは同じ綴りのトップレベル名を覆い隠す（[§1.3.6](#_1-3-6-不変条件) 不変条件 5）ので、`type H(List) = …` の body の `List(Int)` も同じ誤りである。
+
 ### 1.3.2 ビルトイン汎化型
 
 ```
@@ -408,6 +410,10 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
   リクエストを走らせる。`Map` 自身の key も同じ書き方で格納されるので、`Map(Float, V)`
   はその値が key になるなら key になる。`Float` は `.show` を、`File` は
   `{name: $1.name, size: $1.size}` を通して key にする
+- effect は[標準 effect](./stdlib.md#_2-6-標準-effect)の名前（`navigate`・`navigate-replace`・
+  `navigate-back`・`scroll-to`・`toast`・`confirm`・`log`）を名乗れない：ランタイムはマウント時に
+  それぞれをそれ自身の名前で登録するため、その名前の宣言は決して実行されない
+  （[E0234](./errors.md#e0234-reserved-effect-name)）
 
 ### 1.5.3 例
 
@@ -636,7 +642,7 @@ reducer editTitle
 
 スコープは reducer の body と、その中の入れ子になった各文の body である：`for` の body、`if` の各分岐、そして catch-all の `_` を含む match の各アーム。そこで宣言された束縛はそのスコープとともに終わる。
 
-名前を束縛する式も、どこに書かれていてもそれ自体がひとつのスコープである：`let … in` の body、`match` 式の各アーム — 値のものも tile のものも — 、そして tile の `for` の body。束縛は式とともに終わるので、その後での読み — 後の文やオペランド、tile の兄弟の引数の中 — は [E0103](./errors.md#e0103-undef-ref-undef-slot) である。読みを式の中へ移す。`let … in` が束縛する値は、代わりに両方の読みから見える場所で束縛してもよい：reducer では `let` 文で、`fn` では両方の読みを囲む 1 つの `let … in` で、tile では tile の入力で。
+名前を束縛する式も、どこに書かれていてもそれ自体がひとつのスコープである：`let … in` の body、`match` 式の各アーム — 値のものも tile のものも — 、そして tile の `for` の body。束縛は式とともに終わるので、その後での読み — 後の文やオペランド、tile の兄弟の引数の中 — は [E0103](./errors.md#e0103-undef-ref-undef-slot) である。読みを式の中へ移す。`let … in` が束縛する値は、代わりに両方の読みから見える場所で束縛してもよい：reducer では `let` 文で、`fn` や slot の初期化式では両方の読みを囲む 1 つの `let … in` で、tile では両方の読みを `in=` を宣言した tile の中へ移してその値を渡すことで。`app.init` の各要素は式を共有しないので、そこでは読みを `let … in` の中へ移すしかない。
 
 宣言の右辺は、それが宣言する名前がスコープに入る**前**に評価される。したがって `let n = n + 1` は、宣言しようとしている束縛ではなく、シャドーイングする側の束縛を読む。
 

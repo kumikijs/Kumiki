@@ -269,7 +269,7 @@ A `let` is declared for the scope it is written in ([Language §1.6.7](./languag
 
 An expression that binds a name binds it for its own body — a `let … in`, a tile's `for`, each arm of a `match` expression, a value's or a tile's — so the name is undefined after the expression too: in a later statement or operand, and in a sibling argument of a tile, as the second `idx` in `column(for idx in xs text(idx.show), text(idx.show))`.
 
-When the name was declared earlier in the same definition in such a scope — a `let` in a body, a `for` bind, a match-arm pattern, a `let … in` — the diagnostic's `endedScope` field says which kind of scope it was — `if`, `for` or `match` for a reducer's statement body, and `let-in`, `for-expr` (a tile's `for`) or `match-expr` (an arm of a `match` expression) for an expression — and the message gives the repair for that kind. Where several scopes declared it, the message names the one that ended last: of nested statement bodies, the outermost one that ended before the read. Inside a statement body an expression is still the scope named, because a read moved into that body would still be after the expression. A name carries no value out of a loop, so a read after a `for` moves into its body, or the body writes the value to a slot:
+When the name was declared earlier in the same definition in such a scope — a `let` in a body, a `for` bind, a match-arm pattern, a `let … in` — the diagnostic's `endedScope` field says which kind of scope it was — `if`, `for` or `match` for a reducer's statement body, and `let-in`, `for-expr` (a tile's `for`) or `match-expr` (an arm of a `match` expression) for an expression — and the message gives the repair for that kind. Where several scopes declared it, the message names the one that ended last: of nested statement bodies, the outermost one that ended before the read. Inside a statement body an expression is still the scope named, also when a statement nested earlier in that body ended the name too, because a read moved into that body would still be after the expression. A name carries no value out of a loop, so a read after a `for` moves into its body, or the body writes the value to a slot:
 
 > `Reference to undefined name "idx" — it was declared in a "for" loop, and a name carries no value out of a loop: move the read into the loop's body, or write the value to a slot there (see docs/spec/language.md)`
 
@@ -277,9 +277,9 @@ After an `if` or a match, the name is declared once before it with an `if` or ma
 
 > `Reference to undefined name "n" — it was declared in an "if" branch, which ended before this read: declare it once before the "if" with an "if" expression (let n = if c then … else …), or move the read into that branch (see docs/spec/language.md)`
 
-A read in a later branch or arm of the same `if` or match is already in one, so the message points at the one that declares the name: `it was declared in the other branch of this "if"` … `the branch that declares it`, and for a match `another arm of this match` … `the arm that declares it`.
+A read in a later branch or arm of the same `if`, match or `match` expression is already in one, so the message points at the one that declares the name: `it was declared in the other branch of this "if"` … `the branch that declares it`, for a match `another arm of this match` … `the arm that declares it`, and for a `match` expression `another arm of this "match" expression` … `the arm that declares it`.
 
-After an expression, the read moves into it: into the body of the `let … in`, the body of the tile's `for` — a name carries no value out of that loop either — or the arm of the `match` expression. The value a `let … in` binds can instead be bound once where both reads see it: with a `let` statement in a reducer, as the message there says, or with one `let … in` around both reads in a `fn` or a slot initializer.
+After an expression, the read moves into it: into the body of the `let … in`, the body of the tile's `for` — a name carries no value out of that loop either — or the arm of the `match` expression. The value a `let … in` binds can instead be bound once where both reads see it, as the message says: with a `let` statement in a reducer; with one `let … in` around both reads in a `fn` or a slot initializer; in a tile, by moving both reads into a tile that declares `in=` and passing it the value. The entries of `app.init` share no expression, so there the read can only move into the `let … in`.
 
 A read **before** the scope is reported the same way. When the name is declared later in the same definition, in such a scope the read is not inside — a later statement, a later sibling argument of a tile, a later branch or arm, or a branch or arm of the `if` or `match` whose condition or scrutinee reads it — the message says where it is declared (`it is declared later, at 3:35, in a tile's "for"`), and the diagnostic's `laterScope` field carries the kind of scope, from the same list as `endedScope`. The read cannot see a value computed after it, so the repair moves the read into that scope, after the declaration; the value a `let … in` binds can instead be bound once where both reads see it. Of several such scopes the message names the first to begin, and of nested ones the innermost, which declares the name: a read moved into an outer one would still be ahead of the declaration. At most one of the two fields is set: a name declared in a scope that ended before the read and in one that begins after it is reported as the first.
 
@@ -443,7 +443,9 @@ A type name resolves to nothing: it names no `type` definition, no [standard-lib
 
 An unresolved name is *opaque*, and an opaque type accepts every value — so before this check `slot v : NoSuchType = 1` was accepted, and so was every subsequent use of `v`. One misspelling turned off value checking for everything downstream of it.
 
-Type parameters are in scope inside the body of the definition that declares them, and only there: `type Box(T) = {v: T}` is fine, `type Box(T) = {v: U}` is not. No other declaration site (`slot`, `fn`, `effect`, `tile in=`) has type parameters, so an unresolved name at one of those is always an error.
+The name is the one mistake, so E0117 is the one report of it: past it the name is opaque, and neither a value written against it nor a use of that value is an [E0201](#e0201-type-mismatch) against a type that does not exist. An **application** of the name is opaque the same way — `slot y : Foo(Int) = 1` is E0117 alone, with no E0201 on the `1` — and so is an application of a misspelt constructor such as `Lst(Int)`, wherever the application is written: a record field, a `List(…)`, an alias, a `nominal`, a `where`. An application of a standard-library constructor (`List(Int)`, `Option(Text)`) or of a program's own generic (`G(Int)` for a `type G(T) = …`) is a type, and a value is checked against its arguments as usual.
+
+Type parameters are in scope inside the body of the definition that declares them, and only there: `type Box(T) = {v: T}` is fine, `type Box(T) = {v: U}` is not. A parameter written with arguments (`T(Int)`) is in scope too, and is [E0210](#e0210-type-arity-mismatch) rather than this. No other declaration site (`slot`, `fn`, `effect`, `tile in=`) has type parameters, so an unresolved name at one of those is always an error.
 
 A **call's qualifier** is a type name too. `T.fresh()`, `T.parse(t)` and `T.show(v)` are lowered on any capitalised `T` — codegen matches the shape by regex — so a qualifier that names no type is lowered anyway unless it is refused here. `parse` reads its text by the base the qualifier resolves to ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)), and a name that resolves to no type has no base to read by. When `parse` branched on the qualifier's name instead, a misspelling did not fail, it changed which branch ran: `Itn.parse("12")` answered `Some("12")`, which an `Int` slot then held and every later sum concatenated. `fresh` and `show` discard the qualifier, so a misspelling there produces the same value — and the name is reported because a qualifier that resolves to no type is wrong on its own terms, which makes this check deliberately stricter than the lowering for those two. The qualifier resolves against the same namespace as any other type name, primitives included, and must be spelled as one: a name with a hyphen is not a qualifier, and a call written with one is [E0116](#e0116-undef-call) rather than this. A qualifier that resolves to a type **constructor** — `List`, or a `type Box(T)` — names a type and is not one; that is [E0124](#e0124-type-constructor-qualifier).
 
@@ -779,12 +781,15 @@ A `match` arm names a variant tag that is not declared by the scrutinee's union 
 A type-level application `T(...)` of a user-declared generic type passes a different number of type arguments than the declaration's parameters. Without this check, downstream type-param substitution would silently produce a short map and leave unresolved `TypeRef`s in payloads, which would then turn pattern checking into a no-op — exactly the silent-failure shape this error band is meant to catch.
 
 > `Type "<name>" expects <m> type argument(s) but got <n>`
+> `Type parameter "<param>" of "<type>" takes no type arguments, but is written "<application>"`
+
+A type parameter takes none. It names a type — the one its generic is applied to — not a type constructor, so inside `type H(T) = …` it is written bare: `T(Int)`, `T(Int, Text)` and `T()` are each reported here, at the application, wherever in the body it is written — a record field, a `List(…)`, a variant payload, a `nominal`, a `where`. The parameter shadows a top-level type of the same name ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 5), so `List(Int)` in the body of `type H(List) = …` is this too. This is the one report: past it the application is opaque, as an application of an undefined name is under [E0117](#e0117-undef-type), and a value written against `H(Text)` is not an [E0201](#e0201-type-mismatch) for it.
 
 `Tuple` takes any number of arguments, but at least one: a bare `Tuple` names no type.
 
 > `Type "Tuple" expects type arguments but got none`
 
-**Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list.
+**Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list. Write a type parameter bare (`T`), or apply a generic to it (`List(T)`) where a container of it was meant.
 
 ### E0211 `undef-tile-in-selector`
 
@@ -1231,6 +1236,20 @@ Only a declaration is refused. Writing a reserved name is how a program uses the
 
 **Fix**: Rename the program's type — `type AppPanic = {…}` — along with every use that meant it.
 
+### E0234 `reserved-effect-name`
+
+An `effect` is declared under the name of a [standard effect](./stdlib.md#_2-6-standard-effects) — `navigate`, `navigate-replace`, `navigate-back`, `scroll-to`, `toast`, `confirm` or `log`. Reported at the declaration, once per declaration.
+
+> `Effect "<name>" collides with the built-in effect <name>; emits of it never run this effect`
+
+The runtime registers each standard effect under its own name when the app mounts, over the record the program's declaration compiled to — its capability, its request and its `policy` alike. A declared `effect log cap=http.get …` would never make its request: `emit log("x")` runs the built-in `log`, which needs `log.write` and writes to the console. The declared `policy` goes with the rest of the record: the `EffectId` the emit returns is minted under the built-in's default policy, so a `latest-per-key` cancellation the program declared never happens.
+
+Every use of the name is still checked against the declaration — an `emit`'s argument against its `in=`, a `.ok` bind against its `out=`, the capability against its `cap=` — because those are the uses the program wrote for it. So a program whose uses were all written for the declaration gets this one report. A use written for the built-in is held to the declaration and is reported beside it (an `E0202` on an `emit` with the built-in's record).
+
+Only an `effect` declaration is refused. Emitting a standard effect needs no declaration. A reducer, a slot or a `fn` spelled the same way is in another namespace, and an effect whose name merely starts or ends with one (`logger`, `toasts`, `navigate2`) is a name of its own.
+
+**Fix**: Rename the effect together with every `emit`, `app.init` entry and `on=<name>.ok` / `.err` reducer that meant it — `kumiki rename <file> effect.log logRequest` rewrites them all — and emit the standard effect under its own name where the built-in is what was meant. `kumiki rename` rewrites every use, whichever effect it was written for, so an `emit` written for the built-in keeps its `E0202` under the new name and the rename is refused; such a program is renamed by hand, leaving that `emit` as it is. A declaration that restates a standard effect (`effect navigate cap=nav.push in={path: Text, …}`) is deleted instead, since the standard effect needs none. Delete its line directly: `kumiki remove` counts the emits as references to the declaration and refuses.
+
 ## E03xx — Capabilities and Purity
 
 ### E0301 `missing-capability`
@@ -1591,7 +1610,7 @@ The base is the other half of the same rule. Every predicate tests one shape of 
 
 `one-of` lowers to a strict membership test, so each literal has to be a value of the base: `Text where one-of(1, 2)` lists choices no text equals, and a `Bool`, a record or a union has no literal at all. A list with one wrong literal among right ones is reported too — that choice can never be taken.
 
-The base is read through the chain the refinement is written on — an alias, a `nominal`, an earlier `where` — so `type Handle = nominal Text` under `where positive` is reported and a `nominal Int` under `where between(0, 9)` is not. A record, a union or a container is not a base either family tests, and neither is an opaque type such as `EffectId`: whatever represents it at runtime, a program has no value of it the predicate is a question about.
+The base is read through the chain the refinement is written on — an alias, a `nominal`, an earlier `where` — so `type Handle = nominal Text` under `where positive` is reported and a `nominal Int` under `where between(0, 9)` is not. A record, a union or a container is not a base either family tests, and neither is an abstract handle type such as `EffectId`: whatever represents it at runtime, a program has no value of it the predicate is a question about.
 
 A type parameter says nothing about the base on its own, so the definition `type NonEmpty(T) = T where nonempty` is not reported. Its **application** is: the arguments are substituted into the body — through nested applications, record fields and union payloads — and a refinement they put over a base it cannot test is reported at the application, `NonEmpty(Int)` in `slot n : NonEmpty(Int)` or in `type N = NonEmpty(Int)`, and `W(Text)` for `type W(T) = nominal T where positive`. A problem the definition has whatever its arguments are is reported once, at the definition. A problem the arguments bring is reported at the application once for each refinement and base it is put over, however many paths through the body reach that refinement: `type D1(T) = D0(D0(D0(T)))` over `type D0(T) = T where nonempty` gives `D1(Int)` one E0804, not three, while `type P(T) = {a: T where nonempty, b: T where nonempty}` gives `P(Int)` two, one for each refinement.
 
