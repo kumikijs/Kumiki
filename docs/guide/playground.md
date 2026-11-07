@@ -15,4 +15,6 @@ For [WebMCP](https://github.com/webmachinelearning/webmcp)-capable browsers/agen
 | `kumiki_load_example` | Loads an example into the editor by name |
 | `kumiki_set_source` | Replaces the editor's source and previews it |
 
+Each diagnostic is `{code, kind, message, line, col, severity}`, the shape the `@kumikijs/mcp` server returns. A program whose only diagnostics are warnings still compiles: the playground previews it and lists the warnings, and `kumiki_compile` answers `ok: true`.
+
 For local CLI / editor integration, there is also the [`@kumikijs/mcp`](https://github.com/kumikijs/Kumiki/tree/main/packages/mcp) server that runs over stdio.
