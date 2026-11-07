@@ -7,7 +7,12 @@ import type {
 } from "@kumikijs/runtime";
 import { _stdlibTest, dispatchFault, replayEpisodes } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { type ReplayableApp, replayableApp, replayInto } from "./helpers/episode-apps.ts";
+import {
+  type ReplayableApp,
+  recordDispatch,
+  replayableApp,
+  replayInto,
+} from "./helpers/episode-apps.ts";
 
 function makeCounterApp(): ReplayableApp {
   return replayableApp({
@@ -347,6 +352,98 @@ describe("_stdlibTest.runEpisodeTest reports the failure behind a slot divergenc
       expect: { slotsEqual: { error: null }, ...flags },
     });
     expect(matching).toEqual({ name: "err-unasserted", pass: true });
+  });
+});
+
+describe("a `volatile` slot under `slots-equal`", () => {
+  /** The counter whose `inc` also writes `lastClick`, declared `volatile` when `volatile` is true. */
+  function makeLastClickApp(volatile: boolean): ReplayableApp {
+    return replayableApp({
+      slots: { count: { value: 0 }, lastClick: { value: "", volatile } },
+      reducers: [
+        {
+          name: "inc",
+          event: { kind: "ui", ev: "click" },
+          apply: (live) => ({
+            slots: { count: (live.count as number) + 1, lastClick: "clicked" },
+            emits: [],
+          }),
+        },
+      ],
+    });
+  }
+
+  const recorded = recordDispatch(makeLastClickApp(true), "inc");
+
+  /** A log recorded before `lastClick` was volatile, from an `inc` that wrote another value. */
+  const recordedBeforeVolatile: EpisodeLogEntry[] = [
+    {
+      ...incEpisode(1),
+      steps: [
+        {
+          kind: "reducer",
+          name: "inc",
+          "slot-diffs": [
+            { name: "count", before: 0, after: 1 },
+            { name: "lastClick", before: "", after: "tapped" },
+          ],
+          emits: [],
+        },
+      ],
+    },
+  ];
+
+  function lastClickTest(
+    volatile: boolean,
+    slotsEqual: "from-log" | Record<string, unknown>,
+    episodes = recorded,
+  ): TestResult {
+    return _stdlibTest.runEpisodeTest({
+      name: "last-click",
+      app: makeLastClickApp(volatile),
+      episodes,
+      mocks: {},
+      expect: { slotsEqual, noPanics: true },
+    });
+  }
+
+  it("is left out of the log the program records", () => {
+    const diffs = recorded.flatMap((ep) =>
+      ep.steps.flatMap((s) => (s.kind === "reducer" ? (s["slot-diffs"] ?? []) : [])),
+    );
+    expect(diffs).toEqual([{ name: "count", before: 0, after: 1 }]);
+  });
+
+  it.each([
+    ["`from-log`, over the program that recorded the log", true, "from-log" as const],
+    ["a record naming the slot at the value replay writes", true, { lastClick: "clicked" }],
+  ])("passes when `slots-equal` is %s", (_, volatile, slotsEqual) => {
+    expect(lastClickTest(volatile, slotsEqual)).toEqual({ name: "last-click", pass: true });
+  });
+
+  it("leaves the slot out of `from-log` even when an older log recorded a write to it", () => {
+    expect(lastClickTest(true, "from-log", recordedBeforeVolatile)).toEqual({
+      name: "last-click",
+      pass: true,
+    });
+    expect(lastClickTest(false, "from-log", recordedBeforeVolatile).leaf).toEqual({
+      expected: "tapped",
+      actual: "clicked",
+    });
+  });
+
+  it.each([
+    [
+      "`from-log`, once the slot is not volatile and the log never wrote it",
+      false,
+      "from-log" as const,
+    ],
+    ["a record naming the slot at another value", true, { lastClick: "" }],
+  ])("fails at the slot when `slots-equal` is %s", (_, volatile, slotsEqual) => {
+    const result = lastClickTest(volatile, slotsEqual);
+    expect(result.pass).toBe(false);
+    expect(result.diffAt).toBe("slots.lastClick");
+    expect(result.leaf).toEqual({ expected: "", actual: "clicked" });
   });
 });
 

@@ -347,7 +347,7 @@ episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
                  | 'no-errors' ':' bool
 ```
 
-`slots-equal: from-log` は最終 slot をログが記録した値と比較する。レコードを書けば、比較する slot とその期待値をそれで名指す。
+`slots-equal: from-log` は最終 slot をログが記録した値と比較する。レコードを書けば、比較する slot とその期待値をそれで名指す。`volatile` な slot はログに書かれないので（[store 層の構文](./language.md#_1-4-1-構文)）、`from-log` はそれを比較から外す。古いログがその slot への書き込みを記録していても同じである。それ以外の slot は、ログがその slot について最後に記録した値を、ログが一度も書かなかったときは初期値を期待される。レコードは、名指したすべての slot を `volatile` かどうかにかかわらず比較する。
 
 `no-panics: true` は replay した reducer が panic したときに、`no-errors: true` は effect の `err` がどの `.err` reducer にも届かないときに（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）テストを失敗させる。どちらも、そのキーが `true` のときにだけ報告される。ランナーはまずすべての episode が replay されたことを確かめ（[用途](#_8-6-2-use-cases)）、次にこの 2 つをこの順に、どちらも `slots-equal` より先に判定し、最初に失敗したものを報告する。panic した reducer は何も書かず何も emit せず、取りこぼされた `err` はどの reducer も走らせないので、そのどちらかが届くはずだった slot は元の値のままになる。先に比較すれば、slot の差分が原因の代わりにその症状を報告してしまう。
 
