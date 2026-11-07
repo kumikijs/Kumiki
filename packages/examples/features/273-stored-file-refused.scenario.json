@@ -1,0 +1,44 @@
+{
+  "effects": {
+    "save": [
+      {
+        "outcome": "err",
+        "value": "storage.write: the value for \"f\" holds the File \"a.txt\", and localStorage would keep only its name, size and type, not the file; nothing was stored"
+      }
+    ],
+    "load": [{ "outcome": "ok", "value": { "_tag": "None" } }]
+  },
+  "steps": [
+    {
+      "label": "Save with no file picked writes nothing",
+      "do": { "click": "#save" },
+      "expect": { "noErrors": true, "state": { "shown": "idle" } }
+    },
+    {
+      "label": "a file is picked",
+      "do": {
+        "dispatch": "pick",
+        "payload": { "files": [{ "name": "a.txt", "size": 2, "type": "text/plain" }] }
+      },
+      "expect": {
+        "noErrors": true,
+        "state": { "picked": { "_tag": "Some", "_0": { "name": "a.txt" } } }
+      }
+    },
+    {
+      "label": "Save answers err, naming the key and the file",
+      "do": { "click": "#save" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "shown: not saved: storage.write: the value for \"f\" holds the File \"a.txt\""
+        ]
+      }
+    },
+    {
+      "label": "Load then finds nothing under the key",
+      "do": { "click": "#load" },
+      "expect": { "noErrors": true, "domIncludes": ["shown: nothing stored"] }
+    }
+  ]
+}
