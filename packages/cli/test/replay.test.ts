@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 import type { ReplayEvent } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { formatEvent } from "../src/replay.ts";
-import { runCli, SPAWN } from "./helpers/cli.ts";
+import { runCli, SPAWN, spawns } from "./helpers/cli.ts";
+import { warningLinesOf } from "./helpers/diagnostics.ts";
 import { seed, seedLines } from "./helpers/files.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -195,5 +196,33 @@ describe("kumiki replay", () => {
     const { out, code } = runCli(["replay", COUNTER]);
     expect(code).toBe(2);
     expect(out).toMatch(/--from-log/);
+  });
+});
+
+describe("kumiki replay and the warnings of the compile it runs", () => {
+  /** The counter with a reducer on a `ui.focus` its tile can never fire: W0212. */
+  const WARNED = `${readFileSync(COUNTER, "utf8")}
+reducer peek on=ui.focus(Card) do= count := count
+tile Card = box(heading("Count"))
+`;
+  // As `kumiki check` prints it, computed in-process: the line names no file.
+  const warning = warningLinesOf(WARNED);
+
+  it("the warned program warns once, as the other cases assume", () => {
+    expect(warning).toMatch(/^[^\n]*\bW0212 ui-event-tile-mismatch at \d+:\d+: [^\n]+\n$/);
+  });
+
+  it("prints them on stderr and its output as for a clean program", spawns(2), () => {
+    const clean = replayCounter("ep_0001");
+    const warned = runCli(["replay", seed(WARNED), "--from-log", COUNTER_LOG, "ep_0001"]);
+    expect(warned).toMatchObject({ stdout: clean.stdout, stderr: warning, code: 0 });
+    expect(clean).toMatchObject({ stderr: "", code: 0 });
+  });
+
+  it("prints them ahead of what a failed replay prints on stderr", SPAWN, () => {
+    const renamed = seed(WARNED.replace(/\binc\b/g, "bump"));
+    const { stderr, code } = runCli(["replay", renamed, "--from-log", COUNTER_LOG, "ep_0001"]);
+    expect(code).toBe(1);
+    expect(stderr.split("not replayed: ")[0]).toBe(warning);
   });
 });
