@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { lockDef, readOpLog, replaceDef, unlockDef } from "@kumikijs/cli";
 import { app } from "@kumikijs/examples";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -194,6 +195,16 @@ describe("lock", () => {
     expect(() => replaceDef(file, "slot.count", "N = 2")).toThrowError(
       /lock violation: slot\.count is locked by agent:b/,
     );
+  });
+});
+
+describe("lock and unlock", () => {
+  it("refuse a file that does not exist, creating no lock file", () => {
+    const missing = join(dirname(file), "missing.kumiki");
+    const refusal = `File "${missing}" not found`;
+    expect(() => lockDef(missing, "agent:a", "slot.*")).toThrowError(refusal);
+    expect(() => unlockDef(missing, "agent:a")).toThrowError(refusal);
+    expect(existsSync(`${missing}.kumiki-locks.json`)).toBe(false);
   });
 });
 

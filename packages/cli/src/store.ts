@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Def, Program, Token } from "@kumikijs/compiler";
 import { buildDefIndex, lex, parse, type Reference, referencesIn } from "@kumikijs/compiler";
 
@@ -40,6 +41,18 @@ const LAYER_OF = {
 } as const satisfies Record<Def["kind"], string>;
 
 export const LAYERS = Object.values(LAYER_OF);
+
+// Asks only whether the path exists, not whether it parses: `view --history` is wanted most for a
+// file that no longer parses.
+export function requireSourceFile(path: string): string {
+  const abs = resolve(process.cwd(), path);
+  // `undefined` is a path with no entry (ENOENT, ENOTDIR). Any other failure
+  // to look, such as a directory that may not be searched, throws as it is.
+  if (statSync(abs, { throwIfNoEntry: false }) === undefined) {
+    throw new Error(`File "${abs}" not found`);
+  }
+  return abs;
+}
 
 export function load(path: string): Store {
   return loadSource(readFileSync(path, "utf8"));

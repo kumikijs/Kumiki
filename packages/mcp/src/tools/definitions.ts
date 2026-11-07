@@ -35,7 +35,7 @@ export function registerDefinitionTools(tool: RegisterTool): void {
       },
     },
     async ({ path, layer }) => {
-      const entries = listDefs(load(absPath(path)), layer).map(
+      const entries = listDefs(load(requireSourceFile(path)), layer).map(
         (e) => `${e.layer}.${e.name}  (lines ${e.range.startLine}-${e.range.endLine})`,
       );
       return text(entries.join("\n") || "(no definitions)");
@@ -55,7 +55,7 @@ export function registerDefinitionTools(tool: RegisterTool): void {
       },
     },
     async ({ path, name, withDeps }) => {
-      const store = load(absPath(path));
+      const store = load(requireSourceFile(path));
       const out = withDeps ? viewWithDeps(store, name) : viewDef(store, name);
       if (out === null) throw notFound(name);
       return text(out);
@@ -70,7 +70,7 @@ export function registerDefinitionTools(tool: RegisterTool): void {
       inputSchema: { path: z.string(), name: z.string() },
     },
     async ({ path, name }) => {
-      const store = load(absPath(path));
+      const store = load(requireSourceFile(path));
       if (!store.byQName.has(name)) throw notFound(name);
       const refs = findReferences(store, name).map((r) => `${r.qname} @ line ${r.line}`);
       return text(refs.join("\n") || "(no references)");
