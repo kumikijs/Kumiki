@@ -7,7 +7,7 @@ import { loadApp, loadSource } from "./helpers/load.ts";
 import { failureDetail } from "./helpers/scenario.ts";
 
 const PATTERN = "yyyy-MM-dd HH:mm";
-// What `format(PATTERN)` renders for a value that names no instant (stdlib.md §2.2.8).
+// What `format(PATTERN)` renders for a value that names no instant (stdlib.md, Time).
 const NO_INSTANT = "0NaN-NaN-NaN NaN:NaN";
 
 describe("format reads a Time held as text by Time.parse's grammar", () => {
@@ -55,13 +55,15 @@ describe("format reads a Time held as text by Time.parse's grammar", () => {
 
 describe("format on a Time the program keeps in a Set", () => {
   // A Set stores its elements as object keys, which are text; `filter` hands each one back as
-  // the number it was added as, so `format` reads the instant rather than the digits.
+  // the number it was added as, so `format` reads the instant rather than the digits. A failed
+  // parse lands on its own arm instead of on a fallback instant, which `now` would make pass for
+  // the right year whenever the clock reads that year.
   it("keeps an element whose year filter reads through format", async () => {
     const shape = await loadSource(`
 slot days : Set(Time) = {}
 slot kept : Int = -1
 reducer go on=ui.click(Go)
-    do= kept := days.add(Time.parse("2026-03-07T10:00:00Z").get-or(now)).filter($1.format("yyyy") == "2026").size
+    do= kept := match Time.parse("2026-03-07T10:00:00Z") with | Some(t) -> days.add(t).filter($1.format("yyyy") == "2026").size | None -> -2
 tile Go = button(text="go")
 tile App = column(Go)
 app A
