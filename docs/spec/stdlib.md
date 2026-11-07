@@ -354,7 +354,7 @@ to-ms                       : Int
 
 Time / Duration are represented at runtime as a **raw number of milliseconds**. An operation like `time.plus(Duration.h(72))` is expanded into a simple ms addition. A `Duration` is signed: `a.diff(b)` is negative when `a` is the earlier instant ([§2.2.8](#_2-2-8-time)).
 
-That is the unit a program sees as well: `now` and `Time.parse` answer milliseconds since the Unix epoch, `to-ms` hands the number back as it is, and two instants one second apart `diff` to `Duration.s(1)`, whose `to-ms` is `1000`.
+Milliseconds are also the unit a program sees: `now` answers milliseconds since the Unix epoch, and two instants one second apart `diff` to `Duration.s(1)`, whose `to-ms` is `1000`.
 
 Every constructor takes its magnitude, and dropping the parentheses does not make one a value: `Duration.h` is read as a call given no argument, which is the same [E0213](./errors.md#e0213-call-arity-mismatch) as `Duration.h()`. `Bytes.*` below is read the same way. Before that, the bare spelling was a field read that evaluated to nothing at all — and a duration of nothing is a duration of zero, which nothing reported.
 
