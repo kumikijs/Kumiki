@@ -111,7 +111,8 @@ describe("a run reads and removes only the overlays it opened", () => {
           if (n instanceof Element && n.matches(OVERLAYS)) opened.push(n);
       }
     });
-    observer.observe(document.body, { childList: true });
+    // The whole subtree: a toast's banner goes into the stack, not straight into <body>.
+    observer.observe(document.body, { childList: true, subtree: true });
     const report = await run({
       steps: [{ do: { clickText: "Notify" } }, { do: { clickText: "Ask" } }],
     });

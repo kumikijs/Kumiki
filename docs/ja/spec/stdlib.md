@@ -629,7 +629,7 @@ effect navigate-back   cap=nav.back  in=Unit  out=Unit
 
 ### 2.6.2 トースト
 
-ランタイムが描画するバナーは `data-kumiki-toast`（テストが選択に使うマーカ）と `data-level` を持つ。
+ランタイムが描画するバナーは `data-kumiki-toast`（テストが選択に使うマーカ）と `data-level` を持つ。その閉じるボタンは `data-kumiki-toast-dismiss` を持ち、同時に画面にあるバナーは 1 つの要素 `data-kumiki-toast-stack` に収まる（[ライフサイクル §7.7](./lifecycle.md#_7-7-トースト)）。
 
 ```kumiki fragment
 effect toast       cap=notification.show
