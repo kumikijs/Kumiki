@@ -351,6 +351,8 @@ episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
 
 ログの episode は、`kumiki replay` と同じく、ログに並んだ順 — trigger が始まった順 — に 1 つずつ丸ごと replay される（[runtime.md §10.5.3](./runtime.md#_10-5-3-replay)）。したがって、実行が後の trigger より後に受け取った effect の結果は、replay ではその trigger より先に `.ok` / `.err` reducer に届き、その reducer がその trigger の書いた値から計算する slot は、ログの記録とは異なる値で終わることがある。
 
+bind したコントロールが書いた slot は、その書き込みの `bind` step に記録される（[runtime.md §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）。`from-log` は reducer の書いた値を `reducer` step から読むのと同じく、その値をその step の `slot-diffs` から読む。したがって、どの reducer も後に続かない入力で終わるログは、フィールドの slot を入力された値で期待し、書き込みをやり直す replay もそこで終わる。
+
 `no-panics: true` は replay した reducer が panic したときに、`no-errors: true` は effect の `err` がどの `.err` reducer にも届かないときに（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）テストを失敗させる。どちらも、そのキーが `true` のときにだけ報告される。ランナーはまずすべての episode が replay されたことを確かめ（[用途](#_8-6-2-use-cases)）、次にこの 2 つをこの順に、どちらも `slots-equal` より先に判定し、最初に失敗したものを報告する。panic した reducer は何も書かず何も emit せず、取りこぼされた `err` はどの reducer も走らせないので、そのどちらかが届くはずだった slot は元の値のままになる。先に比較すれば、slot の差分が原因の代わりにその症状を報告してしまう。
 
 ```
@@ -381,7 +383,7 @@ FAIL  replay-renamed (Nms)
   diff at:  episodes
 ```
 
-replay にはそのような episode を走らせる手段がなく（[ランタイム §10.5.3](./runtime.md#_10-5-3-replay)）、replay されない episode は panic もエラーも起こさないので、`no-panics` / `no-errors` だけでは、それを何もテストしないものにした改名そのものの上で成り立ってしまう。ログを記録し直すか、reducer にログの持つ名前を付ける。`name` のない入口の `reducer` step も同じように失敗させ、その報告は `reducer step <n> has no name` である。入口の reducer がまったくない `ssr.hydrate` の bootstrap は reducer が 1 つも走らなかった episode であり、クリーンに replay される。それ以外の episode に入口の reducer がなければ、`no reducer step` で失敗させる。その理由はランタイム §10.5.3 にある。
+replay にはそのような episode を走らせる手段がなく（[ランタイム §10.5.3](./runtime.md#_10-5-3-replay)）、replay されない episode は panic もエラーも起こさないので、`no-panics` / `no-errors` だけでは、それを何もテストしないものにした改名そのものの上で成り立ってしまう。ログを記録し直すか、reducer にログの持つ名前を付ける。`name` のない入口の `reducer` step も同じように失敗させ、その報告は `reducer step <n> has no name` である。入口の reducer がまったくない `ssr.hydrate` の bootstrap は reducer が 1 つも走らなかった episode であり、クリーンに replay される。bind したコントロールの書き込みが記録した episode は、その書き込みを replay する。それ以外の episode に入口の reducer がなければ、`no reducer step` で失敗させる。その理由はランタイム §10.5.3 にある。
 
 ## 8.7 ランナー
 

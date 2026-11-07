@@ -78,6 +78,37 @@ describe("formatEvent episode-start", () => {
   });
 });
 
+describe("formatEvent bind", () => {
+  const bind = (rest: Partial<Extract<ReplayEvent, { kind: "bind" }>>): ReplayEvent => ({
+    kind: "bind",
+    episodeId: "ep_0001",
+    stepIndex: 1,
+    name: "draft",
+    value: "milk",
+    slotDiffs: [],
+    ...rest,
+  });
+
+  it.each([
+    [
+      "the slot it moved",
+      bind({ slotDiffs: [{ name: "draft", before: "", after: "milk" }] }),
+      `  [bind] draft  draft: "" -> "milk"`,
+    ],
+    [
+      "the whole slot a path bind moved",
+      bind({
+        name: "form.title",
+        slotDiffs: [{ name: "form", before: { title: "" }, after: { title: "milk" } }],
+      }),
+      `  [bind] form.title  form: {"title":""} -> {"title":"milk"}`,
+    ],
+    ["the value a refinement refused", bind({ refused: true }), `  [bind] draft  (refused "milk")`],
+  ])("prints %s", (_, ev, line) => {
+    expect(formatEvent(ev)).toBe(line);
+  });
+});
+
 describe("kumiki replay", () => {
   it("replays a single episode and prints its steps + final slots", SPAWN, () => {
     const { out, code } = replayCounter("ep_0001");
