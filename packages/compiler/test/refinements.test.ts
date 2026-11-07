@@ -7,7 +7,7 @@ import {
   refinementProblem,
   refinementToJs,
 } from "../src/refinements.ts";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf, pointedErrorsOf } from "./helpers/diagnostics.ts";
 
 const NO_POS = { line: 0, col: 0 };
 const refinement = (pred: string, args: (number | string)[] = []): Refinement => ({
@@ -414,4 +414,53 @@ describe("a predicate over a base type it cannot test is reported", () => {
       expect(diagnostics(src)).toEqual([]);
     });
   }
+});
+
+// A refinement's check is built from the number each literal argument was read as, so one past the
+// safe range would test a bound other than the one written.
+describe("a number argument past the safe range where an Int is meant", () => {
+  const BIG = "9007199254740993";
+  const reported = (defs: string) =>
+    pointedErrorsOf(`${defs}\n${TAIL}`).map(({ code, text }) => ({ code, text }));
+
+  it("reports between's bound over an Int at the literal, naming it as written", () => {
+    const src = `type T = Int where between(0, ${BIG})\nslot t : T = 1\n${TAIL}`;
+    expect(pointedErrorsOf(src)).toEqual([
+      {
+        code: "E0217",
+        message: `Int literal ${BIG} is outside the safe range -9007199254740991 through 9007199254740991 and was rounded to 9007199254740992`,
+        text: `${BIG})`,
+      },
+    ]);
+  });
+
+  it.each([
+    ["between's lower bound, signed", `type T = Int where between(-${BIG}, 0)`, `-${BIG}, 0)`],
+    ["one-of's literal", `type T = Int where one-of(1, ${BIG})`, `${BIG})`],
+    ["a nominal Int's bound", `type T = nominal Int where between(0, ${BIG})`, `${BIG})`],
+    ["an alias of Int's bound", `type N = Int\ntype T = N where between(0, ${BIG})`, `${BIG})`],
+    ["a slot's own refinement", `slot t : Int where between(0, ${BIG}) = 1`, `${BIG}) = 1`],
+    ["len-eq's count, a whole number", `type T = Text where len-eq(${BIG})`, `${BIG})`],
+    ["len-lt's count, a whole number", `type T = Text where len-lt(${BIG})`, `${BIG})`],
+    ["len-gt's count, a whole number", `type T = Text where len-gt(${BIG})`, `${BIG})`],
+  ])("reports %s, once, at the literal", (_, defs, text) => {
+    expect(reported(defs)).toEqual([{ code: "E0217", text }]);
+  });
+
+  it("reports each argument past the bound on its own", () => {
+    expect(reported(`type T = Int where between(-${BIG}, ${BIG})`)).toEqual([
+      { code: "E0217", text: `-${BIG}, ${BIG})` },
+      { code: "E0217", text: `${BIG})` },
+    ]);
+  });
+
+  it.each([
+    `type T = Int where between(-9007199254740991, 9007199254740991)`,
+    `type T = Int where one-of(-9007199254740991, 0)`,
+    // Over a Float a bound is a Float, which holds an approximation by nature, as a Float slot does.
+    `type T = Float where between(0, ${BIG})`,
+    `type T = Float where one-of(0.5, ${BIG})`,
+  ])("accepts %s", (defs) => {
+    expect(reported(defs)).toEqual([]);
+  });
 });
