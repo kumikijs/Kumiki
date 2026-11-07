@@ -33,7 +33,10 @@ export class TypeParser extends TokenStream {
       return { kind: "TypeUnion", variants, pos: first.pos };
     }
     let refined = first;
+    let built = 0;
     while (this.matchKw("where")) {
+      built += 1;
+      this.widen(built);
       this.next();
       const ref = this.parseRefinement();
       refined = { kind: "TypeRefinement", inner: refined, refinement: ref, pos: refined.pos };
@@ -41,10 +44,30 @@ export class TypeParser extends TokenStream {
     return refined;
   }
 
+  /** In a union a primitive's name is a nullary variant, as any other bare name is. */
   protected typeAsVariant(t: TypeExpr): { name: string; payloads: TypeExpr[]; pos: Pos } {
-    if (t.kind === "TypeRef") return { name: t.name, payloads: [], pos: t.pos };
-    if (t.kind === "TypeApp") return { name: t.name, payloads: t.args, pos: t.pos };
-    throw new ParseError(`Unsupported variant form`, t.pos);
+    switch (t.kind) {
+      case "TypeRef":
+      case "TypePrim":
+        return { name: t.name, payloads: [], pos: t.pos };
+      case "TypeApp":
+        return { name: t.name, payloads: t.args, pos: t.pos };
+      case "TypeRecord":
+        throw this.notAVariant("a record", t.pos);
+      case "TypeNominal":
+        throw this.notAVariant("a `nominal` type", t.pos);
+      case "TypeRefinement":
+        throw this.notAVariant("a refinement (`… where …`)", t.pos);
+      case "TypeUnion":
+        throw this.notAVariant("a union", t.pos);
+    }
+  }
+
+  private notAVariant(form: string, pos: Pos): ParseError {
+    return new ParseError(
+      `Unsupported variant form: a variant is a name, optionally with a payload (\`Name\` or \`Name(T, …)\`), not ${form}`,
+      pos,
+    );
   }
 
   protected parseTypeUnionAtom(): TypeExpr {
@@ -133,16 +156,9 @@ export class TypeParser extends TokenStream {
   }
 
   protected parseRefinementArg(): number | string {
+    const n = this.tryEatSignedNumber();
+    if (n !== undefined) return n;
     const t = this.peek();
-    if (t.kind === "op" && t.value === "-" && this.matchTAt(1, "num")) {
-      this.next();
-      const n = this.next() as { value: number };
-      return -n.value;
-    }
-    if (t.kind === "num") {
-      this.next();
-      return t.value;
-    }
     if (t.kind === "str") {
       this.next();
       return t.value;

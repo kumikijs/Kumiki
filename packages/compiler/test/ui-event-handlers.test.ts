@@ -163,6 +163,16 @@ app A
 `;
     expect(codesOf(src)).toEqual(["W0213"]);
   });
+
+  it("reports a user tile whose only firing kind is a nested tile's fallback", () => {
+    // The fallback is rendered without the handlers written at `Outer`'s call site.
+    const src = withApp(`${REDUCER}
+tile Fb in=PanicInfo = button(text="Retry")
+tile Risky error-boundary = Fb = text("ok")
+tile Outer = Risky
+tile App = column(Outer(onClick=open), InBtn, text(n.show))`);
+    expect(codesOf(src)).toEqual(["W0213"]);
+  });
 });
 
 describe("known gap: W0213 does not see a firing kind that is not the root", () => {
@@ -277,6 +287,8 @@ app A
     { kind: "slider", tile: "slider(bind=vol, min=0, max=10)", evs: ALL },
     { kind: "link", tile: 'link(to="/", text="home")', evs: ALL },
     { kind: "select", tile: "select(bind=size, options=sizes())", evs: ALL },
+    { kind: "video", tile: 'video(src="/a.mp4", controls=true)', evs: ALL },
+    { kind: "video without controls", tile: 'video(src="/a.mp4")', evs: ALL },
     { kind: "check", tile: "check(value=done)", evs: ["key"] },
     { kind: "radio", tile: 'radio(group="g", selected=done)', evs: ["key"] },
     { kind: "switch", tile: "switch(value=done)", evs: ["key"] },
@@ -325,6 +337,32 @@ app A
       });
     }
   }
+
+  it.each(
+    ALL,
+  )("reports ui.%s on details with what keeps it away, and lifts nothing onto it", (ev) => {
+    const tile = 'details(summary="Question", text(note))';
+    const reported = checkSource(source(ev, tile));
+    expect(reported.map((e) => e.code)).toEqual(["W0212"]);
+    expect(reported[0]?.message).toContain("its <summary>");
+    expect(loweredOf(source(ev, tile))).not.toContain(`${HANDLER[ev]}: _h("hit")`);
+  });
+
+  const lifted = (tile: string): number =>
+    loweredOf(source("key", tile)).split(`onKeyDown: _h("hit")`).length - 1;
+
+  // A listener on the <details> as well as the control's own would run the
+  // reducer twice per key, since the control's keydown bubbles there. A check
+  // is a wrapped kind too, whose <label> does hear the key.
+  it.each([
+    ["input", "input(bind=note)"],
+    ["check", "check(value=done)"],
+  ])("lifts ui.key on a details onto the %s in its panel, and onto nothing else", (_, inner) => {
+    const details = `details(summary="Question", ${inner})`;
+    expect(codesOf(source("key", details))).toEqual([]);
+    expect(lifted(details)).toBeGreaterThan(0);
+    expect(lifted(details)).toBe(lifted(`box(${inner})`));
+  });
 
   it("leaves ui.change on an editable alone, which is the rule rather than the same gap", () => {
     expect(codesOf(source("change", "editable(bind=note)"))).toEqual(["W0212"]);

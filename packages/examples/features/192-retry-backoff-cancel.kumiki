@@ -1,0 +1,40 @@
+# Feature: a request cancelled while it waits out a retry backoff stops at
+# once (http.md).
+#
+# `loadQuote` retries a 5xx once, 500ms later, and `policy=latest` cancels the
+# running request when another is emitted. When the first answer is a 503 and
+# Load is clicked again inside those 500ms, the waiting request ends there: its
+# `.err` fires with `aborted` before the new request answers, and it makes no
+# second attempt. Stop does the same through `http.cancel`. `log` is written by
+# both result reducers, so it reads in the order they fired.
+
+type Quote = {text: Text, author: Text}
+
+slot quote  : Text     = "none"
+slot log    : Text     = ""
+slot lastId : EffectId = EffectId.none
+
+effect loadQuote cap=http.get
+                 in=Unit
+                 out=Result(Quote, HttpError)
+                 policy=latest
+                 retry=linear(2, 500ms)
+                 map-request={url: "/quote", decode: Decoder.Json(Quote)}
+
+effect cancelLoad cap=http.cancel in=EffectId out=Unit
+
+reducer load   on=ui.click(LoadBtn)    do= lastId := emit loadQuote()
+reducer stop   on=ui.click(StopBtn)    do= emit cancelLoad(lastId)
+reducer loaded on=loadQuote.ok($q, _)  do= quote := $q.text
+                                           log := log + "ok;"
+reducer failed on=loadQuote.err($e, _) do= log := log + $e.message + ";"
+
+tile LoadBtn = button(text="Load", onClick=load) {id: "load"}
+tile StopBtn = button(text="Stop", onClick=stop) {id: "stop"}
+tile App = column(LoadBtn, StopBtn, text("quote: " + quote), text("log: " + log))
+           {pad: "lg", gap: "md"}
+
+app RetryBackoffCancel
+    caps   = [http.get, http.cancel]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
