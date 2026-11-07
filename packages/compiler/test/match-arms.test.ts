@@ -1,16 +1,12 @@
 import { spawnSync } from "node:child_process";
-import { rmSync } from "node:fs";
-import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { compileOrFail, LOADABLE, type ReducerShape, writeTmpFile } from "./helpers/module.ts";
 import { withApp } from "./helpers/programs.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
 
-const made: string[] = [];
-// A 2,000-arm module is hundreds of kilobytes.
-afterAll(() => {
-  for (const d of made) rmSync(d, { recursive: true, force: true });
-});
+// Under the package: the emitted module imports `@kumikijs/runtime` by name.
+const TMP = scratchRoot(import.meta.url);
 
 // A quarter of V8's default. How many nested statements the default holds differs from one
 // machine to the next, so the check fixes the stack rather than inherit it.
@@ -28,9 +24,7 @@ type LoadedApp = {
 };
 
 function emit(source: string): string {
-  const file = writeTmpFile("match-arms", "app.mjs", compileOrFail(source, LOADABLE));
-  made.push(dirname(file));
-  return file;
+  return writeTmpFile(TMP, "match-arms", "app.mjs", compileOrFail(source, LOADABLE));
 }
 
 /** Compiled on first use, so a program that does not compile fails its tests rather than the file's collection. */
