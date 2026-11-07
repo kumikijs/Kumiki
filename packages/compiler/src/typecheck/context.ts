@@ -12,16 +12,33 @@ import type {
 } from "../ast.ts";
 import { callsBuiltin } from "../builtin-calls.ts";
 
+export type Severity = "error" | "warning";
+
 export type KumikiError = {
   code: string;
   kind: string;
   message: string;
   pos: Pos;
-  severity?: "error" | "warning";
+  severity?: Severity;
   unrendered?: "positional" | "text-prop" | "text-shadowed";
+  /**
+   * E0103 only: the kind of nested body that declared the name and ended before this read;
+   * `kumiki fix` reads it to skip the rename.
+   */
+  endedScope?: StatementScope;
   /** E0218 only: the member whose append alone makes the target a List; `kumiki fix` reads it. */
   accessor?: "keys" | "to-list";
 };
+
+export function severityOf(d: Pick<KumikiError, "severity">): Severity {
+  return d.severity ?? "error";
+}
+
+/** The nested statement bodies of a reducer, each a scope of its own. */
+export type StatementScope = "if" | "for" | "match";
+
+/** The body a name ended with; `sibling` while a later branch or arm of its statement is checked. */
+export type EndedScope = { kind: StatementScope; sibling: boolean };
 
 export type SymbolTable = {
   types: Map<string, TypeDef>;
@@ -67,6 +84,8 @@ export type Ctx = {
   routeReadsSeen?: { name: string; pos: Pos }[];
   fragmentFnCallsSeen?: { name: string; pos: Pos }[];
   undeclaredInputReads?: Pos[];
+  /** Names a reducer's ended bodies declared and the enclosing scope does not bind. */
+  endedScopes?: Map<string, EndedScope>;
   /** The effect whose own expressions are checked, when it declares `in=Unit` and so binds no `$1`. */
   noInputEffect?: string;
   oneValueFragment?: { method: string; hides: boolean };
@@ -86,7 +105,7 @@ export function bindLocal(
 }
 
 /** A copy of `ctx` whose bindings can be extended without touching the parent. */
-export function innerScope(ctx: Ctx): Ctx {
+export function innerScope<C extends Ctx>(ctx: C): C {
   return {
     ...ctx,
     localBinds: new Set(ctx.localBinds),
