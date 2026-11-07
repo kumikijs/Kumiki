@@ -42,6 +42,7 @@ import {
   qualifiedMember,
 } from "./infer.ts";
 import {
+  accumulatorType,
   classifyFieldAccess,
   classifyMember,
   fragmentBindings,
@@ -417,8 +418,11 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             body = fragmentCall(a.name, arity, a.pos);
           }
           const [p1, p2] = fragmentBindings(recvType, e, sym, ctx);
+          // `fold`'s fragment answers the next accumulator, so it is checked against that.
+          const acc =
+            fragment.second === "element" ? accumulatorType(p1, p2, body, sym, ctx) : null;
           const inner = innerScope(ctx);
-          bindLocal(inner, "$1", p1);
+          bindLocal(inner, "$1", acc ?? p1);
           if (shape === "value" || shape === "key") {
             inner.localBinds.delete("$2");
             inner.localTypes.delete("$2");
@@ -430,7 +434,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
           if (e.method === "sort-by" && i === 0) {
             checkSortKey(inferType(body, sym, inner), a.pos, recvType, sym, errors);
           }
-          const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
+          const declared = acc ?? memberArgType(recvType, e.method, i, e.args.length, sym);
           if (declared !== null) checkAgainst(body, declared, sym, errors, inner);
         }
       }
