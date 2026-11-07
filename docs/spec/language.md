@@ -711,7 +711,7 @@ With `onClick=saveTodo`, the reducer `saveTodo` is called on click. `{todoId: $1
 
 The name is resolved in the reducer namespace and only there, whatever its capitalisation: `onClick=Bump` binds the reducer `Bump`, and a name that names no reducer is [E0102](./errors.md#e0102-undef-reducer) — a tile written there included. What capitalisation decides is the shape the parser gives the name, and nothing else; it is not a way to say which layer is meant. A capitalised name written as an event handler (`onClick=`, `onChange=`, …) is a *tile call* on a builtin other than the value builtins (`box`, `button`, `check`, `radio`, `column`, …), and a variant tag everywhere else: in a props block, on a value builtin such as `link`, and on a user tile.
 
-Because those shapes carry no arguments, the bare name and the argument-less call are one and the same after parsing — `onClick=Bump`, `onClick=Bump()` and `onClick=Bump {}` are the same node, and all three bind the reducer. A value that carries arguments is not a name and is [E0201](./errors.md#e0201-type-mismatch).
+Because those shapes carry no arguments, the bare name and the argument-less call are one and the same after parsing — `onClick=Bump`, `onClick=Bump()` and `onClick=Bump {}` are the same node, and all three bind the reducer. That holds on every tile a handler is written on as a named argument: on a value builtin and on a user tile, the call form `Bump()` / `Bump {}` (or `Bump() {}`) carrying nothing is the variant tag `Bump` is there. A value that carries arguments or props (`onClick=Some(1)`, `onClick=Bump {x: 1}`) is not a name and is [E0201](./errors.md#e0201-type-mismatch).
 
 ### 1.7.4 Examples
 

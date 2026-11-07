@@ -1,7 +1,8 @@
 import { type Expr, lex, parse, type TileExpr } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { HANDLER_NAMES } from "../src/ui-lifts.ts";
 import { tileCall } from "./helpers/ast.ts";
-import { summariesOf } from "./helpers/diagnostics.ts";
+import { errorCodesOf, errorsOf, summariesOf } from "./helpers/diagnostics.ts";
 import { withApp } from "./helpers/programs.ts";
 
 const HOST = `type F = All | Done
@@ -99,6 +100,35 @@ describe("a capitalised name written as an event handler", () => {
     ["Btn(onClick=Bump)", "onClick"],
   ])("is a variant tag on a value builtin or a user tile: %s", (tile, at) => {
     expect(shapeOf(argOf(tile, at))).toBe("Variant Bump");
+  });
+
+  const otherTiles: readonly (readonly [string, (handler: string) => string])[] = [
+    ["a value builtin", (h) => `link(to="/", ${h})`],
+    ["a user tile", (h) => `Btn(${h})`],
+    ["a user tile, beside its input", (h) => `Row(${h}, 1)`],
+  ];
+
+  describe.each(otherTiles)("on %s", (_, write) => {
+    it.each(
+      [...HANDLER_NAMES].flatMap((name) =>
+        ["Bump()", "Bump {}", "Bump() {}"].map((form) => [name, form] as const),
+      ),
+    )("%s=%s is the same node as the bare name, and binds the reducer", (name, form) => {
+      const tile = write(`${name}=${form}`);
+      expect(argOf(tile, name)).toEqual(argOf(write(`${name}=Bump`), name));
+      expect(errorCodesOf(program(tile))).toEqual([]);
+    });
+  });
+
+  it.each([
+    'link(to="/", onClick=Bump {x: 1})',
+    "Btn(onClick=Bump {x: 1})",
+    "Btn(onClick=Bump(1) {})",
+  ])("is no name when it carries props or arguments, on any tile: %s", (tile) => {
+    const col = "tile App = ".length + tile.indexOf("Bump") + 1;
+    expect(errorsOf(program(tile)).map((e) => `${e.code} ${e.pos.col} ${e.message}`)).toEqual([
+      `E0201 ${col} Event handler arg "onClick" must be a reducer name`,
+    ]);
   });
 });
 
