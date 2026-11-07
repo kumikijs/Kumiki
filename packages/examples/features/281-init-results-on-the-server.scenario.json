@@ -1,0 +1,23 @@
+{
+  "effects": {
+    "loadTheme": [{ "outcome": "ok", "value": "ok" }],
+    "loadQuote": [
+      {
+        "outcome": "err",
+        "value": { "status": 503, "message": "Service Unavailable", "body": { "_tag": "None" } }
+      },
+      { "outcome": "ok", "value": "hello" }
+    ],
+    "ping": [{ "outcome": "ok", "value": "pong" }]
+  },
+  "steps": [
+    {
+      "label": "each init result reached its reducer: the key as $k, the retried quote, the ping",
+      "expect": {
+        "noErrors": true,
+        "state": { "themeAt": "dark", "quote": "hello", "pinged": "pong" },
+        "domIncludes": ["themeAt=dark", "quote=hello", "pinged=pong"]
+      }
+    }
+  ]
+}
