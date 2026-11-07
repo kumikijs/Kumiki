@@ -1261,17 +1261,21 @@ Only an `effect` declaration is refused. Emitting a standard effect needs no dec
 
 ### E0239 `negative-theme-length`
 
-A `theme` writes a negative number as a `spacing` token or as a `breakpoints` width ([Style §4.2](./style.md#_4-2-design-tokens)). Reported at the number, which starts at its `-`, once per number.
+A `theme` writes a negative number as a `spacing` token, a `radius` token, a `typography.size` token or a `breakpoints` width ([Style §4.2](./style.md#_4-2-design-tokens)). Reported at the number, which starts at its `-`, once per number.
 
 > `theme "<name>": spacing "<key>" is <n>, and padding and gap cannot be negative, so it has no effect — write a length of 0 or more (see docs/spec/style.md)`
 >
+> `theme "<name>": radius "<key>" is <n>, and a corner radius cannot be negative, so it has no effect — write a length of 0 or more (see docs/spec/style.md)`
+>
+> `theme "<name>": typography size "<key>" is <n>, and a font size cannot be negative, so it has no effect — write a size of 0 or more (see docs/spec/style.md)`
+>
 > `theme "<name>": breakpoint "<key>" is <n>, and a minimum viewport width cannot be negative, so "<key>" is not a breakpoint at all — write a width of 0 or more (see docs/spec/style.md)`
 
-A number in either section is px. `nudge: -4` gives a `pad: "nudge"` the declaration `padding: -4px`, which is not valid CSS: the browser drops it, and the tile has no padding. A `gap` is dropped the same way. A negative breakpoint width is not a breakpoint ([Style §4.5](./style.md#_4-5-responsive)), yet it still takes the default's place under its key, so `md: -500` removes `md` rather than moving it, and a `{base: …, md: …}` map never resolves to its `md` value. Neither is an error at runtime, and the page only looks slightly off, so nothing but `check` names it.
+A number in any of these sections is px. `nudge: -4` gives a `pad: "nudge"` the declaration `padding: -4px`, which is not valid CSS: the browser drops it, and the tile has no padding. A `gap` is dropped the same way, a `radius: "soft"` over `soft: -4` keeps square corners, and a `size: "tiny"` over `tiny: -4` keeps the font size it inherits. A negative breakpoint width is not a breakpoint ([Style §4.5](./style.md#_4-5-responsive)), yet it still takes the default's place under its key, so `md: -500` removes `md` rather than moving it, and a `{base: …, md: …}` map never resolves to its `md` value. Neither is an error at runtime, and the page only looks slightly off, so nothing but `check` names it.
 
-Only a number directly under `spacing` or `breakpoints` is checked; one nested deeper is neither a token nor a width. A string is not read by this check, so `nudge: "-4px"` and `md: "-500px"` are the same mistakes and are not reported. Every `theme` is checked, whether or not the app names it, since an `app.theme` slot can select any of them while the app runs ([Style §4.6](./style.md#_4-6-dark-mode)).
+Only a number directly under `spacing`, `radius`, `typography.size` or `breakpoints` is checked; one nested deeper is neither a token nor a width. The rest of `typography` (`weight`, `line-height`) holds no lengths and is not checked. A string is not read by this check, so `nudge: "-4px"` and `md: "-500px"` are the same mistakes and are not reported. Every `theme` is checked, whether or not the app names it, since an `app.theme` slot can select any of them while the app runs ([Style §4.6](./style.md#_4-6-dark-mode)).
 
-**Fix**: Write the length or the width as 0 or more (`nudge: 4`, `md: 500`), or leave the key out to keep its default. A tile meant to pull outward writes the negative length in its own `style` block (`style: {margin-top: -4}`), where it is the CSS property's own value and not a token.
+**Fix**: Write the length, the size or the width as 0 or more (`nudge: 4`, `soft: 4`, `tiny: 11`, `md: 500`), or leave the key out to keep its default. A tile meant to pull outward writes the negative length in its own `style` block (`style: {margin-top: -4}`), where it is the CSS property's own value and not a token.
 
 ## E03xx — Capabilities and Purity
 
