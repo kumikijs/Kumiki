@@ -316,17 +316,25 @@ describe("an E0103 for a name read after its scope ended names the scope", () =>
         endedScope: e.endedScope,
         message: e.message,
       }));
-  // A phrase of the repair each hint gives, enough to tell apart the hints of one kind.
+  // Where each hint says the name was declared and the repair it gives, enough to tell every hint
+  // from the others: a statement's from its expression twin, and a sibling's from an ended scope's.
+  const LET_IN = 'by a "let … in", whose body ended before this read: move the read into that body';
   const REPAIR = {
-    for: "a name carries no value out of a loop",
-    if: "move the read into that branch",
-    match: "move the read into that arm",
-    "if sibling": "move the read into the branch that declares it",
-    "match sibling": "move the read into the arm that declares it",
-    "let-in": 'bind it with a "let" statement where both reads see it',
-    "let-in outside a reducer": "bind it once where both reads see it",
-    "for-expr": "move the read into the loop's body",
-    "match-expr": "move the read into that arm",
+    for: 'in a "for" loop, and a name carries no value out of a loop: move the read into the loop\'s body, or write the value to a slot there',
+    if: 'in an "if" branch, which ended before this read: declare it once before the "if"',
+    match: 'in a match arm, which ended before this read: declare it once before the "match"',
+    "if sibling": 'in the other branch of this "if": declare it once before the "if"',
+    "match sibling": 'in another arm of this match: declare it once before the "match"',
+    "let-in": `${LET_IN}, or bind it with a "let" statement where both reads see it`,
+    "let-in around both reads": `${LET_IN}, or bind it with one "let … in" around both reads`,
+    "let-in in a tile": `${LET_IN}, or move both reads into a tile that declares "in=" and pass it the value`,
+    "let-in in app.init": `${LET_IN} (see`,
+    "for-expr":
+      "in a tile's \"for\", and a name carries no value out of a loop: move the read into the loop's body (see",
+    "match-expr":
+      'in an arm of a "match" expression, which ended before this read: move the read into that arm',
+    "match-expr sibling":
+      'in another arm of this "match" expression: move the read into the arm that declares it',
   } as const;
   type Hint = keyof typeof REPAIR;
   const hinted = (name: string, hint: Hint) => ({
@@ -336,6 +344,21 @@ describe("an E0103 for a name read after its scope ended names the scope", () =>
   });
   /** The program with `tile` as its page's body, beside a reducer that reads nothing. */
   const page = (tile: string) => program("app.start", "()").replace("column(text(seen))", tile);
+  /** The program with `fn` declared beside its reducer. */
+  const withFn = (fn: string) =>
+    program("app.start", "()").replace("tile Page", `${fn}\n\ntile Page`);
+  /** The program with `after` initialized to `init`. */
+  const afterIs = (init: string) =>
+    program("app.start", "()").replace('slot after : Text = ""', `slot after : Text = ${init}`);
+  /** The program with `init` as its `app.init`, beside an effect `say` that takes a `Text`. */
+  const initIs = (init: string) =>
+    program("app.start", "()")
+      .replace(
+        "reducer subject",
+        'effect say cap=log.write\n    in=Text\n    out=Result(Text, Text)\n    map-request={level: "info", message: $1}\n\nreducer subject',
+      )
+      .replace("caps   = []", "caps   = [log.write]")
+      .replace("init   = []", `init   = ${init}`);
 
   it.each<{ reads: string; body: string; name: string; hint: Hint }>([
     {
@@ -449,21 +472,37 @@ describe("an E0103 for a name read after its scope ended names the scope", () =>
     },
     {
       reads: "a `let … in` name after it in a `fn`",
-      source: program("app.start", "()").replace(
-        "tile Page",
-        "fn twice(x: Int) -> Int = (let n = x in n) + n\n\ntile Page",
-      ),
+      source: withFn("fn twice(x: Int) -> Int = (let n = x in n) + n"),
       name: "n",
-      hint: "let-in outside a reducer",
+      hint: "let-in around both reads",
     },
     {
       reads: "a `let … in` name in a slot initializer",
-      source: program("app.start", "()").replace(
-        'slot after : Text = ""',
-        'slot after : Text = (let n = "a" in n) + n',
+      source: afterIs('(let n = "a" in n) + n'),
+      name: "n",
+      hint: "let-in around both reads",
+    },
+    {
+      reads: "a `let … in` name in a sibling argument of a tile",
+      source: page('column(text(let n = "a" in n), text(n))'),
+      name: "n",
+      hint: "let-in in a tile",
+    },
+    {
+      reads: "a `let … in` name in a later entry of `app.init`",
+      source: initIs('[say(let n = "a" in n), say(n)]'),
+      name: "n",
+      hint: "let-in in app.init",
+    },
+    {
+      // Following a statement's hint would move the read after the `let … in` still.
+      reads: "a `let … in` name a statement before it in the body ended too",
+      source: program(
+        "app.start",
+        'for x in [1] {\n          if flag then { let n = "b" } else { () }\n          seen := let n = "a" in n\n        }\n        after := n',
       ),
       name: "n",
-      hint: "let-in outside a reducer",
+      hint: "let-in",
     },
     {
       reads: "a `match` expression's arm variable in a later statement",
@@ -471,6 +510,38 @@ describe("an E0103 for a name read after its scope ended names the scope", () =>
         "app.start",
         'seen := match Some("a") with | Some(v) -> v | None -> ""\n        after := v',
       ),
+      name: "v",
+      hint: "match-expr",
+    },
+    {
+      reads: "a `match` expression's arm variable in a later arm",
+      source: program("app.start", 'seen := match Some("a") with | Some(v) -> v | None -> v'),
+      name: "v",
+      hint: "match-expr sibling",
+    },
+    {
+      reads: "a `match` expression's arm variable after it in a `fn`",
+      source: withFn(
+        "fn pick(o: Option(Int)) -> Int = (match o with | Some(v) -> v | None -> 0) + v",
+      ),
+      name: "v",
+      hint: "match-expr",
+    },
+    {
+      reads: "a `match` expression's arm variable in a later arm, in a slot initializer",
+      source: afterIs('match Some("a") with | Some(v) -> v | None -> v'),
+      name: "v",
+      hint: "match-expr sibling",
+    },
+    {
+      reads: "a `match` expression's arm variable after it in a slot initializer",
+      source: afterIs('(match Some("a") with | Some(v) -> v | None -> "") + v'),
+      name: "v",
+      hint: "match-expr",
+    },
+    {
+      reads: "a value `match`'s arm variable in a sibling argument of a tile",
+      source: page('column(text(match Some("a") with | Some(v) -> v | None -> ""), text(v))'),
       name: "v",
       hint: "match-expr",
     },
@@ -487,6 +558,12 @@ describe("an E0103 for a name read after its scope ended names the scope", () =>
       ),
       name: "v",
       hint: "match-expr",
+    },
+    {
+      reads: "a tile `match` arm's variable in a later arm",
+      source: page("column(match Some(1) with | Some(v) -> text(v.show) | None -> text(v.show))"),
+      name: "v",
+      hint: "match-expr sibling",
     },
   ])("names the expression for $reads", ({ source, name, hint }) => {
     expect(undefinedNames(source)).toEqual([hinted(name, hint)]);
@@ -528,10 +605,65 @@ describe("an E0103 for a name read after its scope ended names the scope", () =>
       ),
       name: "idx",
     },
+    {
+      // No scope has ended yet when the left operand is checked.
+      case: "a read before the `let … in` that declares the name",
+      source: withFn("fn f(x: Int) -> Int = n + (let n = x in n)"),
+      name: "n",
+    },
   ])("keeps the plain message for $case", ({ source, name }) => {
     expect(undefinedNames(source)).toEqual([
       { name, endedScope: undefined, message: `Reference to undefined name "${name}"` },
     ]);
+  });
+
+  it("names no scope for a binding the expression's own scope took from around it", () => {
+    // The fragment binds `$1`, and the `let … in` inside it sees that `$1` as well as its `n`.
+    const src = program(
+      "app.start",
+      'seen := ["a"].map(let n = $1 in n).head.get-or("")\n        after := $1',
+    );
+    expect(checkSource(src).map((e) => e.endedScope)).toEqual([undefined]);
+  });
+
+  it.each([
+    [
+      "an outer `let` a `let … in` shadowed",
+      program("app.start", 'let n = 1\n        seen := let n = "a" in n\n        total := n'),
+    ],
+    [
+      "a `fn` parameter a `let … in` shadowed",
+      withFn("fn twice(n: Int) -> Int = (let n = 2 in n) + n"),
+    ],
+    [
+      "a tile `for` variable a nested `for` over the same name shadowed",
+      page("column(for idx in [1] column(for idx in [2] text(idx.show), text(idx.show)))"),
+    ],
+    [
+      "a slot named like a tile `for` variable",
+      page("column(for total in [1] text(total.show), text(total.show))"),
+    ],
+    [
+      "a slot named like a `let … in` name",
+      program("app.start", 'seen := let total = "a" in total\n        after := total.show'),
+    ],
+    [
+      "a slot named like a `match` expression's arm variable",
+      program(
+        "app.start",
+        'seen := match Some("a") with | Some(total) -> total | None -> ""\n        after := total.show',
+      ),
+    ],
+  ])("still reads %s after the expression", (_case, src) => {
+    expect(summariesOf(src)).toEqual([]);
+  });
+
+  it("accepts the hinted repair: a `let` statement both reads see binds the value", () => {
+    const src = program(
+      "app.start",
+      'let n = "a"\n        for x in [1] {\n          if flag then { let n = "b" } else { () }\n          seen := n\n        }\n        after := n',
+    );
+    expect(summariesOf(src)).toEqual([]);
   });
 
   it("reads the slot a branch's `let` shadowed once the branch ends", () => {

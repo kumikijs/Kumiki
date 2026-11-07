@@ -23,6 +23,7 @@ import { arithmeticHint, checkCallee, endedScopeHint, reportRunReducerPosition }
 import {
   bindLocal,
   type Ctx,
+  checkArms,
   endScope,
   innerScope,
   isBuiltinCall,
@@ -471,15 +472,13 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkExpr(e.scrutinee, sym, errors, ctx);
       const scrutType = matchedType(inferType(e.scrutinee, sym, ctx), e.arms, sym);
       let patternsFit = true;
-      for (const arm of e.arms) {
-        const inner = innerScope(ctx);
+      checkArms(e.arms, ctx, (arm, inner) => {
         checkPatternBindsAreDistinct(arm.pattern, errors);
         const before = errors.length;
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         if (errors.length > before) patternsFit = false;
         checkExpr(arm.body, sym, errors, inner);
-        endScope("match-expr", inner, ctx);
-      }
+      });
       if (patternsFit) checkMatchCovers(e, scrutType, sym, errors);
       return;
     }

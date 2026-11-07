@@ -341,13 +341,20 @@ function checkStmt(
   checkAgainst(s.rhs, lvalueType(s.lvalue, sym), sym, errors, ctx);
 }
 
+// A read moved into the body would still be after an expression that ended the name last.
+function endedByStatement(ctx: Ctx, name: string): boolean {
+  const kind = ctx.endedScopes.get(name)?.kind;
+  return kind === "if" || kind === "for" || kind === "match";
+}
+
 /**
  * The bodies of one `if`, `for` or `match`, checked in order. They are mutually exclusive, so
  * each starts from the slots written before the statement.
  *
  * A name the body declares and `ctx` does not bind ends with the body, as does a name a statement
- * nested in it ended; `ctx.endedScopes` records it under `kind`. A read of it in a later body of
- * the same statement is in a sibling of the body that declared it.
+ * nested in it ended, unless an expression later in the body ended it again; `ctx.endedScopes`
+ * records it under `kind`. A read of it in a later body of the same statement is in a sibling of
+ * the body that declared it.
  */
 function checkBodies(
   kind: StatementScope,
@@ -366,6 +373,7 @@ function checkBodies(
     for (const st of stmts) checkStmt(st, sym, errors, inner, bodyWrites);
     for (const name of [...inner.localBinds, ...inner.endedInBody]) {
       if (ctx.localBinds.has(name)) continue;
+      if (!inner.localBinds.has(name) && !endedByStatement(ctx, name)) continue;
       ctx.endedScopes.set(name, { kind, sibling: true });
       ended.add(name);
     }

@@ -30,6 +30,7 @@ import {
 import {
   bindLocal,
   type Ctx,
+  checkArms,
   endScope,
   innerScope,
   type KumikiError,
@@ -243,13 +244,11 @@ export function checkTileExpr(
     case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
       const scrutType = matchedType(inferType(t.scrutinee, sym, ctx), t.arms, sym);
-      for (const arm of t.arms) {
-        const inner = innerScope(ctx);
+      checkArms(t.arms, ctx, (arm, inner) => {
         checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkTileExpr(arm.body, sym, errors, inner);
-        endScope("match-expr", inner, ctx);
-      }
+      });
       return;
     }
     case "TileCall":

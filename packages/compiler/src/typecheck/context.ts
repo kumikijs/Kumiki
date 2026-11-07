@@ -37,8 +37,13 @@ export type StatementScope = "if" | "for" | "match";
  */
 export type NestedScopeKind = StatementScope | "let-in" | "for-expr" | "match-expr";
 
-/** The scope a name ended with; `sibling` while a later branch or arm of its statement is checked. */
-export type EndedScope = { kind: NestedScopeKind; sibling: boolean };
+/**
+ * The scope a name ended with. `sibling` is set while a later branch or arm of its statement or
+ * `match` expression is checked; a `let … in` and a tile's `for` have one body, and so no sibling.
+ */
+export type EndedScope =
+  | { kind: StatementScope | "match-expr"; sibling: boolean }
+  | { kind: "let-in" | "for-expr" };
 
 export type SymbolTable = {
   types: Map<string, TypeDef>;
@@ -84,7 +89,11 @@ export type Ctx = {
   routeReadsSeen?: { name: string; pos: Pos }[];
   fragmentFnCallsSeen?: { name: string; pos: Pos }[];
   undeclaredInputReads?: Pos[];
-  /** Names the ended scopes declared and the enclosing scope does not bind. */
+  /**
+   * Names the ended scopes declared and the enclosing scope does not bind. Every inner scope shares
+   * this one map (`innerScope` spreads it), so a read in a sibling or an enclosing scope sees what
+   * an inner one ended.
+   */
   endedScopes: Map<string, EndedScope>;
   /** The effect whose own expressions are checked, when it declares `in=Unit` and so binds no `$1`. */
   noInputEffect?: string;
@@ -119,10 +128,33 @@ export function innerScope<C extends Ctx>(ctx: C): C {
  * statement body around it does not take them over as it does a nested statement's, because a read
  * moved into that body would still be after the expression.
  */
-export function endScope(kind: NestedScopeKind, inner: Ctx, ctx: Ctx): void {
+export function endScope(kind: "let-in" | "for-expr", inner: Ctx, ctx: Ctx): void {
   for (const name of inner.localBinds) {
-    if (!ctx.localBinds.has(name)) ctx.endedScopes.set(name, { kind, sibling: false });
+    if (!ctx.localBinds.has(name)) ctx.endedScopes.set(name, { kind });
   }
+}
+
+/**
+ * Check the arms of a `match` expression in order, each by `checkArm` in a scope of its own opened
+ * in `ctx`. A name an arm binds ends with the arm, so a read in a later arm is in a sibling of the
+ * arm that bound it, and a read after the expression is after every arm.
+ */
+export function checkArms<A>(
+  arms: readonly A[],
+  ctx: Ctx,
+  checkArm: (arm: A, inner: Ctx) => void,
+): void {
+  const ended = new Set<string>();
+  for (const arm of arms) {
+    const inner = innerScope(ctx);
+    checkArm(arm, inner);
+    for (const name of inner.localBinds) {
+      if (ctx.localBinds.has(name)) continue;
+      ctx.endedScopes.set(name, { kind: "match-expr", sibling: true });
+      ended.add(name);
+    }
+  }
+  for (const name of ended) ctx.endedScopes.set(name, { kind: "match-expr", sibling: false });
 }
 
 export function pureScope(binds: readonly { name: string; type: TypeExpr }[]): Ctx {
