@@ -361,11 +361,14 @@ What `map-request` builds is the request its capability's built-in handler reads
 | `http.post`, `http.put`, `http.patch`, `http.delete` | `url`, `headers`, `query`, `body`, `decode` |
 | `storage.read`, `session.read` | `key`, `decode` |
 | `storage.write`, `session.write` | `key`, `value` |
-| `indexed.read` | `store`, `key`, `decode`, `index`, `range` |
+| `indexed.read` with a `key` (`indexed-read`) | `store`, `key`, `decode` |
+| `indexed.read` with no `key` (`indexed-query`) | `store`, `index`, `range` |
 | `indexed.write` | `store`, `key`, `value` |
 | `indexed.delete` | `store`, `key` |
 
-A field a `map-request` writes that its capability's row does not list is [E0215](./errors.md#e0215-unknown-record-field), reported at the field and naming the nearest field the row has: `headrs: {"X": "1"}` on `http.get` is a header that would never be sent. The method is the capability's, and `timeout` and `credentials` are `app.http`'s ([6.3.1](#_6-3-1-injecting-global-headers)), so none of the three is a request field. A host provider registered for one of these capabilities ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)) is handed the same request, so it is held to the same fields.
+An `indexed.read` request that names `key` reads one record by it, and one that does not runs a query over `index` and `range` ([6.7.4](#_6-7-4-sessionstorage-indexeddb)), so its fields are the row for whichever it is: `index` beside a `key` is never read, and nor is `decode` without one.
+
+A field a `map-request` writes that its capability's row does not list is [E0215](./errors.md#e0215-unknown-record-field), reported at the field, naming the nearest field the row has when one is close, and listing the fields the row accepts: `headrs: {"X": "1"}` on `http.get` is a header that would never be sent. The method is the capability's, and `timeout` and `credentials` are `app.http`'s ([6.3.1](#_6-3-1-injecting-global-headers)), so none of the three is a request field. A host provider registered for one of these capabilities ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)) is handed the same request, so it is held to the same fields.
 
 A field is checked where a literal names it: the `map-request` record itself, or the record a branch of an `if`, an arm of a `match` or the body of a `let` yields there, at any depth. A map literal's `Text` keys count too, since it lowers to the same object. A request computed any other way — returned by a `fn`, read from a slot, or `$1` itself — has its fields decided at run time and is not checked.
 

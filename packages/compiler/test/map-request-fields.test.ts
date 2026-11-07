@@ -1,6 +1,6 @@
 // The built-in handler reads the fields its request defines and nothing else,
-// so a field outside that set is a value no handler reads: a misspelt
-// `headers` is a header that is never sent.
+// so a field outside that set is a value it never reads: a misspelt `headers`
+// is a header that is never sent.
 
 import { describe, expect, it } from "vitest";
 import { checkSource, codesOf, textAt } from "./helpers/diagnostics.ts";
@@ -17,19 +17,21 @@ tile App = text("x")`,
   );
 }
 
-const FIELDS: [cap: string, fields: string[]][] = [
-  ["http.get", ["url", "headers", "query", "decode"]],
-  ["http.post", ["url", "headers", "query", "body", "decode"]],
-  ["http.put", ["url", "headers", "query", "body", "decode"]],
-  ["http.patch", ["url", "headers", "query", "body", "decode"]],
-  ["http.delete", ["url", "headers", "query", "body", "decode"]],
-  ["storage.read", ["key", "decode"]],
-  ["storage.write", ["key", "value"]],
-  ["session.read", ["key", "decode"]],
-  ["session.write", ["key", "value"]],
-  ["indexed.read", ["store", "key", "decode", "index", "range"]],
-  ["indexed.write", ["store", "key", "value"]],
-  ["indexed.delete", ["store", "key"]],
+/** Each request, as a message names it: its capability and the fields it has. */
+const REQUESTS: [request: string, cap: string, fields: string[]][] = [
+  ["http.get request", "http.get", ["url", "headers", "query", "decode"]],
+  ["http.post request", "http.post", ["url", "headers", "query", "body", "decode"]],
+  ["http.put request", "http.put", ["url", "headers", "query", "body", "decode"]],
+  ["http.patch request", "http.patch", ["url", "headers", "query", "body", "decode"]],
+  ["http.delete request", "http.delete", ["url", "headers", "query", "body", "decode"]],
+  ["storage.read request", "storage.read", ["key", "decode"]],
+  ["storage.write request", "storage.write", ["key", "value"]],
+  ["session.read request", "session.read", ["key", "decode"]],
+  ["session.write request", "session.write", ["key", "value"]],
+  ["indexed.read request with a key", "indexed.read", ["store", "key", "decode"]],
+  ["indexed.read request with no key", "indexed.read", ["store", "index", "range"]],
+  ["indexed.write request", "indexed.write", ["store", "key", "value"]],
+  ["indexed.delete request", "indexed.delete", ["store", "key"]],
 ];
 
 /** A value of the right kind for each field, so a clean program is clean for the field alone. */
@@ -48,8 +50,6 @@ const VALUE: Record<string, string> = {
 
 const record = (fields: string[]): string =>
   `{${fields.map((f) => `${f}: ${VALUE[f] ?? "$1"}`).join(", ")}}`;
-
-const fieldsOf = (cap: string): string[] => FIELDS.find(([c]) => c === cap)?.[1] ?? [];
 
 const at = (source: string, e: { pos: { line: number; col: number } } | undefined): string =>
   textAt(source, e?.pos ?? { line: 0, col: 0 });
@@ -85,7 +85,7 @@ tile App = text("x")`,
     expect(nope?.message).toContain("url, headers, query, decode");
   });
 
-  // The method is the capability, and `timeout` / `credentials` are `app.http`'s.
+  // The method is the capability's, and `timeout` / `credentials` are `app.http`'s.
   it.each(["method", "timeout", "credentials"])("refuses %s on http.get", (field) => {
     const found = checkSource(program("http.get", `{url: "/x", ${field}: "x"}`));
     expect(found.map((d) => [d.code, d.kind])).toEqual([["E0215", "unknown-record-field"]]);
@@ -94,21 +94,23 @@ tile App = text("x")`,
 });
 
 describe("the fields are the capability's own", () => {
-  it.each(FIELDS)("%s accepts every field its request has", (cap, fields) => {
+  it.each(REQUESTS)("the %s accepts every field it has", (_request, cap, fields) => {
     expect(checkSource(program(cap, record(fields)))).toEqual([]);
   });
 
-  // Every field some other capability's request has, and this one's does not.
-  const everyField = [...new Set(FIELDS.flatMap(([, fields]) => fields))];
-  const foreign = FIELDS.flatMap(([cap, fields]) =>
-    everyField.filter((f) => !fields.includes(f)).map((f) => [cap, f] as [string, string]),
+  // Every field some other request has and this one does not, but `key`, which makes an
+  // `indexed.read` request with no key one with a key.
+  const everyField = [...new Set(REQUESTS.flatMap(([, , fields]) => fields))];
+  const foreign = REQUESTS.flatMap(([request, cap, fields]) =>
+    everyField
+      .filter((f) => !fields.includes(f) && !(request.endsWith("with no key") && f === "key"))
+      .map((f) => [request, f, cap, fields] as const),
   );
 
-  it.each(foreign)("%s refuses %s", (cap, field) => {
-    const found = checkSource(program(cap, record([...fieldsOf(cap).slice(0, 1), field])));
+  it.each(foreign)("the %s refuses %s", (request, field, cap, fields) => {
+    const found = checkSource(program(cap, record([...fields, field])));
     expect(found.map((d) => [d.code, d.kind])).toEqual([["E0215", "unknown-record-field"]]);
-    expect(found[0]?.message).toContain(`"${field}"`);
-    expect(found[0]?.message).toContain(cap);
+    expect(found[0]?.message).toContain(`The ${request} has no field "${field}"`);
   });
 
   it("accepts decode on storage.read", () => {
@@ -129,6 +131,41 @@ describe("the fields are the capability's own", () => {
     expect(url?.message).toContain("key, decode");
     expect(url?.message).not.toContain("did you mean");
     expect(at(source, url)).toMatch(/^url:/);
+  });
+});
+
+// The built-in handler reads one record by key when the request names `key`, and runs a query
+// over `index` and `range` when it does not, so each reads only its own fields.
+describe("indexed.read, a read by key or a query", () => {
+  it.each([
+    [
+      "a read by key refuses a query's index",
+      `{store: "notes", key: $1, index: Some("by-date")}`,
+      'The indexed.read request with a key has no field "index" (accepted: store, key, decode)',
+      /^index:/,
+    ],
+    [
+      "a query refuses a read's decode",
+      `{store: "notes", range: None, decode: Decoder.Json(Text)}`,
+      'The indexed.read request with no key has no field "decode" (accepted: store, index, range)',
+      /^decode:/,
+    ],
+  ])("%s", (_, request, message, field) => {
+    const source = program("indexed.read", request);
+    const found = checkSource(source);
+    expect(found.map((d) => [d.code, d.message])).toEqual([["E0215", message]]);
+    expect(at(source, found[0])).toMatch(field);
+  });
+
+  it("decides each literal by its own fields", () => {
+    const source = program(
+      "indexed.read",
+      `if $1 == "" then {store: "s", index: None} else {store: "s", key: $1, range: None}`,
+    );
+    const found = checkSource(source);
+    expect(found.map((d) => d.message)).toEqual([
+      'The indexed.read request with a key has no field "range" (accepted: store, key, decode)',
+    ]);
   });
 });
 
