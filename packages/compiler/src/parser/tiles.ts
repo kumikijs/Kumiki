@@ -42,7 +42,7 @@ export class TileParser extends StatementParser {
       return { kind: "TileIf", cond, consequent: thenT, alternate: elseT, pos: start.pos };
     }
     if (this.matchKw("match")) {
-      return { kind: "TileMatch", ...this.parseMatch(() => this.parseTileExpr()) };
+      return this.parseMatch("TileMatch", () => this.parseTileExpr());
     }
     return this.parseTileCall();
   }

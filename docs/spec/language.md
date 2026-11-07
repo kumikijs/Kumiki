@@ -936,6 +936,8 @@ Since a `match` evaluates to one of its arms, it needs **an arm for every value 
 
 A `match` statement in a reducer body ([§1.6.1](#_1-6-1-syntax)) and a `match` in tile position ([§1.7.1](#_1-7-1-syntax)) are not values, and are not held to this: a statement `match` that no arm matches runs none of its arms, as an `if` statement without `else` runs nothing on a false condition, and a tile `match` that no arm matches renders an empty `text`.
 
+**A `match` that ends an arm takes every arm written after it.** Its arms go on for as long as a `|` follows, and the layout does not end them: line breaks and indentation are not read. In `match x with | Red -> match y with | Small -> 1 | Large -> 2 | _ -> 3`, `| _ -> 3` is the third arm of `match y`, and `match x` has the one arm `Red`. The same holds wherever the inner `match` is the last thing written in the arm: the right operand of an operator, an `else` branch, a `let … in` body, the last statement of an arm. To give the arms after it to the outer `match`, close the inner one off before them. As a value, put it in parentheses: `| Red -> (match y with | Small -> 1 | Large -> 2) | _ -> 3`. As a statement, put it in braces: `| Red -> { match s with | Small -> n := 1 | Large -> n := 2 } | _ -> n := 3`. A tile has no parentheses, so move the inner `match` into a tile of its own and name that tile in the arm. An arm the inner `match` takes after its arms above already match every value can never be reached, which is [E0239](./errors.md#e0239-unreachable-nested-arm). A value `match` that this leaves without an arm for some of its values is [E0227](./errors.md#e0227-non-exhaustive-match), and its message then names the inner `match`.
+
 ### 1.9.1 Prohibitions
 
 - **Lambda expressions prohibited**

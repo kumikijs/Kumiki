@@ -289,6 +289,12 @@ export type UiEventKind =
 
 // ----- Statements (reducer body) -----
 
+/**
+ * Where a `match` ends an arm of the `match` at `outer`: nothing closes it off before that arm ends,
+ * so every arm written after it is its own (language.md).
+ */
+export type EndsOuterArm = { outer?: Pos };
+
 export type Statement =
   | { kind: "SlotAssign"; lvalue: Lvalue; rhs: Expr; pos: Pos }
   | { kind: "LetStmt"; name: string; rhs: Expr; pos: Pos }
@@ -296,12 +302,12 @@ export type Statement =
   | { kind: "StopTimer"; name: string; pos: Pos }
   | { kind: "ForStmt"; bind: string; iter: Expr; body: Statement[]; pos: Pos }
   | { kind: "IfStmt"; cond: Expr; consequent: Statement[]; alternate: Statement[]; pos: Pos }
-  | {
+  | ({
       kind: "MatchStmt";
       scrutinee: Expr;
       arms: { pattern: Pattern; body: Statement[] }[];
       pos: Pos;
-    }
+    } & EndsOuterArm)
   | { kind: "PanicStmt"; message: Expr; pos: Pos }
   | { kind: "NoopStmt"; pos: Pos };
 
@@ -372,7 +378,7 @@ type ExprForm =
   | { kind: "MapLit"; entries: { key: Expr; value: Expr }[]; pos: Pos }
   | { kind: "Wildcard"; wild: "any-id"; pos: Pos }
   | { kind: "Wildcard"; wild: "slot"; slot: string; slotPos: Pos; pos: Pos }
-  | { kind: "MatchExpr"; scrutinee: Expr; arms: MatchArm[]; pos: Pos }
+  | ({ kind: "MatchExpr"; scrutinee: Expr; arms: MatchArm[]; pos: Pos } & EndsOuterArm)
   | { kind: "IfExpr"; cond: Expr; consequent: Expr; alternate: Expr; pos: Pos }
   | { kind: "LetIn"; name: string; value: Expr; body: Expr; pos: Pos }
   | { kind: "EmitExpr"; effect: string; args: Expr[]; effectPos?: Pos; pos: Pos }
@@ -414,7 +420,7 @@ export type TileExpr =
   | { kind: "TileFor"; bind: string; iter: Expr; body: TileExpr; pos: Pos }
   | { kind: "TileWhen"; cond: Expr; body: TileExpr; pos: Pos }
   | { kind: "TileIf"; cond: Expr; consequent: TileExpr; alternate: TileExpr; pos: Pos }
-  | { kind: "TileMatch"; scrutinee: Expr; arms: TileMatchArm[]; pos: Pos };
+  | ({ kind: "TileMatch"; scrutinee: Expr; arms: TileMatchArm[]; pos: Pos } & EndsOuterArm);
 
 export type TileMatchArm = {
   pattern: Pattern;

@@ -37,7 +37,12 @@ import {
   refuseRenderedEffectId,
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
+import {
+  checkArmsAfterNestedMatch,
+  checkPatternAgainstType,
+  checkPatternBindsAreDistinct,
+  matchedType,
+} from "./patterns.ts";
 import { collectRenderedBuiltinKinds, collectTileBuiltinKinds } from "./tile-collect.ts";
 import { checkA11y, checkBuiltinProp, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
@@ -233,12 +238,16 @@ export function checkTileExpr(
     case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
       const scrutType = matchedType(inferType(t.scrutinee, sym, ctx), t.arms, sym);
+      let patternsFit = true;
       for (const arm of t.arms) {
         const inner = innerScope(ctx);
         checkPatternBindsAreDistinct(arm.pattern, errors);
+        const before = errors.length;
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
+        if (errors.length > before) patternsFit = false;
         checkTileExpr(arm.body, sym, errors, inner);
       }
+      if (patternsFit) checkArmsAfterNestedMatch(t, "tile", scrutType, sym, errors);
       return;
     }
     case "TileCall":
