@@ -24,7 +24,7 @@ The same holds for each method a `fn` can be named in. `m.filter(keep)` over a `
 
 `fold`'s accumulator `$1` had no type in either spelling, so `xs.fold(0, f)` never checked `f`'s first parameter. It now has the init's type, so a `fn step(acc: Text, x: Int)` there is E0201, and so is `xs.fold("", add($1, $2))` with `add(acc: Int, n: Int)`. An init with no type the checker can decide leaves `$1` untyped as before. One such init is `{}`, which is both the empty Map and the empty Set. A typed accumulator is also read like any other typed value. A key reader on it restores its keys: `nums.fold(counts, $1.keys…)` on a `Map(Int, _)` answers numbers instead of strings. A list literal passed where it takes a Set is built as one: `nums.fold(seen, $1.union([2]))`.
 
-A `fold` into a Set starts from `{}` or a typed Set. `[]` is a `List`, so `xs.fold([], step)` with `fn step(acc: Set(Int), x: Int) -> Set(Int)` is now E0201 (`Expected Set(Int) but got List(?)`), and `xs.fold([], $1.add($2))` is E0108 (`Type "List" has no member ".add"`). Both passed `check` before. The accumulator's type is the init's on the first step only: the fragment's result is not checked against it, so `xs.fold(0, $1.show)` still passes.
+A `fold` into a Set starts from `{}` or a typed Set. `[]` is a `List`, so `xs.fold([], step)` with `fn step(acc: Set(Int), x: Int) -> Set(Int)` is now E0201 (`Expected Set(Int) but got List(?)`), and `xs.fold([], $1.add($2))` is E0108 (`Type "List" has no member ".add"`). Both passed `check` before.
 
 `Result.flat-map`'s `$1` is now typed as the `Ok` value, as `Option.flat-map`'s already was.
 
