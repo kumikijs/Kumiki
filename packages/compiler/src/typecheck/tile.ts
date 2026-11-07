@@ -14,6 +14,7 @@ import {
   staticPaths,
   unboundRedirectNames,
 } from "../redirects.ts";
+import { shadowingRoute } from "../route-rank.ts";
 import { appType, primType } from "../stdlib-types.ts";
 import { HANDLER_NAMES, HANDLER_PROP_TILES, handlerReducerName } from "../ui-lifts.ts";
 import { duplicateSubRoutes } from "../uniqueness.ts";
@@ -193,6 +194,7 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       });
     }
   }
+  checkShadowedSubRoutes(tile, subRoutes, parents, sym, errors);
   // The runtime fills the first outlet anywhere in the tree the tile renders, so an outlet in
   // a layout helper counts, and one a builtin drops does not.
   if (!collectRenderedBuiltinKinds(tile.name, sym).has("route-outlet")) {
@@ -203,6 +205,59 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       pos: tile.pos,
     });
   }
+}
+
+/** A sub-route whose every path an app.routes entry takes ahead of the parent is never reached. */
+function checkShadowedSubRoutes(
+  tile: TileDef,
+  subRoutes: readonly RouteMapEntry[],
+  parents: readonly RouteMapEntry[],
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  const routes = sym.app?.routes ?? [];
+  const parentText =
+    parents.length === 1
+      ? `its parent "${parents[0]?.path}"`
+      : `its parents ${parents.map((p) => `"${p.path}"`).join(", ")}`;
+  for (const sr of subRoutes) {
+    const by = shadowingRoute(sr.path, parents, routes);
+    if (!by) continue;
+    const taken = by.tile.startsWith(">>")
+      ? "follows that redirect there instead"
+      : "renders that route there, without the parent";
+    errors.push({
+      code: "W0218",
+      kind: "shadowed-sub-route",
+      severity: "warning",
+      message:
+        `Sub-route "${sr.path}" in tile "${tile.name}" is never matched: every path it matches is ` +
+        `matched by "${by.path}" in app.routes, which ranks ahead of ${parentText}, so the router ` +
+        `${taken}${idleSubscribers(sr, tile, sym)}`,
+      pos: sr.pathPos,
+    });
+  }
+}
+
+/**
+ * The route events on a shadowed sub-route's key never fire, unless another entry declares the
+ * same key: that one may be reached, and the reducers are named only when none does.
+ */
+function idleSubscribers(sr: RouteMapEntry, tile: TileDef, sym: SymbolTable): string {
+  if (sr.tile.startsWith(">>")) return "";
+  const sameKey = (e: RouteMapEntry) => e !== sr && e.path === sr.path && !e.tile.startsWith(">>");
+  const elsewhere = [
+    ...(sym.app?.routes ?? []),
+    ...[...sym.tiles.values()].flatMap((t) => (t === tile ? [] : (t.subRoutes ?? []))),
+  ];
+  if (elsewhere.some(sameKey)) return "";
+  const names = [...sym.reducers.values()]
+    .filter((r) => r.on.kind === "LifecycleEvent" && r.on.routePattern?.pattern === sr.path)
+    .map((r) => `"${r.name}"`);
+  if (names.length === 0) return "";
+  return names.length === 1
+    ? `. Reducer ${names[0]} subscribes to it and never runs`
+    : `. Reducers ${names.join(", ")} subscribe to it and never run`;
 }
 
 export function checkTileExpr(
