@@ -226,6 +226,24 @@ describe("an index read", () => {
   it("does not read an Object.prototype member as an entry", () => {
     expect(() => _stdlibCore.index({}, "toString")).toThrow(KumikiPanic);
   });
+
+  // The checker refuses these reads where it knows the receiver's type; where it cannot decide
+  // it, the read still runs, and the panic says what the index hit.
+  it.each([
+    ["an Int", 5, 0, "Index 0 reaches no List or Map, but 5"],
+    ["a Text", "abc", 0, 'Index 0 reaches no List or Map, but "abc"'],
+    [
+      "an Option",
+      { _tag: "Some", _0: 1 },
+      0,
+      'Index 0 reaches no List or Map, but {"_tag":"Some","_0":1}',
+    ],
+    ["a union value", { _tag: "Z" }, "k", 'Index "k" reaches no List or Map, but {"_tag":"Z"}'],
+    ["no value", undefined, 0, "Index 0 reaches no List or Map, but undefined"],
+  ])("panics naming the receiver when it is %s", (_what, recv, key, message) => {
+    expect(() => _stdlibCore.index(recv, key)).toThrow(KumikiPanic);
+    expect(() => _stdlibCore.index(recv, key)).toThrow(message);
+  });
 });
 
 describe("mapOver on a Map", () => {

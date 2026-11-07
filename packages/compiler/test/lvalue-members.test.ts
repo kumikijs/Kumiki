@@ -243,21 +243,76 @@ describe("an index read into a Set", () => {
     expect(codesOf(src)).toEqual(["E0232"]);
   });
 
-  // Reads into these have no places either. A record read through a literal key has its field's
-  // type, the others none; that they pass unreported is tracked apart.
-  it.each([
-    ["an Int", `slot n : Int = 5`, `n[0]`],
-    ["a record", `type R = { a: Int }\nslot r : R = { a: 1 }`, `r["a"]`],
-    ["an Option", `slot o : Option(Int) = Some(1)`, `o[0]`],
-    ["a Tuple", `slot p : Tuple(Int, Int) = (1, 2)`, `p[0]`],
-  ])("is not reported for %s", (_what, decls, expr) => {
-    expect(codesOf(shown(decls, expr))).not.toContain("E0232");
-  });
-
   it("stays silent on a receiver whose type name resolves to nothing", () => {
     const codes = codesOf(shown(`slot s : Sett(Int) = []`, `s[1]`));
     expect(codes).toContain("E0117");
     expect(codes).not.toContain("E0232");
+  });
+});
+
+const E0238 = (written: string): string =>
+  `Cannot read through an index into "${written}": an index names a place only in a Map or a List`;
+
+// The receivers the step on the left of `:=` refuses with E0602, a Set and a record aside.
+const NO_PLACES_REACHED: [what: string, decls: string, step: string, written: string][] = [
+  ["an Int", `slot n : Int = 5`, `n[0]`, "Int"],
+  ["a Float", `slot x : Float = 0.5`, `x[0]`, "Float"],
+  ["a Text", `slot t : Text = "abc"`, `t[0]`, "Text"],
+  ["a Bool", `slot b : Bool = false`, `b[0]`, "Bool"],
+  ["an Option", `slot o : Option(Int) = Some(1)`, `o[0]`, "Option(Int)"],
+  ["a Result", `slot res : Result(Int, Text) = Ok(1)`, `res[0]`, "Result(Int, Text)"],
+  ["a Tuple", `slot p : Tuple(Int, Int) = (1, 2)`, `p[0]`, "Tuple(Int, Int)"],
+  ["a union", `type Filter = All | Done\nslot f : Filter = All`, `f[0]`, "Filter"],
+  ["an alias of Int", `type Count = Int\nslot c : Count = 0`, `c[0]`, "Count"],
+  ["a List's Int element", `slot xs : List(Int) = [1, 2, 3]`, `xs[0][0]`, "Int"],
+  ["a Map's Text value", `slot m : Map(Text, Text) = {}`, `m["k"][0]`, "Text"],
+  ["an Option's payload", `slot o : Option(Int) = Some(1)`, `o.get[0]`, "Int"],
+  ["a record's Int field", `type R = { a: Int }\nslot r : R = { a: 1 }`, `r.a[0]`, "Int"],
+];
+
+describe("an index read into a receiver with no places", () => {
+  it("is E0238, naming the receiver as the program writes it", () => {
+    const errs = checkSource(shown(`slot word : Text = "abc"`, `word[0]`));
+    expect(errs.map((x) => [x.code, x.kind, x.message])).toEqual([
+      ["E0238", "unindexable-read", E0238("Text")],
+    ]);
+  });
+
+  it.each(NO_PLACES_REACHED)("is E0238 at the key on %s", (_what, decls, step, written) => {
+    expect(pointedErrorsOf(shown(decls, step))).toEqual([
+      { code: "E0238", message: E0238(written), text: fromLastKey(step) },
+    ]);
+  });
+
+  // The read has no type, so nothing after it is judged against one.
+  it.each([
+    ["shown as a value builtin's content", `slot word : Text = "abc"`, `text(word[0])`],
+    ["an operand of +", `slot n : Int = 5`, `text((n[0] + 1).show)`],
+    [
+      "an operand of + read off an Option",
+      `slot o : Option(Int) = Some(1)`,
+      `text((o[0] + 1).show)`,
+    ],
+    ["the receiver of a member", `slot n : Int = 5`, `text(n[0].foo.show)`],
+  ])("is reported once as %s", (_how, decls, child) => {
+    expect(codesOf(withRoot(child, decls))).toEqual(["E0238"]);
+  });
+
+  it.each([
+    ["a Text", `slot t : Text = ""`, `t := n[0]`],
+    ["a Bool", `slot b : Bool = false`, `b := n[0]`],
+    ["an if condition", `slot k : Int = 0`, `if n[0] then k := 1`],
+  ])("is reported once where %s is expected", (_how, decl, body) => {
+    expect(codesOf(withBody(`slot n : Int = 5\n${decl}`, body))).toEqual(["E0238"]);
+  });
+
+  it("is reported once as a fn body checked against its declared result", () => {
+    const src = withApp(`fn f(n: Int) -> Bool = n[0]\ntile App = column(text(f(5).show))`);
+    expect(codesOf(src)).toEqual(["E0238"]);
+  });
+
+  it("stays silent on a receiver whose type name resolves to nothing", () => {
+    expect(codesOf(shown(`slot u : Mystery = 0`, `u[0]`))).toEqual(["E0117"]);
   });
 });
 
@@ -268,6 +323,13 @@ describe("a membership read and the other index reads stay legal", () => {
     ["a List index", `slot xs : List(Int) = [1]`, `xs[0]`],
     ["a Map index", `slot m : Map(Text, Int) = {"a": 1}`, `m["a"]`],
     ["a Map keyed by a Set", `slot s : Set(Int) = []\nslot m : Map(Set(Int), Int) = {}`, `m[s]`],
+    // language.md: a literal key reads the field it names, a computed one a value of no type.
+    ["a record through a literal key", `type R = { a: Int }\nslot r : R = { a: 1 }`, `r["a"]`],
+    [
+      "a record through a computed key",
+      `type R = { a: Int }\nslot r : R = { a: 1 }\nslot k : Text = "a"`,
+      `r[k]`,
+    ],
   ])("accepts %s", (_how, decls, expr) => {
     expect(checkSource(shown(decls, expr))).toEqual([]);
   });
