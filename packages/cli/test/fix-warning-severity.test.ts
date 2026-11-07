@@ -121,6 +121,28 @@ describe("what the results say about the warnings they filtered out", () => {
     expect(result.remaining).toEqual([]);
     expect(result.warnings.map((w) => w.code)).toEqual(["W0212"]);
   });
+
+  // The patch that fixes the test takes the `{0}` out of the template, and with it the W0214.
+  it.each([
+    { apply: true, status: "applied", file: 'heading(fmt("Hello"))', warnings: [] },
+    { apply: false, status: "proposed", file: 'heading(fmt("Hello{0}"))', warnings: ["W0214"] },
+  ])("carries out of a test patch the warnings of the file as it is left, when $status", async ({
+    apply,
+    status,
+    file: tile,
+    warnings,
+  }) => {
+    write([
+      'tile Title = heading(fmt("Hello{0}"))',
+      "tile App = column(Title)",
+      ...APP,
+      ...FAILING_TEST,
+    ]);
+    const outcome = await runFixFromTest(file, "t", apply);
+    expect(outcome.status).toBe(status);
+    expect(readFileSync(file, "utf8")).toContain(`tile Title = ${tile}`);
+    expect(outcome.warnings.map((w) => w.code)).toEqual(warnings);
+  });
 });
 
 /** Everything `fix` prints when it decides a file needs nothing from it. */

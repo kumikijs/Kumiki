@@ -122,7 +122,7 @@ export function registerCompileTools(tool: RegisterTool): void {
     "kumiki_build",
     {
       title: "Build Kumiki source",
-      description: `Compile a Kumiki program to a self-contained JS module (runtime inlined). Pass \`source\` or \`path\`. On success the first content item is a size summary, or with \`includeJs\` the generated JS and nothing else; when the compile reported warnings, a second content item holds them as a JSON list of diagnostics, and the build still succeeds. On failure the result is \`isError\` and its one item is \`build failed:\` followed by a JSON list of every diagnostic: the warnings, then the errors that failed it. ${DIAGNOSTIC_SHAPE}`,
+      description: `Compile a Kumiki program to a self-contained JS module (runtime inlined). Pass \`source\` or \`path\`. On success the first content item is a size summary, or with \`includeJs\` the generated JS and nothing else; when the compile reported warnings, a second content item holds them, \`warnings:\` followed by a JSON list of diagnostics, and the build still succeeds. On failure the result is \`isError\` and its one item is \`build failed:\` followed by a JSON list of every diagnostic: the warnings, then the errors that failed it. ${DIAGNOSTIC_SHAPE}`,
       inputSchema: {
         source: z.string().optional(),
         path: z.string().optional(),

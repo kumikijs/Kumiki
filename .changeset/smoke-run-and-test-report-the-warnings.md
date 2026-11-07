@@ -19,15 +19,16 @@ or report alone. `kumiki smoke`, `kumiki run` and `kumiki test` printed nothing
 about the warning either.
 
 The three tools now answer as `kumiki_build` does: when the compile succeeded
-with warnings, a second text content item holds them as the JSON diagnostic
-list `kumiki_check` returns, whether the run passed or failed, and `isError` is
+with warnings, a second text content item holds them, `warnings:` followed by
+the JSON diagnostic list `kumiki_check` returns, whether the run passed or failed, and `isError` is
 still decided by the run alone. The first item is unchanged. A file with no
 warnings still gets one item.
 
 ```text
 ok — mounted, rendered, 0 interaction(s), no runtime errors
 ```
-```json
+```text
+warnings:
 [{ "code": "W0212", "kind": "ui-event-tile-mismatch", …, "severity": "warning" }]
 ```
 
@@ -50,3 +51,8 @@ The warnings come from the compile each call already runs. In `@kumikijs/cli`,
 `runScenarioSource` returns `ScenarioReport & { warnings }`, and `TestReport`
 (from `runTests`) has a `warnings` field, each the compiler's `KumikiError[]`.
 `loadApp`, `runTestsSource` and `testFile` keep their signatures.
+
+`kumiki_auto_patch` and `kumiki fix --auto-patch` now report the warnings of
+the file they wrote when a test patch is `applied`. They reported the file as
+it was before the patch, so a patch that took a `{0}` out of an `fmt` template
+still reported the W0214 it had removed.
