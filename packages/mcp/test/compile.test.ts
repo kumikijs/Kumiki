@@ -53,6 +53,7 @@ describe("isError mirrors the CLI's exit code", () => {
   it.each([
     { tool: "kumiki_check", says: "W0212" },
     { tool: "kumiki_fix", says: "no errors (1 warning)" },
+    { tool: "kumiki_build", says: "build ok" },
   ])("$tool does not flag a warning-only file, and still names it", async ({ tool, says }) => {
     const res = await callOnce(tool, { path: FIX_WARNING_ONLY });
     expect(res.isError).toBe(false);
@@ -192,7 +193,11 @@ describe("the diagnostic wire shape", () => {
       expect(head).toBe(
         `build ok — ${expected.js.length} bytes of JS (pass includeJs=true for the source)`,
       );
-      expect(pairs(JSON.parse(warnings) as WireDiagnostic[])).toEqual([["W0212", "warning"]]);
+      const [label, ...list] = warnings.split("\n");
+      expect(label).toBe("warnings:");
+      expect(pairs(JSON.parse(list.join("\n")) as WireDiagnostic[])).toEqual([
+        ["W0212", "warning"],
+      ]);
       expect(await build({ path: FIX_WARNING_ONLY, includeJs: true })).toEqual([
         expected.js,
         warnings,
@@ -205,7 +210,7 @@ describe("the diagnostic wire shape", () => {
     const warningsOf = async (file: string): Promise<string> => {
       const listed = (await callOnce("kumiki_check", { path: file })).body;
       expect(pairs(JSON.parse(listed) as WireDiagnostic[])).toEqual([["W0212", "warning"]]);
-      return listed;
+      return `warnings:\n${listed}`;
     };
 
     it("kumiki_smoke", { timeout: 30000 }, async () => {
@@ -347,7 +352,7 @@ describe("the diagnostic wire shape", () => {
   it.each([
     ...["kumiki_build", "kumiki_smoke", "kumiki_run_scenario", "kumiki_test"].map((name) => [
       name,
-      "a second content item holds them as a JSON list of diagnostics",
+      "a second content item holds them, `warnings:` followed by a JSON list of diagnostics",
     ]),
     ...["kumiki_smoke", "kumiki_run_scenario", "kumiki_test"].map((name) => [
       name,

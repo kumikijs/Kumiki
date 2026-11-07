@@ -23,15 +23,16 @@ and an error got two diagnostics from `kumiki_check` and one from
 `kumiki_build`.
 
 `kumiki_build` now hands a successful build's warnings back in a second text
-content item, as the same JSON diagnostic list `kumiki_check` returns, and the
-result is still not `isError`. The first item is unchanged: the size summary,
+content item, `warnings:` followed by the same JSON diagnostic list
+`kumiki_check` returns, and the result is still not `isError`. The first item is unchanged: the size summary,
 or with `includeJs` the generated JS and nothing else. A build with no
 warnings still answers in one item.
 
 ```text
 build ok — 260108 bytes of JS (pass includeJs=true for the source)
 ```
-```json
+```text
+warnings:
 [{ "code": "W0212", "kind": "ui-event-tile-mismatch", …, "severity": "warning" }]
 ```
 
