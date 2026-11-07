@@ -1,6 +1,7 @@
 import type { EffectDef, FnDef, ReducerDef, SlotDef, TileDef, TypeDef } from "../ast.ts";
 import { isPerTileFamily, TILE_FAMILY, type TileFamily } from "../builtins.ts";
 import type { ParseReading } from "../parse-reading.ts";
+import type { Decoders } from "./decoders.ts";
 import type { NestedRefinements } from "./nested-refinements.ts";
 import type { ShowShapes } from "./show-shapes.ts";
 
@@ -15,6 +16,7 @@ export type GenCtx = {
   usedTiles: Set<string>;
   usedIcons: Set<string>;
   refinements: NestedRefinements;
+  decoders: Decoders;
   usedReaders: Set<ParseReading>;
   showShapes: ShowShapes;
   expectedTree?: boolean;

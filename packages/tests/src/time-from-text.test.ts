@@ -7,10 +7,8 @@ import { loadApp, loadSource } from "./helpers/load.ts";
 import { failureDetail } from "./helpers/scenario.ts";
 
 const PATTERN = "yyyy-MM-dd HH:mm";
-// What `format(PATTERN)` renders for a value that names no instant (stdlib.md §2.2.8).
-const NO_INSTANT = "0NaN-NaN-NaN NaN:NaN";
 
-describe("format reads a Time held as text by Time.parse's grammar", () => {
+describe("Decoder.Json reads a Time field's text by Time.parse's grammar", () => {
   let double: FetchDouble | undefined;
 
   afterEach(() => {
@@ -18,38 +16,40 @@ describe("format reads a Time held as text by Time.parse's grammar", () => {
     double = undefined;
   });
 
-  it("renders each decoded text as Time.parse reads it, so digits are no instant", async () => {
-    const inputs = [
-      "1",
-      "2026",
-      "20260307",
-      "1772877600000",
-      "hello 12",
-      "March 7",
-      "Tue 5",
-      "2026-03-07",
-      "2026-03-07T10:00",
-      "2026-03-07 10:00:00.5",
-      "2026-03-07T10:00:00Z",
-      "2026-03-07T19:00:00+09:00",
-    ];
-    const rows = inputs.map((at, i) => ({ label: `row${i}`, at }));
-    double = stubFetch(() => new Response(JSON.stringify(rows)));
+  /** What example 198 shows once its stamps request answers one stamp at `at`. */
+  async function shownFor(at: string): Promise<string[]> {
+    double = stubFetch(() => new Response(JSON.stringify([{ label: "row", at }])));
     const app = await loadApp(feature("198-time-from-text"));
-    await withMounted(app, async (root) => {
-      await waitUntil(() => texts(root).some((l) => l.startsWith(`row${inputs.length - 1}: `)), {
+    return withMounted(app, async (root) => {
+      await waitUntil(() => texts(root).some((l) => /^row: |^problem: \S/.test(l)), {
         timeoutMs: 3000,
       });
-      inputs.forEach((text, i) => {
-        const parsed = _stdlib.parseTime(text);
-        const expected =
-          parsed._tag === "Some" ? _stdlib.formatTime(parsed._0, PATTERN) : NO_INSTANT;
-        expect(texts(root), text).toContain(`row${i}: ${expected}`);
-      });
-      expect(texts(root)).toContain(`row0: ${NO_INSTANT}`);
-      expect(root.textContent).not.toContain("1969-12-31");
-      expect(root.textContent).not.toContain("1970-01-01");
+      return texts(root);
     });
+  }
+
+  it.each([
+    "1",
+    "2026",
+    "20260307",
+    "1772877600000",
+    "hello 12",
+    "March 7",
+    "Tue 5",
+    "2026-03-07",
+    "2026-03-07T10:00",
+    "2026-03-07 10:00:00.5",
+    "2026-03-07T10:00:00Z",
+    "2026-03-07T19:00:00+09:00",
+  ])("reads %j as Time.parse does, refusing what it refuses", async (at) => {
+    const shown = await shownFor(at);
+    const parsed = _stdlib.parseTime(at);
+    if (parsed._tag === "Some") {
+      expect(shown).toContain(`row: ${_stdlib.formatTime(parsed._0, PATTERN)}`);
+    } else {
+      expect(shown).toContain("problem: decode failed: expected Time at [0].at");
+      expect(shown.some((l) => l.startsWith("row: "))).toBe(false);
+    }
   });
 });
 
