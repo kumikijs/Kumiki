@@ -6,6 +6,9 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { kumiki } from "../src/index.ts";
 import { buildInto, project } from "./helpers/plugin.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
+
+const TMP = scratchRoot(import.meta.url);
 
 /** Forty definitions, each adding 250 `where`s to the one before. */
 function chainOfPredicates(): string {
@@ -25,10 +28,11 @@ app Chain caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
 describe("a slot whose type carries ten thousand predicates", () => {
   it("builds", async () => {
-    const root = project(
-      chainOfPredicates(),
-      `import App from "./app.kumiki";\nexport default App;\n`,
-    );
+    const root = project({
+      where: TMP,
+      source: chainOfPredicates(),
+      main: `import App from "./app.kumiki";\nexport default App;\n`,
+    });
     const out = await buildInto(root, join(root, "dist"), [kumiki()]);
     // Once in the slot's check and once among its named parts.
     expect(out.split("v >= 0 && v <= 999").length - 1).toBe(2 * 40 * 250);
