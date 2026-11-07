@@ -846,6 +846,7 @@ kumiki replay --until-step 5                # 途中まで
   - `value` が欠けている、あるいは `kind` が要求する型でない（`now` / `random` は数値、`fresh-id` / `effect-id` は文字列、`prefers-dark` は真偽値）要素は、本体に渡す前にスコープを開く時点で**棄却される**。不正な要素をそのまま消費すると `undefined` が返り、`now.show` は `"undefined"` を描画し算術は `NaN` になるが、理由を告げる throw は起きない。棄却された要素は `malformed` に数え、その読みはライブにフォールバックする。
   - 記録された `panic` step は `reducer` step と同じように replay される：`name` が入口の reducer を指し、`env-reads` が同じ手順で据えられるので、記録されたクラッシュは再びクラッシュする。
   - 記録済み `env-reads` と replay 中の reducer は**名前で**対応付ける：replay はログの step を辿るのではなく reducer を再実行して連鎖を導くため、reducer `foo` の n 回目の実行が、記録された n 個目の `foo` step の読みを取る。これは順序の仮定であって整合の保証ではない — replay は reducer の emit を宣言順に辿るが、記録側は `.ok` / `.err` step を effect の**完了順**に並べるので、宣言順と違う順で完了した 2 つの effect から同じ reducer に 2 回到達すると、記録された 2 つの読みの組は**入れ替わる**。この失敗は静かである：値は欠落ではなく交差するので、`live` の数には現れない。
+- `kumiki test` と同じく（[testing.md 出力](./testing.md#_8-7-1-output)）、`kumiki replay` はコンパイルの警告を自身の出力より先に stderr へ出力する。警告は出力も終了コードも変えない。
 
 ---
 
