@@ -62,7 +62,7 @@ type HttpBody = Json(JsonValue)
 |---|---|
 | `Json(v)` | `v` の JSON。`Unit` の `Json` は `null` |
 | `Form(m)` | `m` を URL エンコードしたもの（`a=1&b=2`） |
-| `Multipart(m)` | `m` の `FormData`。`FileV` のエントリはファイルとして送る。ファイルを持たない `FileV`（永続化から復元したファイルレコード）はリクエスト前に `HttpError{status: 0}` で effect を失敗させる |
+| `Multipart(m)` | `m` の `FormData`。`FileV` のエントリはファイルとして送る。ファイルを持たない `FileV`（JSON からデコードした `File` で、名前・サイズ・タイプしか持たない）はリクエスト前に `HttpError{status: 0}` で effect を失敗させる |
 | `Text(t)` | `t` そのまま |
 | `Bytes(b)` | `b` のバイト列 |
 | `Empty` | 本文なし |
@@ -383,6 +383,8 @@ effect storage-clear  cap=storage.write
 
 このどれにも当たらないリクエストは `err` になり、何も変更しない。レコードでないもの（空のリクエストを含む）、空でない `Text` でない `key`、フィールドはあるが値を持たない `value`（`undefined`）がこれに当たる。Web Storage の呼び出しの失敗（容量超過、`SecurityError`）も `err` で、そのメッセージは呼び出しとキーを示す。`storage.write` のホストプロバイダ（[§2.5](./stdlib.md#_2-5-standard-capabilities)）は、effect の入力または `map-request` が組み立てたとおりのリクエストを受け取り、クリアではリクエストを受け取らない。
 
+どこかに選ばれた `File` を含む `value` も `err` になり、何も保存されない。ストレージはテキストを保持するが、ファイルのバイト列は書き込みが受け取れるテキストではない（ブラウザはそれを非同期にしか読み出せない）。そのため保存した `File` は名前・サイズ・タイプだけを残してファイルを失い、読み戻したものの `file-url` は `""` になり、それを持つ `FileV` パートはリクエストを失敗させる（[6.1.3](#_6-1-3-httpbody-型)）。メッセージはキーとファイル名を示す: `storage.write: the value for "f" holds the File "a.txt", and localStorage would keep only its name, size and type, not the file; nothing was stored`。JSON からデコードした `File` のようにファイルを持たない `File` には失うものが無く、そのフィールドとして保存される。
+
 **保存形。** JSON が保持できる値は、その JSON テキストとして保存される。`{n: 1}` は `{"n":1}` として保存される。どこかに `Bytes`、有限でない数（`NaN`・`Infinity`・`-Infinity`）または負のゼロを含む値は **タグ付き形式** で保存される。`~` の後に値の JSON が続き、その中で `Bytes` はそれぞれ `{"$bytes": "<その base64>"}`、そうした数はそれぞれ `{"$float": "NaN"}`（または `"Infinity"`・`"-Infinity"`・`"-0"`）と書かれ、値の中のオブジェクトのキー（タグ自身のキーを除く）のうち `$` で始まるもの（`Map(Text, V)` のキーや `Set(Text)` の要素はそうなり得る）は先頭に `$` をもう1つ付けて書かれる。エスケープされたそのキーは `$$` で始まるので、タグ付き形式で `$` 1つで始まるキーを持つオブジェクトはタグだけである。たとえば `{data: Bytes.from-text("hi"), ratio: 1.0 / 0.0}` は `~{"data":{"$bytes":"aGk="},"ratio":{"$float":"Infinity"}}` として保存され、`storage-read` は同じ2バイトと `Infinity` を返す。`~` で始まる JSON テキストは無いので、read は最初の1文字で2つの形式を見分け、JSON として保存されたエントリは、どのビルドが書いたものでも、その JSON のとおりに読み戻される。保存された `{"$bytes":"aGk="}` は書き込まれたときの1エントリの `Map(Text, Text)` であり、`Bytes` ではない。
 
 read は保存されたテキストをその形式に従ってデコードする。タグ付き形式では、`$` 1つで始まるキーを持つオブジェクトはタグそのものでなければならない。パディング付きの標準 base64 を持つ `{"$bytes": …}` か、`"NaN"`・`"Infinity"`・`"-Infinity"`・`"-0"` のいずれかを持つ `{"$float": …}` で、ほかのキーは持たない。JSON でない保存テキストや、タグの位置にそれ以外のものがあるタグ付きテキストはデコードできず、read はキーとストレージを示す `decode failed:` で始まる `Text` を値とする `.err` になる。read の `Decoder.Json(T)` がデコードした値を拒否した場合（レスポンスと同じく [6.1.4](#_6-1-4-decoder-型) の検査）も、read は `decode failed:` で始まる `Text` を値とする `.err` になる。したがって、古いビルドが書いた、あるいは手で編集された、いまの型が拒否する storage は、`.err` reducer が扱える失敗としてプログラムに届く。reducer の batch が書き込みを拒否する `.ok` にはならない（[§10.3.3](./runtime.md#_10-3-3-batching)）。そうなると、その reducer でロード状態を終えるアプリはロード画面のまま止まる。
@@ -422,7 +424,7 @@ reducer onChange
 
 ### 6.7.4 sessionStorage / IndexedDB
 
-`session-*` も同じ形で、保存形も同じ（[6.7.2](#_6-7-2-宣言-localstorage)）。`indexed-*` はキー指定が `{store: Text, key: Text}` になる以外は同じ。拒否された `Decoder.Json(T)` は、`storage-read` と同じく `session-read` と `indexed-read` でも `.err` になる。IndexedDB は構造化された値を保持するので parse はしないが、検査は行う。`indexed-*` にタグ付き形式は無い。IndexedDB は `indexed-write` が書くレコードの構造化複製を保持するので、書いたレコードの中の `Bytes`・有限でない数・負のゼロは `indexed-read` からそのまま返る。レコードでない `value` にはストアのキーを置く場所が無く、書いたとおりには返らない。
+`session-*` も同じ形で、保存形も同じ（[6.7.2](#_6-7-2-宣言-localstorage)）。`session-write` も選ばれた `File` を同じように拒否し、そのメッセージは sessionStorage を示す。`indexed-*` はキー指定が `{store: Text, key: Text}` になる以外は同じ。拒否された `Decoder.Json(T)` は、`storage-read` と同じく `session-read` と `indexed-read` でも `.err` になる。IndexedDB は構造化された値を保持するので parse はしないが、検査は行う。`indexed-*` にタグ付き形式は無い。IndexedDB は `indexed-write` が書くレコードの構造化複製を保持するので、書いたレコードの中の `Bytes`・有限でない数・負のゼロは `indexed-read` からそのまま返る。レコードでない `value` にはストアのキーを置く場所が無く、書いたとおりには返らない。
 
 ```kumiki fragment
 effect indexed-read cap=indexed.read
