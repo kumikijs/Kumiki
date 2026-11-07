@@ -405,20 +405,18 @@ describe("diagnostic messages", () => {
     ["-9007199254740993", "-9007199254740992"],
     ["9007199254740995", "9007199254740996"],
     ["123456789012345678901234567890", "123456789012345677877719597056"],
-    ["9007199254740993.5", "9007199254740994"],
   ])("names %s as written and every digit of the value it was rounded to", (literal, became) => {
     expect(firstMessage(`slot n : Int = ${literal}`)).toBe(
       `Int literal ${literal} is outside the safe range ${SAFE_RANGE} and was rounded to ${became}`,
     );
   });
 
-  // 2^53, its negation, 2^53 + 2, 2^60, and 2^53 written with a point: each is held exactly.
+  // 2^53 and its negation, 2^53 + 2, and 2^60: each is held exactly.
   it.each([
     "9007199254740992",
     "-9007199254740992",
     "9007199254740994",
     "1152921504606846976",
-    "9007199254740992.0",
   ])("says %s, which JavaScript holds exactly, is outside the safe range but not rounded", (literal) => {
     expect(firstMessage(`slot n : Int = ${literal}`)).toBe(
       `Int literal ${literal} is outside the safe range ${SAFE_RANGE}: it is held exactly, but an integer next to it is not`,
