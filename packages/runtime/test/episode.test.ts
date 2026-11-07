@@ -260,17 +260,15 @@ describe("the order the logger keeps episodes in", () => {
     expect(targets()).toEqual(["ABtn", "BBtn"]);
   });
 
-  it.each(
-    outlets,
-  )("%s gets an episode once it is done, while one begun after it waits", (_, _w, make) => {
+  it.each(outlets)("%s gets an episode once it is done, while a later one waits", (_, _w, make) => {
     const { logger, targets } = make();
     logger.beginTrigger({ kind: "ui.click", target: "ABtn" });
-    const save = logger.recordEffectStart("save", "a");
+    const saveA = logger.recordEffectStart("save", "a");
     logger.endTrigger();
-    logger.recordEffectEnd(save, "save", "ok", null)();
     logger.beginTrigger({ kind: "ui.click", target: "BBtn" });
     logger.recordEffectStart("save", "b");
     logger.endTrigger();
+    logger.recordEffectEnd(saveA, "save", "ok", null)();
     expect(targets()).toEqual(["ABtn"]);
   });
 });
