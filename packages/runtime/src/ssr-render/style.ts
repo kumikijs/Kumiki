@@ -6,6 +6,7 @@ import {
   type TileNode,
   type TileProps,
 } from "../core.ts";
+import { FIELDSET_RESET } from "../tiles/input/fieldset.ts";
 
 const COVER_PARENT: StyleDecl[] = [
   ["top", "0"],
@@ -46,6 +47,8 @@ function baseDecls(node: TileNode): StyleDecl[] {
       ];
     case "scroll":
       return [["overflow", "auto"]];
+    case "fieldset":
+      return [...FIELDSET_RESET];
     case "skeleton": {
       const h = node.props?.h;
       return [

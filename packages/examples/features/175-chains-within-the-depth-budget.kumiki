@@ -1,0 +1,34 @@
+# Feature: a type's `where`s and an assignment target's path are chains, and
+# count against the 256-level depth budget like any other.
+#
+# The grammar puts no count on a type's `where`s or on an assignment target's
+# `.field` / `[index]` steps, but each one adds a level to the tree, so both
+# are chains in the sense of language.md: past the budget, the parser refuses
+# the program with "Nesting is deeper than 256 levels" at the step that went
+# over.
+#
+# This program sits far inside the budget. `Tag` carries three predicates, and
+# `rename` writes one `Tag` ten steps down, through records and Lists.
+
+type Tag   = Text where nonempty where len-lt(9) where regex("[a-z]+")
+type Pin   = { tags: List(Tag) }
+type Cell  = { pins: List(Pin) }
+type Row   = { cells: List(Cell) }
+type Board = { rows: List(Row) }
+type World = { boards: List(Board) }
+
+slot world : World = {boards: [{rows: [{cells: [{pins: [{tags: ["kumi"]}]}]}]}]}
+
+reducer rename on=ui.click(Rename)
+    do= world.boards[0].rows[0].cells[0].pins[0].tags[0] := "kumiki"
+
+tile Rename = button(text="rename") {id: "rename"}
+
+tile App = column(
+  Rename,
+  text("tag: " + world.boards[0].rows[0].cells[0].pins[0].tags[0]))
+
+app ChainsWithinTheDepthBudget
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

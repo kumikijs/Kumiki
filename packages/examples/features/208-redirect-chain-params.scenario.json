@@ -1,0 +1,45 @@
+{
+  "steps": [
+    {
+      "label": "a chain of redirects is followed to the page it reaches",
+      "do": { "navigate": "/v1" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Home page", "[at /]"],
+        "domExcludes": ["Not found"]
+      }
+    },
+    {
+      "label": "a parameter the source binds is put into the target",
+      "do": { "navigate": "/old/42" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Item page", "[at /items/42]", "[id 42]"],
+        "domExcludes": ["Not found"]
+      }
+    },
+    {
+      "label": "Back returns to the page before the redirect, not to its source",
+      "do": { "clickText": "Back" },
+      "expect": { "noErrors": true, "domIncludes": ["Home page", "[at /]"] }
+    },
+    {
+      "label": "a wildcard source carries the rest of the path to the target's *",
+      "do": { "navigate": "/docs/a/b" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Help page", "[at /help/a/b]"],
+        "domExcludes": ["Not found"]
+      }
+    },
+    {
+      "label": "redirects in a sub-routes map chain and substitute the same way",
+      "do": { "navigate": "/account/u/5" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Profile page", "[at /account/users/5]", "[id 5]"],
+        "domExcludes": ["Not found"]
+      }
+    }
+  ]
+}
