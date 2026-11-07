@@ -16,8 +16,10 @@ failed with `DOM should include "notified"` while the banner was on screen, so
 fixtures asserted a counter the reducer bumped beside the `emit` instead.
 
 Both assertions, and the step's `domText`, now read the mount root and the
-runtime's overlays, and the step above passes. A run reads only the overlays it
-opened: one already in the document when it starts, left by an earlier run or
-test, is not read, and the ones it opened are removed when it tears down rather
-than staying in a document the next run shares. `RUNTIME_OVERLAY_SELECTORS`,
-exported from `@kumikijs/runtime`, lists the overlays.
+runtime's overlays, and the step above passes. A run reads every overlay that
+appears in the document during it; one already there when it starts, left by an
+earlier run or test, is not read, and a `{click}` that matches nothing under the
+root looks only in the overlays the run reads. At teardown the run removes the
+toasts that appeared during it rather than leaving them in a document the next
+run shares. `RUNTIME_OVERLAY_SELECTORS`, exported from `@kumikijs/runtime`,
+lists the overlays.

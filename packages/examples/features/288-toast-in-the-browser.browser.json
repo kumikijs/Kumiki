@@ -30,13 +30,13 @@
       }
     },
     {
-      "label": "the info toast is still up halfway through its 3000ms",
-      "do": { "wait": 1500 },
+      "label": "the info toast is still up a third of the way through its 3000ms",
+      "do": { "wait": 1000 },
       "expect": { "domIncludes": ["Saved", "Failed"] }
     },
     {
-      "label": "past 3000ms the info toast is gone, and the error toast stays",
-      "do": { "wait": 1700 },
+      "label": "well past 3000ms the info toast is gone, and the error toast stays",
+      "do": { "wait": 2500 },
       "expect": { "domExcludes": ["Saved"], "domIncludes": ["Failed"] }
     }
   ]

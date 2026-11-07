@@ -745,6 +745,8 @@ effect scroll-to   in={x: Int, y: Int}  out=Unit
 
 ### 2.6.5 確認ダイアログ {#_2-6-5-confirm}
 
+ランタイムが描画するダイアログは `data-kumiki-confirm`（テストが選択に使うマーカ）を持ち、その Yes と No のボタンは `data-kumiki-confirm-action` に `yes` と `no` を持つ。
+
 ```kumiki fragment
 effect confirm     cap=notification.show  in={title: Text, message: Text, onYes: ReducerRef, onNo: ReducerRef}  out=Unit
 ```

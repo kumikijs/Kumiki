@@ -771,6 +771,8 @@ The one standard effect with no capability: it moves the viewport of the page th
 
 ### 2.6.5 Confirm
 
+The dialog the runtime renders carries `data-kumiki-confirm` (the marker a test selects on), and its Yes and No buttons carry `data-kumiki-confirm-action` set to `yes` and `no`.
+
 ```kumiki fragment
 effect confirm     cap=notification.show  in={title: Text, message: Text, onYes: ReducerRef, onNo: ReducerRef}  out=Unit
 ```

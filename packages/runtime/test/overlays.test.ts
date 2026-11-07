@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 describe("RUNTIME_OVERLAY_SELECTORS", () => {
-  it("lists one selector per effect that renders outside the mount root", () => {
+  it("lists the toast and confirm markers", () => {
     expect(PRODUCERS.map((p) => p.selector)).toEqual([...RUNTIME_OVERLAY_SELECTORS]);
   });
 
