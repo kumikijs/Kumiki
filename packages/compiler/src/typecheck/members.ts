@@ -1,4 +1,4 @@
-import { isOpaque, recordFieldType, unaliasType } from "../assignable.ts";
+import { assignable, isOpaque, recordFieldType, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, KeyKind, Pos, TypeExpr } from "../ast.ts";
 import { FIELD_ACCESS_SHORTCUTS, METHOD_MIN_ARGS } from "../codegen.ts";
 import { keyRepresentation } from "../key-representation.ts";
@@ -15,7 +15,7 @@ import {
   UNIVERSAL_MEMBERS,
 } from "../stdlib-members.ts";
 import { STDLIB_TYPES } from "../stdlib-types.ts";
-import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
+import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
 import { inferType, primFieldType, typeName } from "./infer.ts";
 
 type MemberClass = "field" | "member" | "unknown" | "undecidable";
@@ -137,6 +137,28 @@ export function fragmentBindings(
   return found.fragment.second === "pair-value" && !KEYED.has(app.name)
     ? pairOrElement(only, sym)
     : [only, null];
+}
+
+/**
+ * `fold`'s accumulator: the wider of `init`, the init's type, and what `body` answers with `$1` of
+ * that type, so an `Int` init the fragment answers a `Float` from is a `Float` accumulator. A
+ * result that fits neither way leaves it the init's, which the result is then checked against. An
+ * init with no type leaves it none.
+ */
+export function accumulatorType(
+  init: TypeExpr | null,
+  elem: TypeExpr | null,
+  body: Expr,
+  sym: SymbolTable,
+  ctx: Ctx,
+): TypeExpr | null {
+  if (init === null) return null;
+  const first = innerScope(ctx);
+  bindLocal(first, "$1", init);
+  bindLocal(first, "$2", elem);
+  const result = inferType(body, sym, first);
+  const widens = result !== null && !assignable(result, init, sym) && assignable(init, result, sym);
+  return widens ? result : init;
 }
 
 function fragmentRow(

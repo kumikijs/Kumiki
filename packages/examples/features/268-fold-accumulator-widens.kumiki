@@ -1,0 +1,46 @@
+# Feature (language.md, stdlib.md): `fold`'s accumulator has the wider of the
+# init's type and the fragment's result type, and `$1` has it at every step.
+#
+#   prices.fold(0, $1 + $2)     # an Int init, a Float result: $1 : Float
+#   prices.fold(0, addPrice)    # addPrice($1, $2), with $1 : Float
+#
+# A fragment whose result fits neither way is E0201, at the fragment, or at
+# the fn's name when it is named bare. Each of these would hand its second
+# step a Text where it reads an Int:
+#
+#   fn step(acc: Int, x: Int) -> Text = (acc + x).show
+#   counts.fold(0, step)        # E0201 Expected Int but got Text
+#   counts.fold(0, $1.show)     # E0201 Expected Int but got Text
+#
+# A fn whose accumulator parameter is narrower than what it answers is E0201
+# at its name, since from the second step on it is handed that answer:
+#
+#   fn grow(acc: Int, p: Float) -> Float = p
+#   prices.fold(0, grow)        # E0201 Expected Int but got Float
+
+slot prices : List(Float) = [1.5, 2.25, 3.0]
+slot counts : List(Int)   = [1, 2, 3]
+
+slot total : Float = 0.0
+slot viaFn : Float = 0.0
+slot sum   : Int   = 0
+
+fn addPrice(acc: Float, p: Float) -> Float = acc + p
+
+reducer run on=ui.click(Run)
+    do= total := prices.fold(0, $1 + $2)
+        viaFn := prices.fold(0, addPrice)
+        sum   := counts.fold(0, $1 + $2)
+
+tile Run = button(text="run") {id: "run"}
+
+tile App = column(
+  Run,
+  text("total: " + total.show),
+  text("via fn: " + viaFn.show),
+  text("sum: " + sum.show))
+
+app FoldAccumulatorWidens
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

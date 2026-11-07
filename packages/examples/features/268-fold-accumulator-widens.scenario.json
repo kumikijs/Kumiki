@@ -1,0 +1,13 @@
+{
+  "steps": [
+    {
+      "label": "an Int init that the fragment answers a Float from folds into a Float, in both spellings",
+      "do": { "click": "#run" },
+      "expect": {
+        "noErrors": true,
+        "state": { "total": 6.75, "viaFn": 6.75, "sum": 6 },
+        "domIncludes": ["total: 6.75", "via fn: 6.75", "sum: 6"]
+      }
+    }
+  ]
+}

@@ -868,7 +868,7 @@ items.filter(isActiveOnly)
 
 A fn name in a fragment position is the call the method makes with the fragment's positionals: `items.map(double)` is `items.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. It is the **only** position a bare fn name is right — a fn is not a value, so `label` written where a value goes is [E0127](./errors.md#e0127-fn-as-value), and the call is `label()`. The positions, and how many positionals each binds, are listed under E0127.
 
-**The type of each positional** is what the method hands the fragment, read off the receiver's type, or, for `fold`'s accumulator, off the init's:
+**The type of each positional** is what the method hands the fragment, read off the receiver's type, or, for `fold`'s accumulator, off the init's and the fragment's result:
 
 | Method | Receiver | `$1` | `$2` |
 |---|---|---|---|
@@ -877,12 +877,12 @@ A fn name in a fragment position is the call the method makes with the fragment'
 | `map` | `Result(T, E)` | the `Ok` value, `T` | — |
 | `filter`, `map` | `Map(K, V)` | the key, `K` | the value, `V` |
 | `filter` | `Set(T)` | the member, `T` | — |
-| `fold(init, f)` | `List(T)` | the accumulator, of the init's type | the element, `T` |
+| `fold(init, f)` | `List(T)` | the accumulator, the wider of the init's type and `f`'s result | the element, `T` |
 | `flat-map` | `Option(T)`, `Result(T, E)` | the value, `T` | — |
 | `update(k, f)` | `Map(K, V)` | the current value, `V` | — |
 | `map-err` | `Result(T, E)` | the error, `E` | — |
 
-Under `filter`, `map`, `find` and `sort-by`, a `T` that is a `Tuple(A, B)` — what `.entries` produces — is taken apart: `$1` is `A` and `$2` is `B` ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)). A `Set`'s member is not: it is `$1` whole, as a `Map`'s key is. A positional is checked like any value of its type, and a fn name is checked as the call it stands for: with `fn loud(t: Text)`, `xs.map(loud($1))` over a `List(Int)` is [E0201](./errors.md#e0201-type-mismatch), and so is `xs.map(loud)`. `xs.fold(0, f)` checks `f`'s first parameter against `Int`, the init's type, and its second against the element. The fragment's result is not checked against the accumulator's type, so `$1` has the init's type on the first step only: `xs.fold(0, $1.show)` passes, and hands the second step a `Text`.
+Under `filter`, `map`, `find` and `sort-by`, a `T` that is a `Tuple(A, B)` — what `.entries` produces — is taken apart: `$1` is `A` and `$2` is `B` ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)). A `Set`'s member is not: it is `$1` whole, as a `Map`'s key is. A positional is checked like any value of its type, and a fn name is checked as the call it stands for: with `fn loud(t: Text)`, `xs.map(loud($1))` over a `List(Int)` is [E0201](./errors.md#e0201-type-mismatch), and so is `xs.map(loud)`. `xs.fold(0, f)` checks `f`'s first parameter against the accumulator and its second against the element. The accumulator's type is the wider of the init's type and the fragment's result type — the one the other fits — and `$1` has it at every step: over a `List(Float)`, `ps.fold(0, $1 + $2)` has a `Float` accumulator, an `Int` widening to a `Float`. Where neither fits the other, the accumulator has the init's type and the fragment is [E0201](./errors.md#e0201-type-mismatch), reported at the fragment, or at the `fn`'s name when it is named bare: from an `Int` init, `xs.fold(0, $1.show)` is, and so is `xs.fold(0, f)` with `fn f(acc: Int, x: Int) -> Text`.
 
 A positional whose type the checker cannot decide has none, and nothing is checked against it: over a receiver whose type is not decided (a type parameter, the result of a `fn` with no `->` whose body's type is not decided), for a `Map` key or a `Set` member that does not read back as its type — a `Bytes` one, or one whose type is a type parameter, is handed over as the string it is stored under — and for the accumulator of a `fold` whose init has no type of its own — `{}`, which is both the empty Map and the empty Set.
 

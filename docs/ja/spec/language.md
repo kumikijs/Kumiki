@@ -854,7 +854,7 @@ items.filter(isActiveOnly)
 
 式断片の位置に置いた fn 名は、メソッドが式断片の positional で行う呼び出しである：`items.map(double)` は `items.map(double($1))`、`xs.fold(0, add)` は `xs.fold(0, add($1, $2))` である。括弧のない fn 名が正しいのは**この位置だけ**である — fn は値ではないので、値の位置に書いた `label` は [E0127](./errors.md#e0127-fn-as-value) であり、呼び出しは `label()` と書く。位置の一覧と、それぞれが束縛する positional の数は E0127 の項に挙げてある。
 
-**各 positional の型**は、メソッドが式断片に渡すものの型であり、レシーバの型から読み取る。`fold` のアキュムレータだけは init の型から読み取る：
+**各 positional の型**は、メソッドが式断片に渡すものの型であり、レシーバの型から読み取る。`fold` のアキュムレータだけは init の型と式断片の結果から読み取る：
 
 | メソッド | レシーバ | `$1` | `$2` |
 |---|---|---|---|
@@ -863,12 +863,12 @@ items.filter(isActiveOnly)
 | `map` | `Result(T, E)` | `Ok` の値、`T` | — |
 | `filter`, `map` | `Map(K, V)` | キー、`K` | 値、`V` |
 | `filter` | `Set(T)` | メンバー、`T` | — |
-| `fold(init, f)` | `List(T)` | アキュムレータ、init の型 | 要素、`T` |
+| `fold(init, f)` | `List(T)` | アキュムレータ、init の型と `f` の結果のうち広いほう | 要素、`T` |
 | `flat-map` | `Option(T)`, `Result(T, E)` | 値、`T` | — |
 | `update(k, f)` | `Map(K, V)` | 現在の値、`V` | — |
 | `map-err` | `Result(T, E)` | エラー、`E` | — |
 
-`filter`・`map`・`find`・`sort-by` では、`Tuple(A, B)` である `T`——`.entries` が返すもの——は分解され、`$1` が `A`、`$2` が `B` になる（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）。`Set` のメンバーは分解されない：`Map` のキーと同じく、丸ごと `$1` になる。positional はその型の値として検査され、fn 名は自身が表す呼び出しとして検査される：`fn loud(t: Text)` に対して、`List(Int)` 上の `xs.map(loud($1))` は [E0201](./errors.md#e0201-type-mismatch) であり、`xs.map(loud)` も同じである。`xs.fold(0, f)` は `f` の第 1 パラメータを init の型 `Int` と、第 2 パラメータを要素と照合する。式断片の結果はアキュムレータの型と照合されないので、`$1` が init の型をもつのは最初の 1 回だけである：`xs.fold(0, $1.show)` は通り、2 回目には `Text` を渡す。
+`filter`・`map`・`find`・`sort-by` では、`Tuple(A, B)` である `T`——`.entries` が返すもの——は分解され、`$1` が `A`、`$2` が `B` になる（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）。`Set` のメンバーは分解されない：`Map` のキーと同じく、丸ごと `$1` になる。positional はその型の値として検査され、fn 名は自身が表す呼び出しとして検査される：`fn loud(t: Text)` に対して、`List(Int)` 上の `xs.map(loud($1))` は [E0201](./errors.md#e0201-type-mismatch) であり、`xs.map(loud)` も同じである。`xs.fold(0, f)` は `f` の第 1 パラメータをアキュムレータと、第 2 パラメータを要素と照合する。アキュムレータの型は init の型と式断片の結果の型のうち広いほう——もう一方がそこに収まるほう——であり、`$1` はどの回でもその型をもつ：`List(Float)` の上の `ps.fold(0, $1 + $2)` のアキュムレータは `Float` であり、`Int` は `Float` に広がる。どちらももう一方に収まらないときは、アキュムレータは init の型をもち、式断片は [E0201](./errors.md#e0201-type-mismatch) となる。報告されるのは式断片の位置、名前だけで書いた `fn` ならその名前の位置である：`Int` の init からの `xs.fold(0, $1.show)` がそうであり、`fn f(acc: Int, x: Int) -> Text` に対する `xs.fold(0, f)` も同じである。
 
 型検査器が型を決められない positional には型がなく、何とも照合されない：型の決まらないレシーバの上（型パラメータ、`->` を持たず本体の型も決まらない `fn` の結果）、型として読み戻されない `Map` のキーや `Set` のメンバー（`Bytes` のものや、型が型パラメータであるものは、格納されている文字列のまま渡される）、そして init 自体に型のない `fold` のアキュムレータ——空の Map でも空の Set でもある `{}`——がそれにあたる。
 
