@@ -862,14 +862,15 @@ items.filter(isActiveOnly)
 | `filter`, `map` | `Option(T)` | 値、`T` | — |
 | `map` | `Result(T, E)` | `Ok` の値、`T` | — |
 | `filter`, `map` | `Map(K, V)` | キー、`K` | 値、`V` |
+| `filter` | `Set(T)` | メンバー、`T` | — |
 | `fold(init, f)` | `List(T)` | アキュムレータ、init の型 | 要素、`T` |
 | `flat-map` | `Option(T)`, `Result(T, E)` | 値、`T` | — |
 | `update(k, f)` | `Map(K, V)` | 現在の値、`V` | — |
 | `map-err` | `Result(T, E)` | エラー、`E` | — |
 
-`filter`・`map`・`find`・`sort-by` では、`Tuple(A, B)` である `T`——`.entries` が返すもの——は分解され、`$1` が `A`、`$2` が `B` になる（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）。positional はその型の値として検査され、fn 名は自身が表す呼び出しとして検査される：`fn loud(t: Text)` に対して、`List(Int)` 上の `xs.map(loud($1))` は [E0201](./errors.md#e0201-type-mismatch) であり、`xs.map(loud)` も同じである。`xs.fold(0, f)` は `f` の第 1 パラメータを init の型 `Int` と、第 2 パラメータを要素と照合する。式断片の結果はアキュムレータの型と照合されないので、`$1` が init の型をもつのは最初の 1 回だけである：`xs.fold(0, $1.show)` は通り、2 回目には `Text` を渡す。
+`filter`・`map`・`find`・`sort-by` では、`Tuple(A, B)` である `T`——`.entries` が返すもの——は分解され、`$1` が `A`、`$2` が `B` になる（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）。`Set` のメンバーは分解されない：`Map` のキーと同じく、丸ごと `$1` になる。positional はその型の値として検査され、fn 名は自身が表す呼び出しとして検査される：`fn loud(t: Text)` に対して、`List(Int)` 上の `xs.map(loud($1))` は [E0201](./errors.md#e0201-type-mismatch) であり、`xs.map(loud)` も同じである。`xs.fold(0, f)` は `f` の第 1 パラメータを init の型 `Int` と、第 2 パラメータを要素と照合する。式断片の結果はアキュムレータの型と照合されないので、`$1` が init の型をもつのは最初の 1 回だけである：`xs.fold(0, $1.show)` は通り、2 回目には `Text` を渡す。
 
-型検査器が型を決められない positional には型がなく、何とも照合されない：型の決まらないレシーバの上（型パラメータ、`->` を持たず本体の型も決まらない `fn` の結果）、[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t) が束縛を与えていない `Set` の `filter`、型として読み戻されない `Map` のキー（`Bytes` のキーや、型が型パラメータであるキーは、格納されている文字列のまま渡される）、そして init 自体に型のない `fold` のアキュムレータ——空の Map でも空の Set でもある `{}`——がそれにあたる。
+型検査器が型を決められない positional には型がなく、何とも照合されない：型の決まらないレシーバの上（型パラメータ、`->` を持たず本体の型も決まらない `fn` の結果）、型として読み戻されない `Map` のキーや `Set` のメンバー（`Bytes` のものや、型が型パラメータであるものは、格納されている文字列のまま渡される）、そして init 自体に型のない `fold` のアキュムレータ——空の Map でも空の Set でもある `{}`——がそれにあたる。
 
 ---
 

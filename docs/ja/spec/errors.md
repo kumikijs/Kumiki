@@ -237,7 +237,7 @@ reducer 名がどの `reducer` 定義も指していない。名指す箇所は 
 
 > `Reference to undefined name "count-1" — "-" continues an identifier, so this is one name. Write "count - 1" with spaces for subtraction.`
 
-1 つの値を受け取る `filter` / `map` / `find` / `sort-by` のフラグメント — ペアでない要素、`Option` の値 — は `$1` だけを束縛する（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）ので、その中の `$2` は理由を添えて報告される：
+1 つの値を受け取る `filter` / `map` / `find` / `sort-by` のフラグメント — ペアでない要素、`Option` の値、`Set` のメンバー — は `$1` だけを束縛する（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）ので、その中の `$2` は理由を添えて報告される：
 
 > `"$2" is not bound here — the .filter fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`
 

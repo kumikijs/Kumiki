@@ -200,7 +200,7 @@ export const RECEIVER_PARAMS = {
 
 // The type parameters of each receiver a fragment's positional can be, named as stdlib.md names
 // them in its signatures.
-type FragmentParams = { List: "T"; Option: "T"; Result: "T" | "E"; Map: "K" | "V" };
+type FragmentParams = { List: "T"; Option: "T"; Result: "T" | "E"; Map: "K" | "V"; Set: "T" };
 
 export type FragmentReceiver = keyof FragmentParams;
 
@@ -253,13 +253,16 @@ type FragmentMethod =
 /**
  * Where each method's fragment argument is (`index`), and what the checker types its
  * positionals as, `$1` first. On a `pair-value` row the length also decides the shape the lowering
- * takes apart: two positionals are a Map's key and value; one is the element, split if a pair.
- * A receiver that has the method but no row binds them with no type: a `Set`'s `filter` is handed
- * each member as an `[element, true]` entry, which a one-positional row would bind to `$1` whole.
- * A receiver without the method is E0108.
+ * takes apart: two positionals are a Map's key and value; one is the element, split if a pair —
+ * except on a `Set`, whose `filter` is handed each member as an `[element, true]` entry, and whose
+ * one positional is that entry's key, whole. A receiver without the method is E0108.
  */
 export const FRAGMENT_ARGUMENTS = {
-  filter: { index: 0, second: "pair-value", on: { List: ["T"], Option: ["T"], Map: ["K", "V"] } },
+  filter: {
+    index: 0,
+    second: "pair-value",
+    on: { List: ["T"], Option: ["T"], Map: ["K", "V"], Set: ["T"] },
+  },
   map: {
     index: 0,
     second: "pair-value",

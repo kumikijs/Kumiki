@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "label": "a Set's filter hands each fragment the member, an Int or a whole pair",
+      "do": { "click": "#run" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "evens": [10, 20],
+          "big": [20, 25],
+          "kept": [[0, 0], [2, 2]]
+        },
+        "domIncludes": ["evens: [10, 20]", "big: [20, 25]", "kept: [(0, 0), (2, 2)]"]
+      }
+    }
+  ]
+}

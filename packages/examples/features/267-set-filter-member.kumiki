@@ -1,0 +1,50 @@
+# Feature (language.md, stdlib.md): a Set's `filter` hands its predicate each
+# member, and `$1` is that member, of the Set's element type.
+#
+#   ids.filter(isEven)          # isEven($1)   $1 : Int, the member
+#   ids.filter($1 > 15)         # $1 : Int
+#
+# So `$1` is checked like any value of its type. A fn over another type is
+# E0201 at its name, as it is at the `$1` when the call is written out, and a
+# member the type does not have is E0108:
+#
+#   fn loud(x: Text) -> Bool = x != ""
+#   ids.filter(loud)            # E0201 Expected Text but got Int
+#   ids.filter(loud($1))        # E0201 Expected Text but got Int
+#   ids.filter($1.size > 0)     # E0108 Type "Int" has no member ".size"
+#
+# The member is `$1` whole, as a Map's key is: a pair member is not taken
+# apart, and the fragment binds no `$2`:
+#
+#   cells.filter($1 != (0, 1))  # $1 : Tuple(Int, Int)
+#   ids.filter($2)              # E0103 "$2" is not bound here
+#
+# A member that is not read back as its type — a `Bytes` one — is handed
+# over as the text it is stored under, so its `$1` has no type.
+
+slot ids   : Set(Int)             = [10, 15, 20, 25]
+slot cells : Set(Tuple(Int, Int)) = [(0, 0), (0, 1), (2, 2)]
+
+slot evens : List(Int)             = []
+slot big   : List(Int)             = []
+slot kept  : List(Tuple(Int, Int)) = []
+
+fn isEven(n: Int) -> Bool = n % 2 == 0
+
+reducer run on=ui.click(Run)
+    do= evens := ids.filter(isEven).to-list
+        big   := ids.filter($1 > 15).to-list
+        kept  := cells.filter($1 != (0, 1)).to-list
+
+tile Run = button(text="run") {id: "run"}
+
+tile App = column(
+  Run,
+  text("evens: " + evens.show),
+  text("big: " + big.show),
+  text("kept: " + kept.show))
+
+app SetFilterMember
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

@@ -320,7 +320,11 @@ export type Lvalue =
 
 export type { KeyKind };
 
-export type FragmentShape = "pair" | "key-value" | "value" | "undecided";
+/**
+ * How the lowering binds `$1` / `$2` from what a `filter` / `map` / `find` / `sort-by` fragment is
+ * handed: `key` is an entry whose key alone is `$1`, as a Set's `filter` is handed `[member, true]`.
+ */
+export type FragmentShape = "pair" | "key-value" | "key" | "value" | "undecided";
 
 export type { ShowShape };
 

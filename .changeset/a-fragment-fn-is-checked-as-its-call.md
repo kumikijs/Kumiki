@@ -28,4 +28,4 @@ A `fold` into a Set starts from `{}` or a typed Set. `[]` is a `List`, so `xs.fo
 
 `Result.flat-map`'s `$1` is now typed as the `Ok` value, as `Option.flat-map`'s already was.
 
-A positional whose type cannot be decided is still checked against nothing. That covers a receiver of undecided type, a `Set`'s `filter`, and a `fold` from `{}`.
+A positional whose type cannot be decided is still checked against nothing. That covers a receiver of undecided type and a `fold` from `{}`.
