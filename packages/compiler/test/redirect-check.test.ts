@@ -199,7 +199,10 @@ describe("E0010: a chain of static redirects reaches a page", () => {
       '"/s/a" ->> "/s/b", "/s/b" ->> "/s/a"',
       '"/items/:id" -> Item, "/s/b" -> Item',
     );
-    expect(locatedOf(src)).toEqual([]);
+    // The map's own "/s/b" never applies, which is the report there instead.
+    expect(locatedOf(src).map((d) => `${d.code} ${textAt(src, d)}`)).toEqual([
+      'W0218 "/s/b" ->> "/s/a",',
+    ]);
   });
 
   it("accepts a chain that ends at the path /404 beside a catch-all redirect", () => {
