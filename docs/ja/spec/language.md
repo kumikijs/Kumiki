@@ -922,6 +922,8 @@ unop        ::= '-' | '!'
 
 reducer 本体の `match` 文（[§1.6.1](#_1-6-1-構文)）とタイル位置の `match`（[§1.7.1](#_1-7-1-構文)）は値ではなく、この規則の対象外である。どの arm にも一致しない `match` 文は、条件が偽のときの `else` なし `if` 文と同じく何も実行せず、どの arm にも一致しないタイルの `match` は空の `text` を描画する。
 
+**arm の終わりにある `match` は、その後に書かれたすべての arm を取る。** その arm は `|` が続くかぎり続き、レイアウトでは終わらない。改行もインデントも読まれない。`match x with | Red -> match y with | Small -> 1 | Large -> 2 | _ -> 3` では、`| _ -> 3` は `match y` の 3 つ目の arm であり、`match x` の arm は `Red` の 1 つだけである。内側の `match` が arm の最後に書かれたものであれば、どこでも同じである。演算子の右オペランド、`else` 分岐、`let … in` の本体、arm の最後の文がそうである。後に書かれた arm を外側の `match` に渡すには、その前で内側を閉じる。値なら括弧に入れる。`| Red -> (match y with | Small -> 1 | Large -> 2) | _ -> 3`。文なら波括弧に入れる。`| Red -> { match s with | Small -> n := 1 | Large -> n := 2 } | _ -> n := 3`。タイルには括弧がないので、内側の `match` を独自のタイルに移し、arm でそのタイルを名指す。上の arm がすでにすべての値に一致した後で内側の `match` が取る arm には決して到達せず、`check` はそこで警告する（[W0219](./errors.md#w0219-unreachable-nested-arm-warning)）。これによってある値の arm を欠いた値としての `match` は [E0227](./errors.md#e0227-non-exhaustive-match) になり、そのメッセージは内側の `match` を名指す。
+
 ### 1.9.1 禁止事項
 
 - **ラムダ式禁止**

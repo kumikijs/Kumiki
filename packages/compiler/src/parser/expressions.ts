@@ -1,7 +1,14 @@
-import type { BinOp, Expr, Pattern, Pos, Token } from "../ast.ts";
+import type { BinOp, EndsOuterArm, Expr, Pattern, Pos, Token } from "../ast.ts";
 import { qualifiedCallee, readsBareMemberAsCall } from "../builtin-calls.ts";
 import { ParseError } from "./token-stream.ts";
 import { TypeParser } from "./types.ts";
+
+type MatchNode<K, B> = {
+  kind: K;
+  scrutinee: Expr;
+  arms: { pattern: Pattern; body: B }[];
+  pos: Pos;
+} & EndsOuterArm;
 
 /** Stays in step with the AST's spelling of the prefix operators. */
 type UnaryOp = Extract<Expr, { kind: "UnaryOp" }>["op"];
@@ -410,15 +417,14 @@ export class ExpressionParser extends TypeParser {
   }
 
   protected parseMatchExpr(): Expr {
-    return { kind: "MatchExpr", ...this.parseMatch(() => this.parseExpr()) };
+    return this.parseMatch("MatchExpr", () => this.parseExpr());
   }
 
+  /** The `match` parsed last and the token it ended before. */
+  private endedMatch: { node: EndsOuterArm; at: number } | undefined;
+
   // The value, statement and tile forms share this, so each holds a `match` to one arm or more.
-  protected parseMatch<B>(parseBody: () => B): {
-    scrutinee: Expr;
-    arms: { pattern: Pattern; body: B }[];
-    pos: Pos;
-  } {
+  protected parseMatch<K extends string, B>(kind: K, parseBody: () => B): MatchNode<K, B> {
     const start = this.eat("kw", "match");
     const scrutinee = this.parseExpr();
     this.eat("kw", "with");
@@ -430,7 +436,11 @@ export class ExpressionParser extends TypeParser {
       arms.push({ pattern, body: parseBody() });
     }
     if (arms.length === 0) throw new ParseError("match requires at least one arm", start.pos);
-    return { scrutinee, arms, pos: start.pos };
+    const node: MatchNode<K, B> = { kind, scrutinee, arms, pos: start.pos };
+    // One that ended before this same token is the end of this match's last arm.
+    if (this.endedMatch?.at === this.i) this.endedMatch.node.outer = start.pos;
+    this.endedMatch = { node, at: this.i };
+    return node;
   }
 
   protected parsePattern(): Pattern {

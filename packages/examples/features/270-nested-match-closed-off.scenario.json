@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "label": "a tile match whose inner match is a tile of its own gives its later arm to the outer match",
+      "expect": { "noErrors": true, "domIncludes": ["tile: 3"] }
+    },
+    {
+      "label": "a value match in parentheses and a statement match in braces leave the outer match its `_` arm",
+      "do": { "click": "#go" },
+      "expect": {
+        "noErrors": true,
+        "state": { "asValue": 3, "asStmt": 3 },
+        "domIncludes": ["value: 3", "statement: 3", "tile: 3"]
+      }
+    }
+  ]
+}
