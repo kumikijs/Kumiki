@@ -64,8 +64,8 @@ describe("UI_LIFTS", () => {
       "video",
     ];
     expect(byEv.get("key")?.tiles).toEqual(new Set([...focusable, "check", "radio", "switch"]));
-    expect(byEv.get("focus")?.tiles).toEqual(new Set(focusable));
-    expect(byEv.get("blur")?.tiles).toEqual(new Set(focusable));
+    expect(byEv.get("focus")?.tiles).toEqual(new Set([...focusable, "scroll"]));
+    expect(byEv.get("blur")?.tiles).toEqual(new Set([...focusable, "scroll"]));
   });
 
   // A listener on an element that holds children hears every key from them too, so it would run
@@ -97,6 +97,16 @@ describe("wrappedUnreached", () => {
     expect(wrappedUnreached("key", WRAPPED)).toEqual([
       { kinds: ["details"], ...DETAILS, bubbles: true, handler: "onKeyDown" },
     ]);
+  });
+
+  // A scroll's <div> is the element that takes focus, so focus and blur fire where the runtime
+  // listens. A key does too, and so does every key from the tiles inside it.
+  it("answers key for a scroll, whose <div> takes focus itself and holds its content too", () => {
+    expect(wrappedUnreached("key", ["scroll"])).toEqual([
+      { kinds: ["scroll"], wrapper: "div", focused: "div", bubbles: true, handler: "onKeyDown" },
+    ]);
+    expect(wrappedUnreached("focus", ["scroll"])).toEqual([]);
+    expect(wrappedUnreached("blur", ["scroll"])).toEqual([]);
   });
 
   it("answers no other event", () => {
@@ -139,6 +149,13 @@ describe("wrapperNeverReceives", () => {
     expect(answered.sort()).toEqual(["blur", "focus"]);
     expect(wrappedUnreached("key", ["details"])).toHaveLength(1);
     expect(wrapperNeverReceives("key", ["details"])).toEqual([]);
+  });
+
+  it("answers no event for a scroll, so W0213 reports no handler written on one", () => {
+    const answered = ALL_UI_EVENT_KINDS.filter(
+      (ev) => wrapperNeverReceives(ev, ["scroll"]).length > 0,
+    );
+    expect(answered).toEqual([]);
   });
 });
 

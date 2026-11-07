@@ -272,6 +272,7 @@ tile SettingsLayout
 - それも無ければグローバル `/404` へ
 - 1 つの親 tile が描画する木の中に複数の `route-outlet()` がある場合の挙動は **未定義**。ランタイムは最初に見つかった outlet にのみ子を描画し、残りは空のまま放置する。tile 設計では outlet を 1 つに保つこと。
 - 子は親の**配下**で描画される。親の `error-boundary` は子を覆い、子が自身で宣言した境界があればそちらが勝つ（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。
+- `ui.<ev>(<親>)` の subscription は子へ持ち上げられない：route が子を実行時に選び単独で描画するので、subscription が届くのは親自身が描画するものだけである。子の tile を購読すれば（`ui.click(<子>)`）、route がそれをどこに表示しても実行される（[W0212](./errors.md#w0212-ui-event-tile-mismatch-warning)）。
 
 ---
 

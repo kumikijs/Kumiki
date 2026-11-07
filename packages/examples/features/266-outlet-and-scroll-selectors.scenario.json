@@ -1,0 +1,59 @@
+{
+  "steps": [
+    {
+      "label": "initial render: nothing has fired",
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "" },
+        "domIncludes": ["a scroll", "log: "]
+      }
+    },
+    {
+      "label": "focus on the scroll runs the ui.focus reducer lifted onto it",
+      "do": { "focus": "#pane" },
+      "expect": { "noErrors": true, "state": { "log": "pf " } }
+    },
+    {
+      "label": "a key on it runs the onKeyDown written on it",
+      "do": { "key": "#pane", "value": "a" },
+      "expect": { "noErrors": true, "state": { "log": "pf pk " } }
+    },
+    {
+      "label": "leaving it runs the ui.blur reducer lifted onto it",
+      "do": { "blur": "#pane" },
+      "expect": { "noErrors": true, "state": { "log": "pf pk pb " } }
+    },
+    {
+      "label": "a key in the input inside the other scroll runs ui.key(List) once",
+      "do": { "key": "#note", "value": "x" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "pf pk pb t " },
+        "domIncludes": ["log: pf pk pb t "]
+      }
+    },
+    {
+      "label": "the route puts Child in Shell's outlet",
+      "do": { "navigate": "/s/child" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["a route-outlet", "shell", "press"],
+        "domExcludes": ["nothing routed"]
+      }
+    },
+    {
+      "label": "a click on the routed button runs ui.click(Child), and not ui.click(Shell)",
+      "do": { "click": "#press" },
+      "expect": { "noErrors": true, "state": { "log": "pf pk pb t c " } }
+    },
+    {
+      "label": "a click on Shell's own button runs ui.click(Shell)",
+      "do": { "click": "#shell" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "pf pk pb t c s " },
+        "domIncludes": ["log: pf pk pb t c s "]
+      }
+    }
+  ]
+}
