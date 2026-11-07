@@ -9,6 +9,9 @@ import {
   callTool,
   errorMessage,
   FIX_COUNTER_TESTS,
+  FIX_COUNTER_TYPO,
+  FIX_COUNTER_TYPO_WITH_TEST,
+  FIX_FAILING_SINGLE,
   listTools,
   useWorkdir,
   withClient,
@@ -198,5 +201,72 @@ describe("ownership locks", () => {
     expect(res.body).toMatch(/lock violation: slot\.todosX is locked by agent:a/);
     expect(readFileSync(file, "utf8")).toBe(source);
     expect(existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
+  });
+
+  // The repair tools are held to the same check before they write.
+  const lockedBy = (qname: string): Record<string, string> => ({
+    reason: "locked",
+    message: `lock violation: ${qname} is locked by agent:a (pattern "reducer.*"). Set KUMIKI_AUTHOR=agent:a to edit.`,
+  });
+
+  /** A copy of `fixture` with `reducer.*` locked by agent:a, and the copy's source. */
+  const lockedCopy = (fixture: string, name: string): { file: string; source: string } => {
+    const file = join(workdir.path, name);
+    copyFileSync(fixture, file);
+    lockDef(file, "agent:a", "reducer.*");
+    process.env.KUMIKI_AUTHOR = "agent:b";
+    return { file, source: readFileSync(file, "utf8") };
+  };
+
+  it("kumiki_fix with apply is refused when the repair changes a locked definition", async () => {
+    const { file, source } = lockedCopy(FIX_COUNTER_TYPO, "typo.kumiki");
+    const res = await callOnce("kumiki_fix", { path: file, apply: true });
+    expect(res.isError).toBe(true);
+    const parsed = JSON.parse(res.body) as {
+      applied: number;
+      remaining: { code: string }[];
+      blocked?: unknown;
+    };
+    expect(parsed.applied).toBe(0);
+    expect(parsed.blocked).toEqual(lockedBy("reducer.inc"));
+    expect(parsed.remaining.map((d) => d.code)).toEqual(["E0103"]);
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
+  it("kumiki_auto_patch with apply is refused when the repair changes a locked definition", {
+    timeout: 30000,
+  }, async () => {
+    const { file, source } = lockedCopy(FIX_COUNTER_TYPO_WITH_TEST, "typo-with-test.kumiki");
+    const res = await callOnce("kumiki_auto_patch", {
+      path: file,
+      testName: "inc-works",
+      apply: true,
+    });
+    expect(res.isError).toBe(true);
+    const parsed = JSON.parse(res.body) as {
+      status: string;
+      compileErrors?: { code: string }[];
+      blocked?: unknown;
+    };
+    expect(parsed.status).toBe("compile-blocked");
+    expect(parsed.blocked).toEqual(lockedBy("reducer.inc"));
+    expect(parsed.compileErrors?.map((d) => d.code)).toEqual(["E0103"]);
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
+  it("kumiki_auto_patch with apply refuses a behavioural patch to a locked definition", {
+    timeout: 30000,
+  }, async () => {
+    const { file, source } = lockedCopy(FIX_FAILING_SINGLE, "failing.kumiki");
+    const res = await callOnce("kumiki_auto_patch", {
+      path: file,
+      testName: "greet-should-say-planet",
+      apply: true,
+    });
+    expect(res.isError).toBe(true);
+    const parsed = JSON.parse(res.body) as { status: string; blocked?: unknown };
+    expect(parsed.status).toBe("test-blocked");
+    expect(parsed.blocked).toEqual(lockedBy("reducer.greet"));
+    expect(readFileSync(file, "utf8")).toBe(source);
   });
 });
