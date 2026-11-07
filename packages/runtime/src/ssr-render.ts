@@ -1,4 +1,4 @@
-import { attrValue, type TileNode } from "./core.ts";
+import { attrValue, type TileNode, type TileProps } from "./core.ts";
 import {
   bindAttr,
   controlAttrs,
@@ -10,11 +10,19 @@ import {
   tileIdOf,
 } from "./ssr-render/html.ts";
 import { overlayLayerStyle } from "./ssr-render/style.ts";
+import { valueKey } from "./tiles/input/_shared.ts";
+import { boxLabelText } from "./tiles/input/check.ts";
 import { headingTag } from "./tiles/text/heading.ts";
 
 /** The spinner a loading button carries, as the renderer builds it. */
 const BUTTON_SPINNER =
   '<span data-kumiki-tile="spinner" aria-hidden="true" style="margin-right: 0.4em"></span>';
+
+/** A `check` or `radio` label is a `<span>` after the `<input>`, as the renderers append it. */
+function boxLabel(props: TileProps | undefined): string {
+  const label = boxLabelText(props);
+  return label ? `<span>${escapeText(label)}</span>` : "";
+}
 
 function renderChildren(children: TileNode[]): string {
   let out = "";
@@ -37,8 +45,16 @@ export function renderTileToString(node: TileNode): string {
     case "region":
     case "scroll":
     case "panel":
-    case "fieldset":
       return el(node, "div", { "data-kumiki-tile": node.kind }, renderChildren(node.children));
+    case "fieldset": {
+      const legend = attrValue(node.props?.legend);
+      return el(
+        node,
+        "fieldset",
+        { "data-kumiki-tile": "fieldset" },
+        `${legend === undefined ? "" : `<legend>${escapeText(String(legend))}</legend>`}${renderChildren(node.children)}`,
+      );
+    }
     case "overlay": {
       // The z-axis: the first child stays in normal flow and every later one gets its own absolutely-positioned layer, placed by `align`.
       const align = typeof node.props?.align === "string" ? node.props.align : "center";
@@ -141,11 +157,10 @@ export function renderTileToString(node: TileNode): string {
         node.kind === "switch"
           ? { "data-kumiki-tile": "switch", role: "switch" }
           : { "data-kumiki-tile": "check" },
-        `<input${inner}>`,
+        `<input${inner}>${node.kind === "check" ? boxLabel(node.props) : ""}`,
       );
     }
     case "radio": {
-      const label = typeof node.props?.label === "string" ? node.props.label : "";
       const inner = serializeAttrs({
         type: "radio",
         name: node.group,
@@ -158,18 +173,19 @@ export function renderTileToString(node: TileNode): string {
         node,
         "label",
         { "data-kumiki-tile": "radio" },
-        `<input${inner}>${label ? `<span>${escapeText(label)}</span>` : ""}`,
+        `<input${inner}>${boxLabel(node.props)}`,
       );
     }
     case "select": {
       const bind = bindAttr(node);
+      // A variant or record option is never the very object the slot holds, so
+      // only the structural key the mounted `<select>` uses can match them.
+      const currentKey = valueKey(node.value);
       const opts = (node.options ?? [])
-        .map(
-          (o) =>
-            `<option value="${escapeAttr(String(o.value))}"${
-              o.value === node.value ? " selected" : ""
-            }>${escapeText(String(o.label))}</option>`,
-        )
+        .map((o) => {
+          const k = valueKey(o.value);
+          return `<option value="${escapeAttr(k)}"${k === currentKey ? " selected" : ""}>${escapeText(String(o.label))}</option>`;
+        })
         .join("");
       return el(
         node,
@@ -180,8 +196,9 @@ export function renderTileToString(node: TileNode): string {
           id: tileIdOf(node),
           ...controlAttrs(node.props),
         },
+        // The placeholder is selected by the client's rule too: when the select has no value.
         node.placeholder !== undefined
-          ? `<option value="" disabled${node.value === undefined ? " selected" : ""}>${escapeText(node.placeholder)}</option>${opts}`
+          ? `<option value="" disabled${node.value == null ? " selected" : ""}>${escapeText(node.placeholder)}</option>${opts}`
           : opts,
       );
     }

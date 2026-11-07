@@ -108,8 +108,8 @@ describe("remove takes out the entry add and insert put in", () => {
     [
       "a nominal-Int Map key",
       "slot c : Map(ItemId, Text) = {}",
-      'c := c.insert(ItemId(1), "a").insert(ItemId(2), "b").remove(ItemId(1))',
-      "c.has(ItemId(1))",
+      'c := c.insert(1, "a").insert(2, "b").remove(1)',
+      "c.has(1)",
     ],
     [
       "a Bool Set member",

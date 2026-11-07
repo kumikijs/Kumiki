@@ -1,10 +1,23 @@
-import type { BinOp, Expr, MatchArm, Pattern, Pos } from "../ast.ts";
-import { QUALIFIED_CALL_NAMESPACES } from "../builtin-calls.ts";
+import type { BinOp, Expr, Pattern, Pos, Token } from "../ast.ts";
+import { qualifiedCallee, readsBareMemberAsCall } from "../builtin-calls.ts";
 import { ParseError } from "./token-stream.ts";
 import { TypeParser } from "./types.ts";
 
 /** Stays in step with the AST's spelling of the prefix operators. */
 type UnaryOp = Extract<Expr, { kind: "UnaryOp" }>["op"];
+
+// Being a whole value is what keeps these from naming a record field, so `{true: "on"}` is a Map.
+const VALUE_KEYWORDS: ReadonlyMap<string, (pos: Pos) => Expr> = new Map([
+  ["true", (pos: Pos): Expr => ({ kind: "Bool", value: true, pos })],
+  ["false", (pos: Pos): Expr => ({ kind: "Bool", value: false, pos })],
+  ["now", (pos: Pos): Expr => ({ kind: "Call", callee: "now", args: [], pos })],
+]);
+
+function fieldNameOf(t: Token): string | undefined {
+  if (t.kind === "ident") return t.value;
+  if (t.kind === "kw" && !VALUE_KEYWORDS.has(t.value)) return t.value;
+  return undefined;
+}
 
 export class ExpressionParser extends TypeParser {
   parseExpr(): Expr {
@@ -45,12 +58,13 @@ export class ExpressionParser extends TypeParser {
     return lhs;
   }
 
-  /** Heuristic: after `|`, does it look like the start of a match arm? */
+  // No expression continues with `->`, so a name, a name with `(…)`, or a `(…)` followed by `->`
+  // can only start the next arm, whatever the name's case.
   protected looksLikeMatchArm(): boolean {
     const next = this.peek(1);
-    // `| _ ->` is a wildcard match arm
+    // `_` never starts an expression, so `| _` is an arm even before its `->` is seen.
     if (next.kind === "ident" && next.value === "_") return true;
-    if (next.kind === "ident" && next.value[0] && next.value[0] >= "A" && next.value[0] <= "Z") {
+    if (next.kind === "ident") {
       const after = this.peek(2);
       if (after.kind === "op" && after.value === "->") return true;
       if (after.kind === "op" && after.value === "(") return this.arrowClosesParens(3);
@@ -226,13 +240,10 @@ export class ExpressionParser extends TypeParser {
       this.next();
       return { kind: "Str", value: t.value, pos: t.pos };
     }
-    if (t.kind === "kw" && (t.value === "true" || t.value === "false")) {
+    const valueKeyword = t.kind === "kw" ? VALUE_KEYWORDS.get(t.value) : undefined;
+    if (valueKeyword) {
       this.next();
-      return { kind: "Bool", value: t.value === "true", pos: t.pos };
-    }
-    if (t.kind === "kw" && t.value === "now") {
-      this.next();
-      return { kind: "Call", callee: "now", args: [], pos: t.pos };
+      return valueKeyword(t.pos);
     }
     if (t.kind === "kw" && t.value === "if") {
       return this.parseIfExpr();
@@ -307,9 +318,9 @@ export class ExpressionParser extends TypeParser {
       }
       if (head.value === "slots") {
         this.eat("op", ".");
-        const slot = this.eat("ident").value;
+        const slot = this.eat("ident");
         this.eat("op", ">");
-        return { kind: "Wildcard", wild: "slot", slot, pos: t.pos };
+        return { kind: "Wildcard", wild: "slot", slot: slot.value, slotPos: slot.pos, pos: t.pos };
       }
       throw new ParseError(
         `Unknown test wildcard "<${head.value}…>" (expected <any-id> or <slots.NAME>)`,
@@ -321,14 +332,14 @@ export class ExpressionParser extends TypeParser {
       const name = t.value;
       const isQualifierReceiver = !!name[0] && name[0]! >= "A" && name[0]! <= "Z";
       if (
-        QUALIFIED_CALL_NAMESPACES.has(name) &&
+        readsBareMemberAsCall(name) &&
         this.matchOp(".") &&
         (this.matchTAt(1, "ident") || this.matchTAt(1, "kw")) &&
         !this.matchTAt(2, "op", "(")
       ) {
         this.next();
         const member = (this.next() as { value: string }).value;
-        return { kind: "Call", callee: `${name}.${member}`, args: [], pos: t.pos };
+        return { kind: "Call", callee: qualifiedCallee(name, member), args: [], pos: t.pos };
       }
       if (
         isQualifierReceiver &&
@@ -349,7 +360,7 @@ export class ExpressionParser extends TypeParser {
           }
         }
         this.eat("op", ")");
-        return { kind: "Call", callee: `${name}.${sub}`, args, pos: t.pos };
+        return { kind: "Call", callee: qualifiedCallee(name, sub), args, pos: t.pos };
       }
       if (this.matchOp("(")) {
         this.next();
@@ -399,19 +410,27 @@ export class ExpressionParser extends TypeParser {
   }
 
   protected parseMatchExpr(): Expr {
+    return { kind: "MatchExpr", ...this.parseMatch(() => this.parseExpr()) };
+  }
+
+  // The value, statement and tile forms share this, so each holds a `match` to one arm or more.
+  protected parseMatch<B>(parseBody: () => B): {
+    scrutinee: Expr;
+    arms: { pattern: Pattern; body: B }[];
+    pos: Pos;
+  } {
     const start = this.eat("kw", "match");
     const scrutinee = this.parseExpr();
     this.eat("kw", "with");
-    const arms: MatchArm[] = [];
+    const arms: { pattern: Pattern; body: B }[] = [];
     while (this.matchOp("|")) {
       this.next();
       const pattern = this.parsePattern();
       this.eat("op", "->");
-      const body = this.parseExpr();
-      arms.push({ pattern, body });
+      arms.push({ pattern, body: parseBody() });
     }
     if (arms.length === 0) throw new ParseError("match requires at least one arm", start.pos);
-    return { kind: "MatchExpr", scrutinee, arms, pos: start.pos };
+    return { scrutinee, arms, pos: start.pos };
   }
 
   protected parsePattern(): Pattern {
@@ -477,25 +496,31 @@ export class ExpressionParser extends TypeParser {
       this.next();
       return { kind: "MapLit", entries: [], pos: start.pos };
     }
-    let isRecord = false;
+    // A word followed by `=`, `,` or `}` starts no Map entry, so it is a record's first field even
+    // when it cannot name one; the field loop refuses it there.
     const k0 = this.peek();
-    if (k0.kind === "ident" || k0.kind === "kw") {
-      const peek1 = this.peek(1);
-      if (
-        peek1.kind === "op" &&
-        (peek1.value === "=" || peek1.value === ":" || peek1.value === "," || peek1.value === "}")
-      ) {
-        isRecord = true;
-      }
-    }
+    const k1 = this.peek(1);
+    const isRecord =
+      (k0.kind === "ident" || k0.kind === "kw") &&
+      k1.kind === "op" &&
+      (k1.value === "=" ||
+        k1.value === "," ||
+        k1.value === "}" ||
+        (k1.value === ":" && fieldNameOf(k0) !== undefined));
     if (isRecord) {
       const fields: { name: string; value: Expr; pos: Pos }[] = [];
       while (true) {
         const keyTok = this.peek();
-        if (keyTok.kind !== "ident" && keyTok.kind !== "kw") {
+        const fieldName = fieldNameOf(keyTok);
+        if (fieldName === undefined) {
+          if (keyTok.kind === "kw") {
+            throw new ParseError(
+              `\`${keyTok.value}\` is a value, not a record field name`,
+              keyTok.pos,
+            );
+          }
           throw new ParseError("Expected a record field name", keyTok.pos);
         }
-        const fieldName = keyTok.value;
         const fieldPos = keyTok.pos;
         this.next();
         let value: Expr;

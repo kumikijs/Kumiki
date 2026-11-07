@@ -1,5 +1,5 @@
-import type { EffectResult } from "./core.ts";
-import { type Decode, decodeRefusal, decodesJson } from "./effects-decode.ts";
+import { abortedHttpError, type EffectResult, type HttpError, NONE, someOf } from "./core.ts";
+import { type Decode, decodeOf, decodeRead, decodesJson } from "./effects-decode.ts";
 
 export type HttpCfg = {
   baseUrl?: string;
@@ -25,36 +25,47 @@ export async function httpFetch(
     headers?: Record<string, string>;
     query?: Record<string, string>;
     body?: unknown;
-    decode?: Decode;
-    key?: string;
-    value?: unknown;
+    decode?: unknown;
   };
-  const baseUrl = httpCfg?.baseUrl ?? "";
-  const url = withQuery(baseUrl + (x.url ?? ""), x.query);
-  const headers: Record<string, string> = {};
-  const globalHeaders = httpCfg?.headers ? safeCallHeaders(httpCfg.headers) : {};
-  for (const [k, v] of Object.entries(globalHeaders)) setHeader(headers, k, v);
-  for (const [k, v] of Object.entries(x.headers ?? {})) setHeader(headers, k, v);
-  const init: RequestInit = {
-    method,
-    headers,
-    credentials: httpCfg?.credentials ?? DEFAULT_CREDENTIALS,
-  };
+  const base = httpCfg?.baseUrl ?? "";
+  // `map-request` is not checked against the request type, so a url can be any value.
+  const url = withQuery(joinBase(base, String(x.url ?? "")), x.query);
+  // Under a base, the program's own headers and credentials stay on the base's origin.
+  const global = base === "" || sameOrigin(url, base);
+  // Each failure before the request is `final`: nothing was sent, so a retry would fail the same
+  // way.
+  const decode = decodeOf(x.decode);
+  if (typeof decode === "object") {
+    return { kind: "err", value: httpError(0, decode.refused), final: true };
+  }
+  let encoded: Encoded = {};
   if (x.body !== undefined && method !== "GET" && method !== "HEAD") {
-    let encoded: Encoded;
     try {
       encoded = encodeBody(x.body);
     } catch (e) {
       // A body that cannot be sent as written fails the effect, before any request.
-      return { kind: "err", value: { status: 0, message: errorText(e), body: "" } };
-    }
-    const { body, contentType } = encoded;
-    if (body !== undefined) init.body = body;
-    if (body instanceof FormData) setHeader(headers, "Content-Type");
-    else if (contentType && headerKey(headers, "Content-Type") === undefined) {
-      headers["Content-Type"] = contentType;
+      return { kind: "err", value: httpError(0, errorText(e)), final: true };
     }
   }
+  const headers: Record<string, string> = {};
+  const layers = [
+    defaultHeaders(decode, encoded.contentType),
+    global && httpCfg?.headers ? safeCallHeaders(httpCfg.headers) : {},
+    x.headers ?? {},
+  ];
+  // A value the types rule out but a lax decoder let through as `undefined` sets nothing, so it
+  // never removes a lower layer's header.
+  for (const layer of layers) {
+    for (const [k, v] of Object.entries(layer)) if (v !== undefined) setHeader(headers, k, v);
+  }
+  // A `FormData` body's Content-Type must carry the boundary only fetch knows.
+  if (encoded.body instanceof FormData) setHeader(headers, "Content-Type");
+  const init: RequestInit = {
+    method,
+    headers,
+    credentials: (global ? httpCfg?.credentials : undefined) ?? DEFAULT_CREDENTIALS,
+  };
+  if (encoded.body !== undefined) init.body = encoded.body;
 
   const timeoutMs = httpCfg?.timeout ?? DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
@@ -70,59 +81,53 @@ export async function httpFetch(
     else externalSignal.addEventListener("abort", onExternalAbort);
   }
 
+  let res: Response | undefined;
   try {
-    const res = await fetch(url, init);
-    if (res.status === 401 || res.status === 403 || res.status >= 500) {
-      return {
-        kind: "err",
-        value: {
-          status: res.status,
-          message: res.statusText,
-          body: await res.text().catch(() => ""),
-        },
-      };
-    }
+    res = await fetch(url, init);
+    // 401 / 403 / 5xx too: the dispatcher routes them to `app.http`'s handlers by status.
     if (!res.ok) {
-      return {
-        kind: "err",
-        value: {
-          status: res.status,
-          message: res.statusText,
-          body: await res.text().catch(() => ""),
-        },
-      };
+      const body = await res.text().catch(() => undefined);
+      // The dispatcher delivers what this returns, so a cancel or timeout during the read must
+      // not reach `.err` as the status, which would fire `app.http`'s handler for it.
+      if (body === undefined && controller.signal.aborted) {
+        return { kind: "err", value: abortedHttpError() };
+      }
+      return { kind: "err", value: httpError(res.status, res.statusText, body) };
     }
-    const decode = x.decode ?? "json";
-    if (decode === "none") return { kind: "ok", value: null };
-    const text = await res.text();
-    if (!decodesJson(decode)) return { kind: "ok", value: text };
-    let value: unknown;
-    try {
-      value = JSON.parse(text);
-    } catch (e) {
-      return {
-        kind: "err",
-        value: { status: res.status, message: `decode failed: ${String(e)}`, body: text },
-      };
-    }
-    const refused = decodeRefusal(decode, value);
-    if (refused)
-      return { kind: "err", value: { status: res.status, message: refused, body: text } };
-    return { kind: "ok", value };
+    const response = res;
+    const decoded = await decodeRead(decode, {
+      text: () => response.text(),
+      bytes: async () => new Uint8Array(await response.arrayBuffer()),
+    });
+    if (decoded.ok) return { kind: "ok", value: decoded.value };
+    return { kind: "err", value: httpError(res.status, decoded.message, decoded.text) };
   } catch (e) {
     const aborted = externallyAborted || isAbortError(e);
-    if (aborted) {
-      return { kind: "err", value: { status: 0, message: "aborted", body: "" } };
-    }
-    return { kind: "err", value: { status: 0, message: String(e), body: "" } };
+    if (aborted) return { kind: "err", value: abortedHttpError() };
+    // A response that arrived keeps its status, so a 2xx whose body read failed is not retried:
+    // the server already took the request.
+    return { kind: "err", value: httpError(res?.status ?? 0, String(e)) };
   } finally {
     clearTimeout(timer);
     if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
   }
 }
 
+/** An omitted `body` is `None`. */
+export function httpError(status: number, message: string, body?: string): HttpError {
+  return { status, message, body: body === undefined ? NONE : someOf(body) };
+}
+
 type Tagged = { _tag: string; _0?: unknown };
 type Encoded = { body?: BodyInit; contentType?: string };
+
+// No `User-Agent`: a browser does not reliably let a script set it.
+function defaultHeaders(decode: Decode, contentType?: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (decodesJson(decode)) headers.Accept = "application/json";
+  if (contentType) headers["Content-Type"] = contentType;
+  return headers;
+}
 
 function encodeBody(body: unknown): Encoded {
   const t = body as Tagged | null;
@@ -179,6 +184,31 @@ function setHeader(headers: Record<string, string>, name: string, value?: string
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+const ABSOLUTE_URL = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|\/\/)/;
+
+// The base is a prefix, not a URL to resolve against: `new URL("/users", base)`
+// would drop the base's own path.
+function joinBase(base: string, url: string): string {
+  if (/[?#]/.test(base) || url === "" || url.startsWith("?") || url.startsWith("#")) {
+    return base + url;
+  }
+  if (!base || ABSOLUTE_URL.test(url)) return url;
+  const trimmed = base.replace(/\/+$/, "");
+  return url.startsWith("/") ? trimmed + url : `${trimmed}/${url}`;
+}
+
+// A relative url and a path-only base both resolve against the page; with no http(s) page, as on
+// a server, against one placeholder origin, so they still agree with each other.
+function sameOrigin(url: string, base: string): boolean {
+  const href = (globalThis as { location?: { href?: string } }).location?.href;
+  const page = href && /^https?:/i.test(href) ? href : "http://localhost/";
+  try {
+    return new URL(url, page).origin === new URL(base, page).origin;
+  } catch {
+    return false;
+  }
 }
 
 function withQuery(url: string, query: Record<string, string> | undefined): string {

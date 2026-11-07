@@ -1,5 +1,5 @@
 import type { EffectResult } from "./core.ts";
-import { type Decode, decodeRefusal } from "./effects-decode.ts";
+import { decodeOf, decodeRefusal } from "./effects-decode.ts";
 import { _stdlibCore } from "./stdlib.ts";
 
 export type IndexedDbStore = { name: string; key: string; indexes?: string[] };
@@ -18,6 +18,9 @@ export type IndexRange = {
 
 const handles = new WeakMap<IndexedDbCfg, Promise<IDBDatabase>>();
 
+// `blocked` is only a notice: the same request still ends in `success` or `error` once every
+// other connection closes, so the open keeps waiting for that end instead of failing. Nothing
+// times the wait out, so the notice is reported.
 function openDb(cfg: IndexedDbCfg): Promise<IDBDatabase> {
   const cached = handles.get(cfg);
   if (cached) return cached;
@@ -27,6 +30,10 @@ function openDb(cfg: IndexedDbCfg): Promise<IDBDatabase> {
       return;
     }
     const req = indexedDB.open(cfg.name, cfg.version);
+    req.onblocked = (ev) =>
+      console.warn(
+        `kumiki: app.indexed-db "${cfg.name}" upgrade ${ev.oldVersion} -> ${ev.newVersion} is blocked by other open connections; indexed-* effects wait until they close`,
+      );
     req.onupgradeneeded = () => {
       const db = req.result;
       for (const s of cfg.stores) {
@@ -40,11 +47,25 @@ function openDb(cfg: IndexedDbCfg): Promise<IDBDatabase> {
         }
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => {
+        db.close();
+        forget();
+      };
+      // `close` fires only when the browser closes the connection (site data cleared, eviction),
+      // never for `db.close()`, which is why `onversionchange` forgets the connection itself.
+      db.onclose = forget;
+      resolve(db);
+    };
     req.onerror = () => reject(req.error ?? new Error("IndexedDB open failed"));
-    req.onblocked = () => reject(new Error("IndexedDB open blocked"));
   });
+  // Forgets this open only while it is still the one kept for `cfg`.
+  const forget = (): void => {
+    if (handles.get(cfg) === p) handles.delete(cfg);
+  };
   handles.set(cfg, p);
+  p.catch(forget);
   return p;
 }
 
@@ -62,23 +83,34 @@ function ensureCfg(cfg: IndexedDbCfg | undefined): cfg is IndexedDbCfg {
 export async function indexedRead(input: unknown, cfg?: IndexedDbCfg): Promise<EffectResult> {
   const x = input as { store: string; key?: unknown } | undefined;
   if (x?.key !== undefined)
-    return pointRead(x as { store: string; key: string; decode?: Decode }, cfg);
+    return pointRead(x as { store: string; key: string; decode?: unknown }, cfg);
   return indexedQuery(input, cfg);
 }
 
+// A stored record is a structured clone, not a text, so `Decoder.Text` and `Decoder.Bytes` have
+// nothing to read and `Decoder.Json(T)` only checks it.
+const CANNOT_READ = { text: "Decoder.Text", bytes: "Decoder.Bytes" } as const;
+
 async function pointRead(
-  input: { store: string; key: string; decode?: Decode },
+  input: { store: string; key: string; decode?: unknown },
   cfg?: IndexedDbCfg,
 ): Promise<EffectResult> {
   if (!ensureCfg(cfg)) {
     return { kind: "err", value: "app.indexed-db is not declared" };
   }
   try {
+    const decode = decodeOf(input.decode);
+    if (typeof decode === "object") return { kind: "err", value: decode.refused };
+    if (decode === "text" || decode === "bytes") {
+      const value = `decode failed: indexed.read holds records, which ${CANNOT_READ[decode]} cannot read`;
+      return { kind: "err", value };
+    }
     const db = await openDb(cfg);
     const tx = db.transaction(input.store, "readonly");
     const value = await reqToPromise(tx.objectStore(input.store).get(input.key));
     if (value === undefined) return { kind: "ok", value: _stdlibCore.None };
-    const refused = decodeRefusal(input.decode, value);
+    if (decode === "none") return { kind: "ok", value: _stdlibCore.Some(null) };
+    const refused = decodeRefusal(decode, value);
     if (refused) return { kind: "err", value: refused };
     return { kind: "ok", value: _stdlibCore.Some(value) };
   } catch (e) {

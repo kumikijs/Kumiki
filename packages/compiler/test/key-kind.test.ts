@@ -57,6 +57,14 @@ describe("a reader of a numeric key records number", () => {
     expect(kindOf(`slot m : Map(Int, Text) = {}`, resType, rhs)).toBe("number");
   });
 
+  // A Set's `filter` hands its predicate each element as an `[element, true]` entry.
+  it.each([
+    ["Set(Int)", "st.filter($1 > 1)"],
+    ["Set(Time)", 'st.filter($1.format("yyyy") == "2026")'],
+  ])("%s / %s", (setType, rhs) => {
+    expect(kindOf(`slot st : ${setType} = {}`, setType, rhs)).toBe("number");
+  });
+
   it("follows a nominal over Int", () => {
     const decls = `type TaskId = nominal Int\nslot st : Set(TaskId) = {}`;
     expect(kindOf(decls, "List(TaskId)", "st.to-list")).toBe("number");
@@ -99,6 +107,10 @@ describe("a Text key records nothing", () => {
 
   it("Set(Text) / st.to-list", () => {
     expect(kindOf(`slot st : Set(Text) = {}`, "List(Text)", "st.to-list")).toBeUndefined();
+  });
+
+  it("Set(Text) / st.filter", () => {
+    expect(kindOf(`slot st : Set(Text) = {}`, "Set(Text)", 'st.filter($1 != "")')).toBeUndefined();
   });
 
   it("Set(TodoId) with TodoId = nominal Text", () => {
