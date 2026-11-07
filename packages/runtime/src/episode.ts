@@ -56,7 +56,7 @@ export type EpisodeStep =
       "env-reads"?: EnvRead[];
       /** `Error.stack` of the caught throw, when available. */
       stack?: string;
-      /** Flattened `Error.cause` chain, root-most first. Omitted when empty. */
+      /** Flattened `Error.cause` chain, nearest cause first. Omitted when empty. */
       cause?: PanicCauseLink[];
       category?: PanicCategory;
       /** An `error-boundary` caught it; absent on every other panic step. */
@@ -66,8 +66,11 @@ export type EpisodeStep =
 
 export type PanicStep = Extract<EpisodeStep, { kind: "panic" }>;
 
-// Absence means unhandled, so a log from a runtime that never writes the field reads the same.
-export function isUnhandledPanic(step: EpisodeStep): step is PanicStep {
+/**
+ * A panic step nothing handled. A step without `handled` counts as unhandled, so a log written
+ * before the field existed still reports every panic.
+ */
+export function isUnhandledPanic(step: EpisodeStep): step is PanicStep & { handled?: false } {
   return step.kind === "panic" && step.handled !== true;
 }
 
@@ -129,6 +132,7 @@ export type EpisodeLogger = {
       name?: string | undefined;
       /** What that body read from the environment before it threw. */
       envReads?: readonly EnvRead[] | undefined;
+      /** An `error-boundary` caught it; the step carries `handled: true` only when this is `true`. */
       handled?: boolean | undefined;
     },
     token?: string,

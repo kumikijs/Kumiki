@@ -49,5 +49,15 @@ overlay: Kumiki panic — render — get called on None
 
 A reducer panic an `app.error` reducer was told about now opens the overlay
 too: `app.error` does not handle a panic, which is still reported to the
-console `smoke` fails on. The timeline lists a handled panic's step, marked
-`(handled)`.
+console `smoke` fails on. So does an effect refused for its capability under a
+`debounce` or `queue` policy, whose `effect-cancel` step comes after the panic.
+The timeline lists a handled panic's step, marked `(handled)`.
+
+The overlay clears by the same rule: an episode with no panic nothing handled
+clears it. It used to wait for a `status: "completed"` episode, which a page
+that keeps a fallback up never records again, since each render there catches
+the panic anew; the overlay a reducer panic opened on such a page stayed up.
+
+`handled: true` says that a boundary caught the panic, not that its fallback
+rendered. A fallback that panics in turn records that panic as a step of its
+own, which the overlay shows.

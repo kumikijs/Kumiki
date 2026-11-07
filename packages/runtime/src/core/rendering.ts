@@ -69,8 +69,9 @@ export function withRenderingView<T>(view: Element, fn: () => T): T {
 export type RenderPanic = { rec: PanicRecord; episodeId: string | undefined };
 
 /**
- * Records a panic an `error-boundary` caught in a render pass as a handled `panic` step at
- * `site`; the id of the episode it landed on.
+ * Where a panic an `error-boundary` caught in a render pass goes: records it as a handled `panic`
+ * step at `site` (or, in the render that ends hydration, records nothing) and returns the id of
+ * the episode its fallback names.
  */
 export type RenderPanicSink = (e: unknown, site: string) => string | undefined;
 

@@ -185,12 +185,14 @@ export function installDevPanel(opts: Options): {
   function maybeShowOverlay(): void {
     const all = opts.logger.list();
     const latest = all.length > 0 ? all[all.length - 1] : undefined;
-    // Not the last step: a dispatch records steps after an unhandled panic, and a caught one can land last.
+    // By `handled`, not by status or the last step: an episode whose only panic a boundary caught
+    // is `status: "panic"`, a dispatch records steps after an unhandled panic, and a caught one
+    // can land last.
     const panic = latest?.steps.find(isUnhandledPanic);
     if (panic) {
       if (overlay) return;
       showOverlay("Kumiki panic", panic.message, panic.location ?? "");
-    } else if (overlay && latest && latest.status === "completed") {
+    } else if (latest) {
       dismissOverlay();
     }
   }
