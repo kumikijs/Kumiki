@@ -483,12 +483,13 @@ export function methodCallJs(
   const binds: Record<FragmentShape, string> = {
     pair: takenApart,
     "key-value": takenApart,
+    key: `const ${p1} = __x[0];`,
     value: `const ${p1} = __x;`,
     undecided: `const _isPair = (Array.isArray(__x) && __x.length === 2); const ${p1} = _isPair ? __x[0] : __x; const ${p2} = _isPair ? __x[1] : (__y !== undefined ? __y : __x);`,
   };
   const decided = shape ?? "undecided";
   const argFnList = (a: Expr): string =>
-    `((__x, __y) => { ${binds[decided]} return ${jsOfExpr(a, decided === "value" ? one : two)}; })`;
+    `((__x, __y) => { ${binds[decided]} return ${jsOfExpr(a, decided === "value" || decided === "key" ? one : two)}; })`;
   const argRaw = (a: Expr): string => jsOfExpr(a, ctx);
 
   switch (method) {

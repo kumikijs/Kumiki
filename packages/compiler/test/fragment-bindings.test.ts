@@ -118,6 +118,43 @@ app A
   });
 });
 
+describe("$1 is the member a Set's filter hands its fragment", () => {
+  const SET = "slot s : Set(Int) = [10, 20]";
+
+  it("reports a member used as a value it is not", () => {
+    expect(diagnostics(SET, "s.filter($1.size > 0)", "Set(Int)")).toEqual([
+      'E0108 Type "Int" has no member ".size" — it is a member of Map / Set',
+    ]);
+  });
+
+  it("records the fragment as handed an entry's key alone", () => {
+    const ast = parse(lex(program(SET, "s.filter($1 > 15)", "Set(Int)")));
+    expect(check(ast)).toEqual([]);
+    expect(shapesOf(ast, "filter")).toEqual(["key"]);
+  });
+
+  it.each([
+    { name: "a member", res: "Set(Int)", rhs: "s.filter($1 > 15 & $2)" },
+    {
+      name: "a pair member, which is not taken apart",
+      res: "Set(Tuple(Int, Text))",
+      rhs: `p.filter($2 == "a")`,
+    },
+  ])("binds no second positional beside $name", ({ res, rhs }) => {
+    const defs = `${SET}\nslot p : Set(Tuple(Int, Text)) = []`;
+    expect(diagnostics(defs, rhs, res)).toEqual([
+      'E0103 "$2" is not bound here — the .filter fragment is handed one value, "$1"; "$2" is bound only over a Map\'s filter or map, or a pair (Tuple(A, B), e.g. from .entries)',
+    ]);
+  });
+
+  it("refuses a fn that takes a second positional", () => {
+    const defs = `fn keep(n: Int, b: Bool) -> Bool = b\n${SET}`;
+    expect(diagnostics(defs, "s.filter(keep)", "Set(Int)")).toEqual([
+      'E0213 Function "keep" expects 2 argument(s) but .filter on "Set(Int)" supplies 1 — a second positional is bound only over a Map\'s filter or map, or a pair (Tuple(A, B), e.g. from .entries)',
+    ]);
+  });
+});
+
 describe("a fn named as the fragment is checked as the call it stands for", () => {
   const XS = "slot xs : List(Int) = [1, 2]";
   const STEP = (acc: string, x: string) => `fn step(acc: ${acc}, x: ${x}) -> Int = 0\n${XS}`;
@@ -168,6 +205,42 @@ describe("a fn named as the fragment is checked as the call it stands for", () =
       res: "Map(Bytes, Int)",
       slotInit: "{}",
       want: ["E0201 Expected Text but got Int"],
+    },
+    {
+      name: "a Set's member, which its filter hands the fn",
+      defs: `fn loud(x: Text) -> Bool = x != ""\nslot s : Set(Int) = [10, 20]`,
+      inline: "s.filter(loud($1))",
+      bare: "s.filter(loud)",
+      res: "Set(Int)",
+      slotInit: "[]",
+      want: ["E0201 Expected Text but got Int"],
+    },
+    {
+      name: "a fn over a Set's member type",
+      defs: "fn big(n: Int) -> Bool = n > 15\nslot s : Set(Int) = [10, 20]",
+      inline: "s.filter(big($1))",
+      bare: "s.filter(big)",
+      res: "Set(Int)",
+      slotInit: "[]",
+      want: [],
+    },
+    {
+      name: "a Set member that is a pair, which is handed whole, as a Map's key is",
+      defs: "fn big(n: Int) -> Bool = n > 15\nslot s : Set(Tuple(Int, Text)) = []",
+      inline: "s.filter(big($1))",
+      bare: "s.filter(big)",
+      res: "Set(Tuple(Int, Text))",
+      slotInit: "[]",
+      want: ["E0201 Expected Int but got Tuple(Int, Text)"],
+    },
+    {
+      name: "a Bytes Set member, which is not read back as its type, so nothing is checked",
+      defs: "fn big(n: Int) -> Bool = n > 15\nslot s : Set(Bytes) = []",
+      inline: "s.filter(big($1))",
+      bare: "s.filter(big)",
+      res: "Set(Bytes)",
+      slotInit: "[]",
+      want: [],
     },
     {
       name: "fold's parameters of the init's type and the element's",
@@ -329,6 +402,7 @@ describe("a fn named as the fragment is checked as the call it stands for", () =
       Option: "Option(Int)",
       Result: "Result(Int, Text)",
       Map: "Map(Text, Int)",
+      Set: "Set(Int)",
     };
     const bound: Record<string, readonly string[]> = {
       "List.filter": ["Int"],
@@ -345,6 +419,7 @@ describe("a fn named as the fragment is checked as the call it stands for", () =
       "Result.flat-map": ["Int"],
       "Result.map": ["Int"],
       "Result.map-err": ["Text"],
+      "Set.filter": ["Int"],
     };
     const rows: string[] = [];
     for (const [method, fragment] of Object.entries(FRAGMENT_ARGUMENTS)) {
@@ -367,7 +442,7 @@ tile App = text("x")`),
         expect(errors("probe"), `${row}(probe)`).toEqual(want);
       }
     }
-    // Every fragment method, on each receiver language.md lists it for. A `Set`'s `filter` has none.
+    // Every fragment method, on each receiver language.md lists it for.
     expect(rows.sort()).toEqual(Object.keys(bound).sort());
   });
 });
@@ -390,14 +465,5 @@ describe("where the lowering's reading is not certain, nothing is bound", () => 
       expect(diagnostics(defs, "xs.fold({}, step)", acc, "{}"), acc).toEqual([]);
       expect(diagnostics(defs, "xs.fold({}, step($1, $2))", acc, "{}"), acc).toEqual([]);
     }
-  });
-
-  it("a Set's filter, which stdlib.md gives no binding", () => {
-    // `_s.filter` hands a Set's predicate each member as an `[element, true]` entry, the element
-    // read back as its type. A one-positional row would bind `$1` to that whole entry.
-    const defs = `${LOUD}\nslot s : Set(Int) = []`;
-    expect(diagnostics(defs, "s.filter(loud)", "Set(Int)")).not.toContain(
-      "E0201 Expected Text but got Int",
-    );
   });
 });

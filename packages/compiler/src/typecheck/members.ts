@@ -111,6 +111,13 @@ export function keyKindOfReader(
   return rep === "text" || rep === null ? undefined : rep;
 }
 
+// The type parameter each receiver stores as object keys, which its `filter` / `map` hands the
+// fragment as an entry's key: a Map's key, and a Set's member, whose entry's value is `true`.
+const KEYED: ReadonlyMap<string, FragmentPositional> = new Map([
+  ["Map", "K"],
+  ["Set", "T"],
+]);
+
 export function fragmentBindings(
   recv: TypeExpr | null,
   call: Expr & { kind: "MethodCall" },
@@ -127,7 +134,9 @@ export function fragmentBindings(
     ];
   }
   const only = positionalType(row[0], app, call, sym, ctx);
-  return found.fragment.second === "pair-value" ? pairOrElement(only, sym) : [only, null];
+  return found.fragment.second === "pair-value" && !KEYED.has(app.name)
+    ? pairOrElement(only, sym)
+    : [only, null];
 }
 
 function fragmentRow(
@@ -148,8 +157,8 @@ function fragmentRow(
 }
 
 /**
- * A key is typed only when it reads back as a value of `K`: a type parameter or
- * a `Bytes` key is handed over as the string it is stored under. `{}` as a
+ * A key is typed only when it reads back as a value of its type: a type parameter
+ * or a `Bytes` key is handed over as the string it is stored under. `{}` as a
  * fold's init infers to nothing, being the empty Map and the empty Set alike.
  */
 function positionalType(
@@ -159,18 +168,12 @@ function positionalType(
   sym: SymbolTable,
   ctx: Ctx,
 ): TypeExpr | null {
-  switch (p) {
-    case "Acc": {
-      const init = call.args[0];
-      return init === undefined ? null : inferType(init, sym, ctx);
-    }
-    case "K": {
-      const key = app.args[TYPE_ARGUMENT_OF.K] ?? null;
-      return keyRepresentation(key, sym) === null ? null : key;
-    }
-    default:
-      return app.args[TYPE_ARGUMENT_OF[p]] ?? null;
+  if (p === "Acc") {
+    const init = call.args[0];
+    return init === undefined ? null : inferType(init, sym, ctx);
   }
+  const arg = app.args[TYPE_ARGUMENT_OF[p]] ?? null;
+  return KEYED.get(app.name) === p && keyRepresentation(arg, sym) === null ? null : arg;
 }
 
 export function fragmentShape(
@@ -184,6 +187,7 @@ export function fragmentShape(
   if (found === null || found.fragment.second !== "pair-value") return null;
   const { row } = found;
   if (row.length === 2) return "key-value";
+  if (KEYED.has(found.app.name)) return "key";
   return elementShape(positionalType(row[0], found.app, call, sym, ctx), sym).shape;
 }
 
