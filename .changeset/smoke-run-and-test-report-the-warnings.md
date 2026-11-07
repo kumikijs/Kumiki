@@ -51,3 +51,8 @@ The warnings come from the compile each call already runs. In `@kumikijs/cli`,
 `runScenarioSource` returns `ScenarioReport & { warnings }`, and `TestReport`
 (from `runTests`) has a `warnings` field, each the compiler's `KumikiError[]`.
 `loadApp`, `runTestsSource` and `testFile` keep their signatures.
+
+`kumiki_auto_patch` and `kumiki fix --auto-patch` now report the warnings of
+the file they wrote when a test patch is `applied`. They reported the file as
+it was before the patch, so a patch that took a `{0}` out of an `fmt` template
+still reported the W0214 it had removed.
