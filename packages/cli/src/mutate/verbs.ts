@@ -6,10 +6,12 @@ import { commit, compareQNames } from "./commit.ts";
 import {
   assemble,
   bodyOf,
+  definitionText,
   headerItems,
   headerOf,
   isDefinitionName,
   nameSites,
+  removedText,
   respell,
   withHeader,
 } from "./definition-text.ts";
@@ -62,7 +64,7 @@ function replaceDefLocked(path: string, qname: string, body: string): ReplaceRes
   const store = load(path);
   const entry = store.byQName.get(qname);
   if (!entry) throw new Error(`Definition "${qname}" not found`);
-  const prev = bodyOf(store, entry, "replace");
+  const prev = definitionText(store, entry);
   const whole = withHeader(entry.layer, body, () => headerOf(store, entry, "replace"));
   const inserted = assemble(entry.layer, entry.name, whole).split(/\r?\n/);
   const next = spliceLines(store.source, entry.range.startLine, entry.range.endLine, inserted);
@@ -154,6 +156,7 @@ function removeSetLocked(
     layer: e.layer,
     name: e.name,
     body: bodyOf(store, e, "remove"),
+    ...removedText(store, e),
   }));
   if (main === undefined) throw new Error("remove rejected: nothing to remove");
   // Bottom up, so the line numbers of the entries still to cut stay valid.
@@ -220,7 +223,7 @@ function editDefLocked(path: string, qname: string, patch: unknown): string {
   const store = load(path);
   const entry = store.byQName.get(qname);
   if (!entry) throw new Error(`Definition "${qname}" not found`);
-  const prev = bodyOf(store, entry, "edit");
+  const prev = definitionText(store, entry);
   const target = store.lines.slice(entry.range.startLine - 1, entry.range.endLine);
   const next = spliceLines(
     store.source,
