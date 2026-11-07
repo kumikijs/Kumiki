@@ -30,6 +30,13 @@ import { statusPatchers, statusTiles } from "./tiles-status.ts";
 import { textPatchers, textTiles } from "./tiles-text.ts";
 
 export {
+  type Choice,
+  type ChosenOption,
+  chooseOption,
+  OptionRefusal,
+  refuseChoice,
+} from "./choose-check.ts";
+export {
   CONTROL_DEMANDS,
   type ControlDemand,
   ControlRefusal,
