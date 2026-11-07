@@ -12,6 +12,7 @@ import type {
 import { failsWithText } from "./capabilities.ts";
 import type { GenCtx } from "./codegen/context.ts";
 import { HANDLER_MEMO_PREAMBLE, jsBinding } from "./codegen/context.ts";
+import { decoders } from "./codegen/decoders.ts";
 import {
   appAnalyticsJson,
   appMetaJson,
@@ -73,6 +74,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
   const app = apps[0];
   if (!app) throw new Error("No app definition found");
 
+  const refinements = nestedRefinements({ types });
   const ctx: GenCtx = {
     slots,
     fns,
@@ -82,7 +84,8 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     types,
     usedTiles: new Set(),
     usedIcons: new Set(),
-    refinements: nestedRefinements({ types }),
+    refinements,
+    decoders: decoders({ types }, refinements),
     usedReaders: new Set(),
     showShapes: showShapes(),
   };
@@ -234,7 +237,7 @@ export function codegen(program: Program, opts: CodegenOptions): CodegenResult {
     lines.push(`App._coverage = ${coverageJs(tests, reducers, tiles, effects, fns)};`);
   }
 
-  lines.splice(refinementsAt, 0, ...ctx.refinements.decls);
+  lines.splice(refinementsAt, 0, ...ctx.refinements.decls, ...ctx.decoders.decls);
   lines.push("  return App;");
   lines.push("}"); // end createApp
   lines.push("");

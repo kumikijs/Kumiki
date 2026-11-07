@@ -180,7 +180,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "EffectId.none") return `""`;
       if (cn === "Decoder.Json") {
         const t = decodedType(e.args[0]);
-        return (t && ctx.gen.refinements.explainerOf(t)) ?? `"json"`;
+        return (t && ctx.gen.decoders.decoderOf(t)) ?? `"json"`;
       }
       if (cn === "Decoder.Text") return `"text"`;
       if (cn === "Decoder.Bytes") return `"bytes"`;

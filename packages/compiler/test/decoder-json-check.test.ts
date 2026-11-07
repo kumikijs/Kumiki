@@ -1,6 +1,5 @@
-import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { compileOrFail, importModule, LOADABLE } from "./helpers/module.ts";
+import { compileOrFail, decodeHandedBy } from "./helpers/module.ts";
 
 const TYPES = `
 type NoteId = nominal Text where uuid
@@ -29,31 +28,19 @@ app D
 type Check = (v: unknown) => { kind: string; args: unknown[]; path: unknown[] } | undefined;
 
 /** The `decode` the compiled `load` effect hands its capability. */
-async function decodeOf(decoder: string): Promise<unknown> {
-  const mod = await importModule<{ default: AppShape }>(
-    compileOrFail(program(decoder), LOADABLE),
-    "decoder",
-  );
-  const load = mod.default.effects.load;
-  if (!load) throw new Error("the program no longer declares `load`");
-  let seen: { decode?: unknown } | undefined;
-  const caps = {
-    provider: () => async (req: { decode?: unknown }) => {
-      seen = req;
-      return { kind: "ok", value: null };
-    },
-  } as unknown as Parameters<typeof load.invoke>[1];
-  await load.invoke(undefined, caps, new AbortController().signal);
-  if (!seen) throw new Error("the effect did not reach its provider");
-  return seen.decode;
-}
+const decodeOf = (decoder: string): Promise<unknown> => decodeHandedBy(program(decoder));
 
 const UUID = "0b8f2c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d";
 
 describe("Decoder.Json(T) carries T's check to the handler", () => {
-  it("a T with no predicate keeps the json sentinel", async () => {
-    expect(await decodeOf("Decoder.Json(Plain)")).toBe("json");
-    expect(await decodeOf("Decoder.Json(Map(Text, List(Plain)))")).toBe("json");
+  it("a T with no predicate is still a check, of its shape", async () => {
+    const check = (await decodeOf("Decoder.Json(Map(Text, List(Plain)))")) as Check;
+    expect(typeof check).toBe("function");
+    expect(check({ a: [{ n: 1, s: "x" }] })).toBeUndefined();
+  });
+
+  it("keeps the json sentinel only for an argument that names no type", async () => {
+    expect(await decodeOf('Decoder.Json("Plain")')).toBe("json");
   });
 
   it("a container of a refined record answers the first predicate refused, and where", async () => {
@@ -87,12 +74,10 @@ describe("Decoder.Json(T) carries T's check to the handler", () => {
     });
   });
 
-  it("is the same helper as a slot of the same type, not a second copy", () => {
-    const out = compileOrFail(
-      program("Decoder.Json(Map(NoteId, Note))", "slot notes : Map(NoteId, Note) = {}"),
-    );
-    const helper = /"decode": (_rq\d+)/.exec(out)?.[1];
-    expect(helper).toBeDefined();
-    expect(out).toContain(`refineFailure: ${helper}`);
+  it("walks the predicates with a slot's helper for the same type, not a second copy", () => {
+    const slot = "slot notes : Map(NoteId, Note) = {}";
+    const walks = (decoder: string) =>
+      compileOrFail(program(decoder, slot)).match(/const _rq\d+ = /g)?.length;
+    expect(walks("Decoder.Json(Map(NoteId, Note))")).toBe(walks('Decoder.Json("Plain")'));
   });
 });

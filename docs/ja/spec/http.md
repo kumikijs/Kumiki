@@ -80,9 +80,15 @@ Decoder.Bytes        # バイト列のまま
 Decoder.None         # レスポンス本文を捨てる
 ```
 
-レスポンスの decode は型としてはコンパイル時に検査され、実行時に検査されるのは JSON の構文と、宣言した型が持つ述語。JSON として壊れている 2xx の本文は、レスポンス自身の `status`、`decode failed:` で始まる `message`、`body` にレスポンス本文（`Some(text)`）を持つ `HttpError` になる。レスポンスは届いているので接続エラー（`status: 0`）ではなく、リトライもされない（[6.5](#_6-5-リトライ)）。本文のない 2xx（204 など）には `Decoder.None` が必要で、そうしないとデフォルトの decoder がその status で `decode failed:` を報告する。
+レスポンスの decode は型としてはコンパイル時に検査され、実行時には本文が宣言した型に照らして検査される：JSON の構文、形、そしてその型が持つすべての述語である。JSON として壊れている 2xx の本文は、レスポンス自身の `status`、`decode failed:` で始まる `message`、`body` にレスポンス本文（`Some(text)`）を持つ `HttpError` になる。レスポンスは届いているので接続エラー（`status: 0`）ではなく、リトライもされない（[6.5](#_6-5-リトライ)）。本文のない 2xx（204 など）には `Decoder.None` が必要で、そうしないとデフォルトの decoder がその status で `decode failed:` を報告する。
 
-decode した値は `T` にも照らして検査される。`T` が持つすべての述語を、それが書かれたすべての位置で検査する。型 `T` の slot への書き込みが受けるのと同じ検査である（[§10.3.3](./runtime.md#_10-3-3-batching)）。拒否された値も同じ `HttpError` になり、`message` は述語と、値がそれを満たさなかった位置を示す（`decode failed: uuid at .id`）。検査するのは述語だけで、`T` が述語を持たない位置は届いたまま受け取る。そのため、構文は通るが宣言した型と形が合わない本文は実行時には検出されない。読み取り capability（`http.*`、`storage.read`、`session.read`、`indexed.read`。[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）に登録したホスト provider は、この検査をリクエストの `decode` として関数で受け取る。parse した値を渡すと、`T` が受け入れれば `undefined` を、拒否すれば満たされなかった述語（`{kind, args, path}`）を返す。述語を持たない `T` では、`decode` は文字列 `"json"` である。
+parse した値は、プログラムが `T` を保持する形、つまり `Json(v)` が送り `storage-write` が保存する形（[6.7.2](#_6-7-2-宣言-localstorage)）で、位置ごとに `T` に照らして検査される。レコードは、型が宣言するすべてのフィールドを、それぞれそのフィールドの型で持つオブジェクトである。型が宣言しないフィールドは届いたまま残す。`List` は要素型の配列、`Tuple` はちょうどその型の並びの配列、`Map` は値が値型で、キーがキー型の保存する形で保存されているオブジェクト（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）なので `"07"` は `Map(Int, V)` のキーではなく、`Set` は各要素の下に `true` を持つオブジェクトである。`Option`・`Result`・union の値は、`_tag` がバリアントの一つを名指し、そのバリアントのペイロードを `_0`・`_1`・… に持つオブジェクトである：`{"_tag": "Some", "_0": 1}` と `{"_tag": "None"}`。したがって JSON の `null` は `None` ではない。`nominal` 型はその基底として検査する。`Int` は整数、`Float` は任意の数値、`Text` は文字列、`Bool` は `true` か `false`、`Unit` は `null`、`Bytes` はバイト列を保持する値（storage のタグ付き形式を読み戻したものなど）だけである。JSON テキストはバイト列を持たない。続いて `T` が持つすべての述語を、それが書かれたすべての位置で検査する。型 `T` の slot への書き込みが受けるのと同じ検査である（[§10.3.3](./runtime.md#_10-3-3-batching)）。
+
+`T` が拒否した値も同じ `HttpError` になる。`message` は、型が並べる順で最初に合わない位置と、そこにあるべきものを示す：型の違うフィールドなら `decode failed: expected Int at .id`、ないフィールドなら `decode failed: missing at .name`、レコードでない本文なら `decode failed: expected User`、拒否された述語なら `decode failed: uuid at .id`。形は述語より先に検査する。
+
+JSON には時刻がないので、`Time` の位置（`Time`、またはそれに対する `nominal` か `where`）はテキストを `Time.parse` の文法で読む（[標準ライブラリ §2.2.8](./stdlib.md#_2-2-8-time)）：その文法の ISO 8601 テキストはそれが指す時刻であり、JSON の数値はそのミリ秒数（整数）である。それ以外は、文字列で書いた数値も含めてその位置で拒否される：`"1772877600000"` は `Time.parse` が読むテキストではないので、`{"at": "1772877600000"}` は `decode failed: expected Time at .at` になり、コロンのないオフセット（`"+0000"`）も同じである。時刻はテキストの代わりにその位置へ書き込まれるので、`.ok` は `plus`・`diff`・`to-ms` と比較演算子が読める `Time` を受け取る。`T` 自体が `Time` であるときは時刻を書き込む先がないので、そのような本文は数値としてだけ読む。
+
+読み取り capability（`http.*`、`storage.read`、`session.read`、`indexed.read`。[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）に登録したホスト provider は、この検査をリクエストの `decode` として関数で受け取る。parse した値を渡すと、それが `T` であれば `undefined` を、そうでなければ失敗（`{kind, args, path}`。`kind` は拒否された述語、`expected` と型、または `missing`）を返す。テキストから読んだ時刻は渡された値そのものへ書き込むので、受け入れられたその値を届ければよい。`decode` が文字列 `"json"` になるのは、型を名指さない引数のときだけである。
 
 ### 6.1.5 共通 props（自動付与） {#_6-1-5-common-props-auto-applied}
 

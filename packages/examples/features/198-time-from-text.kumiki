@@ -10,10 +10,11 @@
 # with no zone (the local clock) and date-only is the instant it names, so
 # `utc` and `offset` hold the same one.
 #
-# `stamps` is filled from a JSON payload whose `at` fields are text, which
-# `Decoder.Json` does not convert. `format` reads each one by the same grammar:
-# "1" is no instant there either, rather than a millisecond after the epoch, so
-# it renders every field as NaN: "0NaN-NaN-NaN NaN:NaN".
+# `stamps` is filled from a JSON payload whose `at` fields are text, and
+# `Decoder.Json` reads a `Time` field by the same grammar. "1" is no instant
+# there either, rather than a millisecond after the epoch, so the payload is no
+# `List(Stamp)`: `loadStamps.err` gets `decode failed: expected Time at [0].at`
+# and `stamps` stays empty. Text in the grammar would arrive as the instant.
 
 type Stamp = {label: Text, at: Time}
 
@@ -26,6 +27,7 @@ slot offset  : Option(Time) = None
 slot local   : Text         = ""
 slot day     : Text         = ""
 slot stamps  : List(Stamp)  = []
+slot problem : Text         = ""
 
 effect loadStamps cap=http.get
                   in=Unit
@@ -45,12 +47,14 @@ reducer boot on=app.start
         local   := shown(Time.parse("2026-03-07T10:00"))
         day     := shown(Time.parse("2026-03-07"))
 
-reducer loaded on=loadStamps.ok($s, _) do= stamps := $s
+reducer loaded  on=loadStamps.ok($s, _)  do= stamps := $s
+reducer refused on=loadStamps.err($e, _) do= problem := $e.message
 
 tile App = column(
   text("1: " + shown(digit)),
   text("local: " + local),
   text("day: " + day),
+  text("problem: " + problem),
   column(for s in stamps text(s.label + ": " + s.at.format("yyyy-MM-dd HH:mm")) {key: s.label}))
 
 app TimeFromText
