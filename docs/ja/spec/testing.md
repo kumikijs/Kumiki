@@ -406,11 +406,11 @@ FAIL  counter-display
 
 本体が例外を投げたテストは、そのテストだけの `FAIL` となり、投げた内容をその下の `error:` 行に示す。ファイル内の他のテストはそのまま実行され、結果を報告する。panic はそのメッセージで示し、メッセージが空なら `KumikiPanic` と示す。それ以外の例外は種類も添えて示す — `TypeError: …` — プログラムではなくコンパイラかランタイムの不具合を指すからである。エラーでない値が投げられた場合は JSON で示す。
 
-コンパイルできないファイルではテストはひとつも走らない。ランナーはファイルを解決済みの（絶対）パスで示し、各診断を `kumiki check` と同じく警告、エラーの順に同じ形 — `<code> <kind> at <line>:<col>: <message>` — で出力し、診断が `test` の中にあればその名前を添える：
+コンパイルできないファイルではテストはひとつも走らない。ランナーはファイルを解決済みの（絶対）パスで示し、各診断を `kumiki check` と同じく警告、エラーの順に同じ形 — `<severity> <code> <kind> at <line>:<col>: <message>` — で出力し、診断が `test` の中にあればその名前を添える：
 
 ```
 compile failed (/path/to/app.kumiki):
-E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")
+error E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")
 ```
 
 ### 8.7.2 失敗テストからの修正 {#_8-7-2-fixing-from-a-failing-test}

@@ -480,11 +480,11 @@ FAIL  counter-display
 
 A test whose body throws is a `FAIL` of that test alone, with what it threw on an `error:` line under it; the file's other tests still run and report. A panic is shown by its message, or as `KumikiPanic` when it has none. Anything else keeps its kind — `TypeError: …` — since it points at the compiler or the runtime rather than at the program, and a thrown value that is not an error is shown as JSON.
 
-A file that does not compile runs no test. The runner names the file by its resolved (absolute) path and prints each diagnostic as `kumiki check` does, warnings before errors — `<code> <kind> at <line>:<col>: <message>` — adding the `test` a diagnostic sits inside:
+A file that does not compile runs no test. The runner names the file by its resolved (absolute) path and prints each diagnostic as `kumiki check` does, warnings before errors — `<severity> <code> <kind> at <line>:<col>: <message>` — adding the `test` a diagnostic sits inside:
 
 ```
 compile failed (/path/to/app.kumiki):
-E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")
+error E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")
 ```
 
 ### 8.7.2 Fixing from a failing test

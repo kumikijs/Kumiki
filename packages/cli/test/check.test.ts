@@ -103,7 +103,7 @@ describe("kumiki check: a program needs exactly one app", () => {
   ])("fails on %s", SPAWN, (_, source) => {
     const { stdout, stderr, code } = runCli(["check", seed(source)]);
     expect(code).toBe(1);
-    expect(stderr).toContain("E0003 missing-app at 1:1");
+    expect(stderr).toContain("error E0003 missing-app at 1:1");
     expect(stdout.trim()).toBe("");
   });
 
@@ -111,7 +111,7 @@ describe("kumiki check: a program needs exactly one app", () => {
     const file = seed(NO_APP);
     const { stderr, code } = runCli(["build", file, join(dirname(file), "out")]);
     expect(code).toBe(1);
-    expect(stderr).toContain("E0003 missing-app at 1:1");
+    expect(stderr).toContain("error E0003 missing-app at 1:1");
     expect(stderr).not.toContain("No app definition found");
   });
 
@@ -124,13 +124,13 @@ describe("kumiki check: a program needs exactly one app", () => {
   it("keeps the structural diagnostics visible under a scope flag", SPAWN, () => {
     const missingApp = runCli(["check", seed(NO_APP), "--refs"]);
     expect(missingApp.code).toBe(1);
-    expect(missingApp.stderr).toContain("E0003 missing-app");
+    expect(missingApp.stderr).toContain("error E0003 missing-app");
     const no404 = seed(
       'tile App = column(heading("v"))\napp A caps=[] routes={"/" -> App} init=[]\n',
     );
     const missing404 = runCli(["check", no404, "--types"]);
     expect(missing404.code).toBe(1);
-    expect(missing404.stderr).toContain("E0001 missing-404");
+    expect(missing404.stderr).toContain("error E0001 missing-404");
   });
 
   it("does not block an AI edit that leaves the program incomplete", SPAWN, () => {
@@ -149,7 +149,7 @@ describe("kumiki check: a program needs exactly one app", () => {
     expect(removed.stdout).toMatch(/\(op_/);
     const { stderr, code } = runCli(["check", file]);
     expect(code).toBe(1);
-    expect(stderr).toContain("E0003 missing-app");
+    expect(stderr).toContain("error E0003 missing-app");
   });
 
   describe("E0004 duplicate-app", () => {
@@ -163,7 +163,7 @@ app Second caps=[] routes={"/x" -> Other, "/404" -> Other} init=[]
     it("fails check, naming the app past the first", SPAWN, () => {
       const { stdout, stderr, code } = runCli(["check", seed(TWO_APPS)]);
       expect(code).toBe(1);
-      expect(stderr).toContain("E0004 duplicate-app at 5:1");
+      expect(stderr).toContain("error E0004 duplicate-app at 5:1");
       expect(stderr).toContain("Second");
       expect(stdout.trim()).toBe("");
     });
@@ -173,7 +173,7 @@ app Second caps=[] routes={"/x" -> Other, "/404" -> Other} init=[]
       const outDir = join(dirname(file), "out");
       const { stderr, code } = runCli(["build", file, outDir]);
       expect(code).toBe(1);
-      expect(stderr).toContain("E0004 duplicate-app");
+      expect(stderr).toContain("error E0004 duplicate-app");
       expect(existsSync(join(outDir, "app.js"))).toBe(false);
     });
   });
