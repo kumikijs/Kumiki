@@ -83,8 +83,16 @@ export function writeKumiki(root: string, prefix: string, src: string): string {
   return file;
 }
 
-/** A throwaway project under `where` holding `source` at `src/app.kumiki` and `main` at `src/main.ts`. */
-export function project(where: string, source: string, main = ""): string {
+/** A throwaway project under `where`: `source` at `src/app.kumiki`, `main` at `src/main.ts`. */
+export function project({
+  where,
+  source,
+  main = "",
+}: {
+  where: string;
+  source: string;
+  main?: string;
+}): string {
   const root = mkdtempSync(join(where, "project-"));
   mkdirSync(join(root, "src"), { recursive: true });
   writeFileSync(join(root, "src", "app.kumiki"), source);

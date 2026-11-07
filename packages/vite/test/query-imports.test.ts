@@ -11,7 +11,7 @@ const SOURCE = readFileSync(app("01-counter"), "utf8");
 
 const TMP = scratchRoot(import.meta.url);
 
-const project = (main = ""): string => projectWith(TMP, SOURCE, main);
+const project = (main = ""): string => projectWith({ where: TMP, source: SOURCE, main });
 
 function buildMain(main: string, plugins: PluginOption[]): Promise<string> {
   const root = project(main);

@@ -1,9 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { codegen, compile, type ExtendedCodegenOptions, lex, parse } from "@kumikijs/compiler";
 import { expect } from "vitest";
+import { removeScratch } from "./scratch.ts";
 
+// Under the package: what `importModule` writes imports `@kumikijs/runtime` by name.
 const TMP_ROOT = resolve(import.meta.dirname, "..", "test-tmp");
 
 /** Options under which a generated module can be imported and its app instantiated. */
@@ -18,26 +20,22 @@ export type ReducerShape = {
 };
 
 /** Writes `content` to `name` in a fresh directory under `root` and returns its path. */
-export function writeTmpFile(
-  prefix: string,
-  name: string,
-  content: string,
-  root: string = TMP_ROOT,
-): string {
+export function writeTmpFile(root: string, prefix: string, name: string, content: string): string {
   mkdirSync(root, { recursive: true });
   const file = join(mkdtempSync(join(root, `${prefix}-`)), name);
   writeFileSync(file, content);
   return file;
 }
 
-/** Imports generated ESM as a fresh module instance. */
+/**
+ * Imports generated ESM as a fresh module instance, then removes its file. A module that fails
+ * to load stays under `test/test-tmp`, where its stack trace points, and nothing removes it.
+ */
 export async function importModule<T>(js: string, prefix = "module"): Promise<T> {
-  const file = writeTmpFile(prefix, "app.mjs", js);
-  try {
-    return (await import(`${pathToFileURL(file).href}?t=${Date.now()}`)) as T;
-  } finally {
-    rmSync(resolve(file, ".."), { recursive: true, force: true });
-  }
+  const file = writeTmpFile(TMP_ROOT, prefix, "app.mjs", js);
+  const mod = (await import(`${pathToFileURL(file).href}?t=${Date.now()}`)) as T;
+  removeScratch(dirname(file));
+  return mod;
 }
 
 /** The generated module for `src`, failing the test with every diagnostic when it does not compile. */

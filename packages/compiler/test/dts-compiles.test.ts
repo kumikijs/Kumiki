@@ -12,7 +12,7 @@ const dtsOf = (src: string): string => generateDts(parse(lex(src)));
 
 /** Type-check one generated module in isolation; returns formatted diagnostics. */
 function tscDiagnostics(source: string): string[] {
-  const file = writeTmpFile("dts", "gen.ts", source, TMP_ROOT);
+  const file = writeTmpFile(TMP_ROOT, "dts", "gen.ts", source);
   const program = ts.createProgram([file], {
     noEmit: true,
     strict: true,

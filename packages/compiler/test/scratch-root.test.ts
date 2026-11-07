@@ -7,6 +7,8 @@ import { scratchRoot } from "./helpers/scratch.ts";
 const TEST_DIR = dirname(fileURLToPath(import.meta.url));
 
 let root = "";
+/** Whether a test saw the root while it existed; "gone" means nothing until one has. */
+let seen = false;
 
 describe("a test file's scratch root", () => {
   // Registered before scratchRoot's own hook, so it stands for an earlier run under the same pid.
@@ -20,13 +22,14 @@ describe("a test file's scratch root", () => {
   });
 
   it("is empty when the file's tests start", () => {
+    seen = existsSync(root);
     expect(readdirSync(root)).toEqual([]);
   });
 });
 
 describe("once the tests that asked for it are done", () => {
   it("the scratch root is gone", () => {
-    expect(root).not.toBe("");
+    expect(seen).toBe(true);
     expect(existsSync(root)).toBe(false);
   });
 });
