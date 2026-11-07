@@ -9,7 +9,9 @@ import {
   lex,
   nearestNames,
   parse,
+  parseFailure,
   qualifierCandidates,
+  severityOf,
   typeCandidates,
   variantTagsOf,
 } from "@kumikijs/compiler";
@@ -358,11 +360,11 @@ function applicationOrder(patches: AutoPatch[]): AutoPatch[] {
 }
 
 export function repairable(diagnostics: KumikiError[]): KumikiError[] {
-  return diagnostics.filter((d) => d.severity !== "warning");
+  return diagnostics.filter((d) => severityOf(d) === "error");
 }
 
 export function advisory(diagnostics: KumikiError[]): KumikiError[] {
-  return diagnostics.filter((d) => d.severity === "warning");
+  return diagnostics.filter((d) => severityOf(d) === "warning");
 }
 
 export type FixPlan = {
@@ -488,15 +490,11 @@ export function gateComposed(
   try {
     parsed = parse(lex(after));
   } catch (e) {
-    const message = messageOf(e);
-    const pe = e as { pos?: { line: number; col: number } };
-    const synthetic: KumikiError = {
-      code: "E0000",
-      kind: "parse-error",
-      message,
-      pos: { line: pe.pos?.line ?? 0, col: pe.pos?.col ?? 0 },
+    const synthetic = parseFailure(e);
+    return {
+      blocked: { reason: "parse-error", message: synthetic.message },
+      remaining: [...errors, synthetic],
     };
-    return { blocked: { reason: "parse-error", message }, remaining: [...errors, synthetic] };
   }
   const diagnostics = check(parsed, { capabilities });
   const remaining = repairable(diagnostics);
