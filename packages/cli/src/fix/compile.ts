@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import type { AppDef, KumikiError, Pos } from "@kumikijs/compiler";
+import type { KumikiError, Pos } from "@kumikijs/compiler";
 import {
   BUILTIN_EFFECT_CAPS,
   calleeCandidates,
@@ -8,7 +8,8 @@ import {
   lex,
   nearestNames,
   parse,
-  servesNotFound,
+  parseFailure,
+  severityOf,
   typeCandidates,
   variantTagsOf,
 } from "@kumikijs/compiler";
@@ -221,12 +222,11 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   ],
   [
     "E0001",
-    (_err, store) => {
-      const app = store.program.defs.find((d): d is AppDef => d.kind === "AppDef");
-      const routes = app?.routes ?? [];
-      if (routes.some((r) => r.path === "/404") && !servesNotFound(routes)) {
-        return { reason: "e0001-404-is-a-redirect" };
-      }
+    (err, store) => {
+      // Adding an entry repairs `missing-404` alone: a redirect at `/404` has to be replaced by the
+      // author (an entry beside it would be E0008), and a sub-route at `/404` removed.
+      if (err.kind === "404-is-redirect") return { reason: "e0001-404-is-a-redirect" };
+      if (err.kind === "404-in-sub-routes") return { reason: "e0001-404-in-sub-routes" };
       if (append404Route(store.source) === null) return { reason: "e0001-no-routes-clause" };
       const defined = store.byQName.has("tile.NotFound");
       return {
@@ -319,7 +319,12 @@ export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
 
 const ANCHOR_TIER: Record<PatchAnchor["kind"], number> = { span: 0, line: 1, region: 2 };
 
-/** Exact spans first, bottom-up so earlier offsets stay valid; then line and region patches. */
+/**
+ * Exact spans first, bottom-up so earlier offsets stay valid; then line and region patches. The
+ * sort is stable, so two patches it does not tell apart (two in the `line` tier, two in the
+ * `region` tier, or two spans at one position) keep the plan's order. A `region` patch must not
+ * depend on that order; see `PatchAnchor`.
+ */
 function applicationOrder(patches: AutoPatch[]): AutoPatch[] {
   return [...patches].sort((a, b) => {
     const tier = ANCHOR_TIER[a.anchor.kind] - ANCHOR_TIER[b.anchor.kind];
@@ -330,11 +335,11 @@ function applicationOrder(patches: AutoPatch[]): AutoPatch[] {
 }
 
 export function repairable(diagnostics: KumikiError[]): KumikiError[] {
-  return diagnostics.filter((d) => d.severity !== "warning");
+  return diagnostics.filter((d) => severityOf(d) === "error");
 }
 
 export function advisory(diagnostics: KumikiError[]): KumikiError[] {
-  return diagnostics.filter((d) => d.severity === "warning");
+  return diagnostics.filter((d) => severityOf(d) === "warning");
 }
 
 export type FixPlan = {
@@ -476,15 +481,11 @@ export function gateComposed(
   try {
     parsed = parse(lex(after));
   } catch (e) {
-    const message = messageOf(e);
-    const pe = e as { pos?: { line: number; col: number } };
-    const synthetic: KumikiError = {
-      code: "E0000",
-      kind: "parse-error",
-      message,
-      pos: { line: pe.pos?.line ?? 0, col: pe.pos?.col ?? 0 },
+    const synthetic = parseFailure(e);
+    return {
+      blocked: { reason: "parse-error", message: synthetic.message },
+      remaining: [...errors, synthetic],
     };
-    return { blocked: { reason: "parse-error", message }, remaining: [...errors, synthetic] };
   }
   const diagnostics = check(parsed, { capabilities });
   const remaining = repairable(diagnostics);

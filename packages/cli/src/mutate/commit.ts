@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { check, lex, parse } from "@kumikijs/compiler";
+import { check, lex, parse, severityOf } from "@kumikijs/compiler";
 import { loadSource, type Store } from "../store.ts";
 import { messageOf } from "../text.ts";
 import { atomicWriteFileSync } from "../write-lock.ts";
@@ -16,7 +16,7 @@ function validate(
 ): { ok: true } | { ok: false; message: string } {
   try {
     const program = parse(lex(src));
-    const errors = check(program, { requireApp: false }).filter((d) => d.severity !== "warning");
+    const errors = check(program, { requireApp: false }).filter((d) => severityOf(d) === "error");
     if (errors.length > 0) {
       const summary = errors
         .slice(0, 3)
