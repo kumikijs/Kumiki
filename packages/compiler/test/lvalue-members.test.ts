@@ -643,6 +643,45 @@ slot parts : List(List(Int)) = []`;
     expect(errs.map((x) => `${x.code} ${x.message}`)).toEqual(["E0201 Expected Int but got Float"]);
   });
 
+  // `/` is a `Float` even between two `Int`s, so a halved length needs its `.floor`.
+  it.each([
+    ["the end of slice", `part := xs.slice(0, xs.length / 2)`, "xs.length / 2)"],
+    ["the size of chunk", `parts := xs.chunk(xs.length / 2)`, "xs.length / 2)"],
+  ])("reports a division as %s", (_where, body, text) => {
+    expect(pointedErrorsOf(withBody(list, body))).toEqual([
+      { code: "E0201", message: "Expected Int but got Float", text },
+    ]);
+  });
+
+  // A fragment's `$1` is typed through its own bindings, apart from the slots and fields above.
+  it.each([
+    [
+      "a fragment's Text element as the start of slice",
+      `part := ts.map(xs.slice($1, 4).length)`,
+      "$1, 4).length)",
+    ],
+    [
+      "a fragment's Text element as the size of chunk",
+      `part := ts.map(xs.chunk($1).length)`,
+      "$1).length)",
+    ],
+    [
+      "a Text start of slice on a fragment's element",
+      `parts := xss.map($1.slice("0", 1))`,
+      `"0", 1))`,
+    ],
+    [
+      "a Text size of chunk on a fragment's element",
+      `part := xss.map($1.chunk("2").length)`,
+      `"2").length)`,
+    ],
+  ])("reports %s, at the argument", (_where, body, text) => {
+    const decls = `${list}\nslot ts : List(Text) = []\nslot xss : List(List(Int)) = []`;
+    expect(pointedErrorsOf(withBody(decls, body))).toEqual([
+      { code: "E0201", message: "Expected Int but got Text", text },
+    ]);
+  });
+
   it("reports each bound of one slice on its own", () => {
     const src = withBody(list, `part := xs.slice("1", 0.5)`);
     const errs = checkSource(src);
@@ -697,6 +736,18 @@ tile App = column(text("x"))`);
     ],
     ["a nominal Int", `type Idx = nominal Int\nslot k : Idx = 1`, `part := xs.slice(k, k)`],
     ["an Int fragment's element", ``, `part := xs.map(xs.slice($1, 4).length)`],
+    [
+      "Int bounds on a fragment's element",
+      `slot xss : List(List(Int)) = []`,
+      `parts := xss.map($1.slice(0, 1))`,
+    ],
+    [
+      "an Int size on a fragment's element",
+      `slot xss : List(List(Int)) = []`,
+      `part := xss.map($1.chunk(2).length)`,
+    ],
+    ["a floored division", ``, `part := xs.slice(0, (xs.length / 2).floor)`],
+    ["a floored division as the size", ``, `parts := xs.chunk((xs.length / 2).floor)`],
   ])("accepts %s", (_how, decl, body) => {
     expect(codesOf(withBody(`${list}\n${decl}`, body))).toEqual([]);
   });

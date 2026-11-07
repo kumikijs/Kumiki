@@ -698,7 +698,8 @@ export function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: C
 
 // A call given fewer arguments than the signature takes has none read against it: which argument
 // it meant as which is not decided (`m.get-or(d)` is the Option reading, whose argument is no key).
-// A member that only leaves off its last arguments, as `xs.slice(start)` does, still has the rest.
+// A call that can only drop trailing arguments, as `xs.slice(start)` does, still has the ones it
+// was given read.
 function memberArgType(
   recv: TypeExpr | null,
   member: string,

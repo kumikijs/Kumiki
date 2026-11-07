@@ -310,7 +310,7 @@ export function receiverParams(
   return PARAM_ROWS.get(receiver)?.get(member);
 }
 
-// Leaving off `slice`'s end leaves its start the start: the slice runs to the end of the list.
+// `xs.slice(start)` drops only the trailing end, so its one argument is still the start.
 const SHORT_CALLS_READ: { readonly [R in Receiver]?: readonly MemberOf<R>[] } = {
   List: ["slice"],
 };
@@ -319,7 +319,7 @@ const SHORT_CALL_ROWS = new Map<string, ReadonlySet<string>>(
   Object.entries(SHORT_CALLS_READ).map(([r, ms]) => [r, new Set<string>(ms)]),
 );
 
-/** Whether a call of `receiver.member` that leaves off its last arguments still has the rest read. */
+/** Whether a call of `receiver.member` that leaves off trailing arguments still has the ones it was given read. */
 export function readsShortCall(receiver: string, member: string): boolean {
   return SHORT_CALL_ROWS.get(receiver)?.has(member) ?? false;
 }

@@ -162,7 +162,7 @@ last                        : Option(T)
 push(x)                     : List(T)
 prepend(x)                  : List(T)
 concat(other)               : List(T)
-slice(start, end)           : List(T)          ; start and end are Int
+slice(start, end)           : List(T)          ; start and end are Int; without end, to the list's end
 reverse                     : List(T)
 sort                        : List(T)          ; T is Ord; ascending, as < orders it
 sort-by(expr)               : List(T)          ; ascending by expr, as < orders it; stable
