@@ -1,8 +1,18 @@
 import type { AutoPatch, FixFromTestOutcome } from "@kumikijs/cli";
-import type { KumikiError } from "@kumikijs/compiler";
+import { type KumikiError, type Severity, severityOf } from "@kumikijs/compiler";
 import { CapabilityManifestError } from "@kumikijs/compiler/node";
 
-export type Diagnostic = { code: string; kind: string; message: string; line: number; col: number };
+export type Diagnostic = {
+  code: string;
+  kind: string;
+  message: string;
+  line: number;
+  col: number;
+  severity: Severity;
+};
+
+export const DIAGNOSTIC_SHAPE =
+  'Each diagnostic is `{code, kind, message, line, col, severity}`; `severity` is `"error"` (the file fails `check`, and `build` too unless only a `strict*` toggle surfaced it) or `"warning"` (advisory: reported, but fails neither; docs/spec/errors.md).';
 
 export function text(s: string) {
   return { content: [{ type: "text" as const, text: s }] };
@@ -29,6 +39,7 @@ export function toDiagnostics(errors: KumikiError[]): Diagnostic[] {
     message: e.message,
     line: e.pos.line,
     col: e.pos.col,
+    severity: severityOf(e),
   }));
 }
 
@@ -45,6 +56,7 @@ export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unkn
         ...(o.testRunError ? { testRunError: o.testRunError } : {}),
         ...(o.failingTest ? { failingTest: o.failingTest } : {}),
         ...(o.reason ? { reason: o.reason } : {}),
+        ...(o.candidates ? { candidates: o.candidates } : {}),
         ...withCompileFixes,
       };
     case "compile-proposed":
