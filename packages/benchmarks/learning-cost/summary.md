@@ -22,14 +22,6 @@ current toolchain across three vendors **under one protocol**.
 > child position renders nothing, and `check` used to accept it; it is now
 > E0128, so **Codex's v3 flips from build-green to typecheck-fail**. `Shell` is
 > never called, so the app itself rendered the same either way.
->
-> **Re-scored again when W0219 `unreachable-nested-arm` landed.** Codex's v4
-> lays out `TaskDetailPage`'s last `| None -> NotFound` under the outer
-> `match routeTaskId(route)`, but the nested `match tasks.get(tid)` above it
-> takes it as a third arm it can never reach, so the outer `match` has no
-> `None` arm. A tile `match` may leave values out, so this is a warning and the
-> app still builds. The harness counts every diagnostic `check` returns,
-> warnings included, so **Codex's v4 keeps build ✅ and flips to typecheck ❌**.
 
 ## Protocol (uniform — single pass, spec only)
 
@@ -59,7 +51,7 @@ current toolchain across three vendors **under one protocol**.
 | v3 Issue Tracker | Codex | 674 | 23,210 | 6,417 | ✅ | ❌ | ❌ | typecheck E0128: `$1` as a child of `column` (×1) |
 | v3 Issue Tracker | Gemini | 440 | 20,270 | 4,995 | ✅ | ❌ | ❌ | typecheck E0103: `$1` w/o `in=` (×23) |
 | v4 Project Mgmt | Claude | 1029 | 39,178 | 9,552 | ❌ | ❌ | ❌ | parse @201:20 (literal match pattern) |
-| v4 Project Mgmt | Codex | 877 | 32,376 | 8,703 | ✅ | ❌ | ✅ | typecheck W0219 (warning): an outer arm taken by a nested `match` (×1) |
+| v4 Project Mgmt | Codex | 877 | 32,376 | 8,703 | ✅ | ✅ | ✅ | — |
 | v4 Project Mgmt | Gemini | 294 | 16,517 | 4,397 | ❌ | ❌ | ❌ | parse @152:50 (tile call in props block) |
 
 ### Reading the table
@@ -68,8 +60,7 @@ current toolchain across three vendors **under one protocol**.
 - **Codex is the only vendor to build v4** (~880 LOC) in one pass. The `error`-tile
   codegen gap had blocked
   its v3 and v4; with it fixed both built, until E0128 refused v3's one value
-  written as a child — a single diagnostic in 674 lines. v4 still builds, with
-  one warning (W0219) that the harness scores as a typecheck ❌.
+  written as a child — a single diagnostic in 674 lines.
 - **Claude leads on smaller tasks but parse-fails v4** — it used a literal `match`
   pattern, which is *not* supported (stated in `language.md`).
 - **Token efficiency** (v2, the one task all three build): Gemini 1,314 <

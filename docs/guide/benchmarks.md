@@ -56,14 +56,14 @@ Each task gives a model **only `docs/spec/` + a task spec** and asks for a singl
 | | Codex | 674 | 6,417 | ✅ | ❌ | ❌ |
 | | Gemini | 440 | 4,995 | ✅ | ❌ | ❌ |
 | v4 Project Mgmt (~900 LOC) | Claude | 1,029 | 9,552 | ❌ | ❌ | ❌ |
-| | Codex | 877 | 8,703 | ✅ | ❌ | ✅ |
+| | Codex | 877 | 8,703 | ✅ | ✅ | ✅ |
 | | Gemini | 294 | 4,397 | ❌ | ❌ | ❌ |
 
 What the table says:
 
 - **Mid-size apps build from the spec alone, in one pass.** Every vendor builds v2; Claude builds the ~600-LOC v3, and Codex misses it by one E0128 (a value written as a child).
 - **Codex builds the ~880-LOC v4** — the only vendor to survive the largest task. Claude holds through v3, then trips on an unsupported `match` pattern at v4 scale; Gemini degrades earliest.
-- **The benchmark is a compiler test too.** The runs surfaced two real defects — built-in tiles that crashed at build and rules the spec stated only by example. Both are fixed, and the table above is scored against the patched compiler. The remaining ❌ are genuine authoring errors the toolchain *correctly* rejects, except Codex's v4 typecheck: one warning (W0219), which the harness scores as a failure though the app builds.
+- **The benchmark is a compiler test too.** The runs surfaced two real defects — built-in tiles that crashed at build and rules the spec stated only by example. Both are fixed, and the table above is scored against the patched compiler. The remaining ❌ are genuine authoring errors the toolchain *correctly* rejects.
 
 ## Reproducing
 
