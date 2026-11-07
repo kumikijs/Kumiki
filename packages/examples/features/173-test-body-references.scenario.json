@@ -1,0 +1,22 @@
+{
+  "steps": [
+    {
+      "label": "the list starts empty",
+      "expect": { "noErrors": true, "domIncludes": ["items: "], "state": { "items": [] } }
+    },
+    {
+      "label": "typing fills the draft",
+      "do": { "fill": "#draft", "value": "Buy" },
+      "expect": { "noErrors": true, "state": { "draft": "Buy" } }
+    },
+    {
+      "label": "submitting shouts it into the list, through the fn the test calls, and clears the field",
+      "do": { "submit": "#draft" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["items: Buy!"],
+        "state": { "items": ["Buy!"], "draft": "" }
+      }
+    }
+  ]
+}

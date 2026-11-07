@@ -50,7 +50,9 @@ export const sliderPatcher: TilePatcher<"slider"> = (el, _oldNode, newNode) => {
   else clearBindDataset(inp);
   if (newNode.value != null) {
     const nextValue = String(newNode.value);
-    if (inp.value !== nextValue && document.activeElement !== inp) inp.value = nextValue;
+    // A bound slider being dragged is left to its own `input` writes; one without a bind has none, and a slider keeps focus after the drag, so it follows each pass.
+    const dragged = newNode.bind && document.activeElement === inp;
+    if (inp.value !== nextValue && !dragged) inp.value = nextValue;
   }
   setHandlers(inp, inputHandlers(newNode));
   applyControlState(el, (newNode as { props?: TileProps }).props);
