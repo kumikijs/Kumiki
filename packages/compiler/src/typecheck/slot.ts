@@ -22,7 +22,7 @@ export function isTestSlot(name: string, sym: SymbolTable): boolean {
 
 export const ROUTE_SLOT_FIELDS: ReadonlySet<string> = new Set(ROUTE_TYPE.fields.map((f) => f.name));
 
-/** Fields are checked against `ROUTE_TYPE`, not the program's `Route`: a program's own `type Route` does not change what the runtime keeps in the slot. */
+/** Fields are checked against `ROUTE_TYPE`, the record the runtime keeps in the slot. */
 export function checkRouteSeed(
   value: Expr,
   sym: SymbolTable,

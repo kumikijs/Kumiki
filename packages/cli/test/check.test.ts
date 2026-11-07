@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { app } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
-import { runCli, SPAWN } from "./helpers/cli.ts";
+import { runCli, SPAWN, spawns } from "./helpers/cli.ts";
 import { APP_A, seed, seedCopy } from "./helpers/files.ts";
 
 const COUNTER = app("01-counter");
@@ -27,7 +27,7 @@ ${APP_A}`;
       SELECTOR_ID_MISMATCH,
       ["E0212", "selector-id-mismatch", "NewForm#nw", '"new"'],
     ],
-  ])("%s turns what plain check lets pass into a failure", SPAWN, (flag, source, reported) => {
+  ])("%s turns what plain check lets pass into a failure", spawns(2), (flag, source, reported) => {
     const file = seed(source);
     const lax = runCli(["check", file]);
     expect(lax.code).toBe(0);
@@ -121,7 +121,7 @@ describe("kumiki check: a program needs exactly one app", () => {
     expect(stdout).toContain("ok");
   });
 
-  it("keeps the structural diagnostics visible under a scope flag", SPAWN, () => {
+  it("keeps the structural diagnostics visible under a scope flag", spawns(2), () => {
     const missingApp = runCli(["check", seed(NO_APP), "--refs"]);
     expect(missingApp.code).toBe(1);
     expect(missingApp.stderr).toContain("E0003 missing-app");
@@ -133,7 +133,7 @@ describe("kumiki check: a program needs exactly one app", () => {
     expect(missing404.stderr).toContain("E0001 missing-404");
   });
 
-  it("does not block an AI edit that leaves the program incomplete", SPAWN, () => {
+  it("does not block an AI edit that leaves the program incomplete", spawns(2), () => {
     const file = seed("");
     const added = runCli(["add", file, "slot", "count", "Int", "=", "0"]);
     expect(added.code).toBe(0);
@@ -141,7 +141,7 @@ describe("kumiki check: a program needs exactly one app", () => {
     expect(runCli(["check", file]).code).toBe(1);
   });
 
-  it("catches an app that a cascading remove deleted", SPAWN, () => {
+  it("catches an app that a cascading remove deleted", spawns(2), () => {
     const file = seedCopy(COUNTER, "counter.kumiki");
     const removed = runCli(["remove", file, "slot.count", "--cascade"]);
     expect(removed.code).toBe(0);

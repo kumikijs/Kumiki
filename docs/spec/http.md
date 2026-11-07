@@ -185,7 +185,7 @@ app App
 |---|---|---|
 | `base-url` | Base for relative URLs — a `Text` or a type built on `Text` (`Url`, `Email`, `Uuid`, …) | per request |
 | `headers` | Applied to every request (under a `base-url`, only to its origin — below) — a `Map(Text, Text)`, the type of a request's own `headers` | per request |
-| `timeout` | Default timeout in milliseconds — anything assignable to `Int`: an `Int`, a `Duration`, a user `nominal Int` | per request |
+| `timeout` | Default timeout, a number of milliseconds from 1 to 2147483647 — anything assignable to `Int`: an `Int`, a `Duration`, a user `nominal Int` | per request |
 | `credentials` | fetch credentials mode (default in [§6.9](#_6-9-default-settings); under a `base-url`, only to its origin — below) — a `Text`, one of `omit` / `same-origin` / `include` | per request |
 | `on-401` | Reducer that receives a 401 (resolved by the compiler — an unknown name is [E0102](./errors.md#e0102-undef-reducer)) | resolved at compile time |
 | `on-403` | Reducer that receives a 403 (same) | resolved at compile time |
@@ -236,16 +236,24 @@ field unless a bullet below says otherwise:
 - `timeout` takes anything assignable to `Int`, read as milliseconds. A
   `Duration` is one (it is milliseconds at run time), and so is a user
   `nominal Int`; a `Float` is not. A `Text` would reach `setTimeout` as `NaN`
-  and abort every request before it can answer.
+  and abort every request before it can answer. The milliseconds are ones a
+  timer can hold: every literal that reaches the field must be from `1` to
+  `2147483647` (2^31 − 1), since `setTimeout` fires the abort at once for `0`
+  or less, and for a longer delay too — a browser wraps it below `0` and Node
+  shortens it to 1 ms — with the same effect.
 - `credentials` takes anything assignable to `Text`, and every literal that
-  reaches the field — the field's own value, or a literal branch of an `if` —
-  must be one of the three Fetch modes, since a browser refuses a request whose
-  init names any other.
+  reaches the field must be one of the three Fetch modes, since a browser
+  refuses a request whose init names any other.
 
-What is compared is the type, and for `credentials` the literals: a value
-computed any other way — a slot, a call, a concatenation — is decided at run
-time, so one of the right type is accepted whatever it will hold. `timeout: 0`
-and a negative `Int` are an `Int`, and are accepted too.
+What is compared is the type, and for `timeout` and `credentials` the literals
+too. A literal reaches the field as the field's own value, or as what a branch
+of an `if`, an arm of a `match` or the body of a `let … in` yields, at any
+depth, and is reported where it is written; `-1`, a number with a minus before
+it, is a literal. Its type is compared first, so `timeout: -5.5` is reported as
+a `Float`. A value computed any other way — a slot, a name bound by `let`,
+arithmetic such as `1 - 1`, a call such as `Duration.ms(0)`, a concatenation —
+is decided at run time, so one of the right type is accepted whatever it will
+hold.
 
 ### 6.3.2 Global Handling of 401
 
@@ -284,7 +292,7 @@ reducer cancelSearch
 
 The id an `emit` yields names the request that emit starts or, when the policy drops the emit, the request that absorbed it. What else it names depends on the effect's policy:
 
-- **`policy=latest` and `policy=latest-per-key(<expr>)`** run one request per key, and the id is that key's: `<effect-name>:<key>`. `<key>` is `_` under `latest`. Under `latest-per-key` it is that expression, **evaluated once, where the `emit` runs**: a slot it reads has the value the reducer body has written up to that statement, and a write later in the same body is not seen. The dispatcher runs the request under that same key, so the id names the request the `emit` started even when the body goes on to write the slot the key reads. A later emit under the same key aborts that request and runs its own under the same id, so a cancel through either id aborts the one that is running. An `app.init` entry is emitted outside any reducer body; its key is evaluated when it is dispatched, against the slots' values at that moment.
+- **`policy=latest` and `policy=latest-per-key(<expr>)`** run one request per key, and the id is that key's: `<effect-name>:<key>`. `<key>` is `_` under `latest`. Under `latest-per-key` it is that expression, **evaluated once, where the `emit` runs**: a slot it reads has the value the reducer body has written up to that statement, and a write later in the same body is not seen. The dispatcher runs the request under that same key, so the id names the request the `emit` started even when the body goes on to write the slot the key reads. A later emit under the same key aborts that request and runs its own under the same id, so a cancel through either id aborts the one that is running. An `app.init` entry is emitted outside any reducer body; its key is evaluated when it is dispatched, against the slots' values at that moment. A `latest-per-key` key is written the way a Map key is stored ([stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)) — a primitive as its text, a record, tuple, `List`, `Map` or variant as its JSON with each record's fields in sorted order — so two emits share an id exactly when their keys are `==` (whatever its declared type, not for a non-finite number), and a key type for which that does not hold is [E0233](./errors.md#e0233-policy-key-type) ([language §1.5.2](./language.md#_1-5-2-semantics)).
 - **Every other policy** — none, `queue`, `debounce`, `throttle`, `once` — makes each `emit` a request of its own, with an id of its own that no other emit yields: two emits of one effect, from one reducer body or from two, yield two ids, and cancelling the request one of them starts leaves the other's as it is. The id is `<effect-name>#` followed by a new id from the generator `<T>.fresh()` draws from ([stdlib §2.4.1](./stdlib.md#_2-4-1-id-generation)), recorded as an `effect-id` read of its own ([runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)), so a replayed reducer body yields the id the recorded one did.
 
 An emit the policy **drops** starts no request, and its id names the request that absorbed it: under `throttle`, an emit inside the window names the request that opened the window; under `once`, an emit of an input already seen names the request that input launched; under `debounce`, an emit that a later one replaced before the timer fired names what the later one names. So `lastId := emit work(x)` followed by `emit cancel(lastId)` reaches the request the policy kept, whichever emit `lastId` came from. Once that request settles, a dropped id names nothing, as a settled one does.
@@ -293,7 +301,7 @@ An `effect ... cap=http.cancel` must declare `in=EffectId out=Unit`; any other s
 
 ### 6.4.1 Behavior
 
-- A cancel against an unknown / already-completed `EffectId` is a silent no-op (cancellation is an idempotent intent, not a contract violation).
+- A cancel against an unknown / already-completed `EffectId` is a silent no-op (cancellation is an idempotent intent, not a contract violation), and records no `effect-cancel` step in the episode log ([runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)).
 - The cancelled effect's `.err` reducer fires with `{status: 0, message: "aborted", body: None}` so the same `HttpError`-shaped path covers both abort and network failure. This normalization also applies to the automatic cancellations triggered by `policy=latest` / `policy=latest-per-key`. `status: 0` means no HTTP response arrived — the same value a timeout and a network failure report — and it is a value of `HttpStatus`, which admits it ([stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)), so a slot holding the `HttpError` accepts it.
 - An `HttpError`'s `body` is an `Option(Text)`. It is `Some` of the response's body text whenever a response arrived and its body was read: a status outside 2xx, and a 2xx whose body does not decode ([6.1.4](#_6-1-4-the-decoder-type)). An empty body is `Some("")`, not `None`. `body` is `None` when no response arrived — an abort, a cancellation, a timeout, a network failure, a request body that cannot be sent, all with `status: 0` — and when a response arrived but its body could not be read. That error keeps the response's own `status`, a 2xx's included, so a 2xx is not retried ([6.5](#_6-5-retry)), unless what stopped the read is the request's own cancellation or timeout: that is the `aborted` error above, whatever the status.
 - A cancel acts on the one request its id names. Any other request of the same effect that is in flight keeps running and delivers its own `.ok` / `.err`.

@@ -1,8 +1,9 @@
 import { writeFileSync } from "node:fs";
 import { feature } from "@kumikijs/examples";
+import { KumikiPanic, type TestResult } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { runTests, runTestsSource } from "../src/smoke.ts";
-import { CHILD_TIMEOUT_MS, runCli, SPAWN, spawnCli, waitFor } from "./helpers/cli.ts";
+import { runOne, runTests, runTestsSource } from "../src/smoke.ts";
+import { CHILD_TIMEOUT_MS, runCli, SPAWN, spawnCli, spawns, waitFor } from "./helpers/cli.ts";
 import { APP_A, seed } from "./helpers/files.ts";
 
 const TESTS = feature("28-tests");
@@ -57,6 +58,14 @@ describe("kumiki test", () => {
     expect(stdout).toContain("9/9 passed");
   });
 
+  it("runs a reducer-test whose given and expect name a variant called Time", SPAWN, () => {
+    const { stdout, code } = runCli(["test", feature("228-primitive-named-variants")]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("PASS  by-time-sets-the-time-variant");
+    expect(stdout).toContain("PASS  by-size-leaves-the-time-variant");
+    expect(stdout).toContain("2/2 passed");
+  });
+
   it("filters by a name prefix", SPAWN, () => {
     const { stdout } = runCli(["test", TESTS, "inc-i*"]);
     expect(stdout).toContain("PASS  inc-increments");
@@ -85,7 +94,7 @@ test starts-at-41 =
         expect = {slots: {count: 42}}
 `;
 
-  it("reports it with the file and the line and column `check` gives", SPAWN, () => {
+  it("reports it with the file and the line and column `check` gives", spawns(2), () => {
     const file = seed(NOT_A_RECORD);
     const checked = runCli(["check", file]);
     expect(checked.code).toBe(1);
@@ -101,7 +110,7 @@ test starts-at-41 =
     expect(tested.stderr).toContain('in test "starts-at-41"');
   });
 
-  it("prints the warnings `check` prints, before the errors", SPAWN, () => {
+  it("prints the warnings `check` prints, before the errors", spawns(2), () => {
     const file = seed(`slot f : Text = ""
 reducer recordFocus on=ui.focus(Card) do= f := "focused"
 tile Card = box(text("hi"))
@@ -161,6 +170,32 @@ test replay =
       expected: 'the episodes in "log.jsonl"',
       actual:
         "no episode log was read: compile was given no readEpisodeLog, so nothing was replayed",
+    });
+  });
+});
+
+describe("a test whose body throws", () => {
+  it.each<[string, unknown, string]>([
+    [
+      "a panic, as its message",
+      new KumikiPanic("Index 3 is out of range for a List of length 1"),
+      "Index 3 is out of range for a List of length 1",
+    ],
+    ["a panic with no message, as its kind", new KumikiPanic(""), "KumikiPanic"],
+    [
+      "any other error, with its kind",
+      new TypeError("_s.runTileTest is not a function"),
+      "TypeError: _s.runTileTest is not a function",
+    ],
+    ["a thrown value that is not an error, as JSON", { code: 1 }, '{"code":1}'],
+  ])("fails alone, reporting %s", (_case, thrown, error) => {
+    const run = (): TestResult => {
+      throw thrown;
+    };
+    expect(runOne({ name: "t", kind: "reducer-test", run })).toEqual({
+      name: "t",
+      pass: false,
+      error,
     });
   });
 });
