@@ -1,4 +1,4 @@
-import { copyFileSync, readFileSync } from "node:fs";
+import { copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { compile } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
@@ -305,7 +305,7 @@ describe("the diagnostic wire shape", () => {
     ])("$tool runs nothing when the compile fails, and answers the one error envelope, warnings first", {
       timeout: 30000,
     }, async ({ tool, args }) => {
-      const res = await callOnce(tool, { path: writeMixed(), ...args });
+      const res = await callOnce(tool, { path: FIX_MIXED, ...args });
       expect(res.isError).toBe(true);
       expect(res.items).toHaveLength(1);
       expect(JSON.parse(res.items[0] ?? "")).toEqual({
