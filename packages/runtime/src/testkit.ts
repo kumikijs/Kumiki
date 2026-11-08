@@ -19,6 +19,7 @@ import {
   compareReducerExpect,
   type ReducerExpect,
   type TestResult,
+  unexpectedPanic,
 } from "./testkit/expect.ts";
 import {
   _hashStr,
@@ -45,7 +46,14 @@ function settleBatch(
 }
 
 /** A `run-reducer` step whose batch a refinement rejected: its batch did not commit, so the trial fails. */
-class RejectedStep extends Error {}
+class RejectedStep extends Error {
+  /** The reducer and each refusing slot's predicate, not the values written, which differ per input. */
+  readonly way: string;
+  constructor(reducer: string, rejected: readonly RefinementRejection[]) {
+    super(rejectedBatchText(reducer, rejected));
+    this.way = JSON.stringify([reducer, rejected.map((r) => [r.slot, r.kind, r.args])]);
+  }
+}
 
 /** Why a trial that threw failed, with a panic told apart from any other error. */
 function thrownReason(e: unknown): string {
@@ -54,7 +62,15 @@ function thrownReason(e: unknown): string {
   return isPanic(e) ? `panicked: ${message}` : `threw: ${message}`;
 }
 
+/** The failure a shrink candidate has to repeat: the same refusal, a panic, or another throw. */
+function failureWay(e: unknown): string {
+  if (e instanceof RejectedStep) return e.way;
+  return isPanic(e) ? "panicked" : "threw";
+}
+
 export const _stdlibTest = {
+  /** Whether a throw in the code under test is a panic, which is the test's outcome. */
+  isPanic,
   /** The wildcard map-key sentinel; codegen lowers a `<any-id>` map key to it. */
   WILD_KEY,
   /** The Set-literal wildcard count; codegen lowers the `<any-id>` members of a Set literal to it. */
@@ -89,7 +105,7 @@ export const _stdlibTest = {
       r.apply(app.live, { $el: event, $event: event }),
       app.slots,
     );
-    if ("rejected" in settled) throw new RejectedStep(rejectedBatchText(name, settled.rejected));
+    if ("rejected" in settled) throw new RejectedStep(name, settled.rejected);
     return { slots: settled.slots };
   },
   runPropertyTest(input: {
@@ -104,19 +120,21 @@ export const _stdlibTest = {
     const count = input.count ?? 100;
     const doShrink = input.shrink ?? true;
     const rng = _rng(input.seed ?? _hashStr(name));
-    const failure = (b: Record<string, unknown>): { reason?: string } | undefined => {
+    const failure = (b: Record<string, unknown>): { reason?: string; way: string } | undefined => {
       try {
-        return trial(b) === true ? undefined : {};
+        return trial(b) === true ? undefined : { way: "false" };
       } catch (e) {
-        return { reason: thrownReason(e) };
+        return { reason: thrownReason(e), way: failureWay(e) };
       }
     };
-    const fails = (b: Record<string, unknown>): boolean => failure(b) !== undefined;
     for (let i = 0; i < count; i++) {
       const binds: Record<string, unknown> = {};
       for (const k of Object.keys(vars)) binds[k] = genValue(vars[k] as GenDesc, rng);
-      if (fails(binds)) {
-        const minimal = doShrink ? shrinkCounterexample(vars, fails, binds) : binds;
+      const first = failure(binds);
+      if (first) {
+        // A candidate counts only when it fails the way the generated case did.
+        const sameWay = (b: Record<string, unknown>): boolean => failure(b)?.way === first.way;
+        const minimal = doShrink ? shrinkCounterexample(vars, sameWay, binds) : binds;
         const reason = failure(minimal)?.reason;
         return {
           name,
@@ -283,20 +301,8 @@ export const _stdlibTest = {
       expectedSlots = expect.slotsEqual as Record<string, unknown>;
     }
 
-    if (expectedSlots) {
-      for (const [k, v] of Object.entries(expectedSlots)) {
-        if (!valueEqual(app.live[k], v)) {
-          return {
-            name,
-            pass: false,
-            expected: _jsonStr(expectedSlots),
-            actual: _jsonStr(app.live),
-            diffAt: `slots.${k}`,
-            leaf: { expected: v, actual: app.live[k] },
-          };
-        }
-      }
-    }
+    // A panic or a dropped err leaves the slots it would have written at their old values, so
+    // compared first those slots would be reported in its place.
     if (expect.noPanics && report.panics.length > 0) {
       return {
         name,
@@ -315,10 +321,32 @@ export const _stdlibTest = {
         diffAt: "errors",
       };
     }
+    if (expectedSlots) {
+      for (const [k, v] of Object.entries(expectedSlots)) {
+        if (!valueEqual(app.live[k], v)) {
+          return {
+            name,
+            pass: false,
+            expected: _jsonStr(expectedSlots),
+            actual: _jsonStr(app.live),
+            diffAt: `slots.${k}`,
+            leaf: { expected: v, actual: app.live[k] },
+          };
+        }
+      }
+    }
     return { name, pass: true };
   },
-  /** Structurally compare a rendered tile against the expected tile structure. */
-  runTileTest(input: { name: string; actual: unknown; expected: unknown }): TestResult {
+  /** A tile-test has no form that expects a panic, so a panic as its target renders is always unexpected. */
+  runTileTest(input: {
+    name: string;
+    actual: unknown;
+    panic: string | null;
+    expected: unknown;
+  }): TestResult {
+    if (input.panic !== null) {
+      return unexpectedPanic(input.name, serializeTileNode(input.expected), input.panic);
+    }
     const cmp = tileStructEqual(input.expected, input.actual);
     return {
       name: input.name,

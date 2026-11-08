@@ -13,7 +13,7 @@ import {
   planFixesExplained,
   repairable,
 } from "./compile.ts";
-import type { AutoPatch, SkipReason } from "./patch.ts";
+import type { AutoPatch, CompilePatch, SkipReason } from "./patch.ts";
 import { planTestPatchExplained, testBodyLineRanges } from "./test-patch.ts";
 
 type FixFromTestStatus =
@@ -27,13 +27,15 @@ type FixFromTestStatus =
       /** Behavioral tier: the target test failed but no deterministic literal repair exists. */
       failingTest?: TestResult;
       reason?: string;
+      /** The tied names, sorted, when `reason` is `close-names-tied`. */
+      candidates?: string[];
       compileFixes?: number;
     }
   | {
       ok: true;
       status: "compile-proposed";
       compileFixes: number;
-      compilePatches: AutoPatch[];
+      compilePatches: CompilePatch[];
     }
   | {
       ok: false;
@@ -94,7 +96,12 @@ export type TestPatchBlock =
   | { reason: "test-runner-threw"; message: string }
   | { reason: "named-test-missing" }
   | { reason: "still-fails"; failingTest: TestResult }
-  | { reason: "regressed"; regressed: string[] };
+  | {
+      reason: "regressed";
+      regressed: string[];
+      /** The patched run's result for each of `regressed` that still ran. */
+      failingTests: TestResult[];
+    };
 
 export type FixFromTestOutcome = FixFromTestStatus & {
   warnings: KumikiError[];
@@ -104,11 +111,13 @@ function noCompilePatch(
   compileErrors: KumikiError[],
   skipped: SkipReason[],
 ): Extract<FixFromTestStatus, { status: "no-patch" }> {
+  const first = skipped[0];
   return {
     ok: false,
     status: "no-patch",
     compileErrors,
-    reason: skipped[0]?.reason ?? "every-patch-declined",
+    reason: first?.reason ?? "every-patch-declined",
+    ...(first?.candidates === undefined ? {} : { candidates: first.candidates }),
   };
 }
 
@@ -262,6 +271,7 @@ async function gateTestPatch(
   const regressed = before
     .filter((b) => b.pass && after.find((r) => r.name === b.name)?.pass !== true)
     .map((b) => b.name);
-  if (regressed.length > 0) return { reason: "regressed", regressed };
-  return null;
+  if (regressed.length === 0) return null;
+  const failingTests = after.filter((r) => regressed.includes(r.name));
+  return { reason: "regressed", regressed, failingTests };
 }

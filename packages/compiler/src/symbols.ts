@@ -1,7 +1,30 @@
 import { paramSubstitution, substituteType, unknownType } from "./assignable.ts";
 import type { Def, Program, TypeDef, TypeExpr } from "./ast.ts";
 import { assertNever } from "./ast.ts";
-import { isReservedTypeName } from "./stdlib-types.ts";
+import { QUALIFIED_CALL_NAMESPACES } from "./builtin-calls.ts";
+import {
+  BUILTIN_TYPE_CONSTRUCTORS,
+  BUILTIN_UNION_TAGS,
+  isReservedTypeName,
+  STDLIB_TYPES,
+  typeCandidates,
+} from "./stdlib-types.ts";
+
+// Codegen builds a variant from any spelling, so this set is the whole difference
+// between a constructor and a record nothing reads. The checker and `kumiki fix`
+// both read it, so the name a diagnostic suggests is the one `fix` writes.
+export function constructorTags(program: Program): string[] {
+  const tags = new Set(unionsByTag([...program.defs, ...STDLIB_TYPES]).keys());
+  for (const builtin of BUILTIN_UNION_TAGS.values()) for (const tag of builtin) tags.add(tag);
+  return [...tags];
+}
+
+// The call namespaces are included although the parser reads their members as
+// calls: a misspelt one is exactly the name whose closest candidate is that namespace.
+export function qualifierCandidates(program: Program): string[] {
+  const userTypes = program.defs.filter((d) => d.kind === "TypeDef").map((d) => d.name);
+  return [...constructorTags(program), ...QUALIFIED_CALL_NAMESPACES, ...typeCandidates(userTypes)];
+}
 
 /**
  * The unions `defs` write, by each tag they declare. A union is a union wherever it is written —
@@ -79,6 +102,11 @@ function typesWrittenIn(def: Def): TypeExpr[] {
   }
 }
 
+function genericUnionTags(name: string): string[] | null {
+  const tags = BUILTIN_TYPE_CONSTRUCTORS.has(name) ? BUILTIN_UNION_TAGS.get(name) : undefined;
+  return tags ? [...tags] : null;
+}
+
 export function collectTimerNames(program: Program): Set<string> {
   const timers = new Set<string>();
   for (const def of program.defs) {
@@ -92,9 +120,7 @@ export function collectTimerNames(program: Program): Set<string> {
 export function variantTagsOf(scrutTypeName: string, program: Program): string[] | null {
   const bare = extractBareName(scrutTypeName);
   if (bare === null) return null;
-  if (bare === "Option") return ["Some", "None"];
-  if (bare === "Result") return ["Ok", "Err"];
-  return collectTagsForTypeName(bare, program, new Set<string>());
+  return genericUnionTags(bare) ?? collectTagsForTypeName(bare, program, new Set<string>());
 }
 
 function extractBareName(s: string): string | null {
@@ -121,13 +147,8 @@ function resolveTags(t: TypeExpr, program: Program, seen: Set<string>): string[]
     case "TypeUnion":
       return t.variants.map((v) => v.name);
     case "TypeRef":
-      if (t.name === "Option") return ["Some", "None"];
-      if (t.name === "Result") return ["Ok", "Err"];
-      return collectTagsForTypeName(t.name, program, seen);
     case "TypeApp":
-      if (t.name === "Option") return ["Some", "None"];
-      if (t.name === "Result") return ["Ok", "Err"];
-      return collectTagsForTypeName(t.name, program, seen);
+      return genericUnionTags(t.name) ?? collectTagsForTypeName(t.name, program, seen);
     case "TypeNominal":
     case "TypeRefinement":
       return resolveTags(t.inner, program, seen);

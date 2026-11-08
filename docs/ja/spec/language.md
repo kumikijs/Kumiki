@@ -153,6 +153,8 @@ type Handle = nominal Text where len-gt(3) where len-lt(7)
 
 違反した値は、**連鎖を基底型の側から外側へ読む順**で**最初に失敗した述語**に対して報告される。1 つの型式の中ではそれが書かれた順であり、名前をまたぐ場合は宣言がたどる順である——`Handle` が `Short` の上に宣言されている以上、ファイル内でどちらの定義が先にあろうと `Short` の `len-lt(7)` が `Handle` 自身の `len-gt(3)` より先に来る。書き込みが reducer のバッチを破棄したときに拒否が名指すのはその述語であり（[batching](./runtime.md#a-batch-commits-all-or-nothing)）、`error` tile が描画するのもその述語のメッセージである（[エラー表示](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)）。
 
+`type-param` が指すのは型であって型コンストラクタではないので、引数を取らない：`type H(T) = …` の body の `T(Int)` は [E0210](./errors.md#e0210-type-arity-mismatch) である。型パラメータは同じ綴りのトップレベル名を覆い隠す（[§1.3.6](#_1-3-6-不変条件) 不変条件 5）ので、`type H(List) = …` の body の `List(Int)` も同じ誤りである。
+
 ### 1.3.2 ビルトイン汎化型
 
 ```
@@ -384,9 +386,37 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
   [E0103](./errors.md#e0103-undef-ref-undef-slot) になる
 - 両者とも他の式と同様に検査される — key 中の未定義名は dispatch 時の実行時
   エラーではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)
+- effect の capability が [http.md §6.6.1](./http.md#_6-6-1-request-fields) に行を
+  持つとき、`map-request` のレコードが書くフィールドはその capability のリクエストに
+  照らされる：リクエストに無いフィールドは [E0215](./errors.md#e0215-unknown-record-field)
 - `latest-per-key` の key は `emit` が実行された地点で評価される。key が読む slot は
   reducer 本体のその文までの書き込みを反映し、それ以降の書き込みは反映しない
   （[http.md §6.4](./http.md#_6-4-cancellation)）
+- `latest-per-key` の key は、それが走らせるリクエストの名前である：key が実行中の
+  リクエストの key と `==`（[§1.9.4](#_1-9-4-演算子の型)）である emit はそのリクエスト
+  を中断し、`==` でない emit はそれを走らせたままにする。key は Map の key が格納
+  されるのと同じ書き方で書かれ（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）、
+  その書き方は 2 つの型を除くすべての型で値を `==` のとおりに区別する — ただし宣言
+  された型が何であれ、有限でない数は例外である。そのいずれかの key、またはフィールド・
+  ペイロード・要素・`Map` の値にそのいずれかを持つ型の key は、key の位置で
+  [E0233](./errors.md#e0233-policy-key-type) になる：
+  - `Float`：`NaN` は 1 つの key だが自身と `==` ではなく、レコード・タプル・`List`・
+    `Map` の値・バリアントの中では `NaN`、`Infinity`、`-Infinity` が 1 つの key になる
+  - `File`：名前・サイズ・型が同じ 2 つの File は 1 つの key になるが、`==` は File と
+    それ自身の間でしか成り立たない
+- `Set` の key はその `==` であり、その `==` 自体が Set の作られ方に依存するので、
+  `Set` である key、または `Set` を持つ key も E0233 になる
+- それ以外の型はすべて key になる：`Text`、`Int`、`Bool`、`Time`、`Bytes`、
+  `EffectId`、`Unit`、それらの上の `nominal` や refinement、そしてそれらから作られた
+  レコード、タプル、`List`、`Map`、`Option`、`Result`、ユニオン —
+  `latest-per-key({user: $1.user, page: $1.page})` はユーザーとページごとに 1 つの
+  リクエストを走らせる。`Map` 自身の key も同じ書き方で格納されるので、`Map(Float, V)`
+  はその値が key になるなら key になる。`Float` は `.show` を、`File` は
+  `{name: $1.name, size: $1.size}` を通して key にする
+- effect は[標準 effect](./stdlib.md#_2-6-標準-effect)の名前（`navigate`・`navigate-replace`・
+  `navigate-back`・`scroll-to`・`toast`・`confirm`・`log`）を名乗れない：ランタイムはマウント時に
+  それぞれをそれ自身の名前で登録するため、その名前の宣言は決して実行されない
+  （[E0234](./errors.md#e0234-reserved-effect-name)）
 
 ### 1.5.3 例
 
@@ -678,7 +708,7 @@ pattern      ::= identifier
 
 **`if` と `match` の値文脈 vs tile 文脈**:
 - tile 引数が tile になるのは、**値 builtin 以外の builtin の位置引数**（`column`, `row`, `card`, `box` 等）だけである —— tile が描画される唯一の位置。そこでは `if` と `match` は tile 式（`TileIf` / `TileMatch`）で各 arm は tile を返し、`(` か `{` が続く builtin 名はその builtin の呼び出し、大文字始まりの名前は user tile になる。
-- それ以外の tile 引数はすべて値である：値 builtin の内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：値 builtin 以外の builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になる。
+- それ以外の tile 引数はすべて値である：値 builtin の内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：値 builtin 以外の builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になる。
 - `when` と `for` には値の形が無いので、どこに書いても tile である。
 - 例: `text(match m with | A -> "a" | B -> "b")` ← 値 match
 - 例: `button(text="Save", disabled=if busy then true else false)`、`Row(if wide then 2 else 1)` ← 値 if

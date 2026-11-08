@@ -26,6 +26,10 @@ export const locatedSummariesOf = (src: string): string[] =>
 export const reservedTypeNameMessage = (name: string, meaning = "the standard library's"): string =>
   `Type "${name}" collides with ${meaning} ${name}; uses of it never see this type`;
 
+/** E0234's message for a program's own `effect` under the standard effect `name`. */
+export const reservedEffectNameMessage = (name: string): string =>
+  `Effect "${name}" collides with the built-in effect ${name}; emits of it never run this effect`;
+
 /** Each diagnostic as `"<code> <message>"`. */
 export const summariesOf = (src: string): string[] =>
   checkSource(src).map((e) => `${e.code} ${e.message}`);

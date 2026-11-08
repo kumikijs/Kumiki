@@ -279,6 +279,25 @@ export type DiagnosticSite = {
   tile?: string | undefined;
 };
 
+/**
+ * The standard effects' names. The compiler keys its table of standard effects by this union and
+ * refuses an `effect` declared under one: the installer writes over it at mount.
+ */
+export type BuiltinEffectName =
+  | "navigate"
+  | "navigate-replace"
+  | "navigate-back"
+  | "scroll-to"
+  | "toast"
+  | "confirm"
+  | "log";
+
+/**
+ * What an installer writes `app.effects` through, so it can register a standard effect only under
+ * its own name.
+ */
+export type BuiltinEffects = { [N in BuiltinEffectName]?: EffectSpec & { name: N } };
+
 /** Mount-internal navigation handles handed to builtin-effect installers. */
 export type NavContext = {
   navigate: (path: string, replace: boolean) => void;
@@ -294,6 +313,12 @@ export type BuiltinInstaller = (app: AppShape, nav: NavContext) => void;
  */
 export type HoldLeave = (close: () => void) => ((outcome: "yes" | "no") => void) | undefined;
 
+/**
+ * A `confirm` modal hands over how to close it unanswered, so disposing the app closes it, and
+ * gets back what to call once it has closed.
+ */
+export type CloseOnDispose = (close: () => void) => () => void;
+
 export type RoutingImpl = {
   createRouter(mode: "history" | "memory" | undefined, initialPath?: string): Router;
   parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRoute;
@@ -303,7 +328,7 @@ export type RoutingImpl = {
   href(route: ParsedRoute): string;
   /** For an in-page jump, what brings the hash's element into view once the page has rendered; `undefined` for any other move. */
   jump(from: ParsedRoute, to: ParsedRoute, root: Node): (() => void) | undefined;
-  /** Register navigate / navigate-replace / navigate-back on `app.effects`. */
+  /** Register navigate / navigate-replace / navigate-back / scroll-to on `app.effects`. */
   installNavEffects(app: AppShape, nav: NavContext): void;
 };
 
@@ -396,6 +421,10 @@ export const someOf = <T>(value: T): OptionOf<T> => ({ _tag: "Some", _0: value }
 
 export const NONE: OptionOf<never> = { _tag: "None" };
 
+/** Own keys only: a name every object inherits (`toString`, `__proto__`) finds nothing. */
+export const own = <T>(table: Readonly<Record<string, T>>, key: string): T | undefined =>
+  Object.hasOwn(table, key) ? table[key] : undefined;
+
 /** `HttpError` as `.err` receives it. */
 export type HttpError = { status: number; message: string; body: OptionOf<string> };
 
@@ -431,7 +460,6 @@ export type MountedApp = AppShape & {
   _submitHeldBy: (e: Event) => readonly string[] | undefined;
   /** Prefetch dedupe set, created on the first link prefetch. */
   _prefetched?: Set<string>;
-  _episodeId?: () => string | undefined;
   live: Record<string, unknown>;
 };
 

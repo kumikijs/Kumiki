@@ -1,0 +1,27 @@
+{
+  "steps": [
+    {
+      "label": "nothing is minted yet",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["minted: 0", "in mint order: true"]
+      }
+    },
+    {
+      "label": "twelve ids minted in one run sort in the order they were minted",
+      "do": { "click": "#mint" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["minted: 12", "in mint order: true"]
+      }
+    },
+    {
+      "label": "a second run's ids sort after the first run's",
+      "do": { "click": "#mint" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["minted: 24", "in mint order: true"]
+      }
+    }
+  ]
+}
