@@ -22,7 +22,7 @@ and `one-of` over an `Int` base, and the count of `len-eq` / `len-lt` /
 E0217 at the literal, named as written:
 
 ```
-E0217 int-literal-precision at 1:31: Int literal 9007199254740993 is outside the safe range -9007199254740991 through 9007199254740991 and was rounded to 9007199254740992
+error E0217 int-literal-precision at 1:31: Int literal 9007199254740993 is outside the safe range -9007199254740991 through 9007199254740991 and was rounded to 9007199254740992
 ```
 
 Over a `Float` base a bound is a `Float` and is not held to the range, as a
