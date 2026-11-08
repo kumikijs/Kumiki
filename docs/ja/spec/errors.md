@@ -18,7 +18,7 @@ type KumikiError = {
 
 `code` は永続的な契約であり、一度割り当てたら意味を変えない。`kind` は同一 `code` 配下の細分類で、診断ロジックの分岐に使う。`severity` は省略時 `"error"`（既存の診断との後方互換のため、未指定 = error 扱い）。`"warning"` は非致命的で、CLI では stderr、Vite では Rollup の `this.warn` に流れるが、終了コードを変えずビルドも止めない。
 
-テキストでは、診断は重大度で始まる 1 行になる：`<severity> <code> <kind> at <line>:<col>: <message>`。たとえば `error E0103 undef-ref at 4:30: Reference to undefined name "totl"` や `warning W0212 ui-event-tile-mismatch at 2:17: …`。この語は `severity` フィールドそのものなので、読み手はコードの先頭文字が何を表すかを知らなくても、助言の診断と失敗とを見分けられる。`kumiki check` は各診断をこの形で出力し、`build`・`test`・`smoke`・`run`・`fix` と MCP の `kumiki_fix` のドライランも同じ形で診断を出力する。JSON で答える MCP ツールは、代わりに各診断に `severity` を載せる。
+`kumiki check` は各診断を、重大度で始まる 1 行で出力する：`<severity> <code> <kind> at <line>:<col>: <message>`。たとえば `error E0103 undef-ref at 4:30: Reference to undefined name "totl"` や `warning W0212 ui-event-tile-mismatch at 2:17: …`。この語は `severity` フィールドそのものなので、読み手はコードの先頭文字が何を表すかを知らなくても、助言の診断と失敗とを見分けられる。`build`・`test`・`smoke`・`run`・`replay` も同じ形で診断を出力する。`fix` も、一覧にする診断をすべてこの形で行頭から出力する。パッチを提案する診断（その下に字下げした `fix: …` の行で編集を示す）、パッチのないエラー（後ろに `[<reason>]` が付く）、残ったエラー、警告、そして `--auto-patch` ではコンパイルエラーと、拒否したパッチが持ち込むはずだったエラーである。MCP の `kumiki_fix` のドライランも同じ形で一覧にし、パッチのないエラーの後ろには `(no auto-patch)` が付く。JSON で答える MCP ツールは、代わりに各診断に `severity` を載せる。
 
 パースエラーは `ParseError`（`message` + `pos`）、字句エラーは `LexError` として `throw` される。どちらも `code` を持たない — その段は最初のエラーで停止するので、コードが指し示すべき診断の集合が存在しない。出力そのものが診断の集合であるツール（`kumiki fix` のロールバック報告、MCP ツールの JSON エンベロープ）は、「診断ゼロ = クリーン」が保たれるように [E0000](#e0000-parse-error) を合成する。MCP ツールの JSON に含まれる診断はすべて `severity` を持ち、省略されない。クライアントは上記の既定値を知らなくてよい。
 
