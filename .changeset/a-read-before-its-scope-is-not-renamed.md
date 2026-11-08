@@ -22,7 +22,7 @@ Before:
 
 ```
 $ kumiki check app.kumiki
-E0103 undef-ref at 3:24: Reference to undefined name "idx"
+error E0103 undef-ref at 3:24: Reference to undefined name "idx"
 $ kumiki fix app.kumiki
 E0103 Reference to undefined name "idx"
   fix: replace "idx" with "id" at 3:24
@@ -39,7 +39,7 @@ and the diagnostic carries the kind of scope as `laterScope`, beside
 
 ```
 $ kumiki check app.kumiki
-E0103 undef-ref at 3:24: Reference to undefined name "idx" — it is declared later, at 3:35, in a tile's "for": move the read into the loop's body (see docs/spec/language.md)
+error E0103 undef-ref at 3:24: Reference to undefined name "idx" — it is declared later, at 3:35, in a tile's "for": move the read into the loop's body (see docs/spec/language.md)
 $ kumiki fix app.kumiki
 (no auto-patches available)
 ```
