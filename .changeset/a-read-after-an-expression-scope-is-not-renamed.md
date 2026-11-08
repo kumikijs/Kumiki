@@ -28,7 +28,7 @@ Before:
 
 ```
 $ kumiki check app.kumiki
-E0103 undef-ref at 3:54: Reference to undefined name "idx"
+error E0103 undef-ref at 3:54: Reference to undefined name "idx"
 $ kumiki fix app.kumiki
 E0103 Reference to undefined name "idx"
   fix: replace "idx" with "id" at 3:54
@@ -45,7 +45,7 @@ tile's `for`) or `match-expr` (an arm of a `match` expression), beside `if` /
 
 ```
 $ kumiki check app.kumiki
-E0103 undef-ref at 3:54: Reference to undefined name "idx" — it was declared in a tile's "for", and a name carries no value out of a loop: move the read into the loop's body (see docs/spec/language.md)
+error E0103 undef-ref at 3:54: Reference to undefined name "idx" — it was declared in a tile's "for", and a name carries no value out of a loop: move the read into the loop's body (see docs/spec/language.md)
 $ kumiki fix app.kumiki
 (no auto-patches available)
 E0103 Reference to undefined name "idx" — it was declared in a tile's "for", and a name carries no value out of a loop: move the read into the loop's body (see docs/spec/language.md)
