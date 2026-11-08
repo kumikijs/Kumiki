@@ -67,3 +67,4 @@ export {
   ROUTE_SLOT_FIELDS,
   servesNotFound,
 } from "./typecheck.ts";
+export { UI_LIFTS, type UiLift } from "./ui-lifts.ts";

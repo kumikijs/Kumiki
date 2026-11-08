@@ -4,9 +4,10 @@ import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { refType } from "../stdlib-types.ts";
 import {
-  firesUnheardIn,
+  firesUnheardClauses,
+  kindsPhrase,
   UI_EVENT_TILE_KINDS,
-  type WrappedUnreached,
+  wrappedClause,
   wrappedUnreached,
 } from "../ui-lifts.ts";
 import {
@@ -158,29 +159,6 @@ function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet
     return `"${ev}" never reaches a listener in tile "${tile}": ${unreached.join("; ")}`;
   }
   return `tile "${tile}" has no descendant that fires "${ev}"`;
-}
-
-export function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
-  const kinds = kindsPhrase(g.kinds);
-  return g.bubbles
-    ? `${kinds} takes no "${ev}" listener on the <${g.wrapper}> around its <${g.focused}>, ` +
-        `since a control in its panel takes the subscription instead — ` +
-        `write ${g.handler}= on the ${g.kinds.join(" / ")} to hear a "${ev}" on its <${g.focused}>`
-    : `the runtime listens for "${ev}" on ${kinds}'s <${g.wrapper}>, ` +
-        `and the "${ev}" its <${g.focused}> fires does not bubble to the <${g.wrapper}>`;
-}
-
-// W0212 and W0213 both give these as their reason, so the two say the same of
-// a kind.
-export function firesUnheardClauses(ev: UiEventKind, kinds: Iterable<string>): string[] {
-  return firesUnheardIn(ev, kinds).map(
-    (g) => `${kindsPhrase(g.kinds)} fires "${ev}", and its renderer ${g.reason}`,
-  );
-}
-
-function kindsPhrase(kinds: readonly string[]): string {
-  const named = kinds.join(" / ");
-  return `${/^[aeiou]/.test(named) ? "an" : "a"} ${named}`;
 }
 
 function declaredRoutePatterns(
