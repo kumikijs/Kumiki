@@ -69,6 +69,27 @@ describe("a static segment", () => {
   });
 });
 
+describe("a sub-route at /404", () => {
+  const page = () => ({ kind: "page" as const, children: [] });
+  const routes: AppShape["routes"] = [
+    { pattern: "/settings/*", tile: page, subRoutes: [{ pattern: "/settings", tile: page }] },
+    { pattern: "/404/*", tile: page, subRoutes: [{ pattern: "/404", tile: page }] },
+    { pattern: "/404", tile: page },
+  ];
+  const routed = (url: string) => {
+    const at = routing.parseLocation(routes, splitPath(url));
+    return [at.pattern, at.childPattern];
+  };
+
+  it("is no default, though a parent's own path is one for the child paths no entry matches", () => {
+    expect(routed("/settings/x")).toEqual(["/settings/*", "/settings"]);
+  });
+
+  it.each(["/404", "/404/x"])("leaves %s under a /404/* parent to the app's /404", (url) => {
+    expect(routed(url)).toEqual(["/404", undefined]);
+  });
+});
+
 describe("routing.jump", () => {
   const routes: AppShape["routes"] = [
     { pattern: "/docs/:page", tile: () => ({ kind: "page", children: [] }) },

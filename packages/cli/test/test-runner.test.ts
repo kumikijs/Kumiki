@@ -3,7 +3,7 @@ import { feature } from "@kumikijs/examples";
 import { KumikiPanic, type TestResult } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { runOne, runTests, runTestsSource } from "../src/smoke.ts";
-import { CHILD_TIMEOUT_MS, runCli, SPAWN, spawnCli, waitFor } from "./helpers/cli.ts";
+import { CHILD_TIMEOUT_MS, runCli, SPAWN, spawnCli, spawns, waitFor } from "./helpers/cli.ts";
 import { APP_A, seed } from "./helpers/files.ts";
 
 const TESTS = feature("28-tests");
@@ -94,7 +94,7 @@ test starts-at-41 =
         expect = {slots: {count: 42}}
 `;
 
-  it("reports it with the file and the line and column `check` gives", SPAWN, () => {
+  it("reports it with the file and the line and column `check` gives", spawns(2), () => {
     const file = seed(NOT_A_RECORD);
     const checked = runCli(["check", file]);
     expect(checked.code).toBe(1);
@@ -110,7 +110,7 @@ test starts-at-41 =
     expect(tested.stderr).toContain('in test "starts-at-41"');
   });
 
-  it("prints the warnings `check` prints, before the errors", SPAWN, () => {
+  it("prints the warnings `check` prints, before the errors", spawns(2), () => {
     const file = seed(`slot f : Text = ""
 reducer recordFocus on=ui.focus(Card) do= f := "focused"
 tile Card = box(text("hi"))

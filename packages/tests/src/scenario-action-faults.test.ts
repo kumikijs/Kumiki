@@ -34,6 +34,33 @@ tile App = column(Box, Field, text("note: " + note))`);
   });
 });
 
+// What the example's scenario cannot hold: a step that fails without a refusal fails the
+// fixture. `packages/e2e/tests/action-faults.spec.ts` asserts the same two at the browser tier.
+describe("a choose that cannot run fails the step, naming what it found", () => {
+  const CHOOSES = feature("264-choose-option");
+
+  it("reports a choose whose selector matches no select, naming the element", async () => {
+    const report = await run(await loadApp(CHOOSES), {
+      steps: [{ do: { choose: "#box", value: "Ay" } }],
+    });
+    expect(report.ok).toBe(false);
+    expect(report.steps[0]?.actionError).toBe(
+      "#box matched <div>, which holds no options to choose — choose targets a select",
+    );
+    expect(report.steps[0]?.errors).toEqual([]);
+  });
+
+  it("reports a choose on a select with no such option, naming the value", async () => {
+    const report = await run(await loadApp(CHOOSES), {
+      steps: [{ do: { choose: "#pick", value: "Zed" } }],
+    });
+    expect(report.ok).toBe(false);
+    expect(report.steps[0]?.actionError).toBe('no option "Zed" in select #pick');
+    expect(report.steps[0]?.errors).toEqual([]);
+    expect(report.steps[0]?.state.pick).toBe("a");
+  });
+});
+
 describe("a broken selector cannot satisfy errorIncludes", () => {
   const SELECTORS = withApp(`slot n : Int = 0
 reducer bump on=ui.click(Btn) do= n := n + 1
@@ -120,6 +147,26 @@ tile App = column(Btn, text("todos: " + todos))`);
     const fault = report.steps[0]?.actionError ?? "";
     expect(fault).toContain('no reducer named "purgeEverything"');
     expect(fault).not.toContain("did you mean");
+  });
+
+  // Naming the first one declared would let declaration order answer what the distance does not.
+  it.each([
+    [["addA", "addB"], '"addA" or "addB"'],
+    [["addB", "addA"], '"addA" or "addB"'],
+    [["addC", "addA", "addB"], '"addA", "addB" or "addC"'],
+  ])("names every reducer equally close (declared %j)", async (names, named) => {
+    const app = await loadSource(
+      withApp(
+        [
+          "slot n : Int = 0",
+          ...names.map((r) => `reducer ${r} on=ui.click(Btn${r}) do= n := n + 1`),
+          ...names.map((r) => `tile Btn${r} = button(text="${r}", onClick=${r})`),
+          `tile App = column(${names.map((r) => `Btn${r}`).join(", ")}, text("n: " + n.show))`,
+        ].join("\n"),
+      ),
+    );
+    const report = await run(app, { steps: [{ do: { dispatch: "add" } }] });
+    expect(report.steps[0]?.actionError).toBe(`no reducer named "add" — did you mean ${named}?`);
   });
 
   it("still dispatches the reducer that does exist", async () => {
