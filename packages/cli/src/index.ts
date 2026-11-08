@@ -5,6 +5,7 @@ export { formatDiagnostic } from "./diagnostic.ts";
 export {
   type AutoPatch,
   applyFixPlan,
+  type CompilePatch,
   type FixApplyResult,
   type FixFromTestOutcome,
   type FixPlan,

@@ -64,8 +64,13 @@ export function registerRepairTools(tool: RegisterTool): void {
         const errors = plan.errors.map(formatDiagnostic);
         return failed(["(no auto-patches available)", ...errors, ...advisory].join("\n"));
       }
-      const proposals = plan.patches.map((p) => `${p.code}: ${p.description}`);
-      const unrepaired = plan.skipped.map((s) => `${s.code}: ${s.message} (no auto-patch)`);
+      const proposals = plan.patches.flatMap((p) => [
+        formatDiagnostic(p.diagnostic),
+        `  fix: ${p.description}`,
+      ]);
+      const unrepaired = plan.skipped.map(
+        (s) => `${formatDiagnostic(s.diagnostic)} (no auto-patch)`,
+      );
       return failed([...proposals, ...unrepaired, ...advisory].join("\n"));
     },
   );

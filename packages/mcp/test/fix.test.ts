@@ -6,6 +6,7 @@ import {
   callOnce,
   FIX_COUNTER_TYPO,
   FIX_MIXED,
+  FIX_PROPOSAL_BESIDE_SKIP,
   FIX_WARNING_ONLY,
   flag,
   useWorkdir,
@@ -60,6 +61,17 @@ describe("kumiki_fix", () => {
       lines: [
         "(no auto-patches available)",
         'error E0103 undef-ref at 4:30: Reference to undefined name "zzz"',
+        expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:17: /),
+      ],
+    },
+    {
+      name: "a proposal beside an error it cannot repair and a warning",
+      path: FIX_PROPOSAL_BESIDE_SKIP,
+      isError: true,
+      lines: [
+        'error E0103 undef-ref at 2:45: Reference to undefined name "conut"',
+        '  fix: replace "conut" with "count" at 2:45',
+        'error E0105 undef-tile at 4:25: Reference to undefined tile "Missing" (no auto-patch)',
         expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:17: /),
       ],
     },

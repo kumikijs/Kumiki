@@ -19,6 +19,8 @@ export const FIX_REGRESSION = fixture("regression");
 export const FIX_FAILING_SINGLE = fixture("failing-single");
 export const FIX_WARNING_ONLY = fixture("warning-only");
 export const FIX_MIXED = fixture("mixed");
+/** A misspelled slot `fix` renames, a missing tile it has no patch for, and a W0212. */
+export const FIX_PROPOSAL_BESIDE_SKIP = fixture("proposal-beside-skip");
 export const FIX_SMOKE_PANICS = fixture("smoke-panics");
 /** `expect-panics` indexes past the end of a list in its `expect`; `inc-works` passes. */
 export const FIX_TEST_THROWS = fixture("test-throws");

@@ -2,6 +2,7 @@ import type { KumikiError } from "@kumikijs/compiler";
 import { formatDiagnostic } from "./diagnostic.ts";
 import { applyFixPlan, type FixApplyResult, planFix } from "./fix/compile.ts";
 import { type FixFromTestOutcome, runFixFromTest } from "./fix/from-test.ts";
+import type { CompilePatch } from "./fix/patch.ts";
 import { failureLines } from "./smoke.ts";
 
 export {
@@ -15,7 +16,7 @@ export {
   planFixesExplained,
 } from "./fix/compile.ts";
 export { type FixFromTestOutcome, runFixFromTest, type TestPatchBlock } from "./fix/from-test.ts";
-export type { AutoPatch, PatchAnchor, SkipReason } from "./fix/patch.ts";
+export type { AutoPatch, CompilePatch, PatchAnchor, SkipReason } from "./fix/patch.ts";
 export { iterStringLiterals, planTestPatch, planTestPatchExplained } from "./fix/test-patch.ts";
 
 export function plural(n: number): string {
@@ -24,6 +25,14 @@ export function plural(n: number): string {
 
 function verdict(headline: string, warnings: KumikiError[]): string {
   return warnings.length > 0 ? `${headline} (${plural(warnings.length)})` : headline;
+}
+
+/** Each proposed patch: the diagnostic it answers, and the edit under it. */
+function printProposals(patches: CompilePatch[]): void {
+  for (const p of patches) {
+    console.log(formatDiagnostic(p.diagnostic));
+    console.log(`  fix: ${p.description}`);
+  }
 }
 
 /** The warnings themselves, under whatever verdict or diagnostic list precedes them. */
@@ -70,13 +79,10 @@ export function fixCmd(
       reportWarnings(warnings);
       return 1;
     }
-    for (const p of patches) {
-      console.log(`${p.code} ${p.message}`);
-      console.log(`  fix: ${p.description}`);
-    }
+    printProposals(patches);
     if (skipped.length > 0) {
       console.log(`(no auto-patch for ${skipped.length} of ${errors.length})`);
-      for (const s of skipped) console.error(`${s.code} ${s.message} [${s.reason}]`);
+      for (const s of skipped) console.error(`${formatDiagnostic(s.diagnostic)} [${s.reason}]`);
     }
     reportWarnings(warnings);
     return 1;
@@ -143,7 +149,7 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path: s
           `(no auto-patch available) — test "${testName}" is blocked by ${outcome.compileErrors.length} compile error(s):`,
         );
         if (outcome.reason) console.log(`  reason: ${outcome.reason}`);
-        for (const e of outcome.compileErrors) console.error(`  ${formatDiagnostic(e)}`);
+        for (const e of outcome.compileErrors) console.error(formatDiagnostic(e));
         return;
       }
       if (outcome.testRunError) {
@@ -163,10 +169,7 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path: s
     }
     case "compile-proposed": {
       console.log(`test "${testName}" is blocked by compile errors; proposed fixes (dry-run):`);
-      for (const p of outcome.compilePatches) {
-        console.log(`  ${p.code} ${p.message}`);
-        console.log(`    fix: ${p.description}`);
-      }
+      printProposals(outcome.compilePatches);
       return;
     }
     case "compile-blocked": {
@@ -174,7 +177,7 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path: s
       console.log(
         `test "${testName}" is still blocked by ${outcome.compileErrors.length} compile error(s):`,
       );
-      for (const e of outcome.compileErrors) console.error(`  ${formatDiagnostic(e)}`);
+      for (const e of outcome.compileErrors) console.error(formatDiagnostic(e));
       return;
     }
     case "compile-remaining": {
@@ -211,7 +214,7 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path: s
       console.log(`  reason: ${outcome.blocked.reason}`);
       const b = outcome.blocked;
       if (b.reason === "introduced")
-        for (const e of b.introduced) console.error(`  ${formatDiagnostic(e)}`);
+        for (const e of b.introduced) console.error(formatDiagnostic(e));
       else if (b.reason === "parse-error" || b.reason === "test-runner-threw")
         console.error(`  ${b.message}`);
       else if (b.reason === "regressed") {
