@@ -17,7 +17,7 @@ tile App = column(leaf)
 
 ```
 $ kumiki check app.kumiki
-E0103 undef-ref at 2:19: Reference to undefined name "leaf"
+error E0103 undef-ref at 2:19: Reference to undefined name "leaf"
 ```
 
 With a `fn leaf` beside the tile it was E0127 (`"leaf" is a fn, and a fn is not
