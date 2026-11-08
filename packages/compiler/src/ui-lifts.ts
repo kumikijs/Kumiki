@@ -12,8 +12,10 @@ export type UiLift = {
    * sets `everyElementFires`.
    */
   readonly firesUnheard?: Readonly<Record<string, string>>;
-  // Every element fires `ev`, so a kind left out of `tiles` is left out only
-  // because its renderer never calls `handler`.
+  /**
+   * Every element fires `ev`, so a kind left out of `tiles` is left out only because its renderer
+   * never calls `handler`.
+   */
   readonly everyElementFires?: true;
 };
 
@@ -149,6 +151,19 @@ export function firesUnheardIn(
     byReason.set(reason, [...(byReason.get(reason) ?? []), kind]);
   }
   return [...byReason].map(([reason, grouped]) => ({ kinds: grouped, reason }));
+}
+
+// W0212 and W0213 both give these as their reason, so the two say the same of
+// a kind.
+export function firesUnheardClauses(ev: UiEventKind, kinds: Iterable<string>): string[] {
+  return firesUnheardIn(ev, kinds).map(
+    (g) => `${kindsPhrase(g.kinds)} fires "${ev}", and its renderer ${g.reason}`,
+  );
+}
+
+export function kindsPhrase(kinds: readonly string[]): string {
+  const named = kinds.join(" / ");
+  return `${/^[aeiou]/.test(named) ? "an" : "a"} ${named}`;
 }
 
 /** Derived view for the W0212 typecheck — keyed by ui-kind. */

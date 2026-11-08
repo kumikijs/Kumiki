@@ -4,7 +4,8 @@ import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { refType } from "../stdlib-types.ts";
 import {
-  firesUnheardIn,
+  firesUnheardClauses,
+  kindsPhrase,
   UI_EVENT_TILE_KINDS,
   type WrappedUnreached,
   wrappedUnreached,
@@ -168,19 +169,6 @@ function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
         `write ${g.handler}= on the ${g.kinds.join(" / ")} to hear a "${ev}" on its <${g.focused}>`
     : `the runtime listens for "${ev}" on ${kinds}'s <${g.wrapper}>, ` +
         `and the "${ev}" its <${g.focused}> fires does not bubble to the <${g.wrapper}>`;
-}
-
-// W0212 and W0213 both give these as their reason, so the two say the same of
-// a kind.
-export function firesUnheardClauses(ev: UiEventKind, kinds: Iterable<string>): string[] {
-  return firesUnheardIn(ev, kinds).map(
-    (g) => `${kindsPhrase(g.kinds)} fires "${ev}", and its renderer ${g.reason}`,
-  );
-}
-
-function kindsPhrase(kinds: readonly string[]): string {
-  const named = kinds.join(" / ");
-  return `${/^[aeiou]/.test(named) ? "an" : "a"} ${named}`;
 }
 
 function declaredRoutePatterns(

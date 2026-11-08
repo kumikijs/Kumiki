@@ -16,6 +16,7 @@ import {
 } from "../redirects.ts";
 import { appType, primType } from "../stdlib-types.ts";
 import {
+  firesUnheardClauses,
   HANDLER_NAMES,
   HANDLER_PROP_TILES,
   handlerReducerName,
@@ -42,7 +43,6 @@ import {
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
-import { firesUnheardClauses } from "./reducer.ts";
 import { collectRenderedBuiltinKinds, collectTileBuiltinKinds } from "./tile-collect.ts";
 import { checkA11y, checkBuiltinProp, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
