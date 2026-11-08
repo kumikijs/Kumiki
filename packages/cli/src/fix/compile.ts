@@ -5,10 +5,12 @@ import {
   calleeCandidates,
   check,
   collectTimerNames,
+  constructorTags,
   lex,
   nearestNames,
   parse,
   parseFailure,
+  qualifierCandidates,
   severityOf,
   typeCandidates,
   variantTagsOf,
@@ -16,7 +18,13 @@ import {
 import { listDefs, load, type Store } from "../store.ts";
 import { messageOf } from "../text.ts";
 import { atomicWriteFileSync } from "../write-lock.ts";
-import { type AutoPatch, debugSkip, type PatchAnchor, type SkipReason } from "./patch.ts";
+import {
+  type AutoPatch,
+  type CompilePatch,
+  debugSkip,
+  type PatchAnchor,
+  type SkipReason,
+} from "./patch.ts";
 import {
   append404Route,
   appendAppCap,
@@ -125,6 +133,40 @@ function variantTag(prefix: string, anchored: boolean): Planner {
   });
 }
 
+// Each kind is repaired from the namespace its diagnostic suggests from: a slot
+// or tile proposed for a callee is E0116 again at the same position.
+const UNDEFINED_NAME: ReadonlyMap<string, Planner> = new Map([
+  [
+    "undef-variant",
+    nameRepair({
+      prefix: "e0116-",
+      quoted: 1,
+      pool: (store) => constructorTags(store.program),
+      noSuggestion: "no-close-variant",
+      anchored: false,
+    }),
+  ],
+  [
+    "undef-qualifier",
+    nameRepair({
+      prefix: "e0116-",
+      quoted: 1,
+      pool: (store) => qualifierCandidates(store.program),
+      noSuggestion: "no-close-qualifier",
+      anchored: false,
+    }),
+  ],
+]);
+
+const undefinedCallee = nameRepair({
+  prefix: "e0116-",
+  quoted: 1,
+  pool: (store, quoted) => calleeCandidates(namesIn(store, "fn"), quoted[0]!),
+  declared: (store) => namesIn(store, "fn"),
+  noSuggestion: "no-close-callee",
+  anchored: false,
+});
+
 const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   ["E0102", anyDefinition], // undef-reducer
   [
@@ -165,17 +207,7 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
       anchored: true,
     }),
   ],
-  [
-    "E0116",
-    nameRepair({
-      prefix: "e0116-",
-      quoted: 1,
-      pool: (store, quoted) => calleeCandidates(namesIn(store, "fn"), quoted[0]!),
-      declared: (store) => namesIn(store, "fn"),
-      noSuggestion: "no-close-callee",
-      anchored: false,
-    }),
-  ],
+  ["E0116", (err, store) => (UNDEFINED_NAME.get(err.kind) ?? undefinedCallee)(err, store)],
   [
     "E0117",
     nameRepair({
@@ -297,8 +329,8 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
 export function planFixesExplained(
   store: Store,
   errors: KumikiError[],
-): { patches: AutoPatch[]; skipped: SkipReason[] } {
-  const patches: AutoPatch[] = [];
+): { patches: CompilePatch[]; skipped: SkipReason[] } {
+  const patches: CompilePatch[] = [];
   const skipped: SkipReason[] = [];
   for (const err of errors) {
     const planned = PLANNERS.get(err.code)?.(err, store) ?? { reason: "no-repair-branch" };
@@ -308,12 +340,13 @@ export function planFixesExplained(
         code: err.code,
         reason,
         message: err.message,
+        diagnostic: err,
         ...(candidates === undefined ? {} : { candidates }),
       });
       const tied = candidates === undefined ? "" : ` (${candidates.join(", ")})`;
       debugSkip(`planFixes:${err.code}`, reason, `${err.message}${tied}`);
     } else {
-      patches.push({ code: err.code, message: err.message, ...planned });
+      patches.push({ code: err.code, message: err.message, diagnostic: err, ...planned });
     }
   }
   return { patches, skipped };
@@ -353,7 +386,7 @@ export type FixPlan = {
   errors: KumikiError[];
   warnings: KumikiError[];
   /** Repairable subset, filtered by `onlyCode` when the caller passed it. */
-  patches: AutoPatch[];
+  patches: CompilePatch[];
   skipped: SkipReason[];
 };
 

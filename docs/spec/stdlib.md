@@ -570,7 +570,7 @@ The uuid is a version 7 ([RFC 9562 §5.7](https://www.rfc-editor.org/rfc/rfc9562
 now                        : Time          ; the current time
 ```
 
-`Time.now` ([§2.2.8](#_2-2-8-time)) is this builtin under its type's name, and `Time.now()` is the same call with its parentheses written: the same `Time`, read from the clock where it is evaluated, and the same environment read — a reducer that reads it records a `now` entry ([Runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)), and a replay answers it from that entry ([§10.5.3](./runtime.md#_10-5-3-replay)). `now` itself is a keyword and takes no parentheses. The qualifier is `Time` itself: `now` is not one of the members every type name has ([§2.4.1](#_2-4-1-id-generation), [§2.4.3](#_2-4-3-type-conversion)), so on a type declared over `Time` (`type Stamp = nominal Time`) `Stamp.now()` is an [E0116](./errors.md#e0116-undef-call). A bare `Stamp.now` is still a field read that passes `check` and evaluates to nothing, a known gap that E0116 describes.
+`Time.now` ([§2.2.8](#_2-2-8-time)) is this builtin under its type's name, and `Time.now()` is the same call with its parentheses written: the same `Time`, read from the clock where it is evaluated, and the same environment read — a reducer that reads it records a `now` entry ([Runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)), and a replay answers it from that entry ([§10.5.3](./runtime.md#_10-5-3-replay)). `now` itself is a keyword and takes no parentheses. The qualifier is `Time` itself: `now` is not one of the members every type name has ([§2.4.1](#_2-4-1-id-generation), [§2.4.3](#_2-4-3-type-conversion)), so on a type declared over `Time` (`type Stamp = nominal Time`) `Stamp.now()` is an [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier). A bare `Stamp.now` is still a field read that passes `check` and evaluates to nothing, a known gap that E0116 describes.
 
 ### 2.4.3 Type Conversion
 
@@ -772,6 +772,8 @@ effect scroll-to   in={x: Int, y: Int}  out=Unit
 The one standard effect with no capability: it moves the viewport of the page the user is already looking at, and reaches nothing outside it. → [Routing §3.9](./routing.md#_3-9-scroll-restoration).
 
 ### 2.6.5 Confirm
+
+The dialog the runtime renders carries `data-kumiki-confirm` (the marker a test selects on), and its Yes and No buttons carry `data-kumiki-confirm-action` set to `yes` and `no`.
 
 ```kumiki fragment
 effect confirm     cap=notification.show  in={title: Text, message: Text, onYes: ReducerRef, onNo: ReducerRef}  out=Unit

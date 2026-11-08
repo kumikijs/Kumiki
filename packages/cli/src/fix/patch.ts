@@ -1,4 +1,4 @@
-import type { Pos } from "@kumikijs/compiler";
+import type { KumikiError, Pos } from "@kumikijs/compiler";
 
 export type PatchAnchor =
   | { kind: "span"; pos: Pos }
@@ -16,10 +16,15 @@ export type AutoPatch = {
   anchor: PatchAnchor;
 };
 
+/** A patch for a compile diagnostic, with the diagnostic, so a report can print it whole. */
+export type CompilePatch = AutoPatch & { diagnostic: KumikiError };
+
 export type SkipReason = {
   code: string;
   reason: string;
   message: string;
+  /** The diagnostic there is no patch for, so a report can print it whole. */
+  diagnostic: KumikiError;
   /** The tied names of a `close-names-tied` skip, sorted. */
   candidates?: string[];
 };
