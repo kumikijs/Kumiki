@@ -184,6 +184,8 @@ app Second caps=[] routes={"/x" -> Other, "/404" -> Other} init=[]
     expect(code).toBe(1);
     expect(stdout).toContain('fix: replace "cout" with "count"');
     expect(stdout).toContain("(no auto-patch for 1 of 2)");
-    expect(stderr).toContain("E0003 Program has no app definition [no-repair-branch]");
+    expect(stderr).toContain(
+      "error E0003 missing-app at 1:1: Program has no app definition [no-repair-branch]",
+    );
   });
 });
