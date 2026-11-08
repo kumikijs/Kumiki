@@ -21,8 +21,8 @@ Before:
 
 ```
 $ kumiki check app.kumiki
-E0210 type-arity-mismatch at 2:10: Type "Option" expects 0 type argument(s) but got 1
-E0201 type-mismatch at 2:24: Expected Option(Int) but got variant "None"
+error E0210 type-arity-mismatch at 2:10: Type "Option" expects 0 type argument(s) but got 1
+error E0201 type-mismatch at 2:24: Expected Option(Int) but got variant "None"
 ```
 
 With `type List(T) = {v: T}`, `List(Int)` accepted both `{v: 1}` and `[1, 2]`,
@@ -32,7 +32,7 @@ After:
 
 ```
 $ kumiki check app.kumiki
-E0231 reserved-type-name at 1:1: Type "Option" collides with the built-in type constructor Option; uses of it never see this type
+error E0231 reserved-type-name at 1:1: Type "Option" collides with the built-in type constructor Option; uses of it never see this type
 ```
 
 **E0231 `reserved-type-name`** now covers three groups, read from the checker's
