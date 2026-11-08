@@ -5,7 +5,6 @@ import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { refType } from "../stdlib-types.ts";
 import {
   firesUnheardClauses,
-  kindsPhrase,
   UI_EVENT_TILE_KINDS,
   wrappedClause,
   wrappedUnreached,
