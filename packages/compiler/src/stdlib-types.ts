@@ -152,9 +152,10 @@ export function isPrimTypeName(name: string): name is PrimName {
 
 export type ReservedTypeReason = "primitive" | "constructor" | "runtime-supplied";
 
-// Read from the tables the parser and the checker resolve these names by, so a
-// name added to one is reserved with no second list to update. A program's
-// definition under one could only be half-applied.
+// The primitives and the constructors are read from the tables the parser and
+// the checker resolve those names by, so a name added to either is reserved with
+// no second list to update; the runtime-supplied names are a list of their own.
+// A program's definition under any of them could only be half-applied.
 export function reservedTypeReason(name: string): ReservedTypeReason | undefined {
   if (isPrimTypeName(name)) return "primitive";
   if (BUILTIN_TYPE_CONSTRUCTORS.has(name)) return "constructor";

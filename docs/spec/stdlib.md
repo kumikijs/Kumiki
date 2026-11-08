@@ -16,6 +16,7 @@ Kumiki's standard library is designed with the goal of being "**minimal and comp
 | `Bytes` | byte sequence | no literal; `Bytes.from-text(text)` / `Bytes.from-base64(text)` / `Bytes.from-bytes(list)` (see [§2.2.10](#_2-2-10-bytes)) |
 | `Time` | UNIX nanoseconds | no literal; `now` or `Time.parse(text)` |
 | `EffectId` | opaque handle returned by `emit` (see [§2.1.1.1](#_2-1-1-1-effectid)) | no literal; `EffectId.none` |
+| `File` | one file a file input picked (see [§2.1.3](#_2-1-3-domain-types-provided-by-the-standard-library)) | no literal; a file input reports it |
 
 #### 2.1.1.1 `EffectId`
 

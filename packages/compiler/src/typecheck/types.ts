@@ -317,7 +317,7 @@ export function checkTypeDef(def: TypeDef, sym: SymbolTable, errors: KumikiError
 
 /**
  * A program's own definition under a name that already means a primitive, a built-in constructor or
- * a standard library type (E0231). It is reported from the program's definitions, not from
+ * a runtime-supplied standard library type (E0231). It is reported from the program's definitions, not from
  * {@link checkTypeDef}, which also judges the standard library's own entries when a type reaches
  * them.
  */

@@ -16,6 +16,7 @@ Kumiki の標準ライブラリは「**最小完備**」を目標に設計され
 | `Bytes` | バイト列 | リテラルなし、`Bytes.from-text(text)` / `Bytes.from-base64(text)` / `Bytes.from-bytes(list)` で生成（[§2.2.10](#_2-2-10-bytes) 参照） |
 | `Time` | UNIX ナノ秒 | リテラルなし、`now` または `Time.parse(text)` |
 | `EffectId` | `emit` が返す不透明ハンドル（[§2.1.1.1](#_2-1-1-1-effectid) 参照） | リテラルなし、`EffectId.none` |
+| `File` | ファイル入力で選ばれた 1 つのファイル（[§2.1.3](#_2-1-3-domain-types-provided-by-the-standard-library) 参照） | リテラルなし、ファイル入力が報告する |
 
 #### 2.1.1.1 `EffectId`
 

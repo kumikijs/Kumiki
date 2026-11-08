@@ -4,8 +4,8 @@
 
 A program cannot declare a type under a primitive or a built-in type constructor name (E0231)
 
-`type Int = …`, `type File = …`, `type Option = …` and `type List(T) = …` passed
-`kumiki check`, and the declaration was then ignored or half-applied. A
+`type Int = …`, `type File = …`, `type Option = …` and `type List(T) = …` were
+accepted by `kumiki check`, and the declaration was then ignored or half-applied. A
 primitive is read as itself wherever a type is written, so `type Int = Text`
 reached no use. A constructor's definition answered where the checker looked
 the name up and not where it applied the built-in:

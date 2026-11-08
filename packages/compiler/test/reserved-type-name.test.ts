@@ -1,4 +1,4 @@
-import { lex, parse } from "@kumikijs/compiler";
+import { lex, parse, variantTagsOf } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import {
   BUILTIN_TYPE_CONSTRUCTORS,
@@ -38,15 +38,17 @@ const RESERVED: [name: string, meaning: string][] = [
   ...[...RUNTIME_SUPPLIED_TYPE_NAMES].map((n): [string, string] => [n, RUNTIME]),
 ];
 
-// The rows above are read from the tables, so these spell some out: a table
+// The rows above are read from the tables, so these spell every one out: a table
 // that shrank would otherwise leave fewer rows that all pass.
-const SPOT: [name: string, meaning: string][] = [
-  ["Int", PRIMITIVE],
-  ["File", PRIMITIVE],
-  ["Option", CONSTRUCTOR],
-  ["List", CONSTRUCTOR],
-  ["Map", CONSTRUCTOR],
-  ["PanicInfo", RUNTIME],
+const SPELLED_OUT: [name: string, meaning: string][] = [
+  ...["Text", "Int", "Float", "Bool", "Unit", "Bytes", "Time", "File", "EffectId"].map(
+    (n): [string, string] => [n, PRIMITIVE],
+  ),
+  ...["Map", "Set", "List", "Option", "Result", "Tuple"].map((n): [string, string] => [
+    n,
+    CONSTRUCTOR,
+  ]),
+  ...RUNTIME_SUPPLIED.map((n): [string, string] => [n, RUNTIME]),
 ];
 
 // Each use is one the standard library's definition would refuse, so a row
@@ -60,10 +62,10 @@ const DECLARABLE: [string, string][] = [
 
 describe("the reserved names", () => {
   it("are the primitives, the built-in constructors and seven standard library entries", () => {
-    for (const row of SPOT) expect(RESERVED).toContainEqual(row);
+    const named = (rows: [string, string][]) => rows.map(([n, m]) => `${n}: ${m}`).sort();
+    expect(named(RESERVED)).toEqual(named(SPELLED_OUT));
     const stdlib = STDLIB_TYPES.map((t) => t.name);
     for (const name of RUNTIME_SUPPLIED_TYPE_NAMES) expect(stdlib).toContain(name);
-    expect([...RUNTIME_SUPPLIED_TYPE_NAMES].sort()).toEqual([...RUNTIME_SUPPLIED].sort());
   });
 
   it("are answered by one predicate, which names the table each comes from", () => {
@@ -234,6 +236,29 @@ describe("a use of a primitive name keeps the primitive", () => {
   it("follows a self-alias to the primitive, so it is no cycle", () => {
     expect(codesOf(`type Int = Int\n${TAIL}`)).toEqual(["E0231"]);
   });
+
+  it("checks a refused union's tag as a value of that union, which a Bool is not", () => {
+    expect(locatedSummariesOf(`type Bool = Yes | No\nslot b : Bool = Yes\n${TAIL}`)).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("Bool", PRIMITIVE)}`,
+      `E0201 2:17 Expected Bool but got variant "Yes"`,
+    ]);
+  });
+});
+
+describe("the variant tags kumiki fix reads under a reserved name", () => {
+  const program = (decl: string) => parse(lex(`${decl}\n${TAIL}`));
+
+  it("are none for a primitive the program declared as a union", () => {
+    expect(variantTagsOf("Bool", program("type Bool = Yes | No"))).toBeNull();
+  });
+
+  it("are the built-in's for a constructor the program declared as a union", () => {
+    expect(variantTagsOf("Option", program("type Option = A | B"))).toEqual(["Some", "None"]);
+  });
+
+  it("are the program's own under a name of its own", () => {
+    expect(variantTagsOf("Mine", program("type Mine = A | B"))).toEqual(["A", "B"]);
+  });
 });
 
 describe("a use of a constructor name keeps the built-in constructor", () => {
@@ -352,6 +377,15 @@ describe("the primitive and constructor names everywhere else", () => {
       ["a slot of that spelling", `slot ${n} : Int = 0`],
       ["a fn of that spelling", `fn ${n}(a: Int) -> Int = a`],
       ["a tile of that name", `tile ${n} = text("t")`],
+      ["a variant tag of that name", `type Mine = ${n} | Other\nslot m : Mine = ${n}`],
+      ...(BUILTIN_TYPE_CONSTRUCTORS.has(n)
+        ? [
+            [
+              "a type parameter of that spelling",
+              `type Box(${n}) = {v: ${n}}\nslot b : Box(Text) = {v: "x"}`,
+            ] as [string, string],
+          ]
+        : []),
     ];
   };
   const cases = [...PRIM_TYPE_NAMES, ...BUILTIN_TYPE_CONSTRUCTORS.keys()].flatMap((name) =>
@@ -359,5 +393,15 @@ describe("the primitive and constructor names everywhere else", () => {
   );
   it.each(cases)("leaves $name in $where alone", ({ decls }) => {
     expect(locatedSummariesOf(`${decls}\n${TAIL}`)).toEqual([]);
+  });
+});
+
+describe("a type parameter spelled like a primitive", () => {
+  it("is read as the primitive, so the field is an Int whatever Box is applied to", () => {
+    const decl = "type Box(Int) = {v: Int}";
+    expect(locatedSummariesOf(`${decl}\nslot b : Box(Text) = {v: 1}\n${TAIL}`)).toEqual([]);
+    expect(locatedSummariesOf(`${decl}\nslot b : Box(Text) = {v: "x"}\n${TAIL}`)).toEqual([
+      "E0201 2:26 Expected Int but got Text",
+    ]);
   });
 });
