@@ -238,7 +238,7 @@ app C
           '(auto-patch rolled back — lock violation: reducer.inc is locked by agent:a (pattern "*"). Set KUMIKI_AUTHOR=agent:a to edit.)\n',
         );
         // The error the repair was for is still in the file, and still reported.
-        expect(stderr).toBe('E0103 Reference to undefined name "cout"\n');
+        expect(stderr).toBe('error E0103 undef-ref at 2:43: Reference to undefined name "cout"\n');
         expect(readFileSync(file, "utf8")).toBe(TYPO_IN_REDUCER);
         expect(code).toBe(1);
       },
