@@ -386,6 +386,9 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
   [E0103](./errors.md#e0103-undef-ref-undef-slot) になる
 - 両者とも他の式と同様に検査される — key 中の未定義名は dispatch 時の実行時
   エラーではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)
+- effect の capability が [http.md §6.6.1](./http.md#_6-6-1-request-fields) に行を
+  持つとき、`map-request` のレコードが書くフィールドはその capability のリクエストに
+  照らされる：リクエストに無いフィールドは [E0215](./errors.md#e0215-unknown-record-field)
 - `latest-per-key` の key は `emit` が実行された地点で評価される。key が読む slot は
   reducer 本体のその文までの書き込みを反映し、それ以降の書き込みは反映しない
   （[http.md §6.4](./http.md#_6-4-cancellation)）

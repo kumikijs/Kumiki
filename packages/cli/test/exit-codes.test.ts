@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { runCli, SPAWN } from "./helpers/cli.ts";
+import { runCli, SPAWN, spawns } from "./helpers/cli.ts";
 import { seed, tempDir } from "./helpers/files.ts";
 import { tiedCounts } from "./helpers/tie.ts";
 
@@ -142,7 +142,7 @@ describe("kumiki fix", () => {
     expect(code).toBe(0);
   });
 
-  it("keeps a repair that clears an error and reveals a warning", SPAWN, () => {
+  it("keeps a repair that clears an error and reveals a warning", spawns(2), () => {
     const src = `slot count : Int = 0
 reducer bump on=ui.focus(Crd) do= count := count + 1
 tile Card = box(heading("Count: " + count.show))
@@ -179,7 +179,7 @@ app Demo
     expect(code).toBe(0);
   });
 
-  it("holds --auto-patch to the same rule as the diagnostic path", SPAWN, () => {
+  it("holds --auto-patch to the same rule as the diagnostic path", spawns(2), () => {
     const blocked = `slot count : Int = 0
 reducer inc on=ui.click(IncBtn) do= conut := count + 1
 tile IncBtn = button(text="+1", onClick=inc)
@@ -331,16 +331,20 @@ describe("kumiki refs / view", () => {
     expect(code).toBe(1);
   });
 
-  it("fails on a qname that is not defined under view --with-deps, as without it", SPAWN, () => {
-    const file = write("view-deps.kumiki", CLEAN);
-    const res = runCli(["view", file, "slot.nope", "--with-deps"]);
-    expect(res).toMatchObject({
-      stdout: "",
-      stderr: 'Definition "slot.nope" not found\n',
-      code: 1,
-    });
-    expect(runCli(["view", file, "slot.nope"])).toEqual(res);
-  });
+  it(
+    "fails on a qname that is not defined under view --with-deps, as without it",
+    spawns(2),
+    () => {
+      const file = write("view-deps.kumiki", CLEAN);
+      const res = runCli(["view", file, "slot.nope", "--with-deps"]);
+      expect(res).toMatchObject({
+        stdout: "",
+        stderr: 'Definition "slot.nope" not found\n',
+        code: 1,
+      });
+      expect(runCli(["view", file, "slot.nope"])).toEqual(res);
+    },
+  );
 
   it("prints a defined qname after its dependencies under view --with-deps", SPAWN, () => {
     const res = runCli(["view", write("view-deps-ok.kumiki", CLEAN), "tile.App", "--with-deps"]);
@@ -461,7 +465,7 @@ describe("kumiki lock / unlock", () => {
     return locks;
   }
 
-  it("lock exits 1 for a pattern another agent's overlaps, and 0 for its holder", SPAWN, () => {
+  it("lock exits 1 for a pattern another agent's overlaps, and 0 for its holder", spawns(2), () => {
     const file = write("lock.kumiki", CLEAN);
     const locks = lockedByA(file);
     const granted = readFileSync(locks, "utf8");
@@ -483,7 +487,7 @@ describe("kumiki lock / unlock", () => {
     expect(existsSync(`${file}.kumiki-locks.json`)).toBe(false);
   });
 
-  it("unlock exits 1 for an agent that holds no lock, and 0 for one that does", SPAWN, () => {
+  it("unlock exits 1 for an agent that holds no lock, and 0 for one that does", spawns(2), () => {
     const file = write("unlock.kumiki", CLEAN);
     const none = runCli(["unlock", file, "agent:x"]);
     expect(none.stderr).toContain("agent:x holds no lock");
@@ -540,7 +544,7 @@ app Demo
     expect(code).toBe(1);
   });
 
-  it("test exits 1 when a test fails", SPAWN, () => {
+  it("test exits 1 when a test fails", spawns(2), () => {
     const failing = WITH_TESTS.replace(
       "expect = {slots: {count: 1}",
       "expect = {slots: {count: 7}",
