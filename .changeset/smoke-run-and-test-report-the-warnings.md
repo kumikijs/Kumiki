@@ -43,7 +43,7 @@ compile that fails prints it: the line `kumiki check` prints, with
 code are what they are for a file with no warning:
 
 ```text
-W0212 ui-event-tile-mismatch at 2:17: Reducer "bump" subscribes to ui.focus(Card) but tile "Card" has no descendant that fires "focus" (…). The handler is silently dropped.
+warning W0212 ui-event-tile-mismatch at 2:17: Reducer "bump" subscribes to ui.focus(Card) but tile "Card" has no descendant that fires "focus" (…). The handler is silently dropped.
 ```
 
 The warnings come from the compile each call already runs. In `@kumikijs/cli`,
