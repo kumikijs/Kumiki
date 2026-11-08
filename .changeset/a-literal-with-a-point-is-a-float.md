@@ -23,7 +23,7 @@ as E0201, as `0.5` already was. The checker now reads the literal as written,
 in a typed position and where no type is declared alike:
 
 ```
-E0201 type-mismatch at 1:16: Expected Int but got Float
+error E0201 type-mismatch at 1:16: Expected Int but got Float
 ```
 
 So `1.0` and `0.0` are `Float`s: `slot n : Int = 1.0`, `fn f(i: Int) -> Int =
