@@ -17,7 +17,13 @@ import { touchedLockViolation } from "../mutate/commit.ts";
 import { listDefs, load, type Store } from "../store.ts";
 import { messageOf } from "../text.ts";
 import { atomicWriteFileSync } from "../write-lock.ts";
-import { type AutoPatch, debugSkip, type PatchAnchor, type SkipReason } from "./patch.ts";
+import {
+  type AutoPatch,
+  type CompilePatch,
+  debugSkip,
+  type PatchAnchor,
+  type SkipReason,
+} from "./patch.ts";
 import {
   append404Route,
   appendAppCap,
@@ -291,8 +297,8 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
 export function planFixesExplained(
   store: Store,
   errors: KumikiError[],
-): { patches: AutoPatch[]; skipped: SkipReason[] } {
-  const patches: AutoPatch[] = [];
+): { patches: CompilePatch[]; skipped: SkipReason[] } {
+  const patches: CompilePatch[] = [];
   const skipped: SkipReason[] = [];
   for (const err of errors) {
     const planned = PLANNERS.get(err.code)?.(err, store) ?? { reason: "no-repair-branch" };
@@ -302,12 +308,13 @@ export function planFixesExplained(
         code: err.code,
         reason,
         message: err.message,
+        diagnostic: err,
         ...(candidates === undefined ? {} : { candidates }),
       });
       const tied = candidates === undefined ? "" : ` (${candidates.join(", ")})`;
       debugSkip(`planFixes:${err.code}`, reason, `${err.message}${tied}`);
     } else {
-      patches.push({ code: err.code, message: err.message, ...planned });
+      patches.push({ code: err.code, message: err.message, diagnostic: err, ...planned });
     }
   }
   return { patches, skipped };
@@ -347,7 +354,7 @@ export type FixPlan = {
   errors: KumikiError[];
   warnings: KumikiError[];
   /** Repairable subset, filtered by `onlyCode` when the caller passed it. */
-  patches: AutoPatch[];
+  patches: CompilePatch[];
   skipped: SkipReason[];
 };
 

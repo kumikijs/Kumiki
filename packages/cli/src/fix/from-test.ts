@@ -13,7 +13,7 @@ import {
   repairable,
   writeFix,
 } from "./compile.ts";
-import type { AutoPatch, SkipReason } from "./patch.ts";
+import type { AutoPatch, CompilePatch, SkipReason } from "./patch.ts";
 import { planTestPatchExplained, testBodyLineRanges } from "./test-patch.ts";
 
 type FixFromTestStatus =
@@ -35,7 +35,7 @@ type FixFromTestStatus =
       ok: true;
       status: "compile-proposed";
       compileFixes: number;
-      compilePatches: AutoPatch[];
+      compilePatches: CompilePatch[];
     }
   | {
       ok: false;

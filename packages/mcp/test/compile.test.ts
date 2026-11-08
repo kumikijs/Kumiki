@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { compile } from "@kumikijs/compiler";
 import { nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
@@ -10,6 +10,7 @@ import {
   FIX_A11Y,
   FIX_COUNTER_TESTS,
   FIX_COUNTER_TYPO,
+  FIX_MIXED,
   FIX_SMOKE_PANICS,
   FIX_WARNING_ONLY,
   flag,
@@ -90,24 +91,6 @@ describe("the diagnostic wire shape", () => {
   // By code: the order the checker reports them in is not what these tests are about.
   const pairs = (ds: WireDiagnostic[]) =>
     [...ds].sort((a, b) => a.code.localeCompare(b.code)).map((d) => [d.code, d.severity]);
-  const writeMixed = (): string => {
-    const file = join(workdir.path, "mixed.kumiki");
-    writeFileSync(
-      file,
-      [
-        "slot count : Int = 0",
-        "reducer bump on=ui.focus(Card) do= count := count + 1",
-        'tile Card = box(heading("Count: " + count.show))',
-        "tile App = column(Card, text(zzz.show))",
-        "app Mixed",
-        "    caps   = []",
-        '    routes = {"/" -> App, "/404" -> App}',
-        "    init   = []",
-        "",
-      ].join("\n"),
-    );
-    return file;
-  };
 
   it("kumiki_check on a warning-only file says in its payload that nothing in it fails", async () => {
     const res = await callOnce("kumiki_check", { path: FIX_WARNING_ONLY });
@@ -118,7 +101,7 @@ describe("the diagnostic wire shape", () => {
   });
 
   it("tells a warning from an error in one file by `severity`", async () => {
-    const res = await callOnce("kumiki_check", { path: writeMixed() });
+    const res = await callOnce("kumiki_check", { path: FIX_MIXED });
     expect(res.isError).toBe(true);
     expect(pairs(JSON.parse(res.body) as WireDiagnostic[])).toEqual([
       ["E0103", "error"],
@@ -148,7 +131,8 @@ describe("the diagnostic wire shape", () => {
   });
 
   it("gives every diagnostic a severity, whichever tool reports it", async () => {
-    const file = writeMixed();
+    const file = join(workdir.path, "mixed.kumiki");
+    copyFileSync(FIX_MIXED, file);
     await withClient(async (client) => {
       const built = await callTool(client, "kumiki_build", { path: file });
       const [head, ...json] = built.split("\n");

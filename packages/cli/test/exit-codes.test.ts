@@ -94,7 +94,9 @@ describe("kumiki fix", () => {
       ]);
       expect(stdout).not.toContain('replace "count"');
       expect(stdout).toContain("(no auto-patches available)");
-      expect(stderr).toContain('E0103 Reference to undefined name "count"');
+      expect(stderr).toContain(
+        'error E0103 undef-ref at 7:49: Reference to undefined name "count"',
+      );
       expect(code).toBe(1);
     });
 
@@ -125,7 +127,7 @@ describe("kumiki fix", () => {
     const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
     expect(readFileSync(file, "utf8")).toBe(tiedCounts("countA", "countB"));
     expect(stdout).toContain("error(s) remain");
-    expect(stderr).toContain('E0103 Reference to undefined name "count"');
+    expect(stderr).toContain('error E0103 undef-ref at 7:49: Reference to undefined name "count"');
     expect(code).toBe(1);
   });
 
@@ -287,7 +289,7 @@ app Demo
     const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
     expect(readFileSync(file, "utf8")).toBe(OUT_OF_SCOPE);
     expect(stdout).toBe("(no auto-patches available)\n");
-    expect(stderr).toContain('E0103 Reference to undefined name "idx" — ');
+    expect(stderr).toContain('error E0103 undef-ref at 6:18: Reference to undefined name "idx" — ');
     expect(code).toBe(1);
   });
 
@@ -312,6 +314,17 @@ app Demo
 });
 
 describe("kumiki check", () => {
+  it("names the severity of each diagnostic it prints, and exits 1 for the error", SPAWN, () => {
+    const src = WARN_ONLY.replace("column(Card)", "column(Card, text(totl.show))");
+    const { stdout, stderr, code } = runCli(["check", write("severity.kumiki", src)]);
+    expect(stderr.trimEnd().split("\n")).toEqual([
+      expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:17: /),
+      'error E0103 undef-ref at 4:30: Reference to undefined name "totl"',
+    ]);
+    expect(stdout).toBe("");
+    expect(code).toBe(1);
+  });
+
   it("unions the scope flags instead of keeping the first", SPAWN, () => {
     const src = `slot count : Int = "zero"
 tile App = column(heading("Count: " + cnt.show))
