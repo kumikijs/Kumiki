@@ -111,7 +111,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
           kind: "selector-id-mismatch",
           message:
             `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}#${r.on.selector.id}) ` +
-            `but every element of tile "${r.on.selector.tile}" that fires "${r.on.ev}" has id ${actual} ` +
+            `but every element of tile "${r.on.selector.tile}" that hands "${r.on.ev}" to a reducer has id ${actual} ` +
             `— this selector can never match`,
           pos: r.on.pos,
         });

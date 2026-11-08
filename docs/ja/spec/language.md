@@ -515,9 +515,9 @@ reducer save on=ui.submit(EditForm#edit) do= ...   # "edit" form のみ
 
 `{id}` プロップは要素のネイティブ HTML `id` 属性としても出力される。[§1.6.4](#_1-6-4-不変条件) Invariant 3 のマルチ reducer ルールは引き続き適用され、同じイベントにマッチする `TileName` 単体 reducer と `#id` 付き reducer は定義順で実行される。
 
-**コンテナへのセレクタは、そのイベントを発火できる子孫に届く。** コンテナ種別の多くは自分自身では何も発火しない（`box` に `keydown` も `focus` も `submit` もない）。そのため `ui.<ev>(<Container>)` は、`<ev>` の許可種別（[§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) の表）に該当する子孫すべてに配線される。`ui.hover` だけは制限がなく、`mouseenter` がバブルしないためコンテナ自身*と*各子孫の両方に配線される。
+**コンテナへのセレクタは、そのイベントを reducer に渡す子孫に届く。** コンテナ種別の多くは自分自身ではイベントを渡さない（`box` に `keydown` も `focus` も `submit` もなく、発火する `click` についても renderer は `onClick` を呼ばない）。そのため `ui.<ev>(<Container>)` は、`<ev>` の許可種別（[§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) の表）に該当する子孫すべてに配線される。`ui.hover` だけは制限がなく、`mouseenter` がバブルしないためコンテナ自身*と*各子孫の両方に配線される。
 
-**コンテナに付けた `#id` は、発火する子孫を指す。** id は dispatch した要素と比較されるので、それは子孫の id（`id="save"` と `{id: "save"}` のどちらで書いてもよい）であり、コンテナ自身の id が一致するのはコンテナ自身が発火するイベントの場合だけである。`tile Toolbar = row(button(text="Save", id="save")) {id: "toolbar"}` では、`ui.click(Toolbar#save)` は Save ボタンで発火し、`ui.click(Toolbar#toolbar)` は決して発火しない — `row` は click を dispatch しないためである。`--strict-selector-id` の下では、このセレクタは [E0212](./errors.md#e0212-selector-id-mismatch-strict-selector-id-で-opt-in) になる。
+**コンテナに付けた `#id` は、dispatch する子孫を指す。** id は dispatch した要素と比較されるので、それは子孫の id（`id="save"` と `{id: "save"}` のどちらで書いてもよい）であり、コンテナ自身の id が一致するのはコンテナ自身にも配線されるイベントの場合だけである。`tile Toolbar = row(button(text="Save", id="save")) {id: "toolbar"}` では、`ui.click(Toolbar#save)` は Save ボタンで発火し、`ui.click(Toolbar#toolbar)` は決して発火しない — row をクリックすればそこで `click` は発火するが、row の renderer は `onClick` を呼ばないので、何も dispatch されないためである。`--strict-selector-id` の下では、このセレクタは [E0212](./errors.md#e0212-selector-id-mismatch-strict-selector-id-で-opt-in) になる。
 
 **子孫の書き方は結果を変えない。** 子 tile を名前で参照する本体も、インラインの本体とまったく同じように（何段でも）辿られる。したがって次の 2 つは同じプログラムである:
 

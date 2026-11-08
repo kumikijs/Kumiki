@@ -762,11 +762,11 @@ reducer が宣言されていない tile を指している。tile を名指す�
 
 reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、その subscription が配線される要素のどれも持っていない。E0211 は tile 名のタイポを捕まえるが、この検査は `#id` 側のタイポを捕まえる — 例えば `tile NewForm = form(...) {id: "new"}` に対する `on=ui.submit(NewForm#nw)`。runtime `_dispatch` のフィルタ（spec [§1.6.2](./language.md#_1-6-2-セレクタ)）は不一致を静かにスキップするため、この検査がなければ reducer は発火せず、開発者はエラーを目にすることができない。`kumiki check --strict-selector-id` または `compile({ strictSelectorId: true })` で opt-in する。
 
-> `Reducer "<name>" subscribes to ui.<ev>(<Tile>#<id>) but every element of tile "<Tile>" that fires "<ev>" has id "<a>" | "<b>" — this selector can never match`
+> `Reducer "<name>" subscribes to ui.<ev>(<Tile>#<id>) but every element of tile "<Tile>" that hands "<ev>" to a reducer has id "<a>" | "<b>" — this selector can never match`
 
 `#id` は dispatch した要素と比較される（[§1.6.2](./language.md#_1-6-2-セレクタ)）ので、id 集合は subscription が配線される要素の id である:
 
-- **tile 配下で `<ev>` を発火する種別の要素すべて**（深さを問わない） — 種別は [W0212](#w0212-ui-event-tile-mismatch-warning) の表のもので、W0212 と同じ walk で辿る: 名前で参照された子 tile、`for` / `when` / `if` / `match` の全分岐、そして本体内で呼ばれた tile の `error-boundary` フォールバック（その tile の位置に描画される）。コンテナ自身の id が集合に入るのは、コンテナ自身が発火するイベントの場合だけである: `tile Toolbar = row(button(text="Save", id="save")) {id: "toolbar"}` に対して、`ui.click(Toolbar#toolbar)` は E0212（集合は `"save"`）、`ui.hover(Toolbar#toolbar)` は E0212 にならない — `hover` は row 自身にも配線されるためである。tile 自身のフォールバックは集合に入らない: それは tile が描画した木を tile の外側から置き換える。
+- **tile 配下で `<ev>` を reducer に渡す種別の要素すべて**（深さを問わない） — 種別は [W0212](#w0212-ui-event-tile-mismatch-warning) の表のもので、W0212 と同じ walk で辿る: 名前で参照された子 tile、`for` / `when` / `if` / `match` の全分岐、そして本体内で呼ばれた tile の `error-boundary` フォールバック（その tile の位置に描画される）。`<ev>` を発火しても reducer に渡さない要素は集合に入らず、`click` ではそれが大半である: どの要素も `click` を発火するが、`onClick` を呼ぶのは W0212 が click に挙げる種別の renderer だけである。したがってコンテナ自身の id が集合に入るのは、コンテナ自身にも配線されるイベントの場合だけである: `tile Toolbar = row(button(text="Save", id="save"), text("label", id="label")) {id: "toolbar"}` に対して、`ui.click(Toolbar#toolbar)` と `ui.click(Toolbar#label)` は E0212（集合は `"save"`）、`ui.hover(Toolbar#toolbar)` は E0212 にならない — `hover` は row 自身にも配線されるためである。tile 自身のフォールバックは集合に入らない: それは tile が描画した木を tile の外側から置き換える。
 - **id はどちらの書き方でもよい**: `{id: "x"}` と `id="x"` は同じ prop である（[§1.7.1](./language.md#_1-7-1-構文)）。1 つの要素が両方書いた場合は props ブロックの方が dispatch される。
 - **tile の各使用箇所が残したとおりに読む**: user tile の呼び出し側に書いた props は、その tile がルートに描画する要素へマージされる。その tile をルートに描画する tile の連鎖をさらに上った各呼び出し側の props も同じ要素へマージされ、最も外側のものが最後に効く。したがって `Btn(id="b")` や `Btn {id: "b"}` は `Btn` がルートに描画する要素に id `"b"` を与え、`tile Outer = Btn` のもとでは `Outer(id="x")` がその要素に `"x"` を与える。tile のルートに描画されるフォールバックは、その tile より上の呼び出し側の props を受け取るが、自分が置き換える呼び出しの props は受け取らない。要素に書かれた id が数えられるのは、どこかの使用箇所がそれをそのまま残す場合だけである: route がその tile を描画する場合と、連鎖を上ったどの呼び出し側も id を書かない場合。
 
@@ -783,7 +783,7 @@ reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、その subscrip
 - セレクタがワイルドカード `_`。
 - 対象 tile 自体が未宣言（E0211 が既に発火するので、E0212 は抑制して単一の根本原因を提示する）。
 
-**修正**: セレクタの `#id` を reducer を発火させたい要素の id に合わせるか、その要素の id を直す。コンテナの場合、それはコンテナ自身の id ではなく、イベントを発火する子孫の id である。
+**修正**: セレクタの `#id` を reducer を発火させたい要素の id に合わせるか、その要素の id を直す。コンテナの場合、それはコンテナ自身の id ではなく、イベントを reducer に渡す子孫の id である。
 
 ### W0212 `ui-event-tile-mismatch`（warning）
 
