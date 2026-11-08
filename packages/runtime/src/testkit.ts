@@ -69,6 +69,8 @@ function failureWay(e: unknown): string {
 }
 
 export const _stdlibTest = {
+  /** Whether a throw in the code under test is a panic, which is the test's outcome. */
+  isPanic,
   /** The wildcard map-key sentinel; codegen lowers a `<any-id>` map key to it. */
   WILD_KEY,
   /** The Set-literal wildcard count; codegen lowers the `<any-id>` members of a Set literal to it. */

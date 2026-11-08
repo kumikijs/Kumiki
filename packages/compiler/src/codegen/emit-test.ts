@@ -267,13 +267,15 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
 }
 
 /**
- * The test's own `given` and `expect` are evaluated outside this guard, so a
- * panic there stays a throw in the test's body rather than its panic.
+ * Declares `<result>` and `_panic`. Only a panic is caught: anything else the call throws points at
+ * the compiler or the runtime, so it is a throw in the test's body and keeps its kind. The test's
+ * own `given` and `expect` are evaluated outside this guard, so a panic in them stays a throw in
+ * the test's body.
  */
 function underTestJs(result: string, call: string): string {
   return `let ${result} = null, _panic = null;
       try { ${result} = ${call}; }
-      catch (e) { _panic = (e && e.message) ? e.message : String(e); }`;
+      catch (e) { if (!_s.isPanic(e)) throw e; _panic = e.message || "KumikiPanic"; }`;
 }
 
 function effectListJs(e: Expr, ctx: EvalCtx): string {
