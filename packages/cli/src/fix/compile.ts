@@ -1,21 +1,30 @@
 import { readFileSync } from "node:fs";
-import type { AppDef, KumikiError, Pos } from "@kumikijs/compiler";
+import type { KumikiError, Pos } from "@kumikijs/compiler";
 import {
   BUILTIN_EFFECT_CAPS,
   calleeCandidates,
   check,
   collectTimerNames,
+  constructorTags,
   lex,
-  nearestName,
+  nearestNames,
   parse,
-  servesNotFound,
+  parseFailure,
+  qualifierCandidates,
+  severityOf,
   typeCandidates,
   variantTagsOf,
 } from "@kumikijs/compiler";
 import { listDefs, load, type Store } from "../store.ts";
 import { messageOf } from "../text.ts";
 import { atomicWriteFileSync } from "../write-lock.ts";
-import { type AutoPatch, debugSkip, type PatchAnchor, type SkipReason } from "./patch.ts";
+import {
+  type AutoPatch,
+  type CompilePatch,
+  debugSkip,
+  type PatchAnchor,
+  type SkipReason,
+} from "./patch.ts";
 import {
   append404Route,
   appendAppCap,
@@ -26,7 +35,10 @@ import {
 } from "./text-edit.ts";
 
 /** A planned repair without the diagnostic it answers, or the reason there is none. */
-type Planned = Omit<AutoPatch, "code" | "message"> | string;
+type Planned = Omit<AutoPatch, "code" | "message"> | Declined;
+
+/** A reason there is no repair, and for a tie the names it would have had to choose between. */
+type Declined = { reason: string; candidates?: string[] };
 
 type Planner = (err: KumikiError, store: Store) => Planned;
 
@@ -55,12 +67,14 @@ function namesIn(store: Store, ...layers: string[]): string[] {
 }
 
 type NameRepair = {
-  /** Prefix of every skip reason this repair reports. */
+  /** Prefix of every skip reason this repair reports, except a tie's shared `close-names-tied`. */
   prefix: string;
   /** How many quoted names the message must carry; the misspelled one is the first. */
   quoted: 1 | 2;
   /** The names the misspelling may be close to; null when there are none to pick from. */
   pool: (store: Store, quoted: readonly string[]) => Iterable<string> | null;
+  /** The program's own names in a pool that holds built-in ones too, which outrank them at a tie. */
+  declared?: (store: Store) => Iterable<string>;
   emptyPool?: string;
   noSuggestion: string;
   /** Write at the name when it sits at the diagnostic's position, else on its line. */
@@ -72,12 +86,15 @@ type NameRepair = {
 function nameRepair(r: NameRepair): Planner {
   return (err, store) => {
     const quoted = Array.from(err.message.matchAll(/"([^"]+)"/g), (m) => m[1]!);
-    if (quoted.length < r.quoted) return `${r.prefix}quoted-name-extract-failed`;
+    if (quoted.length < r.quoted) return { reason: `${r.prefix}quoted-name-extract-failed` };
     const missing = r.pick?.(quoted) ?? quoted[0]!;
     const pool = r.pool(store, quoted);
-    if (pool === null) return `${r.prefix}${r.emptyPool}`;
-    const suggested = nearestName(missing, pool);
-    if (!suggested) return `${r.prefix}${r.noSuggestion}`;
+    if (pool === null) return { reason: `${r.prefix}${r.emptyPool}` };
+    const near = nearestNames(missing, pool, r.declared?.(store));
+    // Writing the first of a tie would let the order of the program's definitions pick the name.
+    if (near.length > 1) return { reason: "close-names-tied", candidates: near };
+    const suggested = near[0];
+    if (suggested === undefined) return { reason: `${r.prefix}${r.noSuggestion}` };
     const anchor: PatchAnchor = r.anchored
       ? nameAnchor(store, err.pos, missing)
       : { kind: "span", pos: err.pos };
@@ -111,9 +128,51 @@ function variantTag(prefix: string, anchored: boolean): Planner {
   });
 }
 
+// Each kind is repaired from the namespace its diagnostic suggests from: a slot
+// or tile proposed for a callee is E0116 again at the same position.
+const UNDEFINED_NAME: ReadonlyMap<string, Planner> = new Map([
+  [
+    "undef-variant",
+    nameRepair({
+      prefix: "e0116-",
+      quoted: 1,
+      pool: (store) => constructorTags(store.program),
+      noSuggestion: "no-close-variant",
+      anchored: false,
+    }),
+  ],
+  [
+    "undef-qualifier",
+    nameRepair({
+      prefix: "e0116-",
+      quoted: 1,
+      pool: (store) => qualifierCandidates(store.program),
+      noSuggestion: "no-close-qualifier",
+      anchored: false,
+    }),
+  ],
+]);
+
+const undefinedCallee = nameRepair({
+  prefix: "e0116-",
+  quoted: 1,
+  pool: (store, quoted) => calleeCandidates(namesIn(store, "fn"), quoted[0]!),
+  declared: (store) => namesIn(store, "fn"),
+  noSuggestion: "no-close-callee",
+  anchored: false,
+});
+
 const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   ["E0102", anyDefinition], // undef-reducer
-  ["E0103", anyDefinition], // undef-ref / undef-slot
+  [
+    "E0103", // undef-ref / undef-slot
+    // A read after the body that declared it is out of scope, not misspelled: a renamed read can
+    // type-check, and the regression gate then counts it as resolved.
+    (err, store) =>
+      err.endedScope !== undefined
+        ? { reason: "e0103-read-after-scope-ended" }
+        : anyDefinition(err, store),
+  ],
   ["E0105", anyDefinition], // undef-tile
   ["E0107", anyDefinition], // undef-motion
   [
@@ -141,22 +200,14 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
       anchored: true,
     }),
   ],
-  [
-    "E0116",
-    nameRepair({
-      prefix: "e0116-",
-      quoted: 1,
-      pool: (store, quoted) => calleeCandidates(namesIn(store, "fn"), quoted[0]!),
-      noSuggestion: "no-close-callee",
-      anchored: false,
-    }),
-  ],
+  ["E0116", (err, store) => (UNDEFINED_NAME.get(err.kind) ?? undefinedCallee)(err, store)],
   [
     "E0117",
     nameRepair({
       prefix: "e0117-",
       quoted: 1,
       pool: (store) => typeCandidates(namesIn(store, "type")),
+      declared: (store) => namesIn(store, "type"),
       noSuggestion: "no-close-type",
       anchored: false,
     }),
@@ -167,6 +218,7 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
       prefix: "e0104-",
       quoted: 1,
       pool: (store) => namesIn(store, "effect").concat([...BUILTIN_EFFECT_CAPS.keys()]),
+      declared: (store) => namesIn(store, "effect"),
       noSuggestion: "no-close-effect",
       anchored: false,
     }),
@@ -187,10 +239,10 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
     "E0301",
     (err, store) => {
       const cap = /requires capability "([^"]+)"/.exec(err.message)?.[1];
-      if (cap === undefined) return "e0301-quoted-name-extract-failed";
-      if (!store.defs.some((e) => e.def.kind === "AppDef")) return "e0301-no-app-def";
+      if (cap === undefined) return { reason: "e0301-quoted-name-extract-failed" };
+      if (!store.defs.some((e) => e.def.kind === "AppDef")) return { reason: "e0301-no-app-def" };
       if (appendAppCap(store.source, cap) === null) {
-        return "e0301-cap-already-present-or-no-caps-field";
+        return { reason: "e0301-cap-already-present-or-no-caps-field" };
       }
       return {
         description: `add capability "${cap}" to app.caps`,
@@ -201,13 +253,12 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   ],
   [
     "E0001",
-    (_err, store) => {
-      const app = store.program.defs.find((d): d is AppDef => d.kind === "AppDef");
-      const routes = app?.routes ?? [];
-      if (routes.some((r) => r.path === "/404") && !servesNotFound(routes)) {
-        return "e0001-404-is-a-redirect";
-      }
-      if (append404Route(store.source) === null) return "e0001-no-routes-clause";
+    (err, store) => {
+      // Adding an entry repairs `missing-404` alone: a redirect at `/404` has to be replaced by the
+      // author (an entry beside it would be E0008), and a sub-route at `/404` removed.
+      if (err.kind === "404-is-redirect") return { reason: "e0001-404-is-a-redirect" };
+      if (err.kind === "404-in-sub-routes") return { reason: "e0001-404-in-sub-routes" };
+      if (append404Route(store.source) === null) return { reason: "e0001-no-routes-clause" };
       const defined = store.byQName.has("tile.NotFound");
       return {
         description: defined
@@ -226,10 +277,10 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
     "E0218",
     (err, store) => {
       // No suffix alone repairs other targets: what an `Option`'s `None` iterates is the author's call.
-      if (!err.accessor) return "e0218-no-accessor";
+      if (!err.accessor) return { reason: "e0218-no-accessor" };
       const remedy = `.${err.accessor}`;
       const name = identifierAt(store, err.pos);
-      if (!name) return "e0218-target-not-a-plain-name";
+      if (!name) return { reason: "e0218-target-not-a-plain-name" };
       return {
         description: `append "${remedy}" to "${name}" at ${err.pos.line}:${err.pos.col}`,
         apply: (text) => replaceAt(text, err.pos, name, `${name}${remedy}`),
@@ -262,25 +313,33 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
           anchor: { kind: "span", pos: err.pos },
         };
       }
-      return "e0129-dropped-argument-has-no-single-repair";
+      return { reason: "e0129-dropped-argument-has-no-single-repair" };
     },
   ],
-  ["E0124", () => "e0124-type-arguments-unknown"],
+  ["E0124", () => ({ reason: "e0124-type-arguments-unknown" })],
 ]);
 
 export function planFixesExplained(
   store: Store,
   errors: KumikiError[],
-): { patches: AutoPatch[]; skipped: SkipReason[] } {
-  const patches: AutoPatch[] = [];
+): { patches: CompilePatch[]; skipped: SkipReason[] } {
+  const patches: CompilePatch[] = [];
   const skipped: SkipReason[] = [];
   for (const err of errors) {
-    const planned = PLANNERS.get(err.code)?.(err, store) ?? "no-repair-branch";
-    if (typeof planned === "string") {
-      skipped.push({ code: err.code, reason: planned, message: err.message });
-      debugSkip(`planFixes:${err.code}`, planned, err.message);
+    const planned = PLANNERS.get(err.code)?.(err, store) ?? { reason: "no-repair-branch" };
+    if ("reason" in planned) {
+      const { reason, candidates } = planned;
+      skipped.push({
+        code: err.code,
+        reason,
+        message: err.message,
+        diagnostic: err,
+        ...(candidates === undefined ? {} : { candidates }),
+      });
+      const tied = candidates === undefined ? "" : ` (${candidates.join(", ")})`;
+      debugSkip(`planFixes:${err.code}`, reason, `${err.message}${tied}`);
     } else {
-      patches.push({ code: err.code, message: err.message, ...planned });
+      patches.push({ code: err.code, message: err.message, diagnostic: err, ...planned });
     }
   }
   return { patches, skipped };
@@ -292,7 +351,12 @@ export function planFixes(store: Store, errors: KumikiError[]): AutoPatch[] {
 
 const ANCHOR_TIER: Record<PatchAnchor["kind"], number> = { span: 0, line: 1, region: 2 };
 
-/** Exact spans first, bottom-up so earlier offsets stay valid; then line and region patches. */
+/**
+ * Exact spans first, bottom-up so earlier offsets stay valid; then line and region patches. The
+ * sort is stable, so two patches it does not tell apart (two in the `line` tier, two in the
+ * `region` tier, or two spans at one position) keep the plan's order. A `region` patch must not
+ * depend on that order; see `PatchAnchor`.
+ */
 function applicationOrder(patches: AutoPatch[]): AutoPatch[] {
   return [...patches].sort((a, b) => {
     const tier = ANCHOR_TIER[a.anchor.kind] - ANCHOR_TIER[b.anchor.kind];
@@ -303,11 +367,11 @@ function applicationOrder(patches: AutoPatch[]): AutoPatch[] {
 }
 
 export function repairable(diagnostics: KumikiError[]): KumikiError[] {
-  return diagnostics.filter((d) => d.severity !== "warning");
+  return diagnostics.filter((d) => severityOf(d) === "error");
 }
 
 export function advisory(diagnostics: KumikiError[]): KumikiError[] {
-  return diagnostics.filter((d) => d.severity === "warning");
+  return diagnostics.filter((d) => severityOf(d) === "warning");
 }
 
 export type FixPlan = {
@@ -315,7 +379,7 @@ export type FixPlan = {
   errors: KumikiError[];
   warnings: KumikiError[];
   /** Repairable subset, filtered by `onlyCode` when the caller passed it. */
-  patches: AutoPatch[];
+  patches: CompilePatch[];
   skipped: SkipReason[];
 };
 
@@ -433,15 +497,11 @@ export function gateComposed(
   try {
     parsed = parse(lex(after));
   } catch (e) {
-    const message = messageOf(e);
-    const pe = e as { pos?: { line: number; col: number } };
-    const synthetic: KumikiError = {
-      code: "E0000",
-      kind: "parse-error",
-      message,
-      pos: { line: pe.pos?.line ?? 0, col: pe.pos?.col ?? 0 },
+    const synthetic = parseFailure(e);
+    return {
+      blocked: { reason: "parse-error", message: synthetic.message },
+      remaining: [...errors, synthetic],
     };
-    return { blocked: { reason: "parse-error", message }, remaining: [...errors, synthetic] };
   }
   const diagnostics = check(parsed, { capabilities });
   const remaining = repairable(diagnostics);
