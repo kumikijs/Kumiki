@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import type { KumikiError } from "@kumikijs/compiler";
-import { describe, expect, it, vi } from "vitest";
-import { applyFixPlan, fixCmd, planFix, runFixFromTest } from "../src/fix.ts";
+import { describe, expect, it } from "vitest";
+import { applyFixPlan, fixCmd, fixFromTest, planFix, runFixFromTest } from "../src/fix.ts";
+import { printed } from "./helpers/console.ts";
 import { seedLines } from "./helpers/files.ts";
 
 /** A `box` cannot fire `focus`, so subscribing to one is W0212 and nothing else. */
@@ -125,36 +126,23 @@ describe("what the results say about the warnings they filtered out", () => {
 
 /** Everything `fix` prints when it decides a file needs nothing from it. */
 describe("the verdicts fix prints", () => {
-  const printed = (run: () => number): { code: number; out: string; err: string } => {
-    const log = vi.spyOn(console, "log").mockImplementation(() => {});
-    const err = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const code = run();
-      const join = (spy: typeof log) => spy.mock.calls.map((c) => String(c[0])).join("\n");
-      return { code, out: join(log), err: join(err) };
-    } finally {
-      log.mockRestore();
-      err.mockRestore();
-    }
-  };
-
-  it("says the file is clean and still says what is in it", () => {
+  it("says the file is clean and still says what is in it", async () => {
     write([...WARNING, "tile App = column(Card)", ...APP]);
-    const dry = printed(() => fixCmd(file, false));
-    expect(dry.code).toBe(0);
+    const dry = await printed(() => fixCmd(file, false));
+    expect(dry.result).toBe(0);
     expect(dry.out).toContain("no errors (1 warning)");
     expect(dry.err).toContain("W0212");
   });
 
-  it("says it the same way with --apply, which changes the file just as little", () => {
+  it("says it the same way with --apply, which changes the file just as little", async () => {
     write([...WARNING, "tile App = column(Card)", ...APP]);
-    const applied = printed(() => fixCmd(file, true));
-    expect(applied.code).toBe(0);
+    const applied = await printed(() => fixCmd(file, true));
+    expect(applied.result).toBe(0);
     expect(applied.out).toContain("no errors (1 warning)");
     expect(applied.err).toContain("W0212");
   });
 
-  it("counts more than one", () => {
+  it("counts more than one", async () => {
     write([
       'slot f : Text = ""',
       'slot g : Text = ""',
@@ -165,21 +153,61 @@ describe("the verdicts fix prints", () => {
       "tile App = column(Card, Other)",
       ...APP,
     ]);
-    expect(printed(() => fixCmd(file, false)).out).toContain("no errors (2 warnings)");
+    expect((await printed(() => fixCmd(file, false))).out).toContain("no errors (2 warnings)");
   });
 
-  it("lists them under the errors when the file has both", () => {
+  it("lists them under the errors when the file has both", async () => {
     write([...WARNING, "tile App = column(Card, Missing)", ...APP]);
-    const dry = printed(() => fixCmd(file, false));
-    expect(dry.code).toBe(1);
-    expect(dry.err).toContain("E0105");
-    expect(dry.err).toContain("W0212");
+    const dry = await printed(() => fixCmd(file, false));
+    expect(dry.result).toBe(1);
+    expect(dry.err.split("\n")).toEqual([
+      'error E0105 undef-tile at 4:25: Reference to undefined tile "Missing"',
+      expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:24: /),
+    ]);
   });
 
-  it("says plain `no errors` when there is nothing at all", () => {
+  it("names the severity of a proposal's diagnostic, and of one it has no patch for", async () => {
+    write([
+      ...WARNING,
+      "slot count : Int = 0",
+      "reducer bump on=ui.click(Go) do= count := conut + 1",
+      'tile Go = button(text="go")',
+      "tile App = column(Card, Go, Missing)",
+      ...APP,
+    ]);
+    const dry = await printed(() => fixCmd(file, false));
+    expect(dry.result).toBe(1);
+    expect(dry.out.split("\n")).toEqual([
+      'error E0103 undef-ref at 5:43: Reference to undefined name "conut"',
+      '  fix: replace "conut" with "count" at 5:43',
+      "(no auto-patch for 1 of 2)",
+    ]);
+    expect(dry.err.split("\n")).toEqual([
+      'error E0105 undef-tile at 7:29: Reference to undefined tile "Missing" [no-close-name-suggestion]',
+      expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:24: /),
+    ]);
+  });
+
+  it("names the severity of what blocks --auto-patch and of the warnings beside it", async () => {
+    write([
+      ...WARNING,
+      'tile Title = heading("Helo")',
+      "tile App = column(Card, Title, Missing)",
+      ...APP,
+      ...FAILING_TEST,
+    ]);
+    const auto = await printed(() => fixFromTest(file, "t", false));
+    expect(auto.result.status).toBe("no-patch");
+    expect(auto.err.split("\n")).toEqual([
+      'error E0105 undef-tile at 5:32: Reference to undefined tile "Missing"',
+      expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:24: /),
+    ]);
+  });
+
+  it("says plain `no errors` when there is nothing at all", async () => {
     write(['tile App = column(text("hi"))', ...APP]);
-    const dry = printed(() => fixCmd(file, false));
-    expect(dry.code).toBe(0);
+    const dry = await printed(() => fixCmd(file, false));
+    expect(dry.result).toBe(0);
     expect(dry.out).toBe("no errors");
     expect(dry.err).toBe("");
   });

@@ -14,11 +14,12 @@ import { collectMountedTiles, installLifecycleListeners } from "./lifecycle.ts";
 import { ensureMotionStyles, setSettling } from "./motion.ts";
 import { createNavigation } from "./navigation.ts";
 import {
+  type EmitRefusal,
   type PanicRecord,
   panicInfo,
   renderPanicFallback,
-  reportCapabilityRefusal,
   reportPanic,
+  reportRefusedEmit,
   reportUnhandledEffectError,
   userPanicInfo,
 } from "./panic.ts";
@@ -41,6 +42,7 @@ import { applyInitialTheme, maybeReapplyTheme, resolvedThemeName } from "./theme
 import { makeMappingTileCtx, type TileElementMap } from "./tile-ctx.ts";
 import {
   type AppShape,
+  type CloseOnDispose,
   type HoldLeave,
   type MountedApp,
   type MountHandle,
@@ -146,7 +148,7 @@ export function mountCore(
     (effect, outcome, value, key, token) => {
       handleEffectResult(effect, outcome, value, key, token);
     },
-    handleCapabilityRefusal,
+    handleRefusedEmit,
     episode ? (effect, input) => episode.recordEffectStart(effect, input) : undefined,
     episode ? (targetId) => episode.recordEffectCancel(targetId) : undefined,
     episode ? (token, name) => episode.cancelPendingEffect(token, name) : undefined,
@@ -393,8 +395,8 @@ export function mountCore(
     }
   }
 
-  function handleCapabilityRefusal(effect: string, cap: string, token?: string): void {
-    const rec = reportCapabilityRefusal(effect, cap);
+  function handleRefusedEmit(effect: string, why: EmitRefusal, token?: string): void {
+    const rec = reportRefusedEmit(effect, why);
     fireAppError(rec, rec.location, {}, token);
   }
 
@@ -525,7 +527,7 @@ export function mountCore(
 
   navigation.start();
 
-  const seams = app as MountedApp & { _holdLeave?: HoldLeave };
+  const seams = app as MountedApp & { _holdLeave?: HoldLeave; _closeOnDispose?: CloseOnDispose };
   seams._rerender = render;
   seams._dispatch = (reducerName, el) => {
     const r = app.reducers.find((x) => x.name === reducerName);
@@ -554,6 +556,11 @@ export function mountCore(
   };
   seams._navigate = (path, replace) => navigation.navigate(path, !!replace);
   seams._holdLeave = navigation.holdLeave;
+  const openDialogs = new Set<() => void>();
+  seams._closeOnDispose = (close) => {
+    openDialogs.add(close);
+    return () => openDialogs.delete(close);
+  };
   seams._submitHeldBy = submitHeldBy;
 
   let lastPanics: RenderPanicSink | undefined;
@@ -598,6 +605,8 @@ export function mountCore(
     for (const h of anonTimers) clearInterval(h);
     for (const h of namedTimers.values()) clearInterval(h);
     namedTimers.clear();
+    // A dialog left open would outlive the app, and answering it would still dispatch.
+    for (const close of openDialogs) close();
     navigation.dispose();
     for (const unsub of lifecycleUnsubs) unsub();
     dispatcher.dispose();

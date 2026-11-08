@@ -313,6 +313,12 @@ export type BuiltinInstaller = (app: AppShape, nav: NavContext) => void;
  */
 export type HoldLeave = (close: () => void) => ((outcome: "yes" | "no") => void) | undefined;
 
+/**
+ * A `confirm` modal hands over how to close it unanswered, so disposing the app closes it, and
+ * gets back what to call once it has closed.
+ */
+export type CloseOnDispose = (close: () => void) => () => void;
+
 export type RoutingImpl = {
   createRouter(mode: "history" | "memory" | undefined, initialPath?: string): Router;
   parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRoute;
@@ -414,6 +420,10 @@ export type OptionOf<T> = { _tag: "Some"; _0: T } | { _tag: "None" };
 export const someOf = <T>(value: T): OptionOf<T> => ({ _tag: "Some", _0: value });
 
 export const NONE: OptionOf<never> = { _tag: "None" };
+
+/** Own keys only: a name every object inherits (`toString`, `__proto__`) finds nothing. */
+export const own = <T>(table: Readonly<Record<string, T>>, key: string): T | undefined =>
+  Object.hasOwn(table, key) ? table[key] : undefined;
 
 /** `HttpError` as `.err` receives it. */
 export type HttpError = { status: number; message: string; body: OptionOf<string> };

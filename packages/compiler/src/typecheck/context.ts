@@ -13,12 +13,14 @@ import type {
 import { callsBuiltin } from "../builtin-calls.ts";
 import { type NestedScopes, nestedScopes } from "./nested-scopes.ts";
 
+export type Severity = "error" | "warning";
+
 export type KumikiError = {
   code: string;
   kind: string;
   message: string;
   pos: Pos;
-  severity?: "error" | "warning";
+  severity?: Severity;
   unrendered?: "positional" | "text-prop" | "text-shadowed";
   /**
    * E0103 only: the kind of nested scope that declared the name and ended before this read;
@@ -30,6 +32,10 @@ export type KumikiError = {
   /** E0218 only: the member whose append alone makes the target a List; `kumiki fix` reads it. */
   accessor?: "keys" | "to-list";
 };
+
+export function severityOf(d: Pick<KumikiError, "severity">): Severity {
+  return d.severity ?? "error";
+}
 
 /** The nested statement bodies of a reducer, each a scope of its own. */
 export type StatementScope = "if" | "for" | "match";
