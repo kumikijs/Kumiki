@@ -30,7 +30,7 @@ function panicLine(panic: string): string {
   return `panic: ${_jsonStr(panic)}`;
 }
 
-/** Where a test asked for a result, a panic in its code under test fails it the same way. */
+/** One report for a panic where a result was expected, so every runner prints it in the same lines. */
 export function unexpectedPanic(name: string, expected: string, panic: string): TestResult {
   return { name, pass: false, expected, actual: panicLine(panic), diffAt: "(unexpected panic)" };
 }
