@@ -26,8 +26,8 @@ the size it inherits. Now:
 
 ```
 $ kumiki check app.kumiki
-E0239 negative-theme-length at 2:20: theme "T": radius "soft" is -4, and a corner radius cannot be negative, so it has no effect — write a length of 0 or more (see docs/spec/style.md)
-E0239 negative-theme-length at 3:31: theme "T": typography size "tiny" is -4, and a font size cannot be negative, so it has no effect — write a size of 0 or more (see docs/spec/style.md)
+error E0239 negative-theme-length at 2:20: theme "T": radius "soft" is -4, and a corner radius cannot be negative, so it has no effect — write a length of 0 or more (see docs/spec/style.md)
+error E0239 negative-theme-length at 3:31: theme "T": typography size "tiny" is -4, and a font size cannot be negative, so it has no effect — write a size of 0 or more (see docs/spec/style.md)
 ```
 
 0 is in range: `square: 0` rounds nothing, and a font size of 0 hides the
