@@ -18,9 +18,11 @@ type KumikiError = {
 
 `code` is a permanent contract; once assigned, its meaning does not change. `kind` is a sub-classification under the same `code`, used to branch diagnostic logic. `severity` defaults to `"error"`: a missing field means the same as `"error"` for backward compatibility with existing diagnostics. The `"warning"` tier is non-fatal — it is surfaced to stderr (CLI) and to Rollup's `this.warn` (Vite) but does not change the exit code or block the build.
 
-A parse error is `throw`n as a `ParseError` (`message` + `pos`), and a lexical one as a `LexError`. Neither carries a `code`: the stage stops at the first error, so there is no set of diagnostics for one to index into. A tool whose output *is* such a set — `kumiki fix`'s rollback report, the MCP tools' JSON envelope — synthesizes [E0000](#e0000-parse-error) so that "no diagnostics" keeps meaning "clean".
+`kumiki check` prints each diagnostic as one line that leads with its severity: `<severity> <code> <kind> at <line>:<col>: <message>`, as in `error E0103 undef-ref at 4:30: Reference to undefined name "totl"` or `warning W0212 ui-event-tile-mismatch at 2:17: …`. The word is the `severity` field, so a reader tells an advisory diagnostic from a failure without knowing what a code's first letter stands for. `build`, `test`, `smoke`, `run` and `replay` print a diagnostic in the same form. So does `fix`, for every diagnostic it lists, each at the start of its line: the diagnostic a patch is proposed for, with the edit indented under it as `fix: …`; an error it has no patch for, followed by `[<reason>]`; the errors that remain; the warnings; and under `--auto-patch`, the compile errors and the errors a refused patch would introduce. The MCP `kumiki_fix` dry run lists them the same way, with `(no auto-patch)` after an error it has no patch for. The MCP tools that answer in JSON carry `severity` on each diagnostic instead.
 
-The checker's codes come from `packages/compiler/src/typecheck.ts` and the modules under `packages/compiler/src/typecheck/`; `E0000` is assigned by the two tools named above.
+A parse error is `throw`n as a `ParseError` (`message` + `pos`), and a lexical one as a `LexError`. Neither carries a `code`: the stage stops at the first error, so there is no set of diagnostics for one to index into. A tool whose output *is* such a set — `kumiki fix`'s rollback report, the MCP tools' JSON envelope — synthesizes [E0000](#e0000-parse-error) so that "no diagnostics" keeps meaning "clean". Every diagnostic in an MCP tool's JSON carries `severity`, never omitted, so a client never has to know the default above.
+
+The checker's codes come from `packages/compiler/src/typecheck.ts` and the modules under `packages/compiler/src/typecheck/`; `E0000` is built by `parseFailure` in `packages/compiler/src/compile.ts`, which the two tools named above call.
 
 ## The Code System
 
@@ -59,7 +61,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 
 | Code | Auto-patch | Strategy |
 |---|---|---|
-| `E0001` | yes | Add `"/404" -> NotFound` to the app's own `routes` (never to a tile's `sub-routes`), and inject a `NotFound` tile unless the program already defines one. No patch when the app has no `routes` clause, or when `/404` is a redirect: E0001 does not count a redirect, and a second `/404` entry would be `E0008`. |
+| `E0001` | yes | Add `"/404" -> NotFound` to the app's own `routes` (never to a tile's `sub-routes`), and inject a `NotFound` tile unless the program already defines one. Only `missing-404` is patched. No patch when the app has no `routes` clause; for `404-is-redirect`, which is repaired by replacing the redirect (an entry added beside it would be a second `/404`, `E0008`); or for `404-in-sub-routes`, which is repaired by removing the entry. |
 | `E0102` | yes | Close-name suggestion (Levenshtein ≤ 2 or ≤ 25%) against known reducer names. |
 | `E0103` | yes | Close-name suggestion against known slot / binding names. No patch for a name read, later in the same definition, after the scope that declared it ended — a reducer's `if` branch, `for` body or match arm, a `let … in` body, a tile's `for` body or an arm of a `match` expression (the diagnostic's `endedScope` is set): the read is out of scope, not misspelled, and a renamed read can type-check and read a different value. Whether to move the declaration or the read is user intent. |
 | `E0104` | yes | Close-name suggestion against declared `effect` names plus the [standard effects](./stdlib.md#_2-6-standard-effects), which no program declares (scoped — a tile or slot whose name is close is not a candidate). |
@@ -91,6 +93,23 @@ typo` is still caught rather than accepted, because the two differ by code.
 | `E0306` | no | Rewriting `E` to `Text` is mechanical, but every `.err` read written to the old `E` (`$e.message`, `$e.code`) then needs rewriting to the message, and what the program wanted from those fields is user intent. |
 | Others | no | Not currently auto-repairable (open an issue if a common shape emerges). |
 
+Every close-name suggestion above is one ranking. The candidates nearest to the
+name written by Levenshtein distance are kept when that distance is at most 2
+or at most a quarter of the name's length, rounded up. Where a namespace has
+built-in names beside the program's own (`E0104`, `E0116`, `E0117`), a name the
+program declares outranks a built-in one at the same distance: `Filtre` is two
+edits from a declared `Filter` and from the built-in `File`, and the patch
+writes `Filter`. A patch is written only when one candidate is left. Two or
+more left are a **tie** — `count` is one edit from both `countA` and `countB` —
+and nothing in the program says which was meant, so `kumiki fix` writes neither
+and reports the diagnostic as skipped with the reason `close-names-tied`,
+naming the tied candidates in sorted order in the skip's `candidates`. When
+that is the first skip, `kumiki_auto_patch`'s `no-patch` outcome carries the
+same `reason` and `candidates`. The verification tiers' unknown-reducer message
+names every tied candidate instead: a `{dispatch}` step naming no reducer
+([Testing §8.10](./testing.md#_8-10-the-three-layers-of-tooling-verification))
+fails with `no reducer named "add" — did you mean "addA" or "addB"?`.
+
 Behavioral repair from a failing `test` (`kumiki fix --auto-patch <test-name>`)
 is a separate tier and works whenever the failing leaf can be traced to a
 unique source position:
@@ -114,13 +133,18 @@ The source could not be lexed or parsed. Not produced by the checker: the parser
 
 **Fix**: Correct the syntax at the reported position. Every other code in this document presumes a file that parses.
 
-### E0001 `missing-404`
+### E0001 `missing-404` / `404-is-redirect` / `404-in-sub-routes`
 
-An app that declares `app.routes` must include a route for the `/404` pattern. Unmatched paths fall back here.
+`/404` is the fallback for paths no route matches. It belongs to `app.routes`, and it renders a tile ([Routing §3.1.3](./routing.md#_3-1-3-404-is-reserved)).
 
-> `app.routes must include a "/404" entry`
+- `missing-404`: `app.routes` has no `/404` entry. Reported at the app.
+  > `app.routes must include a "/404" entry`
+- `404-is-redirect`: the `/404` entry of `app.routes` is a redirect (`"/404" ->> "/"`). Reported at the redirect. The map has a `/404` entry, but not the tile the fallback renders, and a second `/404` entry would be [E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) — so this is not `missing-404`. A `/404` redirect beside a `/404` tile is that E0008 alone: the tile serves the fallback.
+  > `Route "/404" is a redirect, but "/404" is the fallback for paths no route matches and has to render a tile — write "/404" -> <Tile>`
+- `404-in-sub-routes`: a tile's `sub-routes` map has an entry at `/404`, whether it names a tile or redirects. Reported at the entry, and the entry's only report: a target it names is not checked as well, nor is a redirect loop through it. Two entries at `/404` in one map are each reported, and the pair is also [E0112](#e0112-duplicate-sub-route). No sub-route is matched against `/404`, so the entry is never used; a child path that no sub-route matches renders the sub-route tile at the parent's own path if there is one, or else the app's `/404` ([Routing §3.6.3](./routing.md#_3-6-3-matching-rules)).
+  > `Tile "<tile>" has a sub-route at "/404", which is reserved for the app's fallback — no sub-route is matched against it. Remove it: a child path that no sub-route matches renders the sub-route tile at the parent's own path if there is one, or else the app's "/404"`
 
-**Fix**: Add a route to a 404 tile, such as `route "/404" -> NotFound`. See [Routing](./routing.md) for details.
+**Fix**: Route `/404` to a tile in the app's own `routes`, such as `"/404" -> NotFound`, in place of a redirect there. To send unmatched paths to another page, redirect a wildcard (`"/*" ->> "/"`) and keep the `/404` tile. Remove a `/404` entry from a `sub-routes` map. See [Routing](./routing.md) for details.
 
 ### E0002 `duplicate-timer-name`
 
@@ -540,7 +564,7 @@ The name is a type's, so [E0117](#e0117-undef-type) does not apply; the callee i
 
 ### E0125 `redirect-unbound-param`
 
-A redirect's target names a parameter, or the wildcard `*`, that its source does not bind ([Routing §3.10](./routing.md#_3-10-redirects-static)). The runtime puts into the target what the source matched — for each `:name`, the segment it matched, and for `*`, the rest of the path — and leaves every other segment as written, so a name the source does not bind would reach the URL as written: `"/old" ->> "/items/:id"` would land on the path `/items/:id`, where `route.params.id` reads `":id"`. Reported once per name, at the redirect entry, in the app's `routes` and in a tile's `sub-routes` alike.
+A redirect's target names a parameter, or the wildcard `*`, that its source does not bind ([Routing §3.10](./routing.md#_3-10-redirects-static)). The runtime puts into the target what the source matched — for each `:name`, the segment it matched, and for `*`, the rest of the path — and leaves every other segment as written, so a name the source does not bind would reach the URL as written: `"/old" ->> "/items/:id"` would land on the path `/items/:id`, where `route.params.id` reads `":id"`. Reported once per name, at the redirect entry, in the app's `routes` and in a tile's `sub-routes` alike. An entry written at `/404` is not checked: it is never followed, and is reported as [E0001](#e0001-missing-404-404-is-redirect-404-in-sub-routes), or as [E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) beside a `/404` tile in `app.routes`.
 
 > `Redirect "<source>" ->> "<target>" names "<segment>", which "<source>" does not bind`
 
@@ -925,13 +949,15 @@ One diagnostic is reported per missing field, at the literal.
 
 ### E0215 `unknown-record-field`
 
-A record literal, or a `.copy(f=v)` record update, names a field the declared type does not have.
+A record literal, or a `.copy(f=v)` record update, names a field the declared type does not have; or an effect's `map-request` writes a field the request of its capability does not have ([HTTP §6.6.1](./http.md#_6-6-1-request-fields)).
 
 > `Record type has no field "<name>"`
+> `The <cap> request has no field "<name>" — did you mean "<field>"? (accepted: <fields>)`
+> `The <cap> request has no field "<name>" (accepted: <fields>)`
 
-Both lower to a plain object spread, so an undeclared field became a property that nothing ever reads — the value was silently dropped rather than rejected.
+Both record forms lower to a plain object spread, so an undeclared field would be a property that nothing ever reads — the value silently dropped rather than rejected. A request is handed to the capability's built-in handler, which reads its own fields and nothing else, so a field outside them would be dropped the same way: `headrs: {"X": "1"}` on `http.get` is a header that is never sent. The request's message is reported at the field. It names the nearest field the request has when one is close, takes the last form above when none is, and lists the request's fields either way. An `indexed.read` request is named by whether it has a key (`The indexed.read request with a key has no field "index"`), since a read by key and a query have different fields.
 
-**Fix**: Correct the field name, or declare it on the type.
+**Fix**: Correct the field name, or declare it on the type. In a `map-request`, use a field the message lists: the method is the capability's, and `timeout` and `credentials` are set in `app.http`. A field a host provider reads belongs on a custom capability, whose request is the provider's to define.
 
 ### E0216 `unknown-variant`
 

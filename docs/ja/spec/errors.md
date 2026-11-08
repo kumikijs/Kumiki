@@ -18,9 +18,11 @@ type KumikiError = {
 
 `code` は永続的な契約であり、一度割り当てたら意味を変えない。`kind` は同一 `code` 配下の細分類で、診断ロジックの分岐に使う。`severity` は省略時 `"error"`（既存の診断との後方互換のため、未指定 = error 扱い）。`"warning"` は非致命的で、CLI では stderr、Vite では Rollup の `this.warn` に流れるが、終了コードを変えずビルドも止めない。
 
-パースエラーは `ParseError`（`message` + `pos`）、字句エラーは `LexError` として `throw` される。どちらも `code` を持たない — その段は最初のエラーで停止するので、コードが指し示すべき診断の集合が存在しない。出力そのものが診断の集合であるツール（`kumiki fix` のロールバック報告、MCP ツールの JSON エンベロープ）は、「診断ゼロ = クリーン」が保たれるように [E0000](#e0000-parse-error) を合成する。
+`kumiki check` は各診断を、重大度で始まる 1 行で出力する：`<severity> <code> <kind> at <line>:<col>: <message>`。たとえば `error E0103 undef-ref at 4:30: Reference to undefined name "totl"` や `warning W0212 ui-event-tile-mismatch at 2:17: …`。この語は `severity` フィールドそのものなので、読み手はコードの先頭文字が何を表すかを知らなくても、助言の診断と失敗とを見分けられる。`build`・`test`・`smoke`・`run`・`replay` も同じ形で診断を出力する。`fix` も、一覧にする診断をすべてこの形で行頭から出力する。パッチを提案する診断（その下に字下げした `fix: …` の行で編集を示す）、パッチのないエラー（後ろに `[<reason>]` が付く）、残ったエラー、警告、そして `--auto-patch` ではコンパイルエラーと、拒否したパッチが持ち込むはずだったエラーである。MCP の `kumiki_fix` のドライランも同じ形で一覧にし、パッチのないエラーの後ろには `(no auto-patch)` が付く。JSON で答える MCP ツールは、代わりに各診断に `severity` を載せる。
 
-チェッカのコードは `packages/compiler/src/typecheck.ts` と `packages/compiler/src/typecheck/` 配下のモジュールから発行され、`E0000` は上記 2 つのツールが付与する。
+パースエラーは `ParseError`（`message` + `pos`）、字句エラーは `LexError` として `throw` される。どちらも `code` を持たない — その段は最初のエラーで停止するので、コードが指し示すべき診断の集合が存在しない。出力そのものが診断の集合であるツール（`kumiki fix` のロールバック報告、MCP ツールの JSON エンベロープ）は、「診断ゼロ = クリーン」が保たれるように [E0000](#e0000-parse-error) を合成する。MCP ツールの JSON に含まれる診断はすべて `severity` を持ち、省略されない。クライアントは上記の既定値を知らなくてよい。
+
+チェッカのコードは `packages/compiler/src/typecheck.ts` と `packages/compiler/src/typecheck/` 配下のモジュールから発行され、`E0000` は `packages/compiler/src/compile.ts` の `parseFailure` が組み立て、上記 2 つのツールがそれを呼ぶ。
 
 ## コード体系
 
@@ -44,7 +46,7 @@ type KumikiError = {
 
 | コード | 自動修正 | 方針 |
 |---|---|---|
-| `E0001` | あり | app 自身の `routes` に `"/404" -> NotFound` を追加する（tile の `sub-routes` には追加しない）。`NotFound` tile は、プログラムがまだ定義していなければ挿入する。app に `routes` 節がないとき、および `/404` がリダイレクトのときはパッチを出さない：E0001 はリダイレクトを数えず、`/404` をもう 1 つ書けば `E0008` になる。 |
+| `E0001` | あり | app 自身の `routes` に `"/404" -> NotFound` を追加する（tile の `sub-routes` には追加しない）。`NotFound` tile は、プログラムがまだ定義していなければ挿入する。パッチを出すのは `missing-404` だけである。app に `routes` 節がないとき、`404-is-redirect`（リダイレクトを置き換えて直すもので、その隣にエントリを追加すれば `/404` が 2 つになる：`E0008`）、および `404-in-sub-routes`（エントリを削除して直すもの）にはパッチを出さない。 |
 | `E0102` | あり | 既知の reducer 名に対する近傍名の提案（Levenshtein ≤ 2 または ≤ 25%）。 |
 | `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。名前を宣言したスコープ — reducer の `if` の枝・`for` の本体・match arm、`let … in` の本体、tile の `for` の本体、`match` 式の arm — が終わった後で、同じ定義の中でその名前を読んでいる場合（診断の `endedScope` が設定されている）はパッチを出さない：読み出しは綴りの誤りではなくスコープ外であり、名前を置き換えた読み出しは型検査を通って別の値を読むことがある。宣言と読み出しのどちらを動かすかはユーザの意図である。 |
 | `E0104` | あり | 宣言済みの `effect` 名と、プログラムが宣言しない[標準 effect](./stdlib.md#_2-6-標準-effect) に対する近傍名の提案（スコープ限定 — 名前の近い tile や slot は候補にならない）。 |
@@ -76,6 +78,8 @@ type KumikiError = {
 | `E0210` | なし | 型引数の追加はユーザの意図の合成であり、静的修復の外側にある。 |
 | その他 | なし | 現時点では自動修復の対象外（よくある形が見つかれば issue を立てること）。 |
 
+上の近傍名の提案は、すべて 1 つの順位付けである。書かれた名前から Levenshtein 距離で最も近い候補を、その距離が 2 以下、または名前の長さの 4 分の 1（切り上げ）以下であるときに残す。名前空間がプログラム自身の名前と並べて組み込みの名前を持つ場合（`E0104`・`E0116`・`E0117`）、同じ距離ならプログラムが宣言した名前が組み込みの名前に優先する：`Filtre` は宣言された `Filter` からも組み込みの `File` からも 2 編集であり、パッチは `Filter` を書く。パッチを書くのは候補が 1 つだけ残ったときに限る。2 つ以上残れば**同点**である — `count` は `countA` からも `countB` からも 1 編集 — どちらを意図したかはプログラムのどこにも書かれていないので、`kumiki fix` はどちらも書かず、その診断を理由 `close-names-tied` 付きのスキップとして報告し、同点の候補をソート順でスキップの `candidates` に挙げる。それが最初のスキップなら、`kumiki_auto_patch` の `no-patch` の結果も同じ `reason` と `candidates` を持つ。検証ティアの未知の reducer のメッセージは、代わりに同点の候補をすべて挙げる：どの reducer も指さない `{dispatch}` ステップ（[テスト §8.10](./testing.md#_8-10-the-three-layers-of-tooling-verification)）は `no reducer named "add" — did you mean "addA" or "addB"?` で失敗する。
+
 失敗した `test` からの振る舞い修復（`kumiki fix --auto-patch <test-name>`）は別のティアで、失敗した leaf を一意のソース位置まで辿れる場合に機能する：
 
 - 文字列 / 数値 / 真偽値リテラルの完全一致。**スコープを考慮した曖昧性解消**付き：対象 tile / reducer 自身の行範囲を優先し、次にその依存、最後に無関係なコードの順で選ぶ。
@@ -92,13 +96,18 @@ type KumikiError = {
 
 **修正**：報告された位置の構文を直す。この文書の他のコードはすべて、パースできるファイルを前提にしている。
 
-### E0001 `missing-404`
+### E0001 `missing-404` / `404-is-redirect` / `404-in-sub-routes`
 
-`app.routes` を宣言したアプリは、`/404` パターンのルートを必ず含めなければならない。未マッチのパスはここへフォールバックする。
+`/404` はどのルートにもマッチしないパスのフォールバックである。`app.routes` に属し、tile を描画する（[ルーティング §3.1.3](./routing.md#_3-1-3-404-is-reserved)）。
 
-> `app.routes must include a "/404" entry`
+- `missing-404`：`app.routes` に `/404` のエントリがない。app の位置で報告する。
+  > `app.routes must include a "/404" entry`
+- `404-is-redirect`：`app.routes` の `/404` のエントリがリダイレクト（`"/404" ->> "/"`）である。リダイレクトの位置で報告する。マップに `/404` のエントリはあるが、フォールバックが描画する tile がない。`/404` のエントリをもう 1 つ書けば [E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) になる — そのため `missing-404` ではない。`/404` の tile と並んだ `/404` のリダイレクトは、その E0008 だけになる：tile がフォールバックを担うからである。
+  > `Route "/404" is a redirect, but "/404" is the fallback for paths no route matches and has to render a tile — write "/404" -> <Tile>`
+- `404-in-sub-routes`：tile の `sub-routes` マップに `/404` のエントリがある。tile を指名していてもリダイレクトでも同じである。エントリの位置で報告し、それがそのエントリの唯一の報告になる：指名するターゲットも、そのエントリを通るリダイレクトのループも、重ねて検査することはない。1 つのマップに `/404` のエントリが 2 つあれば、それぞれを報告し、その組は [E0112](#e0112-duplicate-sub-route) にもなる。`/404` に対してマッチされるサブルートはないので、エントリは決して使われない。どのサブルートにもマッチしない子のパスは、親自身のパスにサブルートの tile があればそれを、なければ app の `/404` を描画する（[ルーティング §3.6.3](./routing.md#_3-6-3-matching-rules)）。
+  > `Tile "<tile>" has a sub-route at "/404", which is reserved for the app's fallback — no sub-route is matched against it. Remove it: a child path that no sub-route matches renders the sub-route tile at the parent's own path if there is one, or else the app's "/404"`
 
-**修正**：`route "/404" -> NotFound` のような 404 用 tile へのルートを追加する。詳細は [ルーティング](./routing.md)。
+**修正**：app 自身の `routes` で `/404` を tile へ向ける（`"/404" -> NotFound` など）。そこにリダイレクトがあれば置き換える。マッチしないパスを別のページへ送るには、ワイルドカードをリダイレクトし（`"/*" ->> "/"`）、`/404` の tile は残す。`sub-routes` マップの `/404` のエントリは削除する。詳細は [ルーティング](./routing.md)。
 
 ### E0002 `duplicate-timer-name`
 
@@ -518,7 +527,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 ### E0125 `redirect-unbound-param`
 
-リダイレクトのターゲットが、ソースの束縛しないパラメータ、またはワイルドカード `*` を名指している（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）。ランタイムはソースがマッチしたもの——各 `:name` にはそれがマッチしたセグメント、`*` にはパスの残り——をターゲットに入れ、それ以外のセグメントは書かれたとおりに残すので、ソースが束縛しない名前は書かれたまま URL に届いてしまう：`"/old" ->> "/items/:id"` はパス `/items/:id` に行き着き、`route.params.id` は `":id"` を読む。名前ごとに 1 件、リダイレクトのエントリの位置で報告する。アプリの `routes` でも tile の `sub-routes` でも同じである。
+リダイレクトのターゲットが、ソースの束縛しないパラメータ、またはワイルドカード `*` を名指している（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）。ランタイムはソースがマッチしたもの——各 `:name` にはそれがマッチしたセグメント、`*` にはパスの残り——をターゲットに入れ、それ以外のセグメントは書かれたとおりに残すので、ソースが束縛しない名前は書かれたまま URL に届いてしまう：`"/old" ->> "/items/:id"` はパス `/items/:id` に行き着き、`route.params.id` は `":id"` を読む。名前ごとに 1 件、リダイレクトのエントリの位置で報告する。アプリの `routes` でも tile の `sub-routes` でも同じである。`/404` に書かれたエントリは検査しない：それがたどられることはなく、[E0001](#e0001-missing-404-404-is-redirect-404-in-sub-routes) として、または `app.routes` で `/404` の tile と並ぶときは [E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) として報告される。
 
 > `Redirect "<source>" ->> "<target>" names "<segment>", which "<source>" does not bind`
 
@@ -903,13 +912,15 @@ record リテラルが、宣言型の要求するフィールドを欠いてい�
 
 ### E0215 `unknown-record-field`
 
-record リテラル、または `.copy(f=v)` の record 更新が、宣言型に無いフィールドを名指している。
+record リテラル、または `.copy(f=v)` の record 更新が、宣言型に無いフィールドを名指している。あるいは effect の `map-request` が、その capability のリクエストに無いフィールドを書いている（[HTTP §6.6.1](./http.md#_6-6-1-request-fields)）。
 
 > `Record type has no field "<name>"`
+> `The <cap> request has no field "<name>" — did you mean "<field>"? (accepted: <fields>)`
+> `The <cap> request has no field "<name>" (accepted: <fields>)`
 
-どちらも素のオブジェクト spread へ落ちるため、宣言されていないフィールドは「誰も読まないプロパティ」になっていた — 拒否されるのではなく、値が静かに捨てられていた。
+record の 2 つの形はどちらも素のオブジェクト spread へ落ちるため、拒否しなければ、宣言されていないフィールドは「誰も読まないプロパティ」になり、値は静かに捨てられてしまう。リクエストは capability の組み込みハンドラに渡され、ハンドラは自分のフィールドだけを読むので、それ以外のフィールドも同じく捨てられてしまう：`http.get` の `headrs: {"X": "1"}` は決して送られない header になる。リクエストのメッセージはそのフィールドの位置に報告される。リクエストに近いフィールドがあればその名前を添え、無ければ上の最後の形になり、どちらでもリクエストのフィールドを列挙する。`indexed.read` のリクエストは、キーで読むものとクエリとでフィールドが違うので、キーを持つかどうかで名指される（`The indexed.read request with a key has no field "index"`）。
 
-**修正**：フィールド名を直すか、型に宣言する。
+**修正**：フィールド名を直すか、型に宣言する。`map-request` では、メッセージが列挙するフィールドを使う：メソッドは capability が決め、`timeout` と `credentials` は `app.http` で設定する。ホスト provider が読むフィールドは、provider がリクエストを定めるカスタム capability に置く。
 
 ### E0216 `unknown-variant`
 

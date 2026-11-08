@@ -178,7 +178,7 @@ type PanicInfo = {
 }
 ```
 
-`category` names where in the runtime the failure was intercepted. The reducer / tile-render / hydrate paths emit their own category today, and `capability` names an effect the capability check refused ([runtime.md §10.4.2](./runtime.md#_10-4-2-capability-check)) — the one value that reports something nothing threw. `effect` and `unknown` are reserved values so app code can exhaustive-match without a fallthrough as future callsites are wired in.
+`category` names where in the runtime the failure was intercepted. The reducer / tile-render / hydrate paths emit their own category today, and two values report something nothing threw: `effect` names an emit the dispatcher could not run, because no effect in `app.effects` has its name ([runtime.md §10.4.1](./runtime.md#_10-4-1-acceptance)), and `capability` names an effect the capability check refused ([runtime.md §10.4.2](./runtime.md#_10-4-2-capability-check)). `unknown` is a reserved value so app code can exhaustive-match without a fallthrough as future callsites are wired in.
 
 `episode-id` names the episode the panic happened in ([runtime.md §10.5](./runtime.md#_10-5-episode-loop)) — the join between a panic a user saw and what `kumiki replay` / `kumiki_episode_tail` read back. It is `Option(Text)` because an episode is not always open: a host that attached no episode logger has none to name, and `None` is the answer for that. The same is true of a panic raised outside any dispatch — a render panic caught on the first paint, for one.
 
@@ -311,7 +311,7 @@ reducer noop     on=ui.click(_) do= ()
 
 In the runtime implementation, this is rendered as a **modal dialog tile** (not the native `confirm`). This keeps the UI style consistent and makes testing easier.
 
-The dialog is always the runtime's own. A host provider registered for `notification.show` replaces the toast ([§7.7](#_7-7-toasts)) and is never handed a `confirm`, because the answer is delivered by dispatching `onYes` or `onNo`, which a provider's `EffectResult` cannot do ([Standard Library §2.5](./stdlib.md#_2-5-standard-capabilities)). Emitted from a `route.leave` guard, the dialog holds the move until it is answered or another navigation replaces it ([Routing §3.5.2](./routing.md#_3-5-2-leave-guard)).
+The dialog is always the runtime's own. A host provider registered for `notification.show` replaces the toast ([§7.7](#_7-7-toasts)) and is never handed a `confirm`, because the answer is delivered by dispatching `onYes` or `onNo`, which a provider's `EffectResult` cannot do ([Standard Library §2.5](./stdlib.md#_2-5-standard-capabilities)). Emitted from a `route.leave` guard, the dialog holds the move until it is answered or another navigation replaces it ([Routing §3.5.2](./routing.md#_3-5-2-leave-guard)). A dialog still open when the `app` is disposed closes unanswered: neither `onYes` nor `onNo` is dispatched.
 
 ---
 
