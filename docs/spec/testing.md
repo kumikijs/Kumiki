@@ -351,7 +351,7 @@ Each `aria-*` attribute is a field of its own, however it was written (as `aria-
 
 A mismatch reports the field's path and the value arrow, as `image.src  "/a.png" -> "/b.png"`. The `expected:` and `actual:` lines print only the compared fields: each actual node shows the fields the expected node in its position states, so a placeholder or a `bind` that only the actual node carries is not printed.
 
-A tile that panics as it renders fails its test as an **unexpected panic**, in the lines a reducer-test gives a reducer that panics ([§8.2.4](#_8-2-4-expecting-a-panic)), with the snapshot as what was expected:
+A tile that panics as it renders fails its test as an **unexpected panic**, in the lines a reducer-test prints when its reducer panics ([§8.2.4](#_8-2-4-expecting-a-panic)), with the snapshot as what was expected:
 
 ```kumiki fragment
 slot items : List(Int) = []
@@ -370,7 +370,7 @@ FAIL  first-shows
   diff at:  (unexpected panic)
 ```
 
-A tile-test cannot expect the panic: its `expect` is a tile, with no section to write one in, so a panic is expected only in a reducer-test. Only a panic in the target's render is reported this way: the test's own `given` and `expect` are evaluated apart from the render, so a panic in one of them is a throw in the test's body, reported on an `error:` line ([§8.7.1](#_8-7-1-output)).
+A tile-test renders its target's body, so the target's own `error-boundary=` does not apply and its panic is still unexpected; a tile the body renders keeps its boundary, and its fallback is what is compared. A tile-test cannot expect the panic: its `expect` is a tile, with no section to write one in, so a panic is expected only in a reducer-test. Only a panic in the target's render is reported this way: the test's own `given` and `expect` are evaluated apart from the render, so a panic in one of them is a throw in the test's body, reported on an `error:` line ([§8.7.1](#_8-7-1-output)).
 
 ```
 tile-test ::= 'tile-test' identifier

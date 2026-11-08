@@ -298,7 +298,7 @@ FAIL  first-shows
   diff at:  (unexpected panic)
 ```
 
-tile-test はこの panic を期待できない。`expect` は tile であり、panic を書くセクションが無いので、panic を期待できるのは reducer-test だけである。このように報告されるのはターゲットの描画で起きた panic だけである：テスト自身の `given` と `expect` は描画とは別に評価されるので、そのどちらかで起きた panic はテスト本体が投げたものであり、`error:` 行で報告される（[§8.7.1](#_8-7-1-output)）。
+tile-test はターゲットの本体を描画するので、ターゲット自身の `error-boundary=` は適用されず、その panic はやはり予期しない panic になる。本体が描画する tile は自分の境界を保ち、比較されるのはそのフォールバックである。tile-test はこの panic を期待できない。`expect` は tile であり、panic を書くセクションが無いので、panic を期待できるのは reducer-test だけである。このように報告されるのはターゲットの描画で起きた panic だけである：テスト自身の `given` と `expect` は描画とは別に評価されるので、そのどちらかで起きた panic はテスト本体が投げたものであり、`error:` 行で報告される（[§8.7.1](#_8-7-1-output)）。
 
 ```
 tile-test ::= 'tile-test' identifier
