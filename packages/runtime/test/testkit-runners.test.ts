@@ -147,6 +147,16 @@ describe("runReducerTest", () => {
     expect(r.diffAt).toBe("slots.msg");
     expect(r.leaf).toEqual({ expected: "Hello", actual: "Helo" });
   });
+
+  it("reports a reducer that panicked where state was expected as an unexpected panic", () => {
+    expect(reducerTest({ result: null, panic: "boom", expect: expected({ n: 1 }) })).toEqual({
+      name: "t",
+      pass: false,
+      expected: '{"n":1}',
+      actual: 'panic: "boom"',
+      diffAt: "(unexpected panic)",
+    });
+  });
 });
 
 describe("runTileTest", () => {

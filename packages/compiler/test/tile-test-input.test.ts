@@ -1,6 +1,8 @@
 import { codegen, lex, parse } from "@kumikijs/compiler";
+import type { TestResult } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { errorCodesOf, errorsOf, locatedOf, messagesOf, textAt } from "./helpers/diagnostics.ts";
+import { compileOrFail, importModule, LOADABLE } from "./helpers/module.ts";
 
 /** A program whose `test` definitions are what is under test. */
 function app(tests: string, defs = DEFS): string {
@@ -314,17 +316,17 @@ describe("codegen refuses what check refuses", () => {
     ).toThrow(/E0213 tile-test "t": Tile "Host" expects 0 argument\(s\) but got 1/);
   });
 
-  it("lowers the agreeing pairings", () => {
+  it("lowers the agreeing pairings, so the tile renders the test's `in`", async () => {
     const ok = app(`test t =
     tile-test Card
         given  = {slots: {}, in: "x"}
         expect = text("x")`);
-    // A lowering that dropped the argument would still apply `_in`, so the bound value carries the assertion.
-    const js = codegen(parse(lex(ok)), {
-      runtimeSpecifier: "@kumikijs/runtime",
-      includeTests: true,
-    }).js;
-    expect(js).toContain(`const _in = "x";`);
-    expect(js).toContain(`_tilesById["Card"](_in)`);
+    const mod = await importModule<{ default: { _tests: { run: () => TestResult }[] } }>(
+      compileOrFail(ok, { ...LOADABLE, includeTests: true }),
+      "tile-test-in",
+    );
+    expect(mod.default._tests.map((t) => t.run())).toEqual([
+      expect.objectContaining({ name: "t", pass: true }),
+    ]);
   });
 });
