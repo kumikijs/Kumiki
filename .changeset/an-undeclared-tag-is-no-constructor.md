@@ -30,8 +30,8 @@ ok
 After:
 
 ```
-E0116 undef-variant at 5:49: Reference to undefined variant "Nonsense"
-E0116 undef-qualifier at 5:49: Reference to undefined qualifier "Decodr" in "Decodr.None" — did you mean "Decoder"?
+error E0116 undef-variant at 5:49: Reference to undefined variant "Nonsense"
+error E0116 undef-qualifier at 5:49: Reference to undefined qualifier "Decodr" in "Decodr.None" — did you mean "Decoder"?
 ```
 
 The tags are those of every union the program writes — a `type` body, or a
