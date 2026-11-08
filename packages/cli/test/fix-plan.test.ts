@@ -661,9 +661,12 @@ describe("planFixesExplained: skip-reason classification", () => {
       ]),
     )("$code, with $first declared first", ({ code, defs, message, tied, first, second }) => {
       const store = storeOf(["slot n : Int = 0", ...defs(first, second), ""].join("\n"));
-      const { patches, skipped } = planFixesExplained(store, [synth(code, message)]);
+      const diagnostic = synth(code, message);
+      const { patches, skipped } = planFixesExplained(store, [diagnostic]);
       expect(patches).toEqual([]);
-      expect(skipped).toEqual([{ code, reason: "close-names-tied", message, candidates: tied }]);
+      expect(skipped).toEqual([
+        { code, reason: "close-names-tied", message, diagnostic, candidates: tied },
+      ]);
     });
 
     it.each([
