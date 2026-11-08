@@ -19,7 +19,7 @@ Before:
 
 ```
 $ kumiki check leaf.kumiki
-E0005 tile-cycle at 2:25: Tile "leaf" expands into itself (leaf → leaf)
+error E0005 tile-cycle at 2:25: Tile "leaf" expands into itself (leaf → leaf)
 ```
 
 After:
