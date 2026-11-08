@@ -26,7 +26,7 @@ and past it the checker reports **E0237 `tile-depth`**, once per tile nothing
 else expands into, at the call where the tree goes over:
 
 ```
-E0237 tile-depth at 128:20: Tile "T0" nests 600 levels deep once the tiles in it are inlined, past the limit of 256; it goes over where "T127" expands into "T128"
+error E0237 tile-depth at 128:20: Tile "T0" nests 600 levels deep once the tiles in it are inlined, past the limit of 256; it goes over where "T127" expands into "T128"
 ```
 
 The tree is counted in tile levels, as the parser counts one definition: every
