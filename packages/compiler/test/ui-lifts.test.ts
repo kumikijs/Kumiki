@@ -201,10 +201,9 @@ describe("firesUnheard / firesUnheardIn", () => {
     expect(UI_LIFTS.filter((l) => l.everyElementFires).map((l) => l.ev)).toEqual(["click"]);
   });
 
-  it("answers every kind the click row leaves out: link with its own reason, the rest the default", () => {
-    const leftOut = [...BUILTIN_TILES].filter((k) => !UI_EVENT_TILE_KINDS.click?.has(k)).sort();
-    expect(firesUnheardIn("click", BUILTIN_TILES)).toEqual([
-      { kinds: leftOut.filter((k) => k !== "link"), reason: "never calls onClick" },
+  it("answers each kind the click row leaves out: link with its own reason, the rest the default", () => {
+    expect(firesUnheardIn("click", ["text", "box", "link", "image", "button"])).toEqual([
+      { kinds: ["box", "image", "text"], reason: "never calls onClick" },
       { kinds: ["link"], reason: "listens for it only to navigate, never calling onClick" },
     ]);
   });

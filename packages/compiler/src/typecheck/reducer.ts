@@ -4,9 +4,9 @@ import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { refType } from "../stdlib-types.ts";
 import {
-  firesUnheardIn,
+  firesUnheardClauses,
   UI_EVENT_TILE_KINDS,
-  type WrappedUnreached,
+  wrappedClause,
   wrappedUnreached,
 } from "../ui-lifts.ts";
 import {
@@ -169,37 +169,6 @@ function outletClause(ev: UiEventKind, tile: string): string {
     `the tile its route-outlet shows is picked by the route at runtime and rendered on its own, ` +
     `so ui.${ev}(${tile}) is not lifted onto it — subscribe to that tile instead`
   );
-}
-
-export function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
-  const kinds = kindsPhrase(g.kinds);
-  if (!g.bubbles) {
-    return (
-      `the runtime listens for "${ev}" on ${kinds}'s <${g.wrapper}>, ` +
-      `and the "${ev}" its <${g.focused}> fires does not bubble to the <${g.wrapper}>`
-    );
-  }
-  const self = g.wrapper === g.focused;
-  const on = self ? `its <${g.wrapper}>` : `the <${g.wrapper}> around its <${g.focused}>`;
-  const holding = self ? "inside it" : "in its panel";
-  return (
-    `${kinds} takes no "${ev}" listener on ${on}, ` +
-    `since a control ${holding} takes the subscription instead — ` +
-    `write ${g.handler}= on the ${g.kinds.join(" / ")} to hear a "${ev}" on its <${g.focused}>`
-  );
-}
-
-// W0212 and W0213 both give these as their reason, so the two say the same of
-// a kind.
-export function firesUnheardClauses(ev: UiEventKind, kinds: Iterable<string>): string[] {
-  return firesUnheardIn(ev, kinds).map(
-    (g) => `${kindsPhrase(g.kinds)} fires "${ev}", and its renderer ${g.reason}`,
-  );
-}
-
-function kindsPhrase(kinds: readonly string[]): string {
-  const named = kinds.join(" / ");
-  return `${/^[aeiou]/.test(named) ? "an" : "a"} ${named}`;
 }
 
 function declaredRoutePatterns(

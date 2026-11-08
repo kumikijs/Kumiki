@@ -30,5 +30,8 @@ the event instead. A clause names its kinds after `a` or `an`, as the first
 kind takes (`an image / text fires "click"`).
 
 Which diagnostics are reported is unchanged. So is the message where the
-element fires nothing: `ui.focus` on a `box`, `ui.change` on an `editable`,
+element does not fire the event: `ui.focus` on a `box`, `ui.change` on an `editable`,
 `ui.input` on a `text`, and `onChange` on a `row`.
+
+`@kumikijs/compiler` now exports `UI_LIFTS`, which names the builtins each
+`ui.<event>` reaches. W0212, W0213 and the handler codegen read it.

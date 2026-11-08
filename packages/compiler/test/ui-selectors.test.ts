@@ -619,26 +619,52 @@ describe("W0212 gives the reason that holds when the element fires the event", (
       );
     });
 
-    // One builtin of each kind a firesUnheard record names, with the event of its row.
+    // One builtin of each kind a firesUnheard record names: the event of its row, the handler
+    // that row lifts, the builtin as W0212 sees it, and the builtin carrying the handler.
     const RECORDED = [
-      ["link", 'link(to="/", text="home")', "click"],
-      ["slider", "slider(bind=hits, min=0, max=10)", "input"],
-      ["check", "check(value=done)", "input"],
-      ["radio", 'radio(group="g", selected=done)', "input"],
-      ["switch", "switch(value=done)", "input"],
-      ["select", "select(bind=size, options=sizes())", "input"],
+      [
+        "link",
+        "click",
+        "onClick",
+        'link(to="/", text="home")',
+        'link(to="/", text="home", onClick=r)',
+      ],
+      [
+        "slider",
+        "input",
+        "onInput",
+        "slider(bind=hits, min=0, max=10)",
+        "slider(bind=hits, min=0, max=10, onInput=r)",
+      ],
+      ["check", "input", "onInput", "check(value=done)", "check(value=done, onInput=r)"],
+      [
+        "radio",
+        "input",
+        "onInput",
+        'radio(group="g", selected=done)',
+        'radio(group="g", selected=done, onInput=r)',
+      ],
+      ["switch", "input", "onInput", "switch(value=done)", "switch(value=done, onInput=r)"],
+      [
+        "select",
+        "input",
+        "onInput",
+        "select(bind=size, options=sizes())",
+        "select(bind=size, options=sizes(), onInput=r)",
+      ],
     ] as const;
 
     it("has a case for every kind a firesUnheard record names", () => {
       const recorded = UI_LIFTS.flatMap((l) =>
         Object.keys(l.firesUnheard ?? {}).map((kind) => `${l.ev} ${kind}`),
       );
-      expect(RECORDED.map(([kind, , ev]) => `${ev} ${kind}`).sort()).toEqual(recorded.sort());
+      expect(RECORDED.map(([kind, ev]) => `${ev} ${kind}`).sort()).toEqual(recorded.sort());
     });
 
-    it.each(RECORDED)("gives W0212's reason for the handler on a %s", (kind, tile, ev) => {
-      const handler = UI_LIFTS.find((l) => l.ev === ev)?.handler;
-      expect(w0213(`tile D = ${tile.slice(0, -1)}, ${handler}=r)`)).toContain(
+    it.each(
+      RECORDED,
+    )("gives W0212's reason for the handler on a %s", (kind, ev, handler, tile, withHandler) => {
+      expect(w0213(`tile D = ${withHandler}`)).toContain(
         `"${handler}" on ${kind}() is dropped — ${reasonOf(ev, `tile D = ${tile}`)}. `,
       );
     });
@@ -656,7 +682,39 @@ describe("W0212 gives the reason that holds when the element fires the event", (
       );
     });
 
-    it("keeps 'does not fire it' where the element fires nothing", () => {
+    it("joins a user tile's clauses with '; ', the link's first", () => {
+      const inner = 'tile Inner = row(link(to="/", text="h"), text("x"))';
+      expect(w0213(`${inner}\ntile D = column(Inner(onClick=r))`)).toBe(
+        `"onClick" on Inner() is dropped — Inner renders nothing that calls it: ` +
+          `a link fires "click", and its renderer listens for it only to navigate, never calling onClick; ` +
+          `a row / text fires "click", and its renderer never calls onClick ` +
+          `(observed in body: link, row, text). ${ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+      );
+    });
+
+    it("gives a clause only for the kinds in an onInput body that fire input", () => {
+      const inner = 'tile Inner = box(slider(bind=hits, min=0, max=10), text("x"))';
+      expect(w0213(`${inner}\ntile D = column(Inner(onInput=r))`)).toBe(
+        `"onInput" on Inner() is dropped — Inner renders nothing that calls it: ` +
+          `a slider fires "input", and its renderer listens for it only to write the bind, never calling onInput ` +
+          `(observed in body: box, slider, text). ` +
+          `Put it on editable / input / textarea, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+      );
+    });
+
+    it("keeps 'does not fire it' for a handler no ui event lifts to", () => {
+      const onto =
+        "Put it on drawer / modal / popover, or subscribe with a reducer's on=ui.<event>(<Tile>)";
+      expect(w0213('tile D = row(text("x")) {onClose: r}')).toBe(
+        `"onClose" on row() is dropped — row does not fire it. ${onto}`,
+      );
+      expect(w0213('tile Inner = box(text("x"))\ntile D = column(Inner() {onClose: r})')).toBe(
+        `"onClose" on Inner() is dropped — Inner renders nothing that fires it ` +
+          `(observed in body: box, text). ${onto}`,
+      );
+    });
+
+    it("keeps 'does not fire it' where the element does not fire the event", () => {
       expect(w0213('tile D = row(text("x")) {onChange: r}')).toBe(
         `"onChange" on row() is dropped — row does not fire it. ` +
           `Put it on check / input / radio / select / slider / switch / textarea, ` +

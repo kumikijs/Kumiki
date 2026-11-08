@@ -778,7 +778,7 @@ reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、その subscrip
 - その id の値がリテラル文字列ではない式（`Ref`, method call など） — 実行時の値が check 時にはわからない。
 - そのような連鎖を上って prop を書く最も外側の呼び出し側が、`id` を書かず、イベントハンドラと `key` 以外の prop を書いている — それが要素の dispatch 内容に何を残すかは追跡しない。
 - ハンドラがその reducer を名指している（どこに書かれていても `onClick=r`）: ハンドラが dispatch する reducer も同じ `#id` でフィルタされ、その対象はハンドラを持つ要素である。
-- tile 配下に `<ev>` を発火する要素がない — それは [W0212](#w0212-ui-event-tile-mismatch-warning) の扱う場合であり、W0212 は走査が要素を 1 つも見つけられない場合を除いて報告する。
+- tile 配下に `<ev>` を reducer に渡す要素がない — それは [W0212](#w0212-ui-event-tile-mismatch-warning) の扱う場合であり、W0212 は走査が要素を 1 つも見つけられない場合を除いて報告する。
 - セレクタに `#id` がない。
 - セレクタがワイルドカード `_`。
 - 対象 tile 自体が未宣言（E0211 が既に発火するので、E0212 は抑制して単一の根本原因を提示する）。
@@ -819,7 +819,7 @@ body に `route-outlet` がある場合、route がそこに表示する tile �
 
 body にそのイベントの行に載る kind もある場合も同じことが成り立ち、そのとき W0212 は出ない：`ui.click(Shell)` は Shell 自身の body にある button では実行され、route された tile の中の button では決して実行されない。route された tile への subscription（`ui.click(Child)`）は、route がそれをどこに表示しても実行される。
 
-子孫がイベントを発火しないという最初の形は、要素が何も発火しない kind に対するメッセージである：`box` への `ui.focus`、`editable` への `ui.change`、`text` への `ui.input`。
+子孫がイベントを発火しないという最初の形は、要素がそのイベントを発火しない kind に対するメッセージである：`box` への `ui.focus`、`editable` への `ui.change`、`text` への `ui.input`。
 
 各イベントが許容する root builtin tile は以下（現状ツールチェーンの coverage。載っている kind にはいずれもそのイベントが届き、空白が規則であるのは下の注記がそう述べる箇所だけである。実装側の source of truth は `packages/compiler/src/ui-lifts.ts` の `UI_LIFTS` で、`packages/compiler/src/codegen/selector.ts` の `propsFor`（ハンドラ生成ゲート）、`packages/compiler/src/typecheck/reducer.ts` の W0212 検査、`typecheck/tile-collect.ts` の E0212、`typecheck/tile.ts` の W0213 がいずれもこれを参照する。runtime 側の DOM イベント面は `packages/runtime/src/tiles/input/` 配下の tile モジュール群（共有のリスナ登録は `_shared.ts`、`tiles-input.ts` はファミリの集約にすぎない）と `packages/runtime/src/tiles/text/link.ts` が持ち、加えて `packages/runtime/src/core/ui-events.ts` の `applyUiEventHandlers` が普遍的に配線する）:
 
@@ -1160,7 +1160,7 @@ body の kind がイベントを発火するのに、そのレンダラがハン
 
 > `"onFocus" on Inner() is dropped — Inner renders nothing where "focus" reaches it: the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label> (observed in body: check). Put it on button / editable / input / link / scroll / select / slider / textarea / video, or subscribe with a reducer's on=ui.<event>(<Tile>)`
 
-`<kinds>` は tile の描画ツリーを辿って集めたもので、これは [W0212](#w0212-ui-event-tile-mismatch-warning) が使うのと同じ走査である。ただし本体内で呼ばれた tile の `error-boundary` フォールバックには入らない: そのフォールバックは、呼び出し側に書いたハンドラなしで描画される。報告するのは、そのツリーのどこにもハンドラが届く種類が無い場合だけ。これは意図的に控えめである：prop が着地するのはその tile の **root** ノードなので、`tile Card = box(button(...))` もハンドラを捨てるが、この走査は root と子孫を区別しないため報告しない。同様に `tile Faq = details(summary="Q", text("a"))` は root の `<details>` で `Faq(onFocus=r)` を捨てるが、パネルにある `text` のために報告しない。逆に、報告するものはすべて確実に捨てられる。
+`<kinds>` は tile の描画ツリーを辿って集めたもので、これは [W0212](#w0212-ui-event-tile-mismatch-warning) が使うのと同じ走査である。ただし本体内で呼ばれた tile の `error-boundary` フォールバックには入らない: そのフォールバックは、呼び出し側に書いたハンドラなしで描画される。報告するのは、そのツリーのどこにもハンドラを呼ぶ種類が無い場合だけ。ランタイムがタイルの生成した要素にそのまま付ける `onFocus` / `onBlur` では、それはツリーのすべての種類が、包む要素にイベントが届かない包まれた control である場合を指す。これは意図的に控えめである：prop が着地するのはその tile の **root** ノードなので、`tile Card = box(button(...))` もハンドラを捨てるが、この走査は root と子孫を区別しないため報告しない。同様に `tile Faq = details(summary="Q", text("a"))` は root の `<details>` で `Faq(onFocus=r)` を捨てるが、パネルにある `text` のために報告しない。逆に、報告するものはすべて確実に捨てられる。
 
 走査が種類を 1 つも見つけられなかった場合は報告しない — その tile の root 自体が、builtin でも宣言済み tile でもない名前である場合（`tile Inner = Nope()`、あるいは循環 `tile Inner = Inner()`）で、走査は何も学べていない。W0212 も同じ空の答えを前にして黙る。これらの形にはそれぞれの符号がある（[E0005](#e0005-tile-cycle)、[E0105](#e0105-undef-tile)）。解決できない名前が解決可能な body の**内側**にある場合（`tile Inner = box(Nope())`）は別の話で、その周囲の種類は root についての正しい答えなので、W0213 は解決できない部分を名指す符号と並んで報告される。
 
