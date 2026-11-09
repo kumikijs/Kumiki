@@ -29,9 +29,17 @@ export function lifecycleReducer(name: string, apply: ReducerSpec["apply"]): Red
 
 /**
  * `body` under an `error-boundary` that `tile` declares, lowered as codegen lowers one. The
- * fallback is a text naming the `episode-id` it was handed, or `(none)`.
+ * fallback is `fallback` of the `episode-id` it was handed, or of `(none)`; by default a text
+ * naming it.
  */
-export function boundaryAround(tile: string, body: () => TileNode): TileNode {
+export function boundaryAround(
+  tile: string,
+  body: () => TileNode,
+  fallback: (episode: string) => TileNode = (episode) => ({
+    kind: "text",
+    text: `fallback episode: ${episode}`,
+  }),
+): TileNode {
   try {
     return body();
   } catch (e) {
@@ -39,6 +47,6 @@ export function boundaryAround(tile: string, body: () => TileNode): TileNode {
       "episode-id": { _tag: string; _0?: string };
     };
     const ep = info["episode-id"];
-    return { kind: "text", text: `fallback episode: ${ep._tag === "Some" ? ep._0 : "(none)"}` };
+    return fallback(ep._tag === "Some" ? (ep._0 ?? "") : "(none)");
   }
 }

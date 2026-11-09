@@ -1,7 +1,9 @@
 import type { AppShape } from "@kumikijs/runtime";
-import { createEpisodeLogger } from "@kumikijs/runtime";
-import { beforeEach, describe, expect, it } from "vitest";
+import { createEpisodeLogger, mount } from "@kumikijs/runtime";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installDevPanel } from "../src/dev/panel.ts";
+import { buildAndLoad } from "./helpers/build-and-load.ts";
+import { APP_A, seed } from "./helpers/files.ts";
 
 /** The smallest app the panel can be handed: no slots, no reducers, nothing running. */
 function emptyApp(over: Partial<AppShape> = {}): AppShape {
@@ -186,5 +188,261 @@ describe("installDevPanel", () => {
     panel.onRemount();
     expect(inspector.textContent).toContain("99");
     expect(inspector.textContent).not.toContain("42");
+  });
+});
+
+describe("the panic overlay opens for a panic nothing handled", () => {
+  let quiet: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    setupHost();
+    quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    quiet.mockRestore();
+  });
+
+  type Mounted = {
+    /** Click the element with this id. */
+    click: (id?: string) => void;
+    /** The newest episode's timeline lines, as the panel lists them once its head is clicked. */
+    timeline: () => (string | null)[];
+  };
+
+  /** Compile `source` and mount it with a logger wired to the panel, as `kumiki dev`'s client does. */
+  async function mountWithPanel(source: string): Promise<Mounted> {
+    return mountAppWithPanel(await buildAndLoad(seed(`${source}\n${APP_A}`), "app"));
+  }
+
+  function mountAppWithPanel(app: AppShape): Mounted {
+    let panel: ReturnType<typeof installDevPanel> | undefined;
+    const logger = createEpisodeLogger({ onEpisode: () => panel?.push() });
+    panel = installDevPanel({ logger, getApp: () => app });
+    mount(app, document.getElementById("app") as HTMLElement, { episodeLogger: logger });
+    return {
+      click: (id = "go") => (document.getElementById(id) as HTMLElement).click(),
+      timeline: () => {
+        (document.querySelector(".kdp-episode-head") as HTMLElement).click();
+        return Array.from(document.querySelectorAll(".kdp-step"), (li) => li.textContent);
+      },
+    };
+  }
+
+  const overlayLocation = (): string | null | undefined =>
+    document.querySelector(".kdp-overlay .kdp-overlay-loc")?.textContent;
+
+  it.each([
+    {
+      name: "a reducer that wrote no slot",
+      slot: "slot count : Int = 0",
+      reducer: "reducer noop on=ui.click(Go) do= if count > 100 then count := 0",
+    },
+    {
+      name: "a reducer that wrote only a volatile slot",
+      slot: `slot draft : Text volatile = ""`,
+      reducer: `reducer noop on=ui.click(Go) do= draft := draft + "x"`,
+    },
+  ])("stays closed, click after click, for a panic a boundary caught after $name", async ({
+    slot,
+    reducer,
+  }) => {
+    const { click, timeline } = await mountWithPanel(`
+slot secret : Option(Text) = None
+${slot}
+
+tile Risky
+    error-boundary = Fallback
+    = column(text("secret: " + secret.get))
+
+tile Fallback
+    in=PanicInfo
+    = text("recovered: " + $1.message)
+
+tile Go = button(text="go", onClick=noop) {id: "go"}
+
+tile App = column(Risky, Go)
+
+${reducer}`);
+    for (const n of [1, 2, 3]) {
+      click();
+      expect(document.querySelector(".kdp-overlay"), `after click ${n}`).toBeNull();
+    }
+    expect(document.getElementById("app")?.textContent).toContain("recovered: get called on None");
+    expect(timeline()).toEqual([
+      "[reducer] noop",
+      "[panic] get called on None  @ Risky  (handled)",
+    ]);
+  });
+
+  it.each([
+    {
+      name: "a render panic no boundary caught, with a signal-update after it",
+      source: `
+slot secret : Option(Text) = None
+slot reveal : Bool         = false
+
+tile Risky = column(when(reveal, text("secret: " + secret.get)))
+
+tile Go = button(text="go", onClick=doReveal) {id: "go"}
+
+tile App = column(Risky, Go)
+
+reducer doReveal on=ui.click(Go) do= reveal := true`,
+      location: "render",
+      timeline: [
+        "[reducer] doReveal  reveal: false → true",
+        "[panic] get called on None  @ render",
+        "[signal-update] dirty=[reveal]",
+      ],
+    },
+    {
+      name: "a reducer panic an app.error reducer was told about",
+      source: `
+slot secret : Option(Text) = None
+slot caught : Text         = "-"
+
+tile Go = button(text="go", onClick=boom) {id: "go"}
+
+tile App = column(text("caught: " + caught), Go)
+
+reducer boom    on=ui.click(Go) do= caught := secret.get
+reducer onPanic on=app.error    do= caught := $event.message`,
+      location: `reducer "boom"`,
+      timeline: [
+        `[panic] get called on None  @ reducer "boom"`,
+        `[reducer] onPanic  caught: "-" → "get called on None"`,
+        "[signal-update] dirty=[caught]",
+      ],
+    },
+    {
+      name: "a render panic after one a boundary caught, in the same render",
+      source: `
+slot secret : Option(Text) = None
+slot reveal : Bool         = false
+
+tile Guarded
+    error-boundary = Fallback
+    = column(text("secret: " + secret.get))
+
+tile Fallback
+    in=PanicInfo
+    = text("recovered: " + $1.message)
+
+tile Unguarded = column(when(reveal, text("secret: " + secret.get)))
+
+tile Go = button(text="go", onClick=doReveal) {id: "go"}
+
+tile App = column(Guarded, Unguarded, Go)
+
+reducer doReveal on=ui.click(Go) do= reveal := true`,
+      location: "render",
+      timeline: [
+        "[reducer] doReveal  reveal: false → true",
+        "[panic] get called on None  @ Guarded  (handled)",
+        "[panic] get called on None  @ render",
+        "[signal-update] dirty=[reveal]",
+      ],
+    },
+    {
+      name: "a fallback that panics in turn",
+      source: `
+slot secret : Option(Text) = None
+slot reason : Option(Text) = None
+slot reveal : Bool         = false
+
+tile Risky
+    error-boundary = Fallback
+    = column(when(reveal, text("secret: " + secret.get)))
+
+tile Fallback
+    in=PanicInfo
+    = text("recovered: " + reason.get)
+
+tile Go = button(text="go", onClick=doReveal) {id: "go"}
+
+tile App = column(Risky, Go)
+
+reducer doReveal on=ui.click(Go) do= reveal := true`,
+      location: "render",
+      timeline: [
+        "[reducer] doReveal  reveal: false → true",
+        "[panic] get called on None  @ Risky  (handled)",
+        "[panic] get called on None  @ render",
+        "[signal-update] dirty=[reveal]",
+      ],
+    },
+  ])("opens for $name", async ({ source, location, timeline: lines }) => {
+    const { click, timeline } = await mountWithPanel(source);
+    click();
+    const overlay = document.querySelector(".kdp-overlay");
+    expect(overlay?.textContent).toContain("Kumiki panic");
+    expect(overlay?.textContent).toContain("get called on None");
+    expect(overlayLocation()).toBe(location);
+    expect(timeline()).toEqual(lines);
+  });
+
+  it.each([
+    { kind: "queue" as const },
+    { kind: "debounce" as const, ms: 1 },
+  ])("opens for an effect refused under a $kind policy, whose effect-cancel follows the panic", async (policy) => {
+    const app = emptyApp({
+      effects: {
+        save: {
+          name: "save",
+          cap: "storage.write",
+          policy,
+          invoke: async () => ({ kind: "ok", value: "stored" }),
+        },
+      },
+      reducers: [
+        {
+          name: "onStart",
+          event: { kind: "lifecycle", name: "app.start" },
+          apply: (live) => ({ slots: live, emits: [{ effect: "save", args: ["draft"] }] }),
+        },
+      ],
+      root: () => ({ kind: "text", text: "ready" }),
+    });
+    const { timeline } = mountAppWithPanel(app);
+    await vi.waitFor(() => expect(document.querySelector(".kdp-overlay")).not.toBeNull());
+    expect(overlayLocation()).toBe(`effect "save"`);
+    expect(timeline().slice(-2)).toEqual([
+      `[panic] capability "storage.write" is not declared in app.caps  @ effect "save"`,
+      "[effect-cancel] save",
+    ]);
+  });
+
+  it("clears on an episode whose only panic a boundary caught", async () => {
+    const { click, timeline } = await mountWithPanel(`
+slot secret : Option(Text) = None
+slot caught : Text         = "-"
+slot count  : Int          = 0
+
+tile Risky
+    error-boundary = Fallback
+    = column(text("secret: " + secret.get))
+
+tile Fallback
+    in=PanicInfo
+    = text("recovered: " + $1.message)
+
+tile Boom = button(text="boom", onClick=boom) {id: "boom"}
+
+tile Go = button(text="go", onClick=inc) {id: "go"}
+
+tile App = column(Risky, Boom, Go)
+
+reducer boom on=ui.click(Boom) do= caught := secret.get
+reducer inc  on=ui.click(Go)   do= count := count + 1`);
+    click("boom");
+    expect(overlayLocation()).toBe(`reducer "boom"`);
+
+    click("go");
+    expect(document.querySelector(".kdp-overlay")).toBeNull();
+    expect(timeline()).toEqual([
+      "[reducer] inc  count: 0 → 1",
+      "[panic] get called on None  @ Risky  (handled)",
+      "[signal-update] dirty=[count]",
+    ]);
+    expect(document.getElementById("app")?.textContent).toContain("recovered: get called on None");
   });
 });

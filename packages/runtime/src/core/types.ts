@@ -313,6 +313,12 @@ export type BuiltinInstaller = (app: AppShape, nav: NavContext) => void;
  */
 export type HoldLeave = (close: () => void) => ((outcome: "yes" | "no") => void) | undefined;
 
+/**
+ * A `confirm` modal hands over how to close it unanswered, so disposing the app closes it, and
+ * gets back what to call once it has closed.
+ */
+export type CloseOnDispose = (close: () => void) => () => void;
+
 export type RoutingImpl = {
   createRouter(mode: "history" | "memory" | undefined, initialPath?: string): Router;
   parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRoute;

@@ -19,6 +19,7 @@ import {
   compareReducerExpect,
   type ReducerExpect,
   type TestResult,
+  unexpectedPanic,
 } from "./testkit/expect.ts";
 import {
   _hashStr,
@@ -68,6 +69,8 @@ function failureWay(e: unknown): string {
 }
 
 export const _stdlibTest = {
+  /** Whether a throw in the code under test is a panic, which is the test's outcome. */
+  isPanic,
   /** The wildcard map-key sentinel; codegen lowers a `<any-id>` map key to it. */
   WILD_KEY,
   /** The Set-literal wildcard count; codegen lowers the `<any-id>` members of a Set literal to it. */
@@ -334,8 +337,16 @@ export const _stdlibTest = {
     }
     return { name, pass: true };
   },
-  /** Structurally compare a rendered tile against the expected tile structure. */
-  runTileTest(input: { name: string; actual: unknown; expected: unknown }): TestResult {
+  /** A tile-test has no form that expects a panic, so a panic as its target renders is always unexpected. */
+  runTileTest(input: {
+    name: string;
+    actual: unknown;
+    panic: string | null;
+    expected: unknown;
+  }): TestResult {
+    if (input.panic !== null) {
+      return unexpectedPanic(input.name, serializeTileNode(input.expected), input.panic);
+    }
     const cmp = tileStructEqual(input.expected, input.actual);
     return {
       name: input.name,

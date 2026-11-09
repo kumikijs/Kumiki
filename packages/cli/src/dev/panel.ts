@@ -1,4 +1,9 @@
-import type { AppShape, EpisodeLogger, EpisodeStep } from "@kumikijs/runtime";
+import {
+  type AppShape,
+  type EpisodeLogger,
+  type EpisodeStep,
+  isUnhandledPanic,
+} from "@kumikijs/runtime";
 
 type Options = {
   logger: EpisodeLogger;
@@ -180,11 +185,14 @@ export function installDevPanel(opts: Options): {
   function maybeShowOverlay(): void {
     const all = opts.logger.list();
     const latest = all.length > 0 ? all[all.length - 1] : undefined;
-    const lastStep = latest?.steps[latest.steps.length - 1];
-    if (latest && latest.status === "panic" && lastStep && lastStep.kind === "panic") {
+    // By `handled`, not by status or the last step: an episode whose only panic a boundary caught
+    // is `status: "panic"`, a dispatch records steps after an unhandled panic, and a caught one
+    // can land last.
+    const panic = latest?.steps.find(isUnhandledPanic);
+    if (panic) {
       if (overlay) return;
-      showOverlay("Kumiki panic", lastStep.message, lastStep.location ?? "");
-    } else if (overlay && latest && latest.status === "completed") {
+      showOverlay("Kumiki panic", panic.message, panic.location ?? "");
+    } else if (latest) {
       dismissOverlay();
     }
   }
@@ -267,8 +275,10 @@ function formatStep(step: EpisodeStep): string {
       return `[effect-cancel] ${step.targetId}`;
     case "signal-update":
       return `[signal-update] dirty=[${step["dirty-slots"].join(",")}]`;
-    case "panic":
-      return `[panic] ${step.message}${step.location ? `  @ ${step.location}` : ""}`;
+    case "panic": {
+      const where = step.location ? `  @ ${step.location}` : "";
+      return `[panic] ${step.message}${where}${isUnhandledPanic(step) ? "" : "  (handled)"}`;
+    }
   }
 }
 

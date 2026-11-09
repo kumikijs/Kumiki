@@ -69,11 +69,23 @@ export type EpisodeStep =
       "env-reads"?: EnvRead[];
       /** `Error.stack` of the caught throw, when available. */
       stack?: string;
-      /** Flattened `Error.cause` chain, root-most first. Omitted when empty. */
+      /** Flattened `Error.cause` chain, nearest cause first. Omitted when empty. */
       cause?: PanicCauseLink[];
       category?: PanicCategory;
+      /** An `error-boundary` caught it; absent on every other panic step. */
+      handled?: boolean;
       ts: number;
     };
+
+export type PanicStep = Extract<EpisodeStep, { kind: "panic" }>;
+
+/**
+ * A panic step nothing handled. A step without `handled` counts as unhandled, so a log written
+ * before the field existed still reports every panic.
+ */
+export function isUnhandledPanic(step: EpisodeStep): step is PanicStep & { handled?: false } {
+  return step.kind === "panic" && step.handled !== true;
+}
 
 export type EpisodeStatus = "completed" | "panic" | "cancelled" | "ongoing";
 
@@ -156,6 +168,8 @@ export type EpisodeLogger = {
       name?: string | undefined;
       /** What that body read from the environment before it threw. */
       envReads?: readonly EnvRead[] | undefined;
+      /** An `error-boundary` caught it; the step carries `handled: true` only when this is `true`. */
+      handled?: boolean | undefined;
     },
     token?: string,
   ): string | undefined;
@@ -410,6 +424,7 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
       if (info.stack !== undefined) step.stack = info.stack;
       if (info.cause !== undefined && info.cause.length > 0) step.cause = info.cause;
       if (info.category !== undefined) step.category = info.category;
+      if (info.handled === true) step.handled = true;
       ep.steps.push(step);
       ep.status = "panic";
       return ep.id;

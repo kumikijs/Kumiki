@@ -10,7 +10,7 @@ the plugin passed the compiler's column through unchanged. Every error and
 warning it reported therefore pointed one character to the right:
 
 ```
-kumiki check:  E0103 undef-ref at 1:24: Reference to undefined name "nope"
+kumiki check:  error E0103 undef-ref at 1:24: Reference to undefined name "nope"
 
 1  |  tile App = column(text(nope))
    |                          ^

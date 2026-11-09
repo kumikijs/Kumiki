@@ -14,7 +14,7 @@ Kumiki の標準ライブラリは「**最小完備**」を目標に設計され
 | `Bool` | 真偽値 | `true`, `false` |
 | `Unit` | 単一値 | `()` |
 | `Bytes` | バイト列 | リテラルなし、`Bytes.from-text(text)` / `Bytes.from-base64(text)` / `Bytes.from-bytes(list)` で生成（[§2.2.10](#_2-2-10-bytes) 参照） |
-| `Time` | UNIX ナノ秒 | リテラルなし、`now` または `Time.parse(text)` |
+| `Time` | Unix エポックからのミリ秒 | リテラルなし、`now` または `Time.parse(text)` |
 | `EffectId` | `emit` が返す不透明ハンドル（[§2.1.1.1](#_2-1-1-1-effectid) 参照） | リテラルなし、`EffectId.none` |
 
 #### 2.1.1.1 `EffectId`
@@ -51,7 +51,7 @@ let id = emit fetchQuote()
 | `Url` | `nominal Text where url` |
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |
-| `Duration` | `nominal Int` (ナノ秒) |
+| `Duration` | `nominal Int` (ミリ秒) |
 | `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — [ルーティング §3.2](./routing.md#_3-2-current-route-state) 参照 |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
@@ -354,6 +354,8 @@ to-ms                       : Int
 
 Time / Duration はランタイム上では **raw ミリ秒数**として表現される。`time.plus(Duration.h(72))` のような演算は単なる ms 加算に展開される。`Duration` は符号を持ち、`a` の方が前の時刻なら `a.diff(b)` は負になる（[§2.2.8](#_2-2-8-time)）。
 
+プログラムから見える単位もミリ秒である。`now` は Unix エポックからのミリ秒を返し、1 秒離れた二つの時刻の `diff` は `Duration.s(1)` で、その `to-ms` は `1000` である。
+
 構築子はいずれも大きさを引数に取り、括弧を落としても値にはならない。`Duration.h` は引数のない呼び出しとして読まれ、`Duration.h()` と同じ [E0213](./errors.md#e0213-call-arity-mismatch) になる。下の `Bytes.*` も同じ読み方をする。それ以前は括弧なしの表記はフィールド読みで、何も持たない値に評価されていた——そして何も無い duration は 0 の duration であり、それを報告するものは何もなかった。
 
 ```kumiki fragment
@@ -567,7 +569,7 @@ id は uuid の `Text` なので、`TypeName` は `Text` が入る型である�
 now                        : Time          ; 現在時刻
 ```
 
-`Time.now`（[§2.2.8](#_2-2-8-time)）はこの組み込みを型の名前で書いたものであり、`Time.now()` は括弧を書いた同じ呼び出しである。どちらも同じ `Time` で、評価された場所で時計から読まれ、環境読み取りとしても同じである——それを読む reducer は `now` の記録を残し（[ランタイム §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）、リプレイはその記録から答える（[§10.5.3](./runtime.md#_10-5-3-replay)）。`now` 自体はキーワードであり、括弧を取らない。qualifier は `Time` そのものである：`now` はあらゆる型名が持つメンバ（[§2.4.1](#_2-4-1-id-生成)・[§2.4.3](#_2-4-3-型変換)）ではないため、`Time` の上に宣言された型（`type Stamp = nominal Time`）では `Stamp.now()` は [E0116](./errors.md#e0116-undef-call) になる。括弧なしの `Stamp.now` はフィールド読みのまま `check` を通り何も持たない値に評価される。これは E0116 が述べる既知のギャップである。
+`Time.now`（[§2.2.8](#_2-2-8-time)）はこの組み込みを型の名前で書いたものであり、`Time.now()` は括弧を書いた同じ呼び出しである。どちらも同じ `Time` で、評価された場所で時計から読まれ、環境読み取りとしても同じである——それを読む reducer は `now` の記録を残し（[ランタイム §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）、リプレイはその記録から答える（[§10.5.3](./runtime.md#_10-5-3-replay)）。`now` 自体はキーワードであり、括弧を取らない。qualifier は `Time` そのものである：`now` はあらゆる型名が持つメンバ（[§2.4.1](#_2-4-1-id-生成)・[§2.4.3](#_2-4-3-型変換)）ではないため、`Time` の上に宣言された型（`type Stamp = nominal Time`）では `Stamp.now()` は [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier) になる。括弧なしの `Stamp.now` はフィールド読みのまま `check` を通り何も持たない値に評価される。これは E0116 が述べる既知のギャップである。
 
 ### 2.4.3 型変換
 
@@ -744,6 +746,8 @@ effect scroll-to   in={x: Int, y: Int}  out=Unit
 ケイパビリティを要求しない唯一の標準 effect。ユーザーが既に見ているページのビューポートを動かすだけで、その外側には何も届かないからである。→ [ルーティング §3.9](./routing.md#_3-9-スクロール復元)。
 
 ### 2.6.5 確認ダイアログ {#_2-6-5-confirm}
+
+ランタイムが描画するダイアログは `data-kumiki-confirm`（テストが選択に使うマーカ）を持ち、その Yes と No のボタンは `data-kumiki-confirm-action` に `yes` と `no` を持つ。
 
 ```kumiki fragment
 effect confirm     cap=notification.show  in={title: Text, message: Text, onYes: ReducerRef, onNo: ReducerRef}  out=Unit
