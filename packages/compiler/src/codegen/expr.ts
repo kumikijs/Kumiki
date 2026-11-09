@@ -731,6 +731,9 @@ export function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): stri
   );
 }
 
+/** The name a match binds its scrutinee to, so every arm tests the one value it evaluated to. */
+const MATCHED = "_v";
+
 export function matchValueJs<A extends { pattern: Pattern }>(
   scrutinee: string,
   arms: readonly A[],
@@ -738,43 +741,54 @@ export function matchValueJs<A extends { pattern: Pattern }>(
   value: (arm: A, inner: EvalCtx) => string,
   fallback: string,
 ): string {
-  return `((_v) => { ${matchArmsJs(arms, ctx, "_v", { value })} return ${fallback}; })(${scrutinee})`;
+  const armsJs = matchArmsJs(arms, ctx, { kind: "return", value });
+  return `((${MATCHED}) => { ${armsJs} return ${fallback}; })(${scrutinee})`;
+}
+
+/** A match statement: a block named `label` around its arms, each of which runs and leaves it. */
+export function matchStmtJs<A extends { pattern: Pattern }>(
+  scrutinee: string,
+  arms: readonly A[],
+  ctx: EvalCtx,
+  run: (arm: A, inner: EvalCtx) => string,
+  label: string,
+): string {
+  const armsJs = matchArmsJs(arms, ctx, { kind: "break", run, label });
+  return `${label}: { const ${MATCHED} = ${scrutinee};\n  ${armsJs}\n}`;
 }
 
 /** How an arm leaves the match once it is done, so the arms after it are never tried. */
-export type ArmBody<A> =
-  | { value: (arm: A, inner: EvalCtx) => string }
-  | { run: (arm: A, inner: EvalCtx) => string; label: string };
+type ArmExit<A> =
+  | { kind: "return"; value: (arm: A, inner: EvalCtx) => string }
+  | { kind: "break"; run: (arm: A, inner: EvalCtx) => string; label: string };
 
-// The arms sit side by side rather than each in the `else` of the one before it, so the
-// output nests no deeper for two thousand arms than for two.
-export function matchArmsJs<A extends { pattern: Pattern }>(
+/**
+ * One `if` per arm, side by side rather than each in the `else` of the one before it, so the
+ * output nests no deeper for 1,000 arms than for 2. Each arm's exit is written here, so no
+ * caller can leave one out and let the next arm run too.
+ */
+function matchArmsJs<A extends { pattern: Pattern }>(
   arms: readonly A[],
   ctx: EvalCtx,
-  scVar: string,
-  body: ArmBody<A>,
+  exit: ArmExit<A>,
 ): string {
   return arms
     .map((arm) => {
-      const { guard, binds, inner } = patternArm(arm.pattern, ctx, scVar);
+      const { guard, binds, inner } = patternArm(arm.pattern, ctx);
       const then =
-        "value" in body
-          ? ` return ${body.value(arm, inner)}; }`
-          : `\n  ${body.run(arm, inner)}\n  break ${body.label};\n}`;
+        exit.kind === "return"
+          ? ` return ${exit.value(arm, inner)}; }`
+          : `\n  ${exit.run(arm, inner)}\n  break ${exit.label};\n}`;
       return `if (${guard}) {${binds === "" ? "" : ` ${binds}`}${then}`;
     })
     .join(" ");
 }
 
-function patternArm(
-  p: Pattern,
-  ctx: EvalCtx,
-  scVar: string,
-): { guard: string; binds: string; inner: EvalCtx } {
+function patternArm(p: Pattern, ctx: EvalCtx): { guard: string; binds: string; inner: EvalCtx } {
   const inner = childCtx(ctx);
   const guards: string[] = [];
   const binds: string[] = [];
-  walkPattern(p, scVar, inner, guards, binds);
+  walkPattern(p, MATCHED, inner, guards, binds);
   return {
     guard: guards.length === 0 ? "true" : guards.join(" && "),
     binds: binds.join(" "),

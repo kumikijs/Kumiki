@@ -11,7 +11,7 @@ import {
   makeEvalCtx,
 } from "./context.ts";
 import { slotGate } from "./emit-slot.ts";
-import { jsOfExpr, matchArmsJs, reducerEmitJs, slotReadJs } from "./expr.ts";
+import { jsOfExpr, matchStmtJs, reducerEmitJs, slotReadJs } from "./expr.ts";
 import { isUnwrapStep, type PathStep, segmentJs, UNWRAP_SEGMENT } from "./path-segment.ts";
 
 function slotWriteJs(slot: string, valueJs: string, gen: GenCtx): string {
@@ -194,13 +194,15 @@ export function genStatement(s: Statement, ctx: EvalCtx, matchDepth = 0): string
     return `if (${cond}) {\n  ${thenBody}\n} else {\n  ${elseBody}\n}`;
   }
   if (s.kind === "MatchStmt") {
-    // A match nested in an arm labels a block inside this one, which may not reuse its label.
-    const label = `_m${matchDepth}`;
-    const arms = matchArmsJs(s.arms, ctx, "_v", {
-      run: (arm, inner) => arm.body.map((b) => genStatement(b, inner, matchDepth + 1)).join("\n  "),
-      label,
-    });
-    return `${label}: { const _v = ${jsOfExpr(s.scrutinee, ctx)};\n  ${arms}\n}`;
+    // JS rejects a label reused inside its own statement, so a match anywhere within an arm takes
+    // the next depth's label; matches side by side share one.
+    return matchStmtJs(
+      jsOfExpr(s.scrutinee, ctx),
+      s.arms,
+      ctx,
+      (arm, inner) => arm.body.map((b) => genStatement(b, inner, matchDepth + 1)).join("\n  "),
+      `_m${matchDepth}`,
+    );
   }
   if (s.kind === "NoopStmt") {
     return `/* no-op */`;

@@ -1,27 +1,21 @@
 import { spawnSync } from "node:child_process";
-import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { compileOrFail, LOADABLE, type ReducerShape, writeTmpFile } from "./helpers/module.ts";
-import { withApp } from "./helpers/programs.ts";
+import { compileOrFail, LOADABLE, writeTmpFile } from "./helpers/module.ts";
+import { withApp, withReducer } from "./helpers/programs.ts";
 import { scratchRoot } from "./helpers/scratch.ts";
 
 // Under the package: the emitted module imports `@kumikijs/runtime` by name.
 const TMP = scratchRoot(import.meta.url);
 
-// A quarter of V8's default. How many nested statements the default holds differs from one
-// machine to the next, so the check fixes the stack rather than inherit it.
-const STACK_KB = 256;
+// Small enough that arms nested one per arm overrun it on every platform: on Linux x64 they do
+// from about 290 arms. How many nested statements a stack holds differs by platform, so the
+// check fixes the stack rather than inherit it.
+const STACK_KB = 64;
 
-// A real module load overruns the 5s default on a cold cache.
-const LOADS = { timeout: 60_000 } as const;
+// Each run starts a `node` process that loads the runtime from source.
+const RUNS = { timeout: 60_000 } as const;
 
 type Slots = Record<string, unknown>;
-type TileNode = { kind: string; text?: string };
-type LoadedApp = {
-  live: Slots;
-  reducers: ReducerShape[];
-  routes: { pattern: string; tile: () => TileNode }[];
-};
 
 function emit(source: string): string {
   return writeTmpFile(TMP, "match-arms", "app.mjs", compileOrFail(source, LOADABLE));
@@ -45,70 +39,81 @@ function parseError(file: string): string {
   return run.stderr.split("\n").find((l) => /Error/.test(l)) ?? `exit ${run.status}`;
 }
 
-async function load(file: string): Promise<LoadedApp> {
-  const mod: { createApp: () => LoadedApp } = await import(
-    `${pathToFileURL(file).href}?t=${Date.now()}`
+/** What the module observes after the match ran: the slots reducer `r` wrote, or the text `/` rendered. */
+type Read = "slots" | "text";
+
+const RUNNER = `
+import { pathToFileURL } from "node:url";
+const [file, read, subjects] = process.argv.slice(1);
+const app = (await import(pathToFileURL(file).href)).createApp();
+const reducer = app.reducers.find((r) => r.name === "r");
+const route = app.routes.find((r) => r.pattern === "/");
+const observed = JSON.parse(subjects).map((subject) => {
+  app.live.subject = subject;
+  return read === "slots" ? reducer.apply(app.live, {}).slots : route.tile().text;
+});
+process.stdout.write(JSON.stringify(observed));
+`;
+
+/**
+ * What one app instance from `file` observes for each of `subjects` in turn, in a `node` process
+ * of its own. Loaded through vitest instead, a module this size spends seconds in its transform
+ * and starves the test files running beside it.
+ */
+function runEach(file: string, read: Read, subjects: readonly unknown[]): unknown[] {
+  const run = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", RUNNER, file, read, JSON.stringify(subjects)],
+    { encoding: "utf8" },
   );
-  return mod.createApp();
+  if (run.status !== 0) expect.fail(run.stderr);
+  return JSON.parse(run.stdout);
 }
 
 type Arm = readonly [pattern: string, result: string];
 
-/** A program whose one `match` is over slot `subject`, and what that match did with a given subject. */
+/** A program whose one `match` is over slot `subject`, and where what that match chose shows. */
 type Position = {
   program: (decls: string, arms: readonly Arm[]) => string;
-  chosen: (app: LoadedApp, subject: unknown) => unknown;
+  read: Read;
 };
 
-const reducerProgram = (decls: string, body: string): string =>
-  withApp(`${decls}
-slot seen : Text = "unset"
-reducer pick on=ui.click(B) do= ${body}
-tile B = button(text="b", onClick=pick)
-tile App = column(B)`);
-
-function picked(app: LoadedApp, subject: unknown): Slots {
-  app.live.subject = subject;
-  const pick = app.reducers.find((r) => r.name === "pick");
-  if (!pick) expect.fail("the compiled module has no reducer named pick");
-  return pick.apply(app.live, {}).slots;
-}
-
 const NO_WRITE = Symbol("no write");
-function seenWrite(slots: Slots): unknown {
-  return Object.hasOwn(slots, "seen") ? slots.seen : NO_WRITE;
+
+/** What the match in `file` chose for each of `subjects`: the `seen` it wrote, or the text it rendered. */
+function chosen(position: Position, file: string, subjects: readonly unknown[]): unknown[] {
+  const observed = runEach(file, position.read, subjects);
+  if (position.read === "text") return observed;
+  return observed.map((slots) =>
+    Object.hasOwn(slots as Slots, "seen") ? (slots as Slots).seen : NO_WRITE,
+  );
 }
+
+const seenIn = (decls: string): string => `${decls}\nslot seen : Text = "unset"`;
 
 const POSITIONS: Record<"an expression" | "a reducer statement" | "a tile body", Position> = {
   "an expression": {
     program: (decls, arms) =>
-      reducerProgram(
-        decls,
+      withReducer(
+        seenIn(decls),
         `seen := match subject with\n${arms.map(([p, r]) => `  | ${p} -> "${r}"`).join("\n")}`,
       ),
-    chosen: (app, subject) => seenWrite(picked(app, subject)),
+    read: "slots",
   },
   "a reducer statement": {
     program: (decls, arms) =>
-      reducerProgram(
-        decls,
+      withReducer(
+        seenIn(decls),
         `match subject with\n${arms.map(([p, r]) => `  | ${p} -> { seen := "${r}" }`).join("\n")}`,
       ),
-    chosen: (app, subject) => seenWrite(picked(app, subject)),
+    read: "slots",
   },
   "a tile body": {
-    program: (decls, arms) => `${decls}
-tile Shown = match subject with
-${arms.map(([p, r]) => `  | ${p} -> text("${r}")`).join("\n")}
-tile Missing = text("missing")
-app A caps=[] routes={"/" -> Shown, "/404" -> Missing} init=[]
-`,
-    chosen: (app, subject) => {
-      app.live.subject = subject;
-      const route = app.routes.find((r) => r.pattern === "/");
-      if (!route) expect.fail("the compiled module has no route for /");
-      return route.tile().text;
-    },
+    program: (decls, arms) =>
+      withApp(`${decls}
+tile App = match subject with
+${arms.map(([p, r]) => `  | ${p} -> text("${r}")`).join("\n")}`),
+    read: "text",
   },
 };
 
@@ -116,8 +121,8 @@ const POSITION_CASES = Object.entries(POSITIONS);
 
 const variant = (tag: string) => ({ _tag: tag });
 
-describe("a match with 2,000 arms", () => {
-  const ARMS = 2_000;
+describe("a match with 1,000 arms", () => {
+  const ARMS = 1_000;
   const tags = Array.from({ length: ARMS }, (_, i) => `T${i}`);
   const decls = `type Big = ${tags.join(" | ")}\nslot subject : Big = T0`;
   const arms: Arm[] = tags.map((t, i) => [t, `arm ${i}`]);
@@ -129,11 +134,15 @@ describe("a match with 2,000 arms", () => {
       expect(parseError(file())).toBe("");
     });
 
-    it("runs the arm for the first, a middle and the last tag", LOADS, async () => {
-      const app = await load(file());
-      for (const i of [0, 1_000, ARMS - 1]) {
-        expect(position.chosen(app, variant(`T${i}`))).toBe(`arm ${i}`);
-      }
+    it("runs the arm for the first, a middle and the last tag", RUNS, () => {
+      const picks = [0, ARMS / 2, ARMS - 1];
+      expect(
+        chosen(
+          position,
+          file(),
+          picks.map((i) => variant(`T${i}`)),
+        ),
+      ).toEqual(picks.map((i) => `arm ${i}`));
     });
   });
 });
@@ -155,20 +164,22 @@ slot subject : Tuple(Light, Light) = (Red, Red)`;
       expect(parseError(file())).toBe("");
     });
 
-    it("runs the first arm whose pattern holds, though a later one holds too", LOADS, async () => {
-      expect(position.chosen(await load(file()), pair("Red", "Green"))).toBe("first");
+    it("runs the first arm whose pattern holds, though a later one holds too", RUNS, () => {
+      expect(chosen(position, file(), [pair("Red", "Green")])).toEqual(["first"]);
     });
 
-    it("tries the arms in order, past one whose pattern fails", LOADS, async () => {
-      const app = await load(file());
-      expect(position.chosen(app, pair("Green", "Green"))).toBe("second");
-      expect(position.chosen(app, pair("Green", "Red"))).toBe("rest");
+    it("tries the arms in order, past one whose pattern fails", RUNS, () => {
+      expect(chosen(position, file(), [pair("Green", "Green"), pair("Green", "Red")])).toEqual([
+        "second",
+        "rest",
+      ]);
     });
   });
 });
 
-// A match used as a value has an arm for every value of its scrutinee (E0227), so only a statement
-// and a tile body reach the end of their arms.
+// This file's scrutinee has a declared union type, so a value match over it covers every value
+// (E0227) and only a statement and a tile body reach the end of their arms. The panic a value
+// match reaches is pinned in `match-exhaustive.test.ts`.
 describe("a match no arm of which holds", () => {
   const decls = `type Light = Red | Amber | Green
 slot subject : Light = Red`;
@@ -180,33 +191,44 @@ slot subject : Light = Red`;
   it.each<[keyof typeof POSITIONS, string, unknown]>([
     ["a reducer statement", "writes nothing", NO_WRITE],
     ["a tile body", "renders an empty text", ""],
-  ])("as %s, %s", LOADS, async (name, _does, outcome) => {
+  ])("as %s, %s", RUNS, (name, _does, outcome) => {
     const position = POSITIONS[name];
     const file = emit(position.program(decls, arms));
     expect(parseError(file)).toBe("");
-    expect(position.chosen(await load(file), variant("Green"))).toBe(outcome);
+    expect(chosen(position, file, [variant("Green")])).toEqual([outcome]);
   });
 });
 
 describe("a match statement inside an arm of another", () => {
   // Matches in a row label sibling blocks, which may share a label; a match nested in another,
-  // directly or through an `if` or a `for`, labels a block inside the other's, which may not.
+  // directly, through an `if` or an `else`, or through a `for`, labels a block inside the
+  // other's, which may not. So may a match nested in that one in turn.
   const file = emitted(
-    reducerProgram(
-      `type Light = Red | Green
+    withReducer(
+      seenIn(`type Light = Red | Green
 slot subject : Tuple(Light, Light) = (Red, Red)
+slot deeper : Text = "unset"
 slot after  : Text = "unset"
 slot looped : Text = "unset"
-slot last   : Text = "unset"`,
+slot last   : Text = "unset"`),
       `match subject with
   | (Red, inner) -> {
       match inner with
         | Red -> { seen := "red, red" }
-        | _ -> { seen := "red, other" }
-      if true then {
+        | other -> {
+            seen := "red, other"
+            match other with
+              | Green -> { deeper := "deeper green" }
+              | _ -> { deeper := "deeper other" }
+          }
+      if inner == Green then {
         match inner with
           | Green -> { after := "then green" }
           | _ -> { after := "then other" }
+      } else {
+        match inner with
+          | Red -> { after := "else red" }
+          | _ -> { after := "else other" }
       }
       for x in [inner] {
         match x with
@@ -223,14 +245,25 @@ slot last   : Text = "unset"`,
     expect(parseError(file())).toBe("");
   });
 
-  it("runs the inner arm, then the rest of the outer arm", LOADS, async () => {
-    const app = await load(file());
-    expect(picked(app, [variant("Red"), variant("Green")])).toEqual({
+  it("runs the inner arm, then the rest of the outer arm", RUNS, () => {
+    const [redGreen, redRed, greenRed] = runEach(file(), "slots", [
+      [variant("Red"), variant("Green")],
+      [variant("Red"), variant("Red")],
+      [variant("Green"), variant("Red")],
+    ]);
+    expect(redGreen).toEqual({
       seen: "red, other",
+      deeper: "deeper green",
       after: "then green",
       looped: "looped green",
       last: "outer red",
     });
-    expect(picked(app, [variant("Green"), variant("Red")])).toEqual({ last: "outer other" });
+    expect(redRed).toEqual({
+      seen: "red, red",
+      after: "else red",
+      looped: "looped other",
+      last: "outer red",
+    });
+    expect(greenRed).toEqual({ last: "outer other" });
   });
 });
