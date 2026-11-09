@@ -344,17 +344,17 @@ app P
       `"/:b/*" -> Layout, "/:a/*" -> Other`,
     ],
     [
-      "a child written at /404, which matches no path",
-      `"/404" -> Child`,
-      `"/*" -> Layout, "/:page" -> Other`,
-    ],
-    [
       "a child the more specific of two parents takes",
       `"/settings/account" -> Child`,
       `"/settings/*" -> Layout, "/:x/*" -> Layout`,
     ],
   ])("accepts %s", (_, child, routes) => {
     expect(checkSource(program(child, routes))).toEqual([]);
+  });
+
+  it("reports a child written at /404, which matches no path, as E0001 alone", () => {
+    const found = checkSource(program(`"/404" -> Child`, `"/*" -> Layout, "/:page" -> Other`));
+    expect(found.map((d) => [d.code, d.kind])).toEqual([["E0001", "404-in-sub-routes"]]);
   });
 
   it("names both parents of a tile two routes target, when one entry ranks ahead of both", () => {
