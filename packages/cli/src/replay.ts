@@ -99,6 +99,14 @@ export function formatEvent(ev: ReplayEvent): string | null {
       const env = ev.env ? `  (env: ${formatEnvDrift(ev.env)})` : "";
       return `  [reducer] ${ev.name}${diffs ? `  ${diffs}` : ""}${env}`;
     }
+    case "bind": {
+      const diffs = ev.slotDiffs
+        .map((d) => `${d.name}: ${jsonOrNull(d.before)} -> ${jsonOrNull(d.after)}`)
+        .join(", ");
+      const refused = ev.refused ? `(refused ${jsonOrNull(ev.value)})` : "";
+      const said = [diffs, refused].filter((part) => part !== "").join("  ");
+      return `  [bind] ${ev.name}${said ? `  ${said}` : ""}`;
+    }
     case "effect-start":
       return `  [effect-start] ${ev.name}(${jsonOrNull(ev.args)})`;
     case "effect-end": {

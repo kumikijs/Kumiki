@@ -455,6 +455,8 @@ episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
 
 The log's episodes replay in the order the log lists them, which is the order their triggers began, and each runs whole, as `kumiki replay` runs them ([runtime.md §10.5.3](./runtime.md#_10-5-3-replay)). So an effect result the run received after a later trigger reaches its `.ok` / `.err` reducers ahead of that trigger in the replay, and a slot those reducers compute from what the trigger wrote can end differently from the log's record.
 
+A slot a bound control wrote is recorded on the `bind` step of that write ([runtime.md §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)), and `from-log` reads its value from that step's `slot-diffs` as it reads a reducer's from a `reducer` step's. So a log that ends with typing no reducer follows expects the field's slot at what was typed, and the replay, which makes the write again, ends there.
+
 `no-panics: true` fails the test when a replayed reducer panics, and `no-errors: true` when an effect's `err` reaches no `.err` reducer ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)); each is reported only when its key is `true`. The runner first checks that every episode was replayed ([Use Cases](#_8-6-2-use-cases)), then judges these two in that order, both ahead of `slots-equal`, and reports the first that fails. A reducer that panicked writes nothing and emits nothing, and a dropped `err` runs no reducer, so the slots either would have reached keep their old values: compared first, a slot diff would report that symptom in place of its cause.
 
 ```
@@ -485,7 +487,7 @@ FAIL  replay-renamed (Nms)
   diff at:  episodes
 ```
 
-Replay has nothing to run such an episode with ([runtime.md §10.5.3](./runtime.md#_10-5-3-replay)), and an episode that is not replayed raises no panic and no error, so `no-panics` / `no-errors` alone would hold over it on the very rename that stopped it testing anything. Record the log again, or give the reducer the name the log has. An entry `reducer` step with no `name` fails it the same way, with `reducer step <n> has no name`. An `ssr.hydrate` bootstrap with no entry reducer at all is one in which no reducer ran, and replays clean; any other episode without one fails it with `no reducer step`. runtime.md §10.5.3 says why.
+Replay has nothing to run such an episode with ([runtime.md §10.5.3](./runtime.md#_10-5-3-replay)), and an episode that is not replayed raises no panic and no error, so `no-panics` / `no-errors` alone would hold over it on the very rename that stopped it testing anything. Record the log again, or give the reducer the name the log has. An entry `reducer` step with no `name` fails it the same way, with `reducer step <n> has no name`. An `ssr.hydrate` bootstrap with no entry reducer at all is one in which no reducer ran, and replays clean; an episode a bound control's write recorded replays that write; any other episode without one fails it with `no reducer step`. runtime.md §10.5.3 says why.
 
 ## 8.7 The Runner
 
