@@ -290,11 +290,9 @@ export function makeEffectDispatcher(
         run.ctl.abort();
         cancelled.push([run.token, run.name]);
       }
-      state.timers.clear();
-      state.queues.clear();
-      state.runs.clear();
-      state.inflight.clear();
-      state.absorbedBy.clear();
+      for (const m of [state.timers, state.queues, state.runs, state.inflight, state.absorbedBy]) {
+        m.clear();
+      }
       for (const [token, name] of cancelled) {
         if (token) onPolicyCancel?.(token, name);
       }
