@@ -179,9 +179,9 @@ describe("known gap: W0213 does not see a firing kind that is not the root", () 
   const REDUCER = `slot n : Int = 0
 reducer open on=app.start do= n := n + 1`;
 
-  const src = (tiles: string) => `${REDUCER}
+  const src = (tiles: string, handler = "onClick") => `${REDUCER}
 ${tiles}
-tile App = column(Card {onClick: open}, text(n.show))
+tile App = column(Card {${handler}: open}, text(n.show))
 app A
     caps   = []
     routes = {"/" -> App, "/404" -> App}
@@ -202,13 +202,10 @@ app A
     expect(codesOf(src('tile Deep = button(text="go")\ntile Card = box(Deep)'))).toEqual([]);
   });
 
-  it("and says nothing about onFocus on a details root that holds a panel", () => {
-    const focused = src('tile Card = details(summary="Q", text("a"))').replace(
-      "Card {onClick: open}",
-      "Card {onFocus: open}",
-    );
-    expect(focused).toContain("Card {onFocus: open}");
-    expect(codesOf(focused)).toEqual([]);
+  it("but reports onFocus on a details root that holds a panel, as focus does not bubble", () => {
+    expect(codesOf(src('tile Card = details(summary="Q", text("a"))', "onFocus"))).toEqual([
+      "W0213",
+    ]);
   });
 });
 
@@ -317,6 +314,7 @@ app A
       });
 
       it(`merges a ${handler} written on ${kind} with a ui.${ev} selector on it, once`, () => {
+        expect(codesOf(explicit(ev, tile))).toEqual([]);
         const js = loweredOf(explicit(ev, tile));
         const merged = `${handler}: _h("hitExplicit", "hitSelector")`;
         expect(js.split(merged)).toHaveLength(2);
