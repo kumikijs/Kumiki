@@ -8,6 +8,7 @@ import {
   runFixFromTest,
 } from "@kumikijs/cli";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { printed } from "./helpers/console.ts";
 import { APP_A, seed, storeOf } from "./helpers/files.ts";
 
 vi.mock("node:fs", async (importOriginal) => ({ ...(await importOriginal<typeof fs>()) }));
@@ -59,12 +60,6 @@ const failWrites = (message: string) =>
     throw new Error(message);
   });
 
-/** Silence console[`stream`] for the rest of the test; the text it would have printed. */
-function capture(stream: "log" | "error" | "warn"): () => string {
-  const spy = vi.spyOn(console, stream).mockImplementation(() => {});
-  return () => spy.mock.calls.map((c) => String(c[0])).join("\n");
-}
-
 describe("write-failure handling", () => {
   it("applyFixPlan: a failed write sets writeError, applies nothing, and leaves the file", () => {
     const file = seed(`${NEEDS_LOG_WRITE}tile App = heading("hi")\n${APP_A}`);
@@ -78,15 +73,14 @@ describe("write-failure handling", () => {
     expect(readFileSync(file, "utf8")).toBe(before);
   });
 
-  it("fixCmd: a failed write exits 1 and says so on stderr", () => {
+  it("fixCmd: a failed write exits 1 and says so on stderr", async () => {
     const file = seed(`${NEEDS_LOG_WRITE}tile App = heading("hi")\n${APP_A}`);
     const before = readFileSync(file, "utf8");
     failWrites("EACCES: simulated fixCmd");
-    const stderr = capture("error");
-    capture("log");
-    expect(fixCmd(file, true)).toBe(1);
-    expect(stderr()).toContain(`could not write fixes to ${file}`);
-    expect(stderr()).toContain("EACCES");
+    const said = await printed(() => fixCmd(file, true));
+    expect(said.result).toBe(1);
+    expect(said.err).toContain(`could not write fixes to ${file}`);
+    expect(said.err).toContain("EACCES");
     expect(readFileSync(file, "utf8")).toBe(before);
   });
 
@@ -143,22 +137,19 @@ describe("write-failure handling", () => {
   it("fixFromTest: a failed test-tier write prints `could not write test patch`", async () => {
     const file = seed(REPAIRABLE);
     failWrites("EBUSY: simulated");
-    capture("log");
-    const stderr = capture("error");
-    expect((await fixFromTest(file, "t", true)).status).toBe("write-failed");
-    expect(stderr()).toContain('could not write test patch for "t"');
-    expect(stderr()).toContain("EBUSY");
+    const said = await printed(() => fixFromTest(file, "t", true));
+    expect(said.result.status).toBe("write-failed");
+    expect(said.err).toContain('could not write test patch for "t"');
+    expect(said.err).toContain("EBUSY");
   });
 
   it("fixFromTest: a failed compile-tier write does not claim the compile fixes were applied", async () => {
     const file = seed(`${NEEDS_LOG_WRITE}${PASSING}`);
     failWrites("ENOSPC: simulated");
-    const stdout = capture("log");
-    const stderr = capture("error");
-    await fixFromTest(file, "t", true);
-    expect(stdout()).not.toMatch(/applied \d+ compile fix\(es\)/);
-    expect(stderr()).toContain('could not write compile fix for "t"');
-    expect(stderr()).toContain("ENOSPC");
+    const said = await printed(() => fixFromTest(file, "t", true));
+    expect(said.out).not.toMatch(/applied \d+ compile fix\(es\)/);
+    expect(said.err).toContain('could not write compile fix for "t"');
+    expect(said.err).toContain("ENOSPC");
   });
 });
 
@@ -179,30 +170,26 @@ ${APP_A}test t =
 
   it("the test tier's no-patch carries the planner's reason, and the printer shows it", async () => {
     const file = seed(UNREPAIRABLE);
-    const stdout = capture("log");
-    const outcome = await fixFromTest(file, "t", false);
+    const { result: outcome, out } = await printed(() => fixFromTest(file, "t", false));
     expect(outcome).toMatchObject({
       status: "no-patch",
       reason: expect.stringMatching(/^multiplicative-/),
       failingTest: expect.anything(),
     });
-    expect(stdout()).toMatch(/reason:\s+multiplicative-/);
+    expect(out).toMatch(/reason:\s+multiplicative-/);
   });
 
   it("the compile tier's no-patch carries the first skip reason, and the printer shows it", async () => {
     const file = seed(`${NEEDS_LOG_WRITE}tile App = heading("hi")\n`);
-    const stdout = capture("log");
-    capture("error");
-    const outcome = await fixFromTest(file, "t", false);
+    const { result: outcome, out } = await printed(() => fixFromTest(file, "t", false));
     expect(outcome).toMatchObject({ status: "no-patch", reason: "e0301-no-app-def" });
     const codes = outcome.status === "no-patch" ? outcome.compileErrors?.map((e) => e.code) : [];
     expect(codes).toEqual(expect.arrayContaining(["E0301", "E0003"]));
-    expect(stdout()).toMatch(/reason: e0301-no-app-def/);
+    expect(out).toMatch(/reason: e0301-no-app-def/);
   });
 
   it("a test runner that throws is no-patch with reason test-runner-threw", async () => {
     const file = seed(PASSING);
-    const stderr = capture("error");
     vi.resetModules();
     vi.doMock("../src/smoke.ts", async (importOriginal) => ({
       ...(await importOriginal<typeof import("../src/smoke.ts")>()),
@@ -212,14 +199,14 @@ ${APP_A}test t =
     }));
     try {
       const { fixFromTest: withThrowingRunner } = await import("../src/fix.ts");
-      const outcome = await withThrowingRunner(file, "t", false);
+      const { result: outcome, err } = await printed(() => withThrowingRunner(file, "t", false));
       expect(outcome).toMatchObject({
         status: "no-patch",
         reason: "test-runner-threw",
         testRunError: expect.anything(),
       });
-      expect(stderr()).toContain("could not run tests");
-      expect(stderr()).toMatch(/reason:\s+test-runner-threw/);
+      expect(err).toContain("could not run tests");
+      expect(err).toMatch(/reason:\s+test-runner-threw/);
     } finally {
       vi.doUnmock("../src/smoke.ts");
       vi.resetModules();
@@ -236,24 +223,28 @@ describe("KUMIKI_DEBUG=fix hook", () => {
   };
 
   /** What planning one unexplained skip printed to console.warn under KUMIKI_DEBUG=`value`. */
-  function warnedUnder(...values: (string | undefined)[]): string {
-    const warned = capture("warn");
+  async function warnedUnder(...values: (string | undefined)[]): Promise<string> {
     const store = storeOf('tile A = heading("hi")\n');
-    for (const value of values) {
-      vi.stubEnv("KUMIKI_DEBUG", value);
-      planFixesExplained(store, [noQuotedNameErr]);
-    }
-    return warned();
+    const { warned } = await printed(() => {
+      for (const value of values) {
+        vi.stubEnv("KUMIKI_DEBUG", value);
+        planFixesExplained(store, [noQuotedNameErr]);
+      }
+    });
+    return warned;
   }
 
-  it("names the skip and its reason when KUMIKI_DEBUG=fix", () => {
-    const warned = warnedUnder("fix");
+  it("names the skip and its reason when KUMIKI_DEBUG=fix", async () => {
+    const warned = await warnedUnder("fix");
     expect(warned).toContain("[kumiki fix] skip");
     expect(warned).toContain("quoted-name-extract-failed");
   });
 
-  it.each([["smoke,fix"], ["  smoke ,  fix  "]])("is active for the scope list %o", (value) => {
-    expect(warnedUnder(value)).not.toBe("");
+  it.each([
+    ["smoke,fix"],
+    ["  smoke ,  fix  "],
+  ])("is active for the scope list %o", async (value) => {
+    expect(await warnedUnder(value)).not.toBe("");
   });
 
   it.each([
@@ -263,7 +254,7 @@ describe("KUMIKI_DEBUG=fix hook", () => {
     ["whitespace-only", "   "],
     ["a scope that starts with fix", "fix-verbose"],
     ["a scope that ends with fix", "prefix-of-fix"],
-  ])("is silent when KUMIKI_DEBUG is %s", (_, value) => {
-    expect(warnedUnder(value)).toBe("");
+  ])("is silent when KUMIKI_DEBUG is %s", async (_, value) => {
+    expect(await warnedUnder(value)).toBe("");
   });
 });

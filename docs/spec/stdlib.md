@@ -14,7 +14,7 @@ Kumiki's standard library is designed with the goal of being "**minimal and comp
 | `Bool` | boolean | `true`, `false` |
 | `Unit` | single value | `()` |
 | `Bytes` | byte sequence | no literal; `Bytes.from-text(text)` / `Bytes.from-base64(text)` / `Bytes.from-bytes(list)` (see [§2.2.10](#_2-2-10-bytes)) |
-| `Time` | UNIX nanoseconds | no literal; `now` or `Time.parse(text)` |
+| `Time` | milliseconds since the Unix epoch | no literal; `now` or `Time.parse(text)` |
 | `EffectId` | opaque handle returned by `emit` (see [§2.1.1.1](#_2-1-1-1-effectid)) | no literal; `EffectId.none` |
 
 #### 2.1.1.1 `EffectId`
@@ -51,7 +51,7 @@ The only operations defined on `EffectId` are equality (`==`, `!=`), storage in 
 | `Url` | `nominal Text where url` |
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |
-| `Duration` | `nominal Int` (nanoseconds) |
+| `Duration` | `nominal Int` (milliseconds) |
 | `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — see [Routing §3.2](./routing.md#_3-2-current-route-state) |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
@@ -354,6 +354,8 @@ to-ms                       : Int
 
 Time / Duration are represented at runtime as a **raw number of milliseconds**. An operation like `time.plus(Duration.h(72))` is expanded into a simple ms addition. A `Duration` is signed: `a.diff(b)` is negative when `a` is the earlier instant ([§2.2.8](#_2-2-8-time)).
 
+Milliseconds are also the unit a program sees: `now` answers milliseconds since the Unix epoch, and two instants one second apart `diff` to `Duration.s(1)`, whose `to-ms` is `1000`.
+
 Every constructor takes its magnitude, and dropping the parentheses does not make one a value: `Duration.h` is read as a call given no argument, which is the same [E0213](./errors.md#e0213-call-arity-mismatch) as `Duration.h()`. `Bytes.*` below is read the same way. Before that, the bare spelling was a field read that evaluated to nothing at all — and a duration of nothing is a duration of zero, which nothing reported.
 
 ```kumiki fragment
@@ -568,7 +570,7 @@ The uuid is a version 7 ([RFC 9562 §5.7](https://www.rfc-editor.org/rfc/rfc9562
 now                        : Time          ; the current time
 ```
 
-`Time.now` ([§2.2.8](#_2-2-8-time)) is this builtin under its type's name, and `Time.now()` is the same call with its parentheses written: the same `Time`, read from the clock where it is evaluated, and the same environment read — a reducer that reads it records a `now` entry ([Runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)), and a replay answers it from that entry ([§10.5.3](./runtime.md#_10-5-3-replay)). `now` itself is a keyword and takes no parentheses. The qualifier is `Time` itself: `now` is not one of the members every type name has ([§2.4.1](#_2-4-1-id-generation), [§2.4.3](#_2-4-3-type-conversion)), so on a type declared over `Time` (`type Stamp = nominal Time`) `Stamp.now()` is an [E0116](./errors.md#e0116-undef-call). A bare `Stamp.now` is still a field read that passes `check` and evaluates to nothing, a known gap that E0116 describes.
+`Time.now` ([§2.2.8](#_2-2-8-time)) is this builtin under its type's name, and `Time.now()` is the same call with its parentheses written: the same `Time`, read from the clock where it is evaluated, and the same environment read — a reducer that reads it records a `now` entry ([Runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)), and a replay answers it from that entry ([§10.5.3](./runtime.md#_10-5-3-replay)). `now` itself is a keyword and takes no parentheses. The qualifier is `Time` itself: `now` is not one of the members every type name has ([§2.4.1](#_2-4-1-id-generation), [§2.4.3](#_2-4-3-type-conversion)), so on a type declared over `Time` (`type Stamp = nominal Time`) `Stamp.now()` is an [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier). A bare `Stamp.now` is still a field read that passes `check` and evaluates to nothing, a known gap that E0116 describes.
 
 ### 2.4.3 Type Conversion
 
@@ -770,6 +772,8 @@ effect scroll-to   in={x: Int, y: Int}  out=Unit
 The one standard effect with no capability: it moves the viewport of the page the user is already looking at, and reaches nothing outside it. → [Routing §3.9](./routing.md#_3-9-scroll-restoration).
 
 ### 2.6.5 Confirm
+
+The dialog the runtime renders carries `data-kumiki-confirm` (the marker a test selects on), and its Yes and No buttons carry `data-kumiki-confirm-action` set to `yes` and `no`.
 
 ```kumiki fragment
 effect confirm     cap=notification.show  in={title: Text, message: Text, onYes: ReducerRef, onNo: ReducerRef}  out=Unit

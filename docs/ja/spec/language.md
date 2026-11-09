@@ -386,6 +386,9 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
   [E0103](./errors.md#e0103-undef-ref-undef-slot) になる
 - 両者とも他の式と同様に検査される — key 中の未定義名は dispatch 時の実行時
   エラーではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)
+- effect の capability が [http.md §6.6.1](./http.md#_6-6-1-request-fields) に行を
+  持つとき、`map-request` のレコードが書くフィールドはその capability のリクエストに
+  照らされる：リクエストに無いフィールドは [E0215](./errors.md#e0215-unknown-record-field)
 - `latest-per-key` の key は `emit` が実行された地点で評価される。key が読む slot は
   reducer 本体のその文までの書き込みを反映し、それ以降の書き込みは反映しない
   （[http.md §6.4](./http.md#_6-4-cancellation)）
@@ -705,7 +708,7 @@ pattern      ::= identifier
 
 **`if` と `match` の値文脈 vs tile 文脈**:
 - tile 引数が tile になるのは、**値 builtin 以外の builtin の位置引数**（`column`, `row`, `card`, `box` 等）だけである —— tile が描画される唯一の位置。そこでは `if` と `match` は tile 式（`TileIf` / `TileMatch`）で各 arm は tile を返し、`(` か `{` が続く builtin 名はその builtin の呼び出し、大文字始まりの名前は user tile になる。
-- それ以外の tile 引数はすべて値である：値 builtin の内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：値 builtin 以外の builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になる。
+- それ以外の tile 引数はすべて値である：値 builtin の内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：値 builtin 以外の builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になる。
 - `when` と `for` には値の形が無いので、どこに書いても tile である。
 - 例: `text(match m with | A -> "a" | B -> "b")` ← 値 match
 - 例: `button(text="Save", disabled=if busy then true else false)`、`Row(if wide then 2 else 1)` ← 値 if

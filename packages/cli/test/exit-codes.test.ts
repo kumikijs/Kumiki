@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { runCli, SPAWN } from "./helpers/cli.ts";
+import { runCli, SPAWN, spawns } from "./helpers/cli.ts";
 import { seed, tempDir } from "./helpers/files.ts";
 import { tiedCounts } from "./helpers/tie.ts";
 
@@ -51,6 +51,27 @@ test inc-works =
         expect = {slots: {count: 1}, effects: []}
 `;
 
+/** In `first-shows` the list is empty, so `First` panics as it renders. */
+const WITH_RENDER_PANIC = `slot count : Int = 0
+slot items : List(Int) = []
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+tile IncBtn = button(text="+1", onClick=inc)
+tile First = heading("First: " + items[0].show)
+tile App = column(heading("Count: " + count.show), IncBtn)
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+test first-shows =
+    tile-test First
+        given  = {slots: {items: []}}
+        expect = heading("First: 1")
+test inc-works =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: 1}, effects: []}
+`;
+
 /** `[1][3]` indexes past the end of a one-item list, so `expect-panics`' body throws. */
 const WITH_THROWING_TEST = WITH_TESTS.replace(
   "test inc-works =",
@@ -93,7 +114,9 @@ describe("kumiki fix", () => {
       ]);
       expect(stdout).not.toContain('replace "count"');
       expect(stdout).toContain("(no auto-patches available)");
-      expect(stderr).toContain('E0103 Reference to undefined name "count"');
+      expect(stderr).toContain(
+        'error E0103 undef-ref at 7:49: Reference to undefined name "count"',
+      );
       expect(code).toBe(1);
     });
 
@@ -124,7 +147,7 @@ describe("kumiki fix", () => {
     const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
     expect(readFileSync(file, "utf8")).toBe(tiedCounts("countA", "countB"));
     expect(stdout).toContain("error(s) remain");
-    expect(stderr).toContain('E0103 Reference to undefined name "count"');
+    expect(stderr).toContain('error E0103 undef-ref at 7:49: Reference to undefined name "count"');
     expect(code).toBe(1);
   });
 
@@ -140,7 +163,7 @@ describe("kumiki fix", () => {
     expect(code).toBe(0);
   });
 
-  it("keeps a repair that clears an error and reveals a warning", SPAWN, () => {
+  it("keeps a repair that clears an error and reveals a warning", spawns(2), () => {
     const src = `slot count : Int = 0
 reducer bump on=ui.focus(Crd) do= count := count + 1
 tile Card = box(heading("Count: " + count.show))
@@ -177,7 +200,7 @@ app Demo
     expect(code).toBe(0);
   });
 
-  it("holds --auto-patch to the same rule as the diagnostic path", SPAWN, () => {
+  it("holds --auto-patch to the same rule as the diagnostic path", spawns(2), () => {
     const blocked = `slot count : Int = 0
 reducer inc on=ui.click(IncBtn) do= conut := count + 1
 tile IncBtn = button(text="+1", onClick=inc)
@@ -231,7 +254,7 @@ app Demo
     const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
     expect(readFileSync(file, "utf8")).toBe(OUT_OF_SCOPE);
     expect(stdout).toBe("(no auto-patches available)\n");
-    expect(stderr).toContain('E0103 Reference to undefined name "idx" — ');
+    expect(stderr).toContain('error E0103 undef-ref at 6:18: Reference to undefined name "idx" — ');
     expect(code).toBe(1);
   });
 
@@ -256,6 +279,17 @@ app Demo
 });
 
 describe("kumiki check", () => {
+  it("names the severity of each diagnostic it prints, and exits 1 for the error", SPAWN, () => {
+    const src = WARN_ONLY.replace("column(Card)", "column(Card, text(totl.show))");
+    const { stdout, stderr, code } = runCli(["check", write("severity.kumiki", src)]);
+    expect(stderr.trimEnd().split("\n")).toEqual([
+      expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:17: /),
+      'error E0103 undef-ref at 4:30: Reference to undefined name "totl"',
+    ]);
+    expect(stdout).toBe("");
+    expect(code).toBe(1);
+  });
+
   it("unions the scope flags instead of keeping the first", SPAWN, () => {
     const src = `slot count : Int = "zero"
 tile App = column(heading("Count: " + cnt.show))
@@ -309,6 +343,26 @@ describe("kumiki test", () => {
     expect(stdout).toContain("1/2 passed");
     expect(code).toBe(1);
   });
+
+  it("reports a tile that panics as it renders as its test's unexpected panic", SPAWN, () => {
+    // Nothing under the diff line, so the panic reads as the tile's and not as a throw in the
+    // test's body.
+    const { stdout, code } = runCli(["test", write("test-render-panic.kumiki", WITH_RENDER_PANIC)]);
+    expect(stdout).toMatch(
+      new RegExp(
+        [
+          "^FAIL {2}first-shows \\(\\d+ms\\)",
+          ' {2}expected: heading\\("First: 1"\\)',
+          ' {2}actual: {3}panic: "Index 0 is out of range for a List of length 0"',
+          " {2}diff at: {2}\\(unexpected panic\\)",
+          "PASS {2}inc-works \\(\\d+ms\\)$",
+        ].join("\n"),
+        "m",
+      ),
+    );
+    expect(stdout).toContain("1/2 passed");
+    expect(code).toBe(1);
+  });
 });
 
 describe("kumiki refs / view", () => {
@@ -318,16 +372,20 @@ describe("kumiki refs / view", () => {
     expect(code).toBe(1);
   });
 
-  it("fails on a qname that is not defined under view --with-deps, as without it", SPAWN, () => {
-    const file = write("view-deps.kumiki", CLEAN);
-    const res = runCli(["view", file, "slot.nope", "--with-deps"]);
-    expect(res).toMatchObject({
-      stdout: "",
-      stderr: 'Definition "slot.nope" not found\n',
-      code: 1,
-    });
-    expect(runCli(["view", file, "slot.nope"])).toEqual(res);
-  });
+  it(
+    "fails on a qname that is not defined under view --with-deps, as without it",
+    spawns(2),
+    () => {
+      const file = write("view-deps.kumiki", CLEAN);
+      const res = runCli(["view", file, "slot.nope", "--with-deps"]);
+      expect(res).toMatchObject({
+        stdout: "",
+        stderr: 'Definition "slot.nope" not found\n',
+        code: 1,
+      });
+      expect(runCli(["view", file, "slot.nope"])).toEqual(res);
+    },
+  );
 
   it("prints a defined qname after its dependencies under view --with-deps", SPAWN, () => {
     const res = runCli(["view", write("view-deps-ok.kumiki", CLEAN), "tile.App", "--with-deps"]);
@@ -448,7 +506,7 @@ describe("kumiki lock / unlock", () => {
     return locks;
   }
 
-  it("lock exits 1 for a pattern another agent's overlaps, and 0 for its holder", SPAWN, () => {
+  it("lock exits 1 for a pattern another agent's overlaps, and 0 for its holder", spawns(2), () => {
     const file = write("lock.kumiki", CLEAN);
     const locks = lockedByA(file);
     const granted = readFileSync(locks, "utf8");
@@ -470,7 +528,7 @@ describe("kumiki lock / unlock", () => {
     expect(existsSync(`${file}.kumiki-locks.json`)).toBe(false);
   });
 
-  it("unlock exits 1 for an agent that holds no lock, and 0 for one that does", SPAWN, () => {
+  it("unlock exits 1 for an agent that holds no lock, and 0 for one that does", spawns(2), () => {
     const file = write("unlock.kumiki", CLEAN);
     const none = runCli(["unlock", file, "agent:x"]);
     expect(none.stderr).toContain("agent:x holds no lock");
@@ -527,7 +585,7 @@ app Demo
     expect(code).toBe(1);
   });
 
-  it("test exits 1 when a test fails", SPAWN, () => {
+  it("test exits 1 when a test fails", spawns(2), () => {
     const failing = WITH_TESTS.replace(
       "expect = {slots: {count: 1}",
       "expect = {slots: {count: 7}",
