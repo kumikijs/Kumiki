@@ -5,10 +5,12 @@ import {
   calleeCandidates,
   check,
   collectTimerNames,
+  constructorTags,
   lex,
   nearestNames,
   parse,
   parseFailure,
+  qualifierCandidates,
   severityOf,
   typeCandidates,
   variantTagsOf,
@@ -137,6 +139,40 @@ function outOfScopeReason(err: KumikiError): Declined | undefined {
   return undefined;
 }
 
+// Each kind is repaired from the namespace its diagnostic suggests from: a slot
+// or tile proposed for a callee is E0116 again at the same position.
+const UNDEFINED_NAME: ReadonlyMap<string, Planner> = new Map([
+  [
+    "undef-variant",
+    nameRepair({
+      prefix: "e0116-",
+      quoted: 1,
+      pool: (store) => constructorTags(store.program),
+      noSuggestion: "no-close-variant",
+      anchored: false,
+    }),
+  ],
+  [
+    "undef-qualifier",
+    nameRepair({
+      prefix: "e0116-",
+      quoted: 1,
+      pool: (store) => qualifierCandidates(store.program),
+      noSuggestion: "no-close-qualifier",
+      anchored: false,
+    }),
+  ],
+]);
+
+const undefinedCallee = nameRepair({
+  prefix: "e0116-",
+  quoted: 1,
+  pool: (store, quoted) => calleeCandidates(namesIn(store, "fn"), quoted[0]!),
+  declared: (store) => namesIn(store, "fn"),
+  noSuggestion: "no-close-callee",
+  anchored: false,
+});
+
 const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   ["E0102", anyDefinition], // undef-reducer
   [
@@ -170,17 +206,7 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
       anchored: true,
     }),
   ],
-  [
-    "E0116",
-    nameRepair({
-      prefix: "e0116-",
-      quoted: 1,
-      pool: (store, quoted) => calleeCandidates(namesIn(store, "fn"), quoted[0]!),
-      declared: (store) => namesIn(store, "fn"),
-      noSuggestion: "no-close-callee",
-      anchored: false,
-    }),
-  ],
+  ["E0116", (err, store) => (UNDEFINED_NAME.get(err.kind) ?? undefinedCallee)(err, store)],
   [
     "E0117",
     nameRepair({
