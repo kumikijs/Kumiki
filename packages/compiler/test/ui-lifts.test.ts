@@ -128,7 +128,6 @@ describe("wrapperNeverReceives", () => {
   it("answers focus and blur as wrappedUnreached does", () => {
     for (const ev of ["focus", "blur"] as const) {
       expect(wrapperNeverReceives(ev, WRAPPED)).toEqual(wrappedUnreached(ev, WRAPPED));
-      expect(wrapperNeverReceives(ev, WRAPPED)).toHaveLength(2);
     }
   });
 

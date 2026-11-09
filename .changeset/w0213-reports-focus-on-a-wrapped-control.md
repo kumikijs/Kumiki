@@ -2,7 +2,7 @@
 "@kumikijs/compiler": patch
 ---
 
-W0213 reports onFocus / onBlur on a check, radio, switch or details
+W0213 reports `onFocus` / `onBlur` on a `check`, `radio`, `switch` or `details`
 
 A `check`, `radio` or `switch` renders a `<label>` around its `<input>`, and a
 `details` renders a `<details>` around its `<summary>`. A handler written on
@@ -14,15 +14,18 @@ The prop form compiled with no diagnostic. Before, for
 
 After:
 
-> "onFocus" on check() is dropped — the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label>. Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.<event>(<Tile>)
+> "onFocus" on check() is dropped — the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label>. Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself
 
-A user tile whose body renders only such controls is reported too:
+A user tile whose root renders only such controls is reported too:
 
-> "onFocus" on Inner() is dropped — Inner renders nothing where "focus" reaches it: the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label> (observed in body: check). Put it on …
+> "onFocus" on Inner() is dropped — Inner renders nothing at its root where "focus" reaches it: the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label> (observed at its root: check). Put it on …
 
 The reason is the clause W0212 gives for `ui.focus` / `ui.blur` on the same
 kind, read from the same record in `ui-lifts.ts`. The pairs newly reported are
 `onFocus` and `onBlur` on `check`, `radio`, `switch` and `details`, written on
-the builtin or on a user tile that renders one. `onKeyDown` on these four is
-still not reported: a keydown bubbles to the `<label>` and the `<details>`, so
-it runs. A container (`row(onFocus=r)`) is still not reported either.
+the builtin or on a user tile whose root renders nothing but these. Only the
+root is asked, since a focus inside it does not bubble to it either: a
+`details` root is reported with any panel, and `row(check(…))` is not.
+`onKeyDown` on these four is still not reported: a keydown bubbles to the
+`<label>` and the `<details>`, so it runs. A container (`row(onFocus=r)`) is
+still not reported either.

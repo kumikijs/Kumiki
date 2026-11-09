@@ -101,6 +101,7 @@ export function wrappedUnreached(ev: UiEventKind, kinds: Iterable<string>): Wrap
 export function wrapperNeverReceives(ev: UiEventKind, kinds: Iterable<string>): WrappedUnreached[] {
   return wrappedUnreached(ev, kinds).filter((g) => !g.bubbles);
 }
+
 // Grouped by this exact text into one clause, so the four kinds share the constant.
 const LISTENS_FOR_CHANGE = 'listens for "change" instead';
 

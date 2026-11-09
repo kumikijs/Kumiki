@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { UI_LIFTS } from "../src/ui-lifts.ts";
+import { BUILTIN_TILES } from "../src/builtins.ts";
+import { UI_LIFTS, wrapperNeverReceives } from "../src/ui-lifts.ts";
 import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 import { withApp } from "./helpers/programs.ts";
 
@@ -687,61 +688,87 @@ describe("W0212 gives the reason that holds when the element fires the event", (
     describe("on a wrapped control, says focus / blur do not bubble to the wrapper", () => {
       const FOCUS_ONTO =
         "Put it on button / editable / input / link / select / slider / textarea / video";
-      const SUBSCRIBE = "or subscribe with a reducer's on=ui.<event>(<Tile>)";
+      const subscribe = (ev: string) =>
+        `or subscribe with a reducer's on=ui.${ev}(<Tile>) on a tile that takes focus itself`;
 
-      it.each([
-        ["onFocus", "check", "focus", "tile D = check(value=done, onFocus=r)", "check(value=done)"],
-        [
-          "onBlur",
-          "radio",
-          "blur",
-          'tile D = radio(group="g", selected=done, onBlur=r)',
-          'radio(group="g", selected=done)',
-        ],
-        [
-          "onFocus",
-          "switch",
-          "focus",
-          "tile D = switch(value=done) {onFocus: r}",
-          "switch(value=done)",
-        ],
-      ])("says so of %s on a %s", (handler, kind, ev, tiles, bare) => {
-        const message = w0213(tiles);
-        expect(message).toBe(
-          `"${handler}" on ${kind}() is dropped — the runtime listens for "${ev}" on a ${kind}'s <label>, ` +
-            `and the "${ev}" its <input> fires does not bubble to the <label>. ` +
-            `${FOCUS_ONTO}, ${SUBSCRIBE}`,
-        );
-        expect(message).toContain(`— ${reasonOf(ev, `tile D = ${bare}`)}. `);
-      });
+      /** A call of each kind whose wrapper never receives focus, with the arguments it requires. */
+      const CALL: Readonly<Record<string, string>> = {
+        check: "check(value=done)",
+        radio: 'radio(group="g", selected=done)',
+        switch: "switch(value=done)",
+        details: 'details(summary="Q", text("a"))',
+      };
+      const callOf = (kind: string): string => {
+        const call = CALL[kind];
+        if (call === undefined) expect.fail(`no sample call of ${kind}, a kind the table wraps`);
+        return call;
+      };
+      const withHandler = (call: string, handler: string) => call.replace(/\)$/, `, ${handler}=r)`);
+      const HANDLER = { focus: "onFocus", blur: "onBlur" } as const;
+      const PAIRS = (["focus", "blur"] as const).flatMap((ev) =>
+        wrapperNeverReceives(ev, BUILTIN_TILES).flatMap(({ kinds }) =>
+          kinds.map((kind) => [HANDLER[ev], kind, ev] as const),
+        ),
+      );
 
-      it.each([
-        ["onFocus", "focus"],
-        ["onBlur", "blur"],
-      ])("says so of %s on a details", (handler, ev) => {
-        expect(w0213(`tile D = details(summary="Q", text("a"), ${handler}=r)`)).toBe(
-          `"${handler}" on details() is dropped — ` +
-            `${reasonOf(ev, 'tile D = details(summary="Q", text("a"))')}. ` +
-            `${FOCUS_ONTO}, ${SUBSCRIBE}`,
+      it("has a row for each wrapped kind, under focus and under blur", () => {
+        expect(PAIRS.map(([handler, kind]) => `${handler} ${kind}`).sort()).toEqual(
+          Object.keys(CALL)
+            .flatMap((kind) => [`onBlur ${kind}`, `onFocus ${kind}`])
+            .sort(),
         );
       });
 
-      it("says so of a user tile whose body renders only such controls", () => {
+      it("says so in full of onFocus on a check", () => {
+        expect(w0213("tile D = check(value=done, onFocus=r)")).toBe(
+          `"onFocus" on check() is dropped — the runtime listens for "focus" on a check's <label>, ` +
+            `and the "focus" its <input> fires does not bubble to the <label>. ` +
+            `${FOCUS_ONTO}, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`,
+        );
+      });
+
+      it("says so in full of onBlur on a details", () => {
+        expect(w0213('tile D = details(summary="Q", text("a"), onBlur=r)')).toBe(
+          `"onBlur" on details() is dropped — the runtime listens for "blur" on a details's <details>, ` +
+            `and the "blur" its <summary> fires does not bubble to the <details>. ` +
+            `${FOCUS_ONTO}, or subscribe with a reducer's on=ui.blur(<Tile>) on a tile that takes focus itself`,
+        );
+      });
+
+      it("says so in full of onFocus on a user tile over a check", () => {
         expect(w0213("tile Inner = check(value=done)\ntile D = column(Inner(onFocus=r))")).toBe(
-          `"onFocus" on Inner() is dropped — Inner renders nothing where "focus" reaches it: ` +
+          `"onFocus" on Inner() is dropped — Inner renders nothing at its root where "focus" reaches it: ` +
             `the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires ` +
-            `does not bubble to the <label> (observed in body: check). ` +
-            `${FOCUS_ONTO}, ${SUBSCRIBE}`,
+            `does not bubble to the <label> (observed at its root: check). ` +
+            `${FOCUS_ONTO}, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`,
         );
+      });
+
+      it.each(PAIRS)("gives W0212's reason for %s on a %s", (handler, kind, ev) => {
+        expect(w0213(`tile D = ${withHandler(callOf(kind), handler)}`)).toBe(
+          `"${handler}" on ${kind}() is dropped — ${reasonOf(ev, `tile D = ${callOf(kind)}`)}. ` +
+            `${FOCUS_ONTO}, ${subscribe(ev)}`,
+        );
+      });
+
+      it.each(PAIRS)("gives it for %s on a user tile over a %s", (handler, kind, ev) => {
+        expect(w0213(`tile Inner = ${callOf(kind)}\ntile D = column(Inner(${handler}=r))`)).toBe(
+          `"${handler}" on Inner() is dropped — Inner renders nothing at its root where "${ev}" ` +
+            `reaches it: ${reasonOf(ev, `tile D = ${callOf(kind)}`)} (observed at its root: ${kind}). ` +
+            `${FOCUS_ONTO}, ${subscribe(ev)}`,
+        );
+      });
+
+      it("names every wrapped kind a user tile may render at its root", () => {
         expect(
           w0213(
             "tile Inner = if done then check(value=done) else switch(value=done)\n" +
               "tile D = column(Inner() {onBlur: r})",
           ),
         ).toContain(
-          `— Inner renders nothing where "blur" reaches it: the runtime listens for "blur" on a ` +
-            `check / switch's <label>, and the "blur" its <input> fires does not bubble to the <label> ` +
-            `(observed in body: check, switch). `,
+          `— Inner renders nothing at its root where "blur" reaches it: the runtime listens for ` +
+            `"blur" on a check / switch's <label>, and the "blur" its <input> fires does not bubble ` +
+            `to the <label> (observed at its root: check, switch). `,
         );
       });
 
@@ -755,6 +782,10 @@ describe("W0212 gives the reason that holds when the element fires the event", (
         [
           "onFocus on a user tile that may render an input",
           "Inner(onFocus=r)\ntile Inner = if done then check(value=done) else input(bind=note)",
+        ],
+        [
+          "onFocus on a user tile whose root is a row",
+          "Inner(onFocus=r)\ntile Inner = row(check(value=done))",
         ],
       ])("says nothing of %s", (_, tile) => {
         const src = `
