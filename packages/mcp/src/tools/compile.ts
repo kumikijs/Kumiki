@@ -113,7 +113,7 @@ export function registerCompileTools(tool: RegisterTool): void {
     "kumiki_build",
     {
       title: "Build Kumiki source",
-      description: `Compile a Kumiki program to a self-contained JS module (runtime inlined). Pass \`source\` or \`path\`. Returns the generated JS, or \`build failed:\` followed by a JSON list of the diagnostics that failed it. ${DIAGNOSTIC_SHAPE}`,
+      description: `Compile a Kumiki program to a self-contained JS module (runtime inlined). Pass \`source\` or \`path\`. On success the first content item is a size summary, or with \`includeJs\` the generated JS and nothing else; when the compile reported warnings, a second content item holds them, \`warnings:\` followed by a JSON list of diagnostics, and the build still succeeds. On failure the result is \`isError\` and its one item is \`build failed:\` followed by a JSON list of every diagnostic: the warnings, then the errors that failed it. ${DIAGNOSTIC_SHAPE}`,
       inputSchema: {
         source: z.string().optional(),
         path: z.string().optional(),
@@ -122,8 +122,8 @@ export function registerCompileTools(tool: RegisterTool): void {
       },
     },
     async (input) => {
-      const fail = (errors: KumikiError[]) =>
-        failed(`build failed:\n${json(toDiagnostics(errors))}`);
+      const fail = (diagnostics: KumikiError[]) =>
+        failed(`build failed:\n${json(toDiagnostics(diagnostics))}`);
       let result: CompileResult;
       try {
         result = compile(readSource(input), {
@@ -137,11 +137,15 @@ export function registerCompileTools(tool: RegisterTool): void {
         if (e instanceof LexError || e instanceof ParseError) return fail([parseFailure(e)]);
         throw e;
       }
-      if (result.kind === "fail") return fail(result.errors);
-      if (input.includeJs) return text(result.js);
-      return text(
-        `build ok — ${result.js.length} bytes of JS (pass includeJs=true for the source)`,
-      );
+      if (result.kind === "fail") return fail([...result.warnings, ...result.errors]);
+      const head = input.includeJs
+        ? result.js
+        : `build ok — ${result.js.length} bytes of JS (pass includeJs=true for the source)`;
+      // A second item rather than a suffix: with `includeJs` the first item is
+      // the module itself, which a client writes out as it stands. The label marks
+      // where the module ends for a client that joins the items into one text.
+      if (result.warnings.length === 0) return text(head);
+      return text(head, `warnings:\n${json(toDiagnostics(result.warnings))}`);
     },
   );
 
