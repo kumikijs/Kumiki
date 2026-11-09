@@ -95,13 +95,22 @@ effect-list ::= '[' (effect-call (',' effect-call)*)? ']'
 
 reducer テストは*実行中のアプリ*の挙動を表明するものなので、refinement が拒否したバッチはすべての slot を `given` の値のまま残し、effect も発行しない（[batching](./runtime.md#a-batch-commits-all-or-nothing)）。拒否は `expect` ではなく `console.error` に報告される。このティアには `errorIncludes` に相当するものが無いため、`expect` ブロックだけでは「バッチが拒否された」と「reducer が何もしなかった」を区別できない。
 
-### 8.2.4 panic を期待
+### 8.2.4 panic を期待 {#_8-2-4-expecting-a-panic}
 
 ```kumiki fragment
 test addTodo-empty =
     reducer-test addTodo
         given = {slots: {todos: {}, draft: ""}, event: {type: ui.submit, target: NewTodoForm}}
         expect = {panic: "draft cannot be empty"}
+```
+
+panic を期待するテストは、reducer が `expect.panic` を含むメッセージで panic したときに通り、別のメッセージのとき、または panic しなかったときは `diff at: (panic)` で失敗する。テストが状態を期待しているところで reducer が panic すると、そのテストは**予期しない panic** として失敗し、状態があるはずの位置に panic のメッセージを示す——上のテストを `expect = {slots: {todos: {}, draft: ""}}` で書いた場合：
+
+```
+FAIL  addTodo-empty
+  expected: {"todos":{},"draft":""}
+  actual:   panic: "draft cannot be empty"
+  diff at:  (unexpected panic)
 ```
 
 ### 8.2.5 route slot {#_8-2-5-the-route-slot}
@@ -270,6 +279,27 @@ snapshot は深い構造比較。クラス名やスタイルは比較対象外�
 
 不一致はフィールドのパスと値の矢印（`image.src  "/a.png" -> "/b.png"`）で報告する。`expected:` / `actual:` の行は比較したフィールドだけを表示する。実際のノードには同じ位置の期待するノードが述べるフィールドを表示するので、実際のノードだけが持つ `placeholder` や `bind` は表示されない。
 
+描画中に panic する tile は、そのテストを**予期しない panic** として失敗させる。示す行は reducer-test が panic した reducer に示すものと同じで（[§8.2.4](#_8-2-4-expecting-a-panic)）、期待した値として snapshot を示す：
+
+```kumiki fragment
+slot items : List(Int) = []
+tile First = heading("First: " + items[0].show)
+
+test first-shows =
+    tile-test First
+        given  = {slots: {items: []}}
+        expect = heading("First: 1")
+```
+
+```
+FAIL  first-shows
+  expected: heading("First: 1")
+  actual:   panic: "Index 0 is out of range for a List of length 0"
+  diff at:  (unexpected panic)
+```
+
+tile-test はターゲットの本体を描画するので、ターゲット自身の `error-boundary=` は適用されず、その panic はやはり予期しない panic になる。本体が描画する tile は自分の境界を保ち、比較されるのはそのフォールバックである。tile-test はこの panic を期待できない。`expect` は tile であり、panic を書くセクションが無いので、panic を期待できるのは reducer-test だけである。このように報告されるのはターゲットの描画で起きた panic だけである：テスト自身の `given` と `expect` は描画とは別に評価されるので、そのどちらかで起きた panic はテスト本体が投げたものであり、`error:` 行で報告される（[§8.7.1](#_8-7-1-output)）。
+
 ```
 tile-test ::= 'tile-test' identifier
               'given'  '=' '{' (tile-given (',' tile-given)*)? '}'
@@ -349,11 +379,22 @@ episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
 
 `slots-equal: from-log` は最終 slot をログが記録した値と比較する。レコードを書けば、比較する slot とその期待値をそれで名指す。
 
+`no-panics: true` は replay した reducer が panic したときに、`no-errors: true` は effect の `err` がどの `.err` reducer にも届かないときに（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）テストを失敗させる。どちらも、そのキーが `true` のときにだけ報告される。ランナーはまずすべての episode が replay されたことを確かめ（[用途](#_8-6-2-use-cases)）、次にこの 2 つをこの順に、どちらも `slots-equal` より先に判定し、最初に失敗したものを報告する。panic した reducer は何も書かず何も emit せず、取りこぼされた `err` はどの reducer も走らせないので、そのどちらかが届くはずだった slot は元の値のままになる。先に比較すれば、slot の差分が原因の代わりにその症状を報告してしまう。
+
+```
+FAIL  bug-2026-05-21
+  expected: no panics
+  actual:   ep_0001: Cannot read properties of undefined (reading 'id')
+  diff at:  panics
+```
+
+どちらも失敗しなければ、食い違った slot がその slot で、期待値と実際値とともに報告される（[出力](#_8-7-1-output)）。
+
 ### 8.6.1 episode log の形式
 
 → [ランタイム](./runtime.md) で詳述。
 
-### 8.6.2 用途
+### 8.6.2 用途 {#_8-6-2-use-cases}
 
 - バグ報告に付随した episode log を fixture にして regression test 化
 - モデル / アルゴリズムを変更した後でも同じ入力で同じ結果が出るか確認
@@ -393,13 +434,13 @@ FAIL  counter-display
   diff at:  [0].text  "Count: 5" -> "Count: 0"
 ```
 
-本体が例外を投げたテストは、そのテストだけの `FAIL` となり、投げた内容をその下の `error:` 行に示す。ファイル内の他のテストはそのまま実行され、結果を報告する。panic はそのメッセージで示し、メッセージが空なら `KumikiPanic` と示す。それ以外の例外は種類も添えて示す — `TypeError: …` — プログラムではなくコンパイラかランタイムの不具合を指すからである。エラーでない値が投げられた場合は JSON で示す。
+本体が例外を投げたテストは、そのテストだけの `FAIL` となり、投げた内容をその下の `error:` 行に示す。ファイル内の他のテストはそのまま実行され、結果を報告する。panic はそのメッセージで示し、メッセージが空なら `KumikiPanic` と示す。それ以外の例外は種類も添えて示す — `TypeError: …` — プログラムではなくコンパイラかランタイムの不具合を指すからである。エラーでない値が投げられた場合は JSON で示す。テスト対象の reducer や tile の panic はこの例外ではなく、テストの結果——期待したもの、または予期しないもの——である（[§8.2.4](#_8-2-4-expecting-a-panic)、[§8.4](#_8-4-tile-snapshot-tests)）。
 
-コンパイルできないファイルではテストはひとつも走らない。ランナーはファイルを解決済みの（絶対）パスで示し、各診断を `kumiki check` と同じく警告、エラーの順に同じ形 — `<code> <kind> at <line>:<col>: <message>` — で出力し、診断が `test` の中にあればその名前を添える：
+コンパイルできないファイルではテストはひとつも走らない。ランナーはファイルを解決済みの（絶対）パスで示し、各診断を `kumiki check` と同じく警告、エラーの順に同じ形 — `<severity> <code> <kind> at <line>:<col>: <message>` — で出力し、診断が `test` の中にあればその名前を添える：
 
 ```
 compile failed (/path/to/app.kumiki):
-E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")
+error E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")
 ```
 
 ### 8.7.2 失敗テストからの修正 {#_8-7-2-fixing-from-a-failing-test}
@@ -483,9 +524,10 @@ example コーパス（`packages/tests`）は「**壊れた example は決して
 
 `kumiki run <file> <scenario.json>`（MCP: `kumiki_run_scenario`）は、アプリを**シナリオ**で駆動し、毎ステップの構造化 trace を返す。これが「人を介さない生成→実行→観測→修正ループ」の土台になる。
 
-- **操作（action）**: `{dispatch, payload?}`（reducer を名前で発火）/ `{clickText}` / `{click}` / `{focus}` / `{blur}` / `{key, value}` / `{hover}` / `{fill, value}` / `{choose, value}` / `{navigate}` / `{submit}` / `{wait}`。`{focus}` `{blur}` `{key}` `{hover}` はセレクタ一致要素に対し実際の DOM イベント——`FocusEvent`、`value` を `key` に持つ `KeyboardEvent`、`mouseenter`——を dispatch するため、`ui.focus` / `ui.blur` / `ui.key` / `ui.hover` reducer が依存する `addEventListener` 配線層をシナリオ単独で検証できる。いずれもセレクタ一致要素に対して dispatch する。ランタイムがリスナを張るのがそこだからである。`keydown` はそこからバブルし、これが `ui.key(Container)` をフォーカス可能な子孫から駆動できる理由である。`focus` / `blur` / `mouseenter` はバブルしない（ブラウザは 1 つのイベントを伝播させるのではなく、祖先ごとに別々の `mouseenter` を発火する）。`ui.key` reducer のペイロードは `key` と `code` を運ぶが、この層で設定されるのは `key` だけである。`code` は物理キーを指し、`"Enter"` と書いたシナリオはそれを選んでいないためである。`{submit}` は `ui.submit` reducer が待ち受けるフォームイベントを dispatch する。`form` タイルは作者が付けない限り id を持たないため、セレクタはフォーム自身でもその内側の要素でもよい。bind されたフィールドがバリデーションに失敗している form は reducer を呼ばず（[forms.md §5.2.2](./forms.md#_5-2-2-submit-の挙動)）、form が送信を差し止めた `{submit}` は通過せず拒否される（[後述](#a-submit-the-form-holds-back-is-refused)）。`{fill, value}` は `input` / `textarea` / `editable` に書き込み、それ以外に当たった場合は一致した要素名を挙げて拒否する。セレクタがラッパーへずれたとき、誰も読まないプロパティを代入して通るのではなく失敗する。`{wait}` はそのステップ本来の settle に指定ミリ秒を上乗せする。debounce の待ち・retry のバックオフ・タイマーはこれで観測する（操作のないステップは settle しない）。
-- **観測**: 各ステップ後に `state`（slot スナップショット）・`domText`・`errors`・`emits`（発火した effect）を記録。**実行できなかった操作**——何にも一致しないセレクタ、テキストを持たない要素への `fill`、アプリに存在しない reducer 名を指す `{dispatch}`（`no reducer named "<name>"`。近い名前が宣言されていれば `— did you mean "<declared>"?` が続き、最も近い名前が同点で複数あれば `— did you mean "addA" or "addB"?` のようにそのすべてを挙げる）、`#id` スコープ付き reducer を payload でその id を渡さずに指す `{dispatch}`、**プラットフォームが操作を拒否するコントロール**（[後述](#a-step-cannot-drive-a-control-the-platform-refuses)）、および **form が差し止めた**、またはブラウザの constraint validation が止めた `{submit}`（[後述](#a-submit-the-form-holds-back-is-refused)）——は `actionError` として別に記録され、そのステップを失敗させる。これは `error` ではない。アプリについて何も観測していないため、`noErrors` も `errorIncludes` もこれを見ない。両者を同じ場所にまとめていたために、fixture が自分の間違いが起きたことを assert できてしまっていた（`{"do": {"key": "#typo", "value": "Enter"}, "expect": {"errorIncludes": ["no element"]}}` は、何も押さないまま通っていた）。
+- **操作（action）**: `{dispatch, payload?}`（reducer を名前で発火）/ `{clickText}` / `{click}` / `{focus}` / `{blur}` / `{key, value}` / `{hover}` / `{fill, value}` / `{choose, value}` / `{navigate}` / `{submit}` / `{wait}`。`{focus}` `{blur}` `{key}` `{hover}` はセレクタ一致要素に対し実際の DOM イベント——`FocusEvent`、`value` を `key` に持つ `KeyboardEvent`、`mouseenter`——を dispatch するため、`ui.focus` / `ui.blur` / `ui.key` / `ui.hover` reducer が依存する `addEventListener` 配線層をシナリオ単独で検証できる。いずれもセレクタ一致要素に対して dispatch する。ランタイムがリスナを張るのがそこだからである。`keydown` はそこからバブルし、これが `ui.key(Container)` をフォーカス可能な子孫から駆動できる理由である。`focus` / `blur` / `mouseenter` はバブルしない（ブラウザは 1 つのイベントを伝播させるのではなく、祖先ごとに別々の `mouseenter` を発火する）。`ui.key` reducer のペイロードは `key` と `code` を運ぶが、この層で設定されるのは `key` だけである。`code` は物理キーを指し、`"Enter"` と書いたシナリオはそれを選んでいないためである。`{submit}` は `ui.submit` reducer が待ち受けるフォームイベントを dispatch する。`form` タイルは作者が付けない限り id を持たないため、セレクタはフォーム自身でもその内側の要素でもよい。bind されたフィールドがバリデーションに失敗している form は reducer を呼ばず（[forms.md §5.2.2](./forms.md#_5-2-2-submit-の挙動)）、form が送信を差し止めた `{submit}` は通過せず拒否される（[後述](#a-submit-the-form-holds-back-is-refused)）。`{fill, value}` は `input` / `textarea` / `editable` に書き込み、それ以外に当たった場合は一致した要素名を挙げて拒否する。セレクタがラッパーへずれたとき、誰も読まないプロパティを代入して通るのではなく失敗する。`{choose, value}` は `select` の option のうち、ラベルが `value` であるもの（両辺とも前後の空白を除き、連続する空白を 1 つにまとめて比べる）を選び、そのラベルを持つ option が無いときに限り、値が `value` と完全に一致するものを選ぶ。option の値は `select` タイルが書き込むキーである（[select の値マッチング](./runtime.md#_10-3-8-value-matching-of-select)）：Text の `b` なら引用符込みの `"b"`。`<label>` に一致したセレクタは、そのラベルが指すコントロールを操作する。`select` に行き着かない要素（`<label>` の内側の要素を含む）への `{choose}` は一致した要素名を挙げて拒否され（`#box matched <div>, which holds no options to choose`）、どちらにも一致する option の無い `select` への `{choose}` は `no option "Zed" in select #pick` として失敗し、無効な option を指す `{choose}` は無効なコントロールと同じく拒否される（[後述](#a-step-cannot-drive-a-control-the-platform-refuses)）。両ティアが同じ規則で option を決めるため、ステップはどちらでも同じ option に行き着く。`{wait}` はそのステップ本来の settle に指定ミリ秒を上乗せする。debounce の待ち・retry のバックオフ・タイマーはこれで観測する（操作のないステップは settle しない）。
+- **観測**: 各ステップ後に `state`（slot スナップショット）・`domText`・`errors`・`emits`（発火した effect）を記録。**実行できなかった操作**——何にも一致しないセレクタ、テキストを持たない要素への `fill`、`select` に行き着かないか、その option のどれも指さない `{choose}`、アプリに存在しない reducer 名を指す `{dispatch}`（`no reducer named "<name>"`。近い名前が宣言されていれば `— did you mean "<declared>"?` が続き、最も近い名前が同点で複数あれば `— did you mean "addA" or "addB"?` のようにそのすべてを挙げる）、`#id` スコープ付き reducer を payload でその id を渡さずに指す `{dispatch}`、**プラットフォームが操作を拒否するコントロール**（[後述](#a-step-cannot-drive-a-control-the-platform-refuses)）、および **form が差し止めた**、またはブラウザの constraint validation が止めた `{submit}`（[後述](#a-submit-the-form-holds-back-is-refused)）——は `actionError` として別に記録され、そのステップを失敗させる。これは `error` ではない。アプリについて何も観測していないため、`noErrors` も `errorIncludes` もこれを見ない。両者を同じ場所にまとめていたために、fixture が自分の間違いが起きたことを assert できてしまっていた（`{"do": {"key": "#typo", "value": "Enter"}, "expect": {"errorIncludes": ["no element"]}}` は、何も押さないまま通っていた）。
 - **アサーション（expect）**: `{ noErrors?, errorIncludes?, actionErrorIncludes?, state?, domIncludes?, domExcludes? }` — 上の操作一覧と同じく**閉じた集合**である。集合外のキーは無視されるのではなく実行を失敗させ、browser ティアが所有する名前（`focused` / `visible` / `hidden` / `animating` / `elementState`、および `setProperty` 操作）はそのティアを名指しして失敗する。したがって、**ブラウザティアのアサーションを含む** `.browser.json` を `kumiki run` に渡すと、何も検証しないまま通るのではなく拒否される。headless DOM で答えられるものしか assert していない fixture はそのまま実行される（コーパスに実例がある）。文書自体も同じく閉じている — `steps`（必須、かつ空でないこと：何も assert しないシナリオが成功を返してはならない）と `effects` / `defaultEffect` のみ。したがって `steps` の綴り間違いは「存在しない」と読まれるのではなく名指しで報告される。シナリオの検証は mount より前に行われ、文書中の問題はすべて一度に報告される。`state` は **slot 状態への部分一致**（ドット区切りパス可）。`errorIncludes` は `noErrors` の対になるもので、各部分文字列がそのステップ中に報告されたいずれかのエラーに含まれることを要求する。refinement が拒否した reducer バッチ（[batching](./runtime.md#a-batch-commits-all-or-nothing)）や、`.err` reducer が受け取らない effect エラーのように、runtime が*報告すること*自体が契約であるケース向けである。scenario ティア専用で、browser ティアは報告されたエラーをすべて致命として扱う。満たせるのはアプリが報告したエラーだけである——操作自体が実行できなかったステップは代わりに `actionError` を報告し、失敗する。`actionErrorIncludes` はそのもう一方のチャネルに対応するものである。各部分文字列がそのステップの `actionError` に含まれることを要求し、一致したものは `expectedActionError` へ移ってステップを失敗させなくなる。これが必要なのは、拒否そのものが fixture の表明したい挙動であることが多いためである——「保存中は save ボタンが disabled なので、クリックしても何も起きない」を書く方法はこれ以前には無く、disabled なコントロールを操作したステップは、ガードが効いていても reducer が存在しなくても同じく通っていた。逆向きにも一方通行である：拒否を要求したのに拒否されなかったステップは失敗する。したがってルールが拒否しなくなった日には、拒否を表明している fixture はすべて緑ではなく赤になる。DOM テキストではなく状態を検証できるため、「select が常に最後の選択肢になる」ような**非例外の振る舞いバグ**（人がクリックして気づくクラス）を機械的に検出できる。これは TDD の受け入れ基準（AC）を実行可能にしたものに等しい。
+- **DOM アサーションが読むもの**: `domIncludes` / `domExcludes` は mount root **とランタイムのオーバーレイ**のテキストを読む。オーバーレイとはトーストのバナー（`data-kumiki-toast`、[標準ライブラリ §2.6.2](./stdlib.md#_2-6-2-トースト)）と確認ダイアログ（`data-kumiki-confirm`、[標準ライブラリ §2.6.5](./stdlib.md#_2-6-5-confirm)）であり、ランタイムはこれらを root の下に描画せず `<body>` に追加する。したがってステップはトーストの文言や confirm の問いを assert できる。それぞれは別々に読まれるので、部分文字列が一方の末尾と次の先頭をまたいで一致することはない。`domText` はこのテキストの連続する空白を一つにまとめたものなので、そこから写した部分文字列が一致するのは、元のテキストの空白が同じところだけである。実行は、実行中に文書に現れたオーバーレイをすべて読み、同じ文書に mount された別のアプリが開いたものも含む。実行の開始時にすでに文書にあるもの（同じ文書を共有する以前の実行やテストが残したもの）は読まない。セレクタが root の下の何にも一致しない `{click}` は、これと同じオーバーレイの中だけを探す。後始末では、mount の dispose がアプリの開いたままの confirm を閉じ（[ライフサイクル §7.6](./lifecycle.md#_7-6-confirmation-dialogs)）、実行は実行中に現れたトーストをすべて削除する。トーストのタイマーはまだ数秒残っていることがあるからである。別のアプリの confirm は、そのアプリが閉じるまで開いたままである。browser ティアはアプリを mount する root（複数あればそのすべて）に加えて同じオーバーレイを `innerText` として読む。実行ごとに新しいページを読み込むため、そこにあるオーバーレイはすべてその実行のものである。
 - **effect スクリプト**: `effects: { <name>: [{outcome, value}, ...] }` で HTTP / Storage の結果を順に差し替え、ループを決定論的・ネットワーク非依存に保つ。スクリプトした結果は provider の結果の代わりに置かれるので、provider の結果と同じように読まれる。`storage.*` / `session.*` / `indexed.*` の effect への `err` は、その effect が provider の err 値を読むのと同じ読み方で（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）、`out=` が宣言する `Text` として `.err` に届く。`Text` は書いたとおり、`Text` の `message` を持つレコードはそのフィールド（`{"message": "blocked"}` は `"blocked"`）、それ以外はその JSON テキスト（`42` は `"42"`）であり、`value` を書かないスクリプトは `"undefined"` になる。`value` の無い provider の err が届けるのがそれだからである。したがってシナリオが、アプリには決して入れられない値を `Text` の slot に入れることはない。それ以外の capability への `err`（`HttpError` や、カスタム capability 自身の `E`）は、スクリプトに書いたとおり `.err` に届く。
 - **後始末**: 実行はレポートを返す前に自身の mount を dispose する。レポートより長生きするものは無い — `timer` reducer のインターバルは止まり、ホストのライフサイクルリスナは外れ、shape は再び mount できる状態に戻る。描画された DOM も一緒に消えるので、`domText` ではなく要素そのものを見たい呼び出し側は自分で mount する。
 
@@ -519,6 +561,8 @@ example コーパス（`packages/tests`）は「**壊れた example は決して
 - **`editable` の理由は `disabled` ではなく `not editable` である。** `disabled` と `readonly` はどちらも `contenteditable="false"` として描画され、DOM 上に両者を区別するものは無い。したがって与える理由は真であるほうを選ぶ。
 
 `{submit}` はコントロールではなくフォームを対象とし、`{dispatch}` / `{navigate}` は DOM ではなく seam を駆動するので、いずれもこのルールを問わない。`check` / `radio` / `switch` がタイルの id を載せる `<label>` を対象にした操作は、その内側の `<input>` で判定される。ブラウザがラベルではなくコントロールで判定するからである。disabled なコントロールの*内側*を対象にした操作——`loading` な button が描くスピナーなど——はそのコントロールで判定される。ドライバが dispatch したイベントはそこへ届くからである。
+
+無効な `<option>`——`placeholder` や、無効な `<optgroup>` の内側の option——を指す `{choose}` も同じように `option "<value>" is disabled` として拒否される。ユーザーはそれを選べず、Playwright も選択しないからである。
 
 #### form が差し止めた `{submit}` は拒否される {#a-submit-the-form-holds-back-is-refused}
 

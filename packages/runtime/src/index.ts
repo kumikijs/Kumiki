@@ -30,6 +30,13 @@ import { statusPatchers, statusTiles } from "./tiles-status.ts";
 import { textPatchers, textTiles } from "./tiles-text.ts";
 
 export {
+  type Choice,
+  type ChosenOption,
+  chooseOption,
+  OptionRefusal,
+  refuseChoice,
+} from "./choose-check.ts";
+export {
   CONTROL_DEMANDS,
   type ControlDemand,
   ControlRefusal,
@@ -153,6 +160,7 @@ export {
   type EpisodeTrigger,
   type SlotDiff,
 } from "./episode.ts";
+export { RUNTIME_OVERLAY_SELECTORS } from "./overlays.ts";
 export { routing } from "./router.ts";
 export {
   partialMatch,
