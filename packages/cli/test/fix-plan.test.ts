@@ -4,8 +4,22 @@ import { check, collectTimerNames, lex, parse, variantTagsOf } from "@kumikijs/c
 import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
 import { APP_A, seed, storeOf } from "./helpers/files.ts";
+import { tiedCounts } from "./helpers/tie.ts";
 
 const APP_ONE_LINE = `app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
+
+// `request` as an effect's `map-request` and `value` bound by a `let`: positions
+// no declared type judges, so a capitalised name there resolves as itself alone.
+const unjudged = (request: string, value: string): string => `type Status = Idle | Busy
+slot s : Status = Idle
+fn idel(x: Int) -> Int = x
+effect load cap=http.get in=Unit out=Result(Text, HttpError) map-request=${request}
+reducer go on=ui.click(B) do= let next = ${value}
+    s := next
+    emit load()
+tile B = button(text="b")
+tile App = column(B, text(s.show))
+${APP_A.replace("caps   = []", "caps   = [http.get]")}`;
 
 function planOf(file: string) {
   const store = load(file);
@@ -55,6 +69,20 @@ tile App = column(B, text(a.show), text(t))
 ${APP_A}`,
       description: 'replace "Int.pasre" with "Int.parse" at 3:35',
       fixed: "a := Int.parse(t).get-or(0)",
+    },
+    {
+      // `Idel` is one edit from the fn `idel` and two from the tag `Idle`, but a
+      // capitalised name is a constructor, so only a tag resolves it.
+      repair: "repairs a tag no type declares from the tags, not the callees (E0116)",
+      source: unjudged('{url: "/x", decode: Decoder.Text}', "Idel"),
+      description: 'replace "Idel" with "Idle" at 5:42',
+      fixed: "let next = Idle",
+    },
+    {
+      repair: "repairs a qualifier that names nothing from the qualifiers (E0116)",
+      source: unjudged('{url: "/x", decode: Decodr.None}', "Idle"),
+      description: 'replace "Decodr" with "Decoder" at 4:94',
+      fixed: "decode: Decoder.None",
     },
     {
       repair: "answers a misspelt `Time.now` with the qualified builtin (E0116)",
@@ -436,9 +464,9 @@ ${APP_A}`);
 });
 
 describe("planFixesExplained: skip-reason classification", () => {
-  const synth = (code: string, message: string) => ({
+  const synth = (code: string, message: string, kind = "type-error") => ({
     code,
-    kind: "type-error" as const,
+    kind,
     message,
     pos: { line: 1, col: 1 },
   });
@@ -494,6 +522,20 @@ describe("planFixesExplained: skip-reason classification", () => {
       'Call to undefined function "doubel-value"',
     ],
     [
+      "e0116-no-close-variant",
+      LONE_TILE,
+      "E0116",
+      'Reference to undefined variant "ZZZZZZZZZZ"',
+      "undef-variant",
+    ],
+    [
+      "e0116-no-close-qualifier",
+      LONE_TILE,
+      "E0116",
+      'Reference to undefined qualifier "ZZZZZZZZZZ" in "ZZZZZZZZZZ.show"',
+      "undef-qualifier",
+    ],
+    [
       "e0116-no-close-callee",
       'slot at : Time = nwo()\ntile App = heading("hi")\n',
       "E0116",
@@ -545,8 +587,8 @@ describe("planFixesExplained: skip-reason classification", () => {
       'Effect "e" requires capability "log.write" which is not declared',
     ],
     ["no-repair-branch", LONE_TILE, "E0999", "some future diagnostic"],
-  ])("%s: %s / %s %s", (reason, source, code, message) => {
-    const { patches, skipped } = planFixesExplained(storeOf(source), [synth(code, message)]);
+  ])("%s: %s / %s %s", (reason, source, code, message, kind?: string) => {
+    const { patches, skipped } = planFixesExplained(storeOf(source), [synth(code, message, kind)]);
     expect(patches).toEqual([]);
     expect(skipped).toEqual([expect.objectContaining({ code, reason })]);
   });
@@ -558,6 +600,151 @@ describe("planFixesExplained: skip-reason classification", () => {
     );
     expect(patches).toHaveLength(1);
     expect(patches[0]?.description).toContain('replace "App" with "Apps"');
+  });
+
+  describe("close-names-tied: two names equally close, so nothing is written", () => {
+    // `defs(a, b)` declares `a` first; the quoted name is one edit from each.
+    const TIES: {
+      code: string;
+      defs: (a: string, b: string) => string[];
+      message: string;
+      tied: [string, string];
+    }[] = [
+      {
+        code: "E0102",
+        defs: (a, b) => [`slot ${a} : Int = 0`, `slot ${b} : Int = 0`],
+        message: 'reducer refers to undefined name "count"',
+        tied: ["countA", "countB"],
+      },
+      {
+        code: "E0103",
+        defs: (a, b) => [`slot ${a} : Int = 0`, `slot ${b} : Int = 0`],
+        message: 'Reference to undefined name "count"',
+        tied: ["countA", "countB"],
+      },
+      {
+        code: "E0105",
+        defs: (a, b) => [`tile ${a} = heading("a")`, `tile ${b} = heading("b")`],
+        message: 'Reference to undefined tile "Card"',
+        tied: ["CardA", "CardB"],
+      },
+      {
+        code: "E0107",
+        defs: (a, b) => [
+          `motion ${a} = {keyframes: {from: {opacity: 0}, to: {opacity: 1}}}`,
+          `motion ${b} = {keyframes: {from: {opacity: 1}, to: {opacity: 0}}}`,
+        ],
+        message: 'Reference to undefined motion "fade"',
+        tied: ["fadeA", "fadeB"],
+      },
+      {
+        code: "E0211",
+        defs: (a, b) => [`tile ${a} = heading("a")`, `tile ${b} = heading("b")`],
+        message: 'Reducer "bump" selects undefined tile "Card"',
+        tied: ["CardA", "CardB"],
+      },
+      {
+        code: "E0106",
+        defs: (a, b) => [
+          `reducer a on=timer(100ms, name=${a}) do= n := n + 1`,
+          `reducer b on=timer(100ms, name=${b}) do= n := n + 1`,
+        ],
+        message: 'stop-timer refers to undefined timer name "tick"',
+        tied: ["tickA", "tickB"],
+      },
+      {
+        code: "E0116",
+        defs: (a, b) => [`fn ${a}(x: Int) -> Int = x`, `fn ${b}(x: Int) -> Int = x`],
+        message: 'Call to undefined function "score"',
+        tied: ["scoreA", "scoreB"],
+      },
+      {
+        code: "E0117",
+        defs: (a, b) => [`type ${a} = Int`, `type ${b} = Int`],
+        message: 'Reference to undefined type "Shape"',
+        tied: ["ShapeA", "ShapeB"],
+      },
+      {
+        code: "E0104",
+        defs: (a, b) => [
+          `effect ${a} cap=log.write in=Text out=Unit`,
+          `effect ${b} cap=log.write in=Text out=Unit`,
+        ],
+        message: 'Reference to undefined effect "save"',
+        tied: ["saveA", "saveB"],
+      },
+      {
+        code: "E0118",
+        defs: (a, b) => [`slot ${a} : Text = "a"`, `slot ${b} : Text = "b"`],
+        message: 'Reference to undefined theme "mode"',
+        tied: ["modeA", "modeB"],
+      },
+      {
+        code: "E0216",
+        defs: (a, b) => [`type S = ${a} | ${b}`],
+        message: 'Variant "Idle" is not a member of type "S"',
+        tied: ["IdleA", "IdleB"],
+      },
+      {
+        code: "E0209",
+        defs: (a, b) => [`type S = ${a} | ${b}`],
+        message: 'Variant "Idle" is not a member of scrutinee type "S"',
+        tied: ["IdleA", "IdleB"],
+      },
+    ];
+
+    // Each branch is asked with its two tied definitions in both orders: a branch that keeps the
+    // first name it meets passes one order and fails the other.
+    it.each(
+      TIES.flatMap((t) => [
+        { ...t, first: t.tied[0], second: t.tied[1] },
+        { ...t, first: t.tied[1], second: t.tied[0] },
+      ]),
+    )("$code, with $first declared first", ({ code, defs, message, tied, first, second }) => {
+      const store = storeOf(["slot n : Int = 0", ...defs(first, second), ""].join("\n"));
+      const diagnostic = synth(code, message);
+      const { patches, skipped } = planFixesExplained(store, [diagnostic]);
+      expect(patches).toEqual([]);
+      expect(skipped).toEqual([
+        { code, reason: "close-names-tied", message, diagnostic, candidates: tied },
+      ]);
+    });
+
+    it.each([
+      ["countA", "countB"],
+      ["countB", "countA"],
+    ])("plans the program `check` reports the tie in, with %s declared first", (first, second) => {
+      const store = storeOf(tiedCounts(first, second));
+      const errors = check(store.program);
+      expect(errors.map((e) => e.code)).toEqual(["E0103"]);
+      const { patches, skipped } = planFixesExplained(store, errors);
+      expect(patches).toEqual([]);
+      expect(skipped.map((s) => [s.reason, s.candidates])).toEqual([
+        ["close-names-tied", ["countA", "countB"]],
+      ]);
+    });
+
+    it("refuses a tie among built-in names too", () => {
+      // Writing one of the four units would change how long something waits by a factor nothing
+      // in the program chose.
+      const { patches, skipped } = planFixesExplained(storeOf(LONE_TILE), [
+        synth("E0116", 'Call to undefined function "Duration.x"'),
+      ]);
+      expect(patches).toEqual([]);
+      expect(skipped.map((s) => [s.reason, s.candidates])).toEqual([
+        ["close-names-tied", ["Duration.d", "Duration.h", "Duration.m", "Duration.s"]],
+      ]);
+    });
+
+    it("lets a declared fn outrank a built-in call at the same distance", () => {
+      // `randm` is one edit from the declared `rando` and from the built-in `random`.
+      const store = storeOf('fn rando(x: Int) -> Int = x\ntile App = heading("hi")\n');
+      const { patches, skipped } = planFixesExplained(store, [
+        synth("E0116", 'Call to undefined function "randm"'),
+      ]);
+      expect(skipped).toEqual([]);
+      expect(patches.map((p) => p.description)).toEqual(['replace "randm" with "rando" at 1:1']);
+    });
   });
 });
 
