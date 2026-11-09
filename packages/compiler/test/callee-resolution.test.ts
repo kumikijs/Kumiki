@@ -11,7 +11,7 @@ import {
   UNQUALIFIED_BUILTIN_CALLS,
 } from "../src/builtin-calls.ts";
 import { jsBinding } from "../src/codegen/context.ts";
-import { checkSource, codesOf, messagesOf } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf, messagesOf, posOf } from "./helpers/diagnostics.ts";
 import { compileOrFail, fnLowering } from "./helpers/module.ts";
 
 function inReducer(expr: string): string {
@@ -71,8 +71,9 @@ describe("E0116 undef-call", () => {
   });
 });
 
-// `map-request` is a position no declared type judges, so a capitalised name there
-// is decided by its own resolution alone. `Status` is declared below its first use.
+// A `map-request` field other than `decode` is a position no declared type judges, so a
+// capitalised name there is decided by its own resolution alone. `Status` is declared below
+// its first use.
 function inRequest(request: string): string {
   return `slot s : Status = Idle
 effect load cap=http.post in=Unit out=Result(Text, HttpError) map-request=${request}
@@ -102,21 +103,22 @@ describe("E0116 undef-variant / undef-qualifier", () => {
   it.each([
     {
       name: "a tag no type declares",
-      request: '{url: "/x", decode: Nonsense}',
+      request: '{url: "/x", body: Nonsense}',
+      at: "Nonsense",
       kind: "undef-variant",
       message: 'Reference to undefined variant "Nonsense"',
     },
     {
       name: "the qualifier of a bare member when the qualifier names nothing",
       request: '{url: "/x", decode: Decodr.None}',
+      at: "Decodr.None",
       kind: "undef-qualifier",
       message:
         'Reference to undefined qualifier "Decodr" in "Decodr.None" — did you mean "Decoder"?',
     },
-  ])("reports $name", ({ request, kind, message }) => {
-    expect(checkSource(inRequest(request))).toEqual([
-      { code: "E0116", kind, message, pos: { line: 2, col: 95 } },
-    ]);
+  ])("reports $name", ({ request, at, kind, message }) => {
+    const src = inRequest(request);
+    expect(checkSource(src)).toEqual([{ code: "E0116", kind, message, pos: posOf(src, at) }]);
   });
 
   it.each(["Nonsense", "Decodr.None"])("refuses to build %s", (expr) => {

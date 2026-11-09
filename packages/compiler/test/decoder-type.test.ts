@@ -97,6 +97,7 @@ describe("a map-request's decode", () => {
     ["an Int", "1", "1}", "Int"],
     ["a record", "{kind: mode}", "{kind: mode}", "{kind: Text}"],
     ["an Option's None", "None", "None}", 'variant "None"'],
+    ["a tag no type declares", "Nonsense", "Nonsense}", 'variant "Nonsense"'],
     ["{}", "{}", "{}}", "{}, an empty Map, Set or record"],
   ])("refuses %s at the value", (_what, value, at, actual) => {
     const src = mapped(`{key: "note", decode: ${value}}`);
