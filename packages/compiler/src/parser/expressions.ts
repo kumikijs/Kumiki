@@ -51,7 +51,7 @@ export class ExpressionParser extends TypeParser {
       this.chainStep(chain);
       const op = "|" as BinOp;
       this.next();
-      const rhs = this.descend(() => this.parseLogicAnd());
+      const rhs = this.under(() => this.parseLogicAnd());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
     this.endChain(chain);
@@ -92,7 +92,7 @@ export class ExpressionParser extends TypeParser {
     while (this.matchOp("&&") || this.matchOp("&")) {
       this.chainStep(chain);
       this.next();
-      const rhs = this.descend(() => this.parseCmp());
+      const rhs = this.under(() => this.parseCmp());
       lhs = { kind: "BinOp", op: "&", lhs, rhs, pos: lhs.pos };
     }
     this.endChain(chain);
@@ -105,7 +105,7 @@ export class ExpressionParser extends TypeParser {
     while (this.matchAnyOp(["==", "!=", "<", ">", "<=", ">="])) {
       this.chainStep(chain);
       const op = this.eat("op").value as BinOp;
-      const rhs = this.descend(() => this.parseAdd());
+      const rhs = this.under(() => this.parseAdd());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
     this.endChain(chain);
@@ -118,7 +118,7 @@ export class ExpressionParser extends TypeParser {
     while (this.matchAnyOp(["+", "-"])) {
       this.chainStep(chain);
       const op = this.eat("op").value as BinOp;
-      const rhs = this.descend(() => this.parseMul());
+      const rhs = this.under(() => this.parseMul());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
     this.endChain(chain);
@@ -131,7 +131,7 @@ export class ExpressionParser extends TypeParser {
     while (this.matchAnyOp(["*", "/", "%"])) {
       this.chainStep(chain);
       const op = this.eat("op").value as BinOp;
-      const rhs = this.descend(() => this.parseUnary());
+      const rhs = this.under(() => this.parseUnary());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
     this.endChain(chain);
@@ -146,8 +146,9 @@ export class ExpressionParser extends TypeParser {
       else if (this.matchT("ident", "not")) prefixes.push({ op: "!", pos: this.next().pos });
       else break;
     }
-    // The operand is read after the run, at this level, so how deep it goes is known
-    // only once it is read; the run is charged at its first token both before and after.
+    // The run's nodes sit over an operand read at this level, whose depth is known only once it
+    // is read: the run is charged alone first, then on top of the operand, both at the operand's
+    // first token.
     const at = this.peek().pos;
     this.charge(prefixes.length, at);
     if (prefixes.length === 0) return this.parsePostfix();
@@ -264,8 +265,13 @@ export class ExpressionParser extends TypeParser {
         this.next();
         return { kind: "Unit", pos: t.pos };
       }
-      const inner = this.parseExpr();
+      const at = this.peek().pos;
+      const enclosing = this.measure();
+      const inner = this.group(() => this.parseExprNested());
+      const below = this.measured(enclosing);
       if (this.matchOp(",")) {
+        // A tuple is a node, with its first item under it as the others are.
+        this.charge(below + 1, at);
         this.next();
         const items: [Expr, Expr, ...Expr[]] = [inner, this.parseExpr()];
         while (this.matchOp(",")) {

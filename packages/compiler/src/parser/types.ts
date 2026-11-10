@@ -64,8 +64,12 @@ export class TypeParser extends TokenStream {
       if (refinement) (node as { refinement?: Refinement }).refinement = refinement;
       return node;
     }
+    const enclosing = this.measure();
     const atom = this.parseTypeAtom();
+    const below = this.measured(enclosing);
     if (this.matchKw("where")) {
+      // A run's first `where` is a node over the atom, as each later one is over the one before.
+      this.charge(below + 1, this.peek().pos);
       this.next();
       const ref = this.parseRefinement();
       return { kind: "TypeRefinement", inner: atom, refinement: ref, pos: atom.pos };

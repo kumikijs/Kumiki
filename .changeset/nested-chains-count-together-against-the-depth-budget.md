@@ -27,18 +27,23 @@ text), and sixteen 200-step index chains, each the first index of the next
 Now each chain measures how deep every operand it reads goes, and each step is
 charged for the deepest of them, so all of these are the positioned parse error
 a single overlong chain gives, at the step that takes the tree to level 256.
-For the 10-level type above, that is the 47th `where` of the second run from
+For the 10-level type above, that is the 45th `where` of the second run from
 the inside:
 
 ```
-Parse error at 2:3737: Nesting is deeper than 256 levels — extract part of this into a definition of its own
+Parse error at 2:3707: Nesting is deeper than 256 levels — extract part of this into a definition of its own
 ```
 
 The same holds for anything else nested in a chain's operand: a product inside
 a sum, a nested list that is then indexed, a `match` pattern, a nested type
-application under `where`s. A binary operator's right operand counts one level
-under its operator, as an index already did under its `[`.
+application under `where`s.
 
-A single chain's limits and the positions it is refused at are unchanged, and a
-program inside the budget is unaffected: a 10-level `Id(…)` type 255 levels
-deep still compiles.
+Where the parser's count and the tree differed by a level, the count now
+follows the tree. A binary operator's right operand counts one level under its
+operator, as an index already did under its `[`, so `1 + [[…]]` holds one list
+fewer than `[[…]]`. A run's first `where` counts, as the later ones did, so a
+`where` chain is refused one `where` sooner. Parentheses build no node and
+count only for what they hold: `((1 + 1) + 1) + …` and a bare `((…))` go one
+level deeper than before, and `1 + (1 + (…))` as deep as before. Every other
+single chain is refused where it was, and a 10-level `Id(…)` type one `where`
+inside the budget still compiles.
