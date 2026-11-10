@@ -1,0 +1,20 @@
+# Feature (runtime.md): `init` emits a standard effect, and the server pass
+# skips it.
+#
+# A mount installs `log` onto the app's effects before it dispatches anything,
+# so in the browser the entry is written and `wasLogged` counts it. The server
+# pass installs no standard effect: an emit of one names an effect that pass
+# does not run, not a missing one, so `renderToString` skips it without a
+# report. The page is served with nothing on the console and a bootstrap
+# episode whose status is `completed`, not `panic`.
+
+slot logged : Int = 0
+
+reducer wasLogged on=log.ok(_, _) do= logged := logged + 1
+
+tile App = column(heading("Init log"), text("logged " + logged.show)) {pad: "lg", gap: "md"}
+
+app InitStandardEffectOnTheServer
+    caps   = [log.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = [log({level: "info", message: "boot", data: {"phase": "init"}})]

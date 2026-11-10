@@ -11,13 +11,13 @@ description: Diagnose and fix Kumiki compiler errors. Use when `kumiki check`/`b
 pnpm kumiki check <file>
 ```
 
-Or `kumiki_check` via `@kumikijs/mcp`. Each diagnostic has a stable `code` (E0xxx) documented in `docs/spec/errors.md`. Read that entry first — it states the rule and the fix.
+Or `kumiki_check` via `@kumikijs/mcp`. Each diagnostic prints as one line that leads with its severity — `error E0103 undef-ref at 4:30: …` or `warning W0212 … at 2:17: …` — and has a stable `code` documented in `docs/spec/errors.md`. Read that entry first — it states the rule and the fix.
 
 ## Error code map (see docs/spec/errors.md for detail)
 
 | code | meaning | usual fix |
 |---|---|---|
-| `E0001` | `app.routes` missing `/404` | add `"/404" -> NotFound` |
+| `E0001` | `app.routes` missing `/404` (`missing-404`), its `/404` written as a redirect (`404-is-redirect`), or a `sub-routes` entry at `/404` (`404-in-sub-routes`) | route `/404` to a tile in `app.routes`: `"/404" -> NotFound`; remove a `/404` entry from `sub-routes` — the app's `/404` is the only one |
 | `E0003` | no `app` definition (an empty file counts) | add the `app` entry point; expected while a program is still being assembled with the editing verbs, which do not enforce it |
 | `E0004` | more than one `app` definition — codegen keeps the first and drops the rest | remove or merge the extra; `replace` the app instead of adding a second |
 | `E0005` | a tile expands into itself, directly or through other tiles | break the loop — repetition belongs in `for`, alternatives in `when` / `match` |
@@ -27,7 +27,7 @@ Or `kumiki_check` via `@kumikijs/mcp`. Each diagnostic has a stable `code` (E0xx
 | `E0009` | a `type` resolves to itself — the alias chain returns to a name on it without reaching a record, union, container or primitive | give one name on the chain a body; a recursive type wants a record or union where it names itself |
 | `E0010` | `->>` redirects written for static paths send a path back to itself (`"/a" ->> "/b"`, `"/b" ->> "/a"`) — a loop through a `:param` or `*` passes check and is stopped at run time with `[kumiki] redirect loop` on `console.error` | point one redirect on the cycle at a path a route renders |
 | `E0102` | undefined reducer in a handler | fix the reducer name; try `kumiki_fix` |
-| `E0103` | undefined name / slot — including a `let` read outside the `if` branch, `for` body or match arm that declared it | declare it, or fix the spelling; for a name an inner scope declared, declare it before that scope (`let n = if c then … else …`) or move the read inside — a rename is not the repair |
+| `E0103` | undefined name / slot — including a `let`, `for` bind, match-arm pattern or `let … in` name read outside the scope that declared it. When the same definition reads it after that scope — a reducer's `if` branch, `for` body or match arm, a `let … in` body, a tile's `for` body, an arm of a `match` expression — the message says which (`— it was declared in a "for" loop, …`) and the diagnostic carries `endedScope` | declare it, or fix the spelling; for a name a scope declared a rename is not the repair — see Auto-fix below |
 | `E0104` | undefined effect in `emit`, `app.init`, or an `on=<effect>.ok/.err` selector | declare the effect or fix the name |
 | `E0105` | undefined tile (incl. route target) | declare the tile or fix the name |
 | `E0108` | `recv.m` where `m` is neither a field nor a member of **that** receiver (`docs/spec/stdlib.md`) — a member of another receiver is not one: `xs.size` on a `List`, `res.filter(…)` on a `Result`, `opt.keys`, `st.map(…)` on a `Set` | use the receiver's own spelling (`List.length`, `Map` / `Set` `.size`), or convert to a receiver that has the member — `res.to-option.filter(…)`, `st.to-list.map(…)`; the message names the receivers that do have it |
@@ -42,7 +42,7 @@ Or `kumiki_check` via `@kumikijs/mcp`. Each diagnostic has a stable `code` (E0xx
 | `E0211` | a reducer's `ui.*` selector or `tile.mount` / `tile.unmount` names an undeclared tile | declare the tile or fix the name; try `kumiki_fix` |
 | `E0213` | wrong argument count: `fn` call, `emit`, user-tile call, or variant payload | pass the declared number |
 | `E0214` | a record literal is missing a declared field | supply it — Kumiki records have no optional fields |
-| `E0215` | a record literal / `.copy(f=v)` names a field the type does not have | fix the name, or declare it on the type |
+| `E0215` | a record literal / `.copy(f=v)` names a field the type does not have, or a `map-request` writes a field its capability's request does not have (http.md: `headrs` on `http.get`) | fix the name, or declare it on the type; in a `map-request`, use a field the message lists — `timeout` / `credentials` go in `app.http`, and a field a host provider reads belongs on a custom capability |
 | `E0216` | a variant constructor names a tag the union does not have | use a declared tag; try `kumiki_fix` |
 | `E0217` | an `Int` literal outside ±(2^53-1) would be rounded | use a value in range, or carry it as `Text` |
 | `E0218` | a `for` iterates something whose decided type is not a `List` — a `Map`, a `Set`, an `Option` / `Result` not yet unwrapped, a `Text`, an `Int`, a record | `m.keys` / `s.to-list` (`kumiki fix` appends it); unwrap an `Option` / `Result` of a List with `.get-or([])`, any other with a `match`; `t.split(sep)`; otherwise iterate the List you meant |
@@ -73,7 +73,15 @@ Or `kumiki_check` via `@kumikijs/mcp`. Each diagnostic has a stable `code` (E0xx
 
 ## Auto-fix
 
-For name-resolution errors, the compiler can suggest the closest existing name. `E0104` (effects + the standard effects), `E0106` (timer names), `E0116` (fn + built-in calls), `E0117` (type names), `E0118` (theme + slot names), `E0209` / `E0216` (variant tags) are scoped to their own namespace, so a slot is never proposed where a type belongs; `E0102`, `E0103`, `E0105`, `E0107` and `E0211` search all top-level definitions. An `E0103` on a `let` read outside the scope that declared it is not a misspelling: do not apply a rename `fix` proposes for it — it would read a different value and still type-check.
+For name-resolution errors, the compiler can suggest the closest existing name. `E0104` (effects + the standard effects), `E0106` (timer names), `E0116` (fn + built-in calls; variant tags for `undef-variant`; tags, types and namespaces for `undef-qualifier`), `E0117` (type names), `E0118` (theme + slot names), `E0209` / `E0216` (variant tags) are scoped to their own namespace, so a slot is never proposed where a type belongs; `E0102`, `E0103`, `E0105`, `E0107` and `E0211` search all top-level definitions. An `E0103` whose message says the name `was declared in` an `if` branch, a `for` loop or a match arm, a tile's `for` or an arm of a `match` expression, or `by a "let … in"` (the diagnostic's `endedScope` is set) is a read after that scope ended, not a misspelling, and `fix` proposes no rename for it: a renamed read can type-check, and the regression gate then counts it as resolved. A dry run with other patches to show lists it under `(no auto-patch for …)` as `[e0103-read-after-scope-ended]`; otherwise `fix` prints `(no auto-patches available)`. Not every out-of-scope name is hinted, and `fix` still proposes a rename for the rest: a read before the scope that declares the name, unless an earlier scope in the same definition already ended that name (the hint then names that scope); a read in another definition than the one that declares it; an assignment (`:=`, `undef-slot`) to a name a body declared; a fragment's `$1` / `$2` read after the fragment. So do not apply a rename `fix` proposes for an `E0103` until you know the name is misspelled rather than out of scope — it would read a different value and can still type-check. Repair an out-of-scope read by what declared the name:
+
+- a `for` bind, or a `let` in a loop body: a name carries no value out of a loop, and a bind cannot move before its loop — move the read into the body, or write the value to a slot there;
+- a `let` in an `if` branch or match arm, or an arm's pattern: declare it once before the statement with an `if` / match expression (`let n = if c then … else …`; a `let n = 0` there is only shadowed by the body's own `n`), or move the read into the branch or arm that declares it;
+- a `let … in` name: move the read into the expression after `in`, or bind the value once where both reads see it — with a `let` statement in a reducer; with one `let … in` around both reads in a `fn` or a slot initializer; in a tile, by moving both reads into a tile that declares `in=` and passing it the value. The entries of `app.init` share no expression, so there only the move works;
+- a tile's `for` variable, or a `match` expression arm's pattern: move the read into the loop's body or into that arm, or for a read in a later arm of the same `match` expression, into the arm that declares it;
+- a read before the body that declares the name: move the read into that body, after the declaration.
+
+When two or more names are equally close (`count` beside `countA` and `countB`), `fix` proposes none — picking one would be a guess — and leaves the error for you to resolve: its skip reason is `close-names-tied`, with the tied names in the skip's `candidates`. A name the program declares does outrank a built-in one at the same distance (`Filtre` → the declared `Filter`, not the built-in `File`).
 
 ```sh
 pnpm kumiki fix <file>          # show planned fixes
@@ -88,7 +96,7 @@ Or `kumiki_fix` via `@kumikijs/mcp`.
 
 ## Warnings (W-codes)
 
-`Wxxxx` diagnostics are non-fatal: `kumiki check` exits 0 and prints `ok (N warning(s))`. They still indicate real bugs: `W0212` and `W0213` flag a subscription or handler that never fires, so its reducer never runs. If `smoke` reports "interaction did nothing," scan the warning lines first.
+Warnings — the lines that start with `warning` — are non-fatal: `kumiki check` exits 0 and prints `ok (N warning(s))`. They still indicate real bugs: `W0212` and `W0213` flag a subscription or handler that never fires, so its reducer never runs. If `smoke` reports "interaction did nothing," scan the warning lines first.
 
 ## "It checks but misbehaves at runtime"
 
