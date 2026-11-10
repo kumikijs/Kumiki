@@ -48,6 +48,8 @@ type RefinementEntry = {
   readonly params: Params;
   readonly combined?: (args: readonly RefinementArg[]) => string | undefined;
   readonly body?: (args: readonly RefinementArg[]) => string;
+  /** The answer `body` gives for a literal, for a value known before the program runs. */
+  readonly holds: (args: readonly RefinementArg[], v: RefinementArg) => boolean;
 };
 
 const NUM = `typeof v === "number"`;
@@ -62,6 +64,12 @@ const UUID_RE = "/^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[
 /** `args[i]` as a number, for an entry the checker has already validated. */
 const num = (args: readonly RefinementArg[], i: number): number => Number(args[i]);
 
+/** One of the regex literals above, as a pattern to test with. */
+const pattern = (literal: string): RegExp => new RegExp(literal.slice(1, -1));
+
+const isText = (v: RefinementArg): v is string => typeof v === "string";
+const isNumber = (v: RefinementArg): v is number => typeof v === "number";
+
 const anchored = (pattern: string): string => `^(?:${pattern})$`;
 
 export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string, RefinementEntry>([
@@ -75,15 +83,25 @@ export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string,
           ? `between(${a[0]}, ${a[1]}) has a lower bound above its upper bound, so no value satisfies it`
           : undefined,
       body: (a) => `${NUM} && v >= ${num(a, 0)} && v <= ${num(a, 1)}`,
+      holds: (a, v) => isNumber(v) && v >= num(a, 0) && v <= num(a, 1),
     },
   ],
-  ["nonempty", { tests: "text", params: { fixed: [] }, body: () => `${STR} && v.length > 0` }],
+  [
+    "nonempty",
+    {
+      tests: "text",
+      params: { fixed: [] },
+      body: () => `${STR} && v.length > 0`,
+      holds: (_, v) => isText(v) && v.length > 0,
+    },
+  ],
   [
     "len-eq",
     {
       tests: "text",
       params: { fixed: ["count"] },
       body: (a) => `${STR} && v.length === ${num(a, 0)}`,
+      holds: (a, v) => isText(v) && v.length === num(a, 0),
     },
   ],
   [
@@ -97,6 +115,7 @@ export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string,
           ? "len-lt(0) is shorter than every text, so no value satisfies it"
           : undefined,
       body: (a) => `${STR} && v.length < ${num(a, 0)}`,
+      holds: (a, v) => isText(v) && v.length < num(a, 0),
     },
   ],
   [
@@ -105,13 +124,54 @@ export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string,
       tests: "text",
       params: { fixed: ["count"] },
       body: (a) => `${STR} && v.length > ${num(a, 0)}`,
+      holds: (a, v) => isText(v) && v.length > num(a, 0),
     },
   ],
-  ["positive", { tests: "number", params: { fixed: [] }, body: () => `${NUM} && v > 0` }],
-  ["negative", { tests: "number", params: { fixed: [] }, body: () => `${NUM} && v < 0` }],
-  ["email", { tests: "text", params: { fixed: [] }, body: () => `${STR} && ${EMAIL_RE}.test(v)` }],
-  ["url", { tests: "text", params: { fixed: [] }, body: () => `${STR} && ${URL_RE}.test(v)` }],
-  ["uuid", { tests: "text", params: { fixed: [] }, body: () => `${STR} && ${UUID_RE}.test(v)` }],
+  [
+    "positive",
+    {
+      tests: "number",
+      params: { fixed: [] },
+      body: () => `${NUM} && v > 0`,
+      holds: (_, v) => isNumber(v) && v > 0,
+    },
+  ],
+  [
+    "negative",
+    {
+      tests: "number",
+      params: { fixed: [] },
+      body: () => `${NUM} && v < 0`,
+      holds: (_, v) => isNumber(v) && v < 0,
+    },
+  ],
+  [
+    "email",
+    {
+      tests: "text",
+      params: { fixed: [] },
+      body: () => `${STR} && ${EMAIL_RE}.test(v)`,
+      holds: (_, v) => isText(v) && pattern(EMAIL_RE).test(v),
+    },
+  ],
+  [
+    "url",
+    {
+      tests: "text",
+      params: { fixed: [] },
+      body: () => `${STR} && ${URL_RE}.test(v)`,
+      holds: (_, v) => isText(v) && pattern(URL_RE).test(v),
+    },
+  ],
+  [
+    "uuid",
+    {
+      tests: "text",
+      params: { fixed: [] },
+      body: () => `${STR} && ${UUID_RE}.test(v)`,
+      holds: (_, v) => isText(v) && pattern(UUID_RE).test(v),
+    },
+  ],
   [
     "regex",
     {
@@ -131,6 +191,7 @@ export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string,
         }
       },
       body: (a) => `${STR} && new RegExp(${JSON.stringify(anchored(String(a[0])))}).test(v)`,
+      holds: (a, v) => isText(v) && new RegExp(anchored(String(a[0]))).test(v),
     },
   ],
   [
@@ -139,6 +200,7 @@ export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string,
       tests: "choice",
       params: { rest: "literal", min: 1 },
       body: (a) => `${JSON.stringify(a)}.includes(v)`,
+      holds: (a, v) => a.includes(v),
     },
   ],
 ]);
@@ -153,6 +215,11 @@ export function refinementBodyJs(r: Refinement): string | undefined {
 export function refinementToJs(r: Refinement): string | undefined {
   const body = refinementBodyJs(r);
   return body === undefined ? undefined : `(v) => ${body}`;
+}
+
+/** Whether the literal `v` passes `r`, as the check `r` lowers to would answer. */
+export function refinementHolds(r: Refinement, v: RefinementArg): boolean {
+  return REFINEMENTS.get(r.pred)?.holds(r.args, v) ?? false;
 }
 
 /** Why a refinement cannot become a runtime check, for the checker to code. */
