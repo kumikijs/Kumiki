@@ -1,5 +1,6 @@
 import {
   type AppShape,
+  type BuiltinEffects,
   type LocationLike,
   type NavContext,
   NONE,
@@ -127,7 +128,9 @@ function parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRou
             };
         }
         const bare = parentBare(r.pattern);
-        if (bare !== null) {
+        // `matchPattern` matches nothing against `/404`, and neither does this default: under a
+        // `/404/*` parent it would be the one way a sub-route at `/404` renders.
+        if (bare !== null && bare !== "/404") {
           for (const sr of r.subRoutes) {
             if ("redirectTo" in sr) continue;
             if (sr.pattern === bare) {
@@ -324,7 +327,8 @@ function buildPath(x: {
 }
 
 function installNavEffects(app: AppShape, nav: NavContext): void {
-  app.effects.navigate = {
+  const effects: BuiltinEffects = app.effects;
+  effects.navigate = {
     name: "navigate",
     cap: "nav.push",
     invoke: overridableInvoke("nav.push", async (input) => {
@@ -337,7 +341,7 @@ function installNavEffects(app: AppShape, nav: NavContext): void {
       return { kind: "ok", value: null };
     }),
   };
-  app.effects["navigate-replace"] = {
+  effects["navigate-replace"] = {
     name: "navigate-replace",
     cap: "nav.replace",
     invoke: overridableInvoke("nav.replace", async (input) => {
@@ -350,7 +354,7 @@ function installNavEffects(app: AppShape, nav: NavContext): void {
       return { kind: "ok", value: null };
     }),
   };
-  app.effects["navigate-back"] = {
+  effects["navigate-back"] = {
     name: "navigate-back",
     cap: "nav.back",
     invoke: overridableInvoke("nav.back", async () => {
@@ -358,7 +362,7 @@ function installNavEffects(app: AppShape, nav: NavContext): void {
       return { kind: "ok", value: null };
     }),
   };
-  app.effects["scroll-to"] = {
+  effects["scroll-to"] = {
     name: "scroll-to",
     cap: "",
     invoke: overridableInvoke("", async (input) => {
