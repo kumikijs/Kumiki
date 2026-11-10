@@ -9,11 +9,11 @@
 # value builtin's content — `text(leaf)` — or a user tile's input —
 # `Card(leaf)` — it is a value: the slot. Nothing is inlined there, so the tile
 # `leaf` reading the slot `leaf` does not expand into itself, and the page
-# shows the slot's value twice.
+# shows the slot's value twice: as it is, and upper-cased by `Card`.
 
 slot leaf : Text = "hello"
 
-tile Card in=Text = text("card: " + $1)
+tile Card in=Text = text("card: " + $1.upper)
 
 tile leaf = column(text(leaf), Card(leaf))
 

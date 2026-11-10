@@ -27,6 +27,11 @@ describe("expansionTargets", () => {
     ["link's content", `column(link(leaf, to="/"))`, ["column", "link"]],
     ["editable's content", `column(editable(leaf))`, ["column", "editable"]],
     ["a value builtin at the root", `text(leaf)`, ["text"]],
+    // A control renders no positional argument, so nothing written there is inlined.
+    ["a button's positional identifier", `column(button(leaf))`, ["column", "button"]],
+    ["a spinner's positional identifier", `column(spinner(leaf))`, ["column", "spinner"]],
+    ["a call under a button", `column(button(row(leaf)))`, ["column", "button"]],
+    ["a call under a spinner", `column(spinner(Card()))`, ["column", "spinner"]],
     // The callee is rendered; its input is a value, read as `$1` in its body.
     ["a user tile's input", `column(Card(leaf))`, ["column", "Card"]],
     ["a user tile's input beside a child", `column(Card(leaf), leaf)`, ["column", "Card", "leaf"]],
@@ -71,6 +76,16 @@ tile Row = row(text(button))`;
 
   it("W0213 does not count a slot read as content as a rendered builtin", () => {
     expect(codes(`${PRELUDE}\ntile App = column(Row {onClick: tap})`)).toEqual(["W0213"]);
+  });
+
+  it("W0212 does not count a tile under a builtin that drops it as rendered", () => {
+    // `spinner` renders no positional argument, so `Btn` is never in `Row`'s DOM.
+    const src = `slot n : Int = 0
+tile Btn = button(text="go")
+tile Row = row(spinner(Btn))
+reducer R on=ui.click(Row) do= n := n + 1
+tile App = column(Row, Btn)`;
+    expect(codes(src)).toEqual(["W0212"]);
   });
 
   it("both still see a builtin the tile does render", () => {

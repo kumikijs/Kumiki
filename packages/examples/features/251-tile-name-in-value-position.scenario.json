@@ -1,10 +1,10 @@
 {
   "steps": [
     {
-      "label": "the tile named leaf renders, showing the slot named leaf as text and as Card's input",
+      "label": "the tile named leaf renders, showing the slot named leaf as text and, upper-cased, as Card's input",
       "expect": {
         "noErrors": true,
-        "domIncludes": ["hello", "card: hello"]
+        "domIncludes": ["hello", "card: HELLO"]
       }
     }
   ]
