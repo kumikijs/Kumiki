@@ -1,9 +1,10 @@
+import { readFileSync } from "node:fs";
+import { testFile } from "@kumikijs/cli";
 import { feature } from "@kumikijs/examples";
-import { type AppShape, renderToString } from "@kumikijs/runtime";
-import { afterEach, describe, expect, it } from "vitest";
-import { find, freshRoot, mountApp, tick } from "./helpers/dom.ts";
-import { loadApp, loadSource } from "./helpers/load.ts";
-import { withApp } from "./helpers/source.ts";
+import { describe, expect, it } from "vitest";
+import { find, mountSource, served, texts, tick, typeInto, withMounted } from "./helpers/dom.ts";
+import { loadApp, loadSource, writeSource } from "./helpers/load.ts";
+import { editedIn, withApp } from "./helpers/source.ts";
 
 const EXAMPLE = feature("252-props-in-the-block");
 
@@ -23,26 +24,12 @@ function sourceOf(tile: string): string {
   );
 }
 
-// Torn down here rather than at the end of each test, so a failing assertion cannot leave a live
-// app in the document for the next test.
-const handles: { dispose(): void }[] = [];
-afterEach(() => {
-  for (const h of handles.splice(0)) h.dispose();
-  document.body.replaceChildren();
-});
-
 type Path = "client" | "server";
 
-function mounted(app: AppShape): HTMLElement {
-  const { root, handle } = mountApp(app);
-  handles.push(handle);
-  return root;
-}
-
 async function rendered(tile: string, path: Path): Promise<HTMLElement> {
-  const app = await loadSource(sourceOf(tile));
-  const host = path === "client" ? mounted(app) : freshRoot();
-  if (path === "server") host.innerHTML = (await renderToString(app)).html;
+  const src = sourceOf(tile);
+  const host =
+    path === "client" ? (await mountSource(src)).root : await served(await loadSource(src));
   const root = host.firstElementChild as HTMLElement | null;
   if (!root) throw new Error(`${path}: nothing rendered for ${tile}`);
   return root;
@@ -61,8 +48,9 @@ type Row = {
 
 const BOTH_PATHS: readonly Path[] = ["client", "server"];
 
-const onEachPath = (rs: Row[]) =>
-  rs.flatMap((row) => (row.paths ?? BOTH_PATHS).map((path) => ({ ...row, path })));
+/** Each row on each path it renders on, its name led by `group`. */
+const onEachPath = (rs: Row[], group = "") =>
+  rs.flatMap((row) => (row.paths ?? BOTH_PATHS).map((path) => ({ ...row, group, path })));
 
 const rows: Row[] = [
   {
@@ -291,6 +279,16 @@ const rows: Row[] = [
     }),
   ),
   {
+    name: "radio bind",
+    arg: 'radio(bind=pick, value="a")',
+    block: 'radio(value="a") {bind: pick}',
+    claim: (root) => {
+      const radio = find<HTMLInputElement>(root, "input");
+      expect(radio.dataset.kumikiBind).toBe("pick");
+      expect(radio.checked).toBe(true);
+    },
+  },
+  {
     name: "link to",
     arg: 'link("Home", to="/x")',
     block: 'link("Home") {to: "/x"}',
@@ -324,93 +322,102 @@ const rows: Row[] = [
   },
 ];
 
+/** Each row written both ways, the block holding a different value from the argument it overrides. */
+const both: Row[] = [
+  {
+    name: "modal open",
+    arg: 'modal(text("m"), open=false)',
+    block: 'modal(text("m"), open=true) {open: false}',
+    claim: (root) => expect(find(root, tile("modal")).style.display).toBe("none"),
+  },
+  {
+    name: "select options",
+    arg: `select(bind=pick, options=${OPTIONS_AB})`,
+    block: `select(bind=pick, options=[{label: "A", value: "a"}]) {options: ${OPTIONS_AB}}`,
+    claim: (root) => expect(find<HTMLSelectElement>(root, "select").options.length).toBe(2),
+  },
+  {
+    name: "list ordered",
+    arg: 'list(text("a"), ordered=true)',
+    block: 'list(text("a"), ordered=false) {ordered: true}',
+    claim: (root) => expect(find(root, tile("list")).tagName).toBe("OL"),
+  },
+  {
+    name: "input type",
+    arg: 'input(type="email")',
+    block: 'input(type="text") {type: "email"}',
+    claim: (root) => expect(find<HTMLInputElement>(root, "input").type).toBe("email"),
+  },
+  {
+    name: "input bind",
+    arg: "input(bind=draft)",
+    block: "input(bind=pick) {bind: draft}",
+    claim: (root) => expect(find(root, "input").dataset.kumikiBind).toBe("draft"),
+  },
+];
+
+const MAP = '{"a": 1}';
+const TUPLE = '(1, "a")';
+/** A Map or a Tuple a prop shows, which the block writes by its type as the argument does. */
+const shown: Row[] = [
+  {
+    name: "tooltip text",
+    arg: 'tooltip(text("m"), text=m)',
+    block: 'tooltip(text("m")) {text: m}',
+    claim: (root) => expect(find(root, tile("tooltip")).getAttribute("title")).toBe(MAP),
+  },
+  {
+    name: "modal title",
+    arg: 'modal(text("m"), title=tup)',
+    block: 'modal(text("m")) {title: tup}',
+    claim: (root) => expect(find(root, tile("modal")).getAttribute("aria-label")).toBe(TUPLE),
+  },
+  {
+    name: "details summary",
+    arg: 'details(text("d"), summary=m)',
+    block: 'details(text("d")) {summary: m}',
+    claim: (root) => expect(find(root, "summary").textContent).toBe(MAP),
+  },
+  {
+    name: "input value",
+    arg: "input(value=tup)",
+    block: "input() {value: tup}",
+    claim: (root) => expect(find<HTMLInputElement>(root, "input").value).toBe(TUPLE),
+  },
+  {
+    name: "code lang",
+    arg: 'code("x", lang=m)',
+    block: 'code("x") {lang: m}',
+    claim: (root) => expect(find(root, "code").dataset.lang).toBe(MAP),
+  },
+];
+
 describe("a prop a builtin lifts reads either spelling", () => {
-  it.each(onEachPath(rows))("$name, $path", async ({ arg, block, claim, path }) => {
+  it.each([
+    ...onEachPath(rows),
+    ...onEachPath(both, "both written, the block wins: "),
+    ...onEachPath(shown, "a Map or Tuple it shows: "),
+  ])("$group$name, $path", async ({ arg, block, claim, path }) => {
     const viaArg = await rendered(arg, path);
     const viaBlock = await rendered(block, path);
     claim(viaArg);
     claim(viaBlock);
     expect(viaBlock.outerHTML).toBe(viaArg.outerHTML);
   });
-});
 
-describe("when a call writes both spellings, the block's value is read", () => {
-  const both: Row[] = [
-    {
-      name: "modal open",
-      arg: 'modal(text("m"), open=false)',
-      block: 'modal(text("m"), open=true) {open: false}',
-      claim: (root) => expect(find(root, tile("modal")).style.display).toBe("none"),
-    },
-    {
-      name: "select options",
-      arg: `select(bind=pick, options=${OPTIONS_AB})`,
-      block: `select(bind=pick, options=[{label: "A", value: "a"}]) {options: ${OPTIONS_AB}}`,
-      claim: (root) => expect(find<HTMLSelectElement>(root, "select").options.length).toBe(2),
-    },
-    {
-      name: "list ordered",
-      arg: 'list(text("a"), ordered=true)',
-      block: 'list(text("a"), ordered=false) {ordered: true}',
-      claim: (root) => expect(find(root, tile("list")).tagName).toBe("OL"),
-    },
-    {
-      name: "input type",
-      arg: 'input(type="email")',
-      block: 'input(type="text") {type: "email"}',
-      claim: (root) => expect(find<HTMLInputElement>(root, "input").type).toBe("email"),
-    },
-  ];
-  it.each(onEachPath(both))("$name, $path", async ({ arg, block, claim, path }) => {
-    const viaArg = await rendered(arg, path);
-    const viaBoth = await rendered(block, path);
-    claim(viaArg);
-    claim(viaBoth);
-    expect(viaBoth.outerHTML).toBe(viaArg.outerHTML);
-  });
-});
-
-describe("a Map or a Tuple a block prop shows is written by its type, as its argument is", () => {
-  const MAP = '{"a": 1}';
-  const TUPLE = '(1, "a")';
-  const shown: Row[] = [
-    {
-      name: "tooltip text",
-      arg: 'tooltip(text("m"), text=m)',
-      block: 'tooltip(text("m")) {text: m}',
-      claim: (root) => expect(find(root, tile("tooltip")).getAttribute("title")).toBe(MAP),
-    },
-    {
-      name: "modal title",
-      arg: 'modal(text("m"), title=tup)',
-      block: 'modal(text("m")) {title: tup}',
-      claim: (root) => expect(find(root, tile("modal")).getAttribute("aria-label")).toBe(TUPLE),
-    },
-    {
-      name: "details summary",
-      arg: 'details(text("d"), summary=m)',
-      block: 'details(text("d")) {summary: m}',
-      claim: (root) => expect(find(root, "summary").textContent).toBe(MAP),
-    },
-    {
-      name: "input value",
-      arg: "input(value=tup)",
-      block: "input() {value: tup}",
-      claim: (root) => expect(find<HTMLInputElement>(root, "input").value).toBe(TUPLE),
-    },
-    {
-      name: "code lang",
-      arg: 'code("x", lang=m)',
-      block: 'code("x") {lang: m}',
-      claim: (root) => expect(find(root, "code").dataset.lang).toBe(MAP),
-    },
-  ];
-  it.each(onEachPath(shown))("$name, $path", async ({ arg, block, claim, path }) => {
-    const viaArg = await rendered(arg, path);
-    const viaBlock = await rendered(block, path);
-    claim(viaArg);
-    claim(viaBlock);
-    expect(viaBlock.outerHTML).toBe(viaArg.outerHTML);
+  it("writes the slot the block binds when both spellings bind one", async () => {
+    const src = withApp(
+      [
+        'slot a : Text = ""',
+        'slot b : Text = ""',
+        'tile Probe = column(input(bind=a) {bind: b}, text("a=" + a), text("b=" + b))',
+      ].join("\n"),
+      "Probe",
+    );
+    const { root } = await mountSource(src);
+    typeInto(find<HTMLInputElement>(root, "input"), "x");
+    await tick(0);
+    expect(texts(root)).toEqual(expect.arrayContaining(["a=", "b=x"]));
   });
 });
 
@@ -441,7 +448,7 @@ app M
 
   it("renders the same closed modal, two options and <ol> in both", async () => {
     for (const src of [BLOCK, ARGUMENT]) {
-      const root = mounted(await loadSource(src));
+      const { root } = await mountSource(src);
       expect({
         modalDisplay: find(root, "#m").style.display,
         options: Array.from(find<HTMLSelectElement>(root, "#s").options, (o) => o.text),
@@ -453,15 +460,44 @@ app M
 
 describe("the 252-props-in-the-block example", () => {
   it("renders its note closed until the slot opens it, both fruits, and an <ol>", async () => {
-    const root = mounted(await loadApp(EXAMPLE));
-    expect(find(root, "#note").style.display).toBe("none");
-    expect(Array.from(find<HTMLSelectElement>(root, "#fruit").options, (o) => o.text)).toEqual([
-      "Apple",
-      "Pear",
+    await withMounted(await loadApp(EXAMPLE), async (root) => {
+      expect(find(root, "#note").style.display).toBe("none");
+      expect(Array.from(find<HTMLSelectElement>(root, "#fruit").options, (o) => o.text)).toEqual([
+        "Apple",
+        "Pear",
+      ]);
+      expect(find(root, "#steps").tagName).toBe("OL");
+      find(root, "#show").click();
+      await tick(0);
+      expect(find(root, "#note").style.display).toBe("flex");
+      find(root, "#hide").click();
+      await tick(0);
+      expect(find(root, "#note").style.display).toBe("none");
+    });
+  });
+
+  // Each test states its subject in the argument spelling while the tile writes the block, so a
+  // pass means the snapshot compared the value the block lowered.
+  const SOURCE = readFileSync(EXAMPLE, "utf8");
+
+  it("passes its tile-tests as written", async () => {
+    const results = await testFile(EXAMPLE);
+    expect(results.map((r) => [r.name, r.pass])).toEqual([
+      ["note-closed", true],
+      ["note-open", true],
+      ["fruit-options", true],
+      ["steps-ordered", true],
     ]);
-    expect(find(root, "#steps").tagName).toBe("OL");
-    find(root, "#show").click();
-    await tick(0);
-    expect(find(root, "#note").style.display).toBe("flex");
+  });
+
+  it.each([
+    ["note-closed", "tile Note", "{open: showing", "{open: not showing"],
+    ["note-open", "tile Note", "{open: showing", "{open: not showing"],
+    ["fruit-options", "tile Fruit", '{label: "Pear", value: "p"}', '{label: "Plum", value: "p"}'],
+    ["steps-ordered", "tile Steps", "{ordered: true", "{ordered: false"],
+  ])("fails %s when %s's block says otherwise", async (test, at, from, to) => {
+    const path = writeSource(`prop-spellings/${test}`, editedIn(SOURCE, [at], from, to).source);
+    const result = (await testFile(path)).find((r) => r.name === test);
+    expect(result?.pass).toBe(false);
   });
 });

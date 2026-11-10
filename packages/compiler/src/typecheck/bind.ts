@@ -5,14 +5,21 @@ import {
   numberLiteral,
   type Pos,
   type TileExpr,
+  type TileProp,
   type TypeExpr,
-  writtenProp,
 } from "../ast.ts";
 import { bindTarget } from "../bind-target.ts";
 import { errorField, fieldSegment } from "../error-field.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "../input-bind.ts";
 import { checkAgainst, checkIndexIsPlace, indexStep, unwrappedType } from "./against.ts";
-import { type Ctx, type KumikiError, type SymbolTable, severityOf } from "./context.ts";
+import {
+  type Ctx,
+  type KumikiError,
+  propBlock,
+  propOf,
+  type SymbolTable,
+  severityOf,
+} from "./context.ts";
 import { pushMismatch } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
 import { classifyMember, receiverName } from "./members.ts";
@@ -34,7 +41,7 @@ export function checkBindTargetSteps(
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  const bind = writtenProp(t, "bind")?.value;
+  const bind = propOf(t, "bind", ctx)?.value;
   if (!bind) return;
   for (const step of bindTarget(bind).steps) {
     if (step.kind === "Index") {
@@ -66,10 +73,10 @@ export function checkBindTargetRoot(
   ctx: Ctx,
 ): void {
   if (!BIND_CONTROLS.has(t.name)) return;
-  const bind = writtenProp(t, "bind")?.value;
+  const bind = propOf(t, "bind", ctx)?.value;
   if (!bind) return;
   // A file input takes no bind at all, and E0205 says so whatever the target names.
-  if (isFileInput(t)) return;
+  if (isFileInput(t, ctx)) return;
   const root = bindRootNotASlot(bindTarget(bind).root, sym, ctx);
   if (!root) return;
   errors.push({
@@ -80,9 +87,9 @@ export function checkBindTargetRoot(
   });
 }
 
-function isFileInput(t: TileExpr & { kind: "TileCall" }): boolean {
+function isFileInput(t: TileExpr & { kind: "TileCall" }, ctx: Ctx): boolean {
   if (t.name !== "input") return false;
-  const type = writtenProp(t, "type")?.value;
+  const type = propOf(t, "type", ctx)?.value;
   return type?.kind === "Str" && type.value === "file";
 }
 
@@ -166,11 +173,15 @@ export function checkBindStrictProp(
   }
 }
 
-/** Where `t` writes `name`, as a named argument or in its props block. */
-function writtenAt(t: TileExpr & { kind: "TileCall" }, name: string): Pos[] {
+/** Where `t` writes `name`, as a named argument or in the props `block`. */
+function writtenAt(
+  t: TileExpr & { kind: "TileCall" },
+  name: string,
+  block: readonly TileProp[],
+): Pos[] {
   return [
     ...t.args.flatMap((a) => (a.name === name ? [a.namePos] : [])),
-    ...t.props.flatMap((p) => (p.name === name ? [p.pos] : [])),
+    ...block.flatMap((p) => (p.name === name ? [p.pos] : [])),
   ];
 }
 
@@ -181,9 +192,11 @@ function writtenAt(t: TileExpr & { kind: "TileCall" }, name: string): Pos[] {
 export function checkSecondSpelling(
   t: TileExpr & { kind: "TileCall" },
   errors: KumikiError[],
+  ctx: Ctx,
 ): void {
-  if (t.name === "slider" && writtenProp(t, "bind") !== undefined) {
-    for (const pos of writtenAt(t, "value")) {
+  const block = propBlock(t, ctx);
+  if (t.name === "slider" && propOf(t, "bind", ctx) !== undefined) {
+    for (const pos of writtenAt(t, "value", block)) {
       errors.push({
         code: "W0216",
         kind: "selection-beside-bind",
@@ -193,8 +206,8 @@ export function checkSecondSpelling(
       });
     }
   }
-  if (t.name === "radio" && writtenAt(t, "group").length > 0) {
-    for (const pos of writtenAt(t, "name")) {
+  if (t.name === "radio" && writtenAt(t, "group", block).length > 0) {
+    for (const pos of writtenAt(t, "name", block)) {
       errors.push({
         code: "W0217",
         kind: "name-beside-group",
@@ -222,21 +235,20 @@ export function checkToggleBind(
   ctx: Ctx,
 ): void {
   if (!TOGGLE_BIND_CONTROLS.has(t.name)) return;
-  const bind = writtenProp(t, "bind");
+  const bind = propOf(t, "bind", ctx);
   if (!bind) return;
   const bindExpr = bind.value;
   const unread = TOGGLE_UNBOUND_SELECTION[t.name];
-  const unreadProp = unread === undefined ? undefined : writtenProp(t, unread);
-  if (unreadProp) {
+  for (const pos of unread === undefined ? [] : writtenAt(t, unread, propBlock(t, ctx))) {
     errors.push({
       code: "W0216",
       kind: "selection-beside-bind",
       severity: "warning",
       message: `"${unread}" on ${t.name}() is not read beside bind= — the bound value decides whether it is ${t.name === "radio" ? "chosen" : "ticked"}. Remove it (see docs/spec/forms.md)`,
-      pos: unreadProp.namePos,
+      pos,
     });
   }
-  const value = t.name === "radio" ? writtenProp(t, "value") : undefined;
+  const value = t.name === "radio" ? propOf(t, "value", ctx) : undefined;
   if (t.name === "radio" && !value) {
     errors.push({
       code: "E0225",
@@ -267,9 +279,9 @@ export function checkInputBindType(
   ctx: Ctx,
 ): void {
   if (t.name !== "input") return;
-  const bind = writtenProp(t, "bind")?.value;
+  const bind = propOf(t, "bind", ctx)?.value;
   if (!bind) return;
-  const typeExpr = writtenProp(t, "type")?.value;
+  const typeExpr = propOf(t, "type", ctx)?.value;
   const literal = typeExpr === undefined ? "text" : typeExpr.kind === "Str" ? typeExpr.value : null;
   if (literal === "file") return;
   const bound = inferType(bind, sym, ctx);
@@ -319,7 +331,15 @@ export function checkErrorField(
   };
   const rootProblem = (named: string, is: string, fix?: string): string =>
     `error(field=…) cannot show the failure of ${named}: ${is}. field= names a slot, or a path into one${fix ? ` — ${fix}` : ""} ${see}`;
-  const written = writtenProp(t, "field");
+  const written = propOf(t, "field", ctx);
+  const unreadBlock = ctx.expectedTree ? t.props.find((p) => p.name === "field") : undefined;
+  if (!written && unreadBlock) {
+    refuse(
+      `error() {field: …} is not read in a tile-test's expect, which compares named arguments only — write error(field=…) ${see}`,
+      unreadBlock.pos,
+    );
+    return;
+  }
   if (!written) {
     const arg = t.args.find((a) => a.name === "field");
     if (arg && isTileExpr(arg.value)) {

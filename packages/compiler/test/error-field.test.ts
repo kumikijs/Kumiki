@@ -195,6 +195,20 @@ describe("a slot, or a path into one, is accepted", () => {
     expect(codesOf(program(`tile App = error(field=${field})`))).toEqual([]);
   });
 
+  it("reports a field written in the block of a tile-test's expected tree, which reads none", () => {
+    const tile = `tile Err = error(field=form.email)
+tile App = column(Err)
+test err-field =
+    tile-test Err
+        given  = {slots: {}}
+        expect = error() {field: form.email}`;
+    expect(diagnosticsOf(tile)).toEqual([
+      E0230(
+        `error() {field: …} is not read in a tile-test's expect, which compares named arguments only — write error(field=…) ${SEE}`,
+      ),
+    ]);
+  });
+
   it("accepts a path in the props block", () => {
     expect(codesOf(program(`tile App = error() {field: draft.get.title}`))).toEqual([]);
   });

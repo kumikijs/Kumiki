@@ -25,8 +25,13 @@ held for every prop the lowering lifts: `open` on `drawer`, `popover` and
 `switch` and `radio`; `min`, `max` and `step` on `slider`; `value` and `max`
 on `progress`; `to` on `link`; `lang` on `code`; `src`, `controls` and
 `autoplay` on `video`; `colspan` / `rowspan` on `table-cell`; `summary` on
-`details`; and `field` on `error`. `packages/examples/features/34-builtin-tiles`
-wrote `list(…) {ordered: true}` and rendered a `<ul>`.
+`details`. `packages/examples/features/34-builtin-tiles` wrote
+`list(…) {ordered: true}` and rendered a `<ul>`. A `field` on `error` in the
+block was never read as the path the tile renders, and with a `.get` on a
+`None` there the page panicked. Going the other way, a `link`'s `prefetch` and
+`prefetch-args` and a `key` were read from the block only, and a `motion` was
+checked there only: `link("x", to="/", prefetch=load)` passed `check` and
+prefetched nothing, and `box(motion="Ghost")` was not E0107.
 
 Now each of them is read from either spelling through one lookup, the one the
 props bag and the checker already used, and when a call writes both the
@@ -35,5 +40,9 @@ same lookup, so they judge what renders: `radio(bind=b) {value: V}` is no
 longer E0225, `input(bind=n) {type: "number"}` no longer E0226, and a block
 `{type: "submmit"}` on a button, `{bind: …}` on a file input and
 `{accept: …}` on a text input are E0201, E0205 and E0206 as their argument
-spellings are. A tile-test's `expect` tree still compares no block
-(testing.md §8.4).
+spellings are, `editable() {bind: handle}` on an `EffectId` slot is E0204, and
+a toggle that writes `value` beside its `bind` in both spellings is W0216 at
+each. A tile-test's `expect` tree still compares no block, and the checker
+now reads it the same way: there `error() {field: …}` is E0230, and a block
+entry no longer satisfies a rule such as E0225 that the compared tree would
+break.

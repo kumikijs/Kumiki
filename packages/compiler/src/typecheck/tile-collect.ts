@@ -310,7 +310,7 @@ export function collectPrefetchTargets(expr: TileExpr, out: Set<string>): void {
       return;
     case "TileCall": {
       if (expr.name === "link") {
-        const v = expr.props.find((p) => p.name === "prefetch")?.value;
+        const v = writtenProp(expr, "prefetch")?.value;
         if (v?.kind === "Ref") out.add(v.name);
         else if (v?.kind === "Str") out.add(v.value);
       }

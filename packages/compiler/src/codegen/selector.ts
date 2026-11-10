@@ -4,9 +4,9 @@ import { type EnclosingTiles, type EvalCtx, fieldKey, handlerRef, jsProperty } f
 import { jsOfExpr, showJs } from "./expr.ts";
 
 export function keyFor(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string | null {
-  const keyProp = t.props.find((p) => p.name === "key");
-  if (!keyProp) return null;
-  return showJs(jsOfExpr(keyProp.value, ctx), keyProp.value, ctx.gen);
+  const key = propValue(t, "key", ctx);
+  if (!key) return null;
+  return showJs(jsOfExpr(key, ctx), key, ctx.gen);
 }
 
 function isNotPropData(tile: string, name: string, forEl = false): boolean {
@@ -14,7 +14,8 @@ function isNotPropData(tile: string, name: string, forEl = false): boolean {
   if (name === "key") return true;
   if (tile === "link" && (name === "prefetch" || name === "prefetch-args")) return true;
   if (forEl && name === "style") return true;
-  // The control's own `bind` field carries the lvalue; as data it would read the slot for nothing.
+  // On every tile, in either spelling: a control's own `bind` field carries the lvalue, and as data
+  // it would read the slot for nothing, here or in a user tile's call-site props.
   if (name === "bind") return true;
   // A read of an `error` tile's `field` can panic (`.get` on a `None`, an index
   // past a List's end) where the tile itself renders nothing.

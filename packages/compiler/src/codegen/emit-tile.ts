@@ -477,21 +477,16 @@ function tileCallJs(
         const textExpr = textArg ? asExpr(textArg.value) : textProp ? textProp.value : undefined;
         const text = textExpr ? jsOfExpr(textExpr, ctx) : '""';
         const fields = [`kind: "link"`, `text: ${showJs(text, textExpr, gen)}`, `to: ${to}`];
-        const prefetchProp = t.props.find((p) => p.name === "prefetch");
-        if (prefetchProp) {
-          const v = prefetchProp.value as Expr;
-          if (v.kind === "Ref") {
-            fields.push(`prefetch: ${JSON.stringify((v as Expr & { name: string }).name)}`);
-          } else if (v.kind === "Str") {
-            fields.push(`prefetch: ${JSON.stringify((v as Expr & { value: string }).value)}`);
-          } else {
-            fields.push(`prefetch: ${jsOfExpr(v, ctx)}`);
-          }
+        const prefetch = prop("prefetch");
+        if (prefetch?.kind === "Ref") {
+          fields.push(`prefetch: ${JSON.stringify(prefetch.name)}`);
+        } else if (prefetch?.kind === "Str") {
+          fields.push(`prefetch: ${JSON.stringify(prefetch.value)}`);
+        } else if (prefetch) {
+          fields.push(`prefetch: ${jsOfExpr(prefetch, ctx)}`);
         }
-        const prefetchArgsProp = t.props.find((p) => p.name === "prefetch-args");
-        if (prefetchArgsProp) {
-          fields.push(`prefetchArgs: ${jsOfExpr(prefetchArgsProp.value, ctx)}`);
-        }
+        const prefetchArgs = prop("prefetch-args");
+        if (prefetchArgs) fields.push(`prefetchArgs: ${jsOfExpr(prefetchArgs, ctx)}`);
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
       }

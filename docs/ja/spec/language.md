@@ -698,7 +698,7 @@ pattern      ::= identifier
 ```
 
 **名前付き引数と `{ … }` — 1 つの prop**:
-- 同じ名前の名前付き引数と `{ … }` の項目は、どちらで書いても**1 つの prop** である：`modal(text("x"), open=false)` と `modal(text("x")) {open: false}` は同じに描画される。これはどの builtin でも、その builtin が読むどの prop でも成り立つ —— 種類が自分で取るもの（`modal` の `open`、`select` の `options` と `bind`、`list` の `ordered`、`button` の `type` など）も、[標準ライブラリ §2.3.10](./stdlib.md#_2-3-10-props-の共通仕様) の共通 prop と同じである —— そして `kumiki check` も描画と同じ読み方で prop を読む。1 つの呼び出しが両方を書いたときに読まれるのはブロックの値である。builtin の内容は prop ではなく、次に述べるとおり `( … )` から読まれる。tile-test の `expect` ツリーではブロックはそもそも比較されない（[テスト §8.4](./testing.md#_8-4-tile-snapshot-tests)）。
+- 同じ名前の名前付き引数と `{ … }` の項目は、どちらで書いても**1 つの prop** である：`modal(text("x"), open=false)` と `modal(text("x")) {open: false}` は同じに描画される。これはどの builtin でも、その builtin が読むどの prop でも成り立つ —— 種類が自分で取るもの（`modal` の `open`、`select` の `options` と `bind`、`list` の `ordered`、`button` の `type`、`link` の `prefetch` など）も、[標準ライブラリ §2.3.10](./stdlib.md#_2-3-10-props-の共通仕様) の共通 prop と同じである —— そして `kumiki check` も描画と同じ読み方で prop を読む。1 つの呼び出しが両方を書いたときに読まれるのはブロックの値である。builtin の内容は prop ではなく、次に述べるとおり `( … )` から読まれる。tile-test の `expect` ツリーではブロックはそもそも比較されないので、`kumiki check` もそのツリーの prop を名前付き引数だけから読む（[テスト §8.4](./testing.md#_8-4-tile-snapshot-tests)）。
 
 **builtin の内容 — 位置引数**:
 - テキスト系 builtin（`text("Home")`, `heading("Hi")`, `code("…")`）の内容は `( … )` に書く最初の**位置**引数である。名前付き引数はどこに書いても prop である — `heading(level=2, title)` が表示するのは `title` で、`level` は prop のまま。

@@ -11,6 +11,11 @@
 # scenario's view (it reads text, not styles or tag names);
 # `packages/tests/src/prop-spellings.test.ts` mounts this example and reads them
 # from the DOM.
+#
+# The tile-tests at the end write each expected tree with named arguments
+# while the tiles write the block, so each passes only when the value in the
+# block is the one the tile rendered: the note closed and then open, both
+# fruits, an ordered list.
 
 slot pick    : Text = "a"
 slot showing : Bool = false
@@ -43,3 +48,23 @@ app PropsInTheBlock
     caps   = []
     routes = {"/" -> App, "/404" -> App}
     init   = []
+
+test note-closed =
+    tile-test Note
+        given  = {slots: {showing: false}}
+        expect = modal(text("A note in a modal"), button(text="Hide the note"), open=false)
+
+test note-open =
+    tile-test Note
+        given  = {slots: {showing: true}}
+        expect = modal(text("A note in a modal"), button(text="Hide the note"), open=true)
+
+test fruit-options =
+    tile-test Fruit
+        given  = {slots: {pick: "p"}}
+        expect = select(options=[{label: "Apple", value: "a"}, {label: "Pear", value: "p"}], value="p")
+
+test steps-ordered =
+    tile-test Steps
+        given  = {slots: {}}
+        expect = list(list-item(text("Pick a fruit")), list-item(text("Read the note")), ordered=true)

@@ -195,15 +195,17 @@ describe("check / switch / radio bind types", () => {
     expect(codes(program(`radio(group="f", value=All, selected=true)`))).not.toContain("W0216");
   });
 
-  it("reads bind, value and selected in the {…} block as it reads the arguments", () => {
-    expect(codes(program(`radio(group="f", bind=filter) {value: Done}`))).toEqual([]);
-    expect(codes(program(`radio(group="f") {bind: filter}`))).toContain("E0225");
-    expect(codes(program(`radio(group="f", value=X) {bind: filter}`))).toContain("E0216");
-    expect(codes(program("check() {bind: name}"))).toContain("E0201");
-    expect(codes(program("check(bind=flag) {value: true}"))).toContain("W0216");
-    expect(codes(program(`radio(group="f", bind=filter, value=All) {selected: true}`))).toContain(
-      "W0216",
-    );
+  it.each([
+    [`radio(group="f", bind=filter) {value: Done}`, []],
+    [`radio(group="f") {bind: filter}`, ["E0225"]],
+    [`radio(group="f", value=X) {bind: filter}`, ["E0216"]],
+    ["check() {bind: name}", ["E0201"]],
+    ["check(bind=flag) {value: true}", ["W0216"]],
+    [`radio(group="f", bind=filter, value=All) {selected: true}`, ["W0216"]],
+  ])("reads bind, value and selected in the {…} block of %s as it reads the arguments", (tile, want) => {
+    const got = codes(program(tile));
+    if (want.length === 0) expect(got).toEqual([]);
+    else expect(got).toEqual(expect.arrayContaining(want));
   });
 
   it("accepts the bindings the table lists", () => {

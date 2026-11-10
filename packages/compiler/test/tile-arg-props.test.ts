@@ -119,6 +119,31 @@ describe("a prop a kind lifts into its node reads either spelling", () => {
     expect(fieldsOf(emit(tile, SLOTS), kind)).toContain(field);
   });
 
+  it.each([
+    [
+      "a link's prefetch and prefetch-args",
+      'link("go", to="/x") {prefetch: load, prefetch-args: {"id": "1"}}',
+      'link("go", to="/x", prefetch=load, prefetch-args={"id": "1"})',
+    ],
+    [
+      "a for row's key",
+      "column(for p in xs text(p) {key: p})",
+      "column(for p in xs text(p, key=p))",
+    ],
+    [
+      "a user tile row's Tuple key",
+      "column(for t in ts Row {key: t})",
+      "column(for t in ts Row(key=t))",
+    ],
+  ])("lowers %s the same from either spelling", (_, block, arg) => {
+    const defs = `slot xs : List(Text) = []
+slot ts : List(Tuple(Int, Text)) = []
+tile Row = text("r")
+slot n : Int = 0
+reducer load on=route.enter("/") do= n := 1`;
+    expect(emit(arg, defs)).toBe(emit(block, defs));
+  });
+
   it("lowers the value the block writes when both spellings are written", () => {
     const js = emit('list(text("a"), ordered=false) {ordered: true}');
     expect(fieldsOf(js, "list")).toContain("ordered: !!(true)");
@@ -146,6 +171,53 @@ test probe-list =
     const expected = js.slice(js.indexOf("const _expected = "));
     expect(fieldsOf(expected, "list")).toContain("ordered: false");
     expect(fieldsOf(js, "list")).toContain("ordered: !!(true)");
+  });
+});
+
+describe("the checker reads a tile-test's expected tree as its lowering does, with no block", () => {
+  const tileTest = (defs: string, tile: string, expected: string) => `${defs}
+tile Probe = ${tile}
+
+app P
+    caps   = []
+    routes = {"/" -> Probe, "/404" -> Probe}
+    init   = []
+
+test probe =
+    tile-test Probe
+        given  = {slots: {}}
+        expect = ${expected}
+`;
+
+  it.each([
+    [
+      "an error's field, as E0230",
+      'slot mail : Text = "a"',
+      "error(field=mail)",
+      "error() {field: mail}",
+      "E0230",
+    ],
+    [
+      "a bound radio's value, as E0225",
+      "slot n : Int = 0",
+      "radio(bind=n, value=2)",
+      "radio(bind=n) {value: 2}",
+      "E0225",
+    ],
+  ])("reports %s when the block alone writes it", (_, defs, tile, expected, code) => {
+    expect(codesOf(tileTest(defs, tile, expected))).toEqual([code]);
+  });
+
+  it.each([
+    ["an error's field", 'slot mail : Text = "a"', "error(field=mail)", "error(field=mail)"],
+    [
+      "a bound radio's value",
+      "slot n : Int = 0",
+      "radio(bind=n, value=2)",
+      "radio(bind=n, value=2)",
+    ],
+  ])("accepts %s written as an argument", (_, defs, tile, expected) => {
+    expect(codesOf(tileTest(defs, tile, expected))).toEqual([]);
   });
 });
 
