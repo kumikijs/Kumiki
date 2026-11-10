@@ -15,7 +15,13 @@ import {
   unboundRedirectNames,
 } from "../redirects.ts";
 import { appType, primType } from "../stdlib-types.ts";
-import { HANDLER_NAMES, HANDLER_PROP_TILES, handlerReducerName } from "../ui-lifts.ts";
+import {
+  firesUnheardClauses,
+  HANDLER_NAMES,
+  HANDLER_PROP_TILES,
+  handlerReducerName,
+  liftForHandler,
+} from "../ui-lifts.ts";
 import { duplicateSubRoutes } from "../uniqueness.ts";
 import { checkAgainst } from "./against.ts";
 import {
@@ -27,7 +33,15 @@ import {
   checkSecondSpelling,
   checkToggleBind,
 } from "./bind.ts";
-import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
+import {
+  bindLocal,
+  type Ctx,
+  checkArms,
+  endScope,
+  innerScope,
+  type KumikiError,
+  type SymbolTable,
+} from "./context.ts";
 import {
   checkCondition,
   checkExpr,
@@ -48,6 +62,7 @@ export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]
     localTypes: new Map(),
     localBinders: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
   };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
@@ -98,6 +113,7 @@ function readsUndeclaredInput(tile: TileDef, sym: SymbolTable): boolean {
     localTypes: new Map(),
     localBinders: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
     undeclaredInputReads: seen,
   };
   checkTileExpr(tile.body, sym, [], ctx);
@@ -231,6 +247,7 @@ export function checkTileExpr(
       const inner = innerScope(ctx);
       bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx), "for");
       checkTileExpr(t.body, sym, errors, inner);
+      endScope("for-expr", inner, ctx);
       return;
     }
     case "TileWhen":
@@ -247,12 +264,11 @@ export function checkTileExpr(
     case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
       const scrutType = matchedType(inferType(t.scrutinee, sym, ctx), t.arms, sym);
-      for (const arm of t.arms) {
-        const inner = innerScope(ctx);
+      checkArms(t.arms, ctx, (arm, inner) => {
         checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkTileExpr(arm.body, sym, errors, inner);
-      }
+      });
       return;
     }
     case "TileCall":
@@ -551,24 +567,26 @@ function checkHandlerTarget(
 ): void {
   const allowed = HANDLER_PROP_TILES[handler];
   if (allowed == null) return;
+  const ev = liftForHandler(handler)?.ev;
+  const unheard = (kinds: Iterable<string>): string[] =>
+    ev === undefined ? [] : firesUnheardClauses(ev, kinds);
   if (BUILTIN_TILES.has(tileName)) {
     if (allowed.has(tileName)) return;
-    errors.push(inertHandler(tileName, handler, `${tileName} does not fire it`, allowed, pos));
+    const [because = `${tileName} does not fire it`] = unheard([tileName]);
+    errors.push(inertHandler(tileName, handler, because, allowed, pos));
     return;
   }
   if (!sym.tiles.has(tileName)) return;
   const kinds = sym.builtinKindsIn(tileName);
   if (kinds.size === 0) return;
   if ([...kinds].some((k) => allowed.has(k))) return;
-  errors.push(
-    inertHandler(
-      tileName,
-      handler,
-      `${tileName} renders nothing that fires it (observed in body: ${[...kinds].sort().join(", ")})`,
-      allowed,
-      pos,
-    ),
-  );
+  const observed = `(observed in body: ${[...kinds].sort().join(", ")})`;
+  const clauses = unheard(kinds);
+  const because =
+    clauses.length === 0
+      ? `${tileName} renders nothing that fires it ${observed}`
+      : `${tileName} renders nothing that calls it: ${clauses.join("; ")} ${observed}`;
+  errors.push(inertHandler(tileName, handler, because, allowed, pos));
 }
 
 /** One W0213, whichever side — builtin or user tile — asked for it. */

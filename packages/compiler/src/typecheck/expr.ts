@@ -8,6 +8,7 @@ import {
   type FragmentArgument,
   fragmentArgument,
   fragmentBinds,
+  readsShortCall,
   receiverParams,
   TYPE_ARGUMENT_OF,
 } from "../stdlib-members.ts";
@@ -24,6 +25,8 @@ import { arithmeticHint, checkCallee, endedScopeHint, reportRunReducerPosition }
 import {
   bindLocal,
   type Ctx,
+  checkArms,
+  endScope,
   innerScope,
   isBuiltinCall,
   type KumikiError,
@@ -266,12 +269,12 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         });
         return;
       }
-      const ended = ctx.endedScopes?.get(e.name);
+      const ended = ctx.endedScopes.get(e.name);
       if (ended !== undefined) {
         errors.push({
           code: "E0103",
           kind: "undef-ref",
-          message: `Reference to undefined name "${e.name}"${endedScopeHint(e.name, ended)}`,
+          message: `Reference to undefined name "${e.name}"${endedScopeHint(e.name, ended, ctx)}`,
           pos: e.pos,
           endedScope: ended.kind,
         });
@@ -500,14 +503,13 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkExpr(e.scrutinee, sym, errors, ctx);
       const scrutType = matchedType(inferType(e.scrutinee, sym, ctx), e.arms, sym);
       let patternsFit = true;
-      for (const arm of e.arms) {
-        const inner = innerScope(ctx);
+      checkArms(e.arms, ctx, (arm, inner) => {
         checkPatternBindsAreDistinct(arm.pattern, errors);
         const before = errors.length;
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         if (errors.length > before) patternsFit = false;
         checkExpr(arm.body, sym, errors, inner);
-      }
+      });
       if (patternsFit) checkMatchCovers(e, scrutType, sym, errors);
       return;
     }
@@ -519,7 +521,9 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     case "LetIn": {
       checkExpr(e.value, sym, errors, ctx);
-      checkExpr(e.body, sym, errors, letInScope(e, sym, ctx));
+      const inner = letInScope(e, sym, ctx);
+      checkExpr(e.body, sym, errors, inner);
+      endScope("let-in", inner, ctx);
       return;
     }
     case "TokenRef":
@@ -779,6 +783,8 @@ export function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: C
 
 // A call given fewer arguments than the signature takes has none read against it: which argument
 // it meant as which is not decided (`m.get-or(d)` is the Option reading, whose argument is no key).
+// A call that can only drop trailing arguments, as `xs.slice(start)` does, still has the ones it
+// was given read.
 function memberArgType(
   recv: TypeExpr | null,
   member: string,
@@ -789,7 +795,8 @@ function memberArgType(
   const t = unaliasType(recv, sym);
   if (t?.kind !== "TypeApp") return null;
   const params = receiverParams(t.name, member);
-  if (params === undefined || argCount < params.length) return null;
+  if (params === undefined) return null;
+  if (argCount < params.length && !readsShortCall(t.name, member)) return null;
   const param = params[index] ?? null;
   switch (param) {
     case null:
