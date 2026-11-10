@@ -171,9 +171,9 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   ["E0102", anyDefinition], // undef-reducer
   [
     "E0103", // undef-ref / undef-slot
-    // A read after the body that declared it is out of scope, not misspelled: a renamed read can
-    // type-check, and the regression gate then counts it as resolved. So can a positional renamed
-    // to the nearest declared name, which is never what the fragment, tile or handler bound.
+    // A read after the scope that declared it ended is out of scope, not misspelled: a renamed
+    // read can type-check, and the regression gate then counts it as resolved. So can a positional
+    // renamed to the nearest declared name, which is never what the fragment, tile or handler bound.
     (err, store) => {
       if (err.endedScope !== undefined) return { reason: "e0103-read-after-scope-ended" };
       if (atPositional(store, err.pos)) return { reason: "e0103-positional-unbound" };
