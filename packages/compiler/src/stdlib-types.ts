@@ -136,6 +136,14 @@ export const BUILTIN_TYPE_CONSTRUCTORS: ReadonlyMap<string, number | null> = new
   ["Tuple", null],
 ]);
 
+// `Option` and `Result` have no body to read tags from, and `HttpBody` is read
+// by the HTTP runtime by tag alone. `FormValue`'s tags come from its definition.
+export const BUILTIN_UNION_TAGS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["Option", ["Some", "None"]],
+  ["Result", ["Ok", "Err"]],
+  ["HttpBody", ["Json", "Form", "Multipart", "Text", "Bytes", "Empty"]],
+]);
+
 const PRIM_TYPE_NAMES: readonly PrimName[] = [
   "Text",
   "Int",
@@ -155,9 +163,6 @@ export function isPrimTypeName(name: string): name is PrimName {
 }
 
 export function typeCandidates(userTypeNames: Iterable<string>): string[] {
-  // The program's own names come first so an equidistant tie resolves to one
-  // of them: `Filtre` is two edits from both the declared `Filter` and the
-  // built-in `File`, and the declared type is the one the author meant.
   return [
     ...userTypeNames,
     ...STDLIB_TYPES.map((t) => t.name),

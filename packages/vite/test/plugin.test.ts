@@ -12,11 +12,13 @@ import { app, feature } from "@kumikijs/examples";
 import type { AppShape } from "@kumikijs/runtime";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { APP_A, TMP, throwingCtx, transformCode, transformOf } from "./helpers/plugin.ts";
+import { APP_A, throwingCtx, transformCode, transformOf } from "./helpers/plugin.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
 
 const COUNTER = app("01-counter");
 const CUSTOM_CAP = feature("27-custom-capability");
 const COUNTER_SRC = readFileSync(COUNTER, "utf8");
+const TMP = scratchRoot(import.meta.url);
 
 async function importModule<T>(code: string, prefix: string): Promise<T> {
   const path = join(mkdtempSync(join(TMP, `${prefix}-`)), "app.mjs");
