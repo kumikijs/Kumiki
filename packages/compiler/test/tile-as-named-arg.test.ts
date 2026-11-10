@@ -71,6 +71,10 @@ describe("a tile as a named argument", () => {
     expect(codes("label(text=when(busy, Header))")).toEqual(["E0236"]);
   });
 
+  it.each(tiles)("leaves %s as an error's field to E0230", (_, value) => {
+    expect(codes(`error(field=${value})`)).toEqual(["E0230"]);
+  });
+
   it("leaves an event handler to the handler's own check", () => {
     const home = `button(text="go", onClick=when(busy, text("x")))`;
     expect(diagnostics(home)).toEqual([

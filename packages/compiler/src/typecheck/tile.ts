@@ -656,6 +656,8 @@ function checkTileCall(
     if (arg.name === undefined && shownInPlaceOfPositional(t.name)) continue;
     // E0236 (`checkTileAsContent`), and moved whole too.
     if (arg === tileContent) continue;
+    // E0230 (`checkErrorField`), which says what an error's field names instead.
+    if (t.name === "error" && arg.name === "field" && isTileExpr(v)) continue;
     if (arg.name !== undefined && isTileExpr(v)) {
       errors.push(tileAsProp(t.name, arg.name, v.pos));
       continue;
