@@ -21,17 +21,23 @@ export function isPanic(e: unknown): e is KumikiPanic {
   );
 }
 
-export function reportCapabilityRefusal(
+/** Why the dispatcher could not run an emit, as the category its report carries. */
+export type EmitRefusal = { category: "effect" } | { category: "capability"; cap: string };
+
+export function reportRefusedEmit(
   effect: string,
-  cap: string,
+  why: EmitRefusal,
 ): PanicRecord & { location: string } {
   const location = `effect "${effect}"`;
   const rec: PanicRecord & { location: string } = {
-    message: `capability "${cap}" is not declared in app.caps`,
+    message:
+      why.category === "effect"
+        ? `effect "${effect}" is not declared in app.effects`
+        : `capability "${why.cap}" is not declared in app.caps`,
     location,
     stack: undefined,
     cause: undefined,
-    category: "capability",
+    category: why.category,
   };
   reportPanicRecord(location, rec, "panic");
   return rec;

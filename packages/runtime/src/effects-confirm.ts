@@ -1,4 +1,10 @@
-import { type AppShape, type BuiltinInstaller, overridableInvoke } from "./core.ts";
+import type {
+  AppShape,
+  BuiltinEffects,
+  BuiltinInstaller,
+  CloseOnDispose,
+  HoldLeave,
+} from "./core.ts";
 
 type ConfirmInput = {
   title?: string;
@@ -9,18 +15,22 @@ type ConfirmInput = {
 
 type AppWithHooks = AppShape & {
   _dispatch?: (name: string, el: Record<string, unknown>) => void;
-  _resolveLeave?: (outcome: "yes" | "no") => void;
+  _holdLeave?: HoldLeave;
+  _closeOnDispose?: CloseOnDispose;
 };
 
 export const installConfirm: BuiltinInstaller = (app) => {
-  app.effects.confirm = {
+  const effects: BuiltinEffects = app.effects;
+  effects.confirm = {
     name: "confirm",
     cap: "notification.show",
-    invoke: overridableInvoke("notification.show", async (input) => {
+    // Not `overridableInvoke`: a provider's `EffectResult` cannot dispatch
+    // `onYes` / `onNo` or settle a held move, so the dialog is always this one.
+    invoke: async (input) => {
       const t = (input ?? {}) as ConfirmInput;
       await renderConfirmModal(app as AppWithHooks, t);
       return { kind: "ok", value: null };
-    }),
+    },
   };
 };
 
@@ -74,13 +84,26 @@ function renderConfirmModal(app: AppWithHooks, t: ConfirmInput): Promise<void> {
     };
     document.addEventListener("keydown", onKey);
 
-    const finish = (outcome: "yes" | "no"): void => {
+    let open = true;
+    // Answering, the move it held being dropped, and the app being disposed can each close it.
+    const close = (): void => {
+      if (!open) return;
+      open = false;
+      release?.();
       document.removeEventListener("keydown", onKey);
       overlay.remove();
+      resolve();
+    };
+    const release = app._closeOnDispose?.(close);
+    const settle = app._holdLeave?.(close);
+
+    const finish = (outcome: "yes" | "no"): void => {
+      if (!open) return;
+      close();
+      // The answer's reducer runs first, so its cleanup lands before route.enter.
       const cb = outcome === "yes" ? t.onYes : t.onNo;
       if (cb) app._dispatch?.(cb, {});
-      app._resolveLeave?.(outcome);
-      resolve();
+      settle?.(outcome);
     };
 
     yesBtn.addEventListener("click", () => finish("yes"));

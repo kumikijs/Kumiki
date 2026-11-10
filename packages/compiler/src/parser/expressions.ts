@@ -1,5 +1,5 @@
-import type { BinOp, Expr, MatchArm, Pattern, Pos, Token } from "../ast.ts";
-import { QUALIFIED_CALL_NAMESPACES } from "../builtin-calls.ts";
+import type { BinOp, Expr, Pattern, Pos, Token } from "../ast.ts";
+import { qualifiedCallee, readsBareMemberAsCall } from "../builtin-calls.ts";
 import { ParseError } from "./token-stream.ts";
 import { TypeParser } from "./types.ts";
 
@@ -58,12 +58,13 @@ export class ExpressionParser extends TypeParser {
     return lhs;
   }
 
-  /** Heuristic: after `|`, does it look like the start of a match arm? */
+  // No expression continues with `->`, so a name, a name with `(…)`, or a `(…)` followed by `->`
+  // can only start the next arm, whatever the name's case.
   protected looksLikeMatchArm(): boolean {
     const next = this.peek(1);
-    // `| _ ->` is a wildcard match arm
+    // `_` never starts an expression, so `| _` is an arm even before its `->` is seen.
     if (next.kind === "ident" && next.value === "_") return true;
-    if (next.kind === "ident" && next.value[0] && next.value[0] >= "A" && next.value[0] <= "Z") {
+    if (next.kind === "ident") {
       const after = this.peek(2);
       if (after.kind === "op" && after.value === "->") return true;
       if (after.kind === "op" && after.value === "(") return this.arrowClosesParens(3);
@@ -342,14 +343,14 @@ export class ExpressionParser extends TypeParser {
       const name = t.value;
       const isQualifierReceiver = !!name[0] && name[0]! >= "A" && name[0]! <= "Z";
       if (
-        QUALIFIED_CALL_NAMESPACES.has(name) &&
+        readsBareMemberAsCall(name) &&
         this.matchOp(".") &&
         (this.matchTAt(1, "ident") || this.matchTAt(1, "kw")) &&
         !this.matchTAt(2, "op", "(")
       ) {
         this.next();
         const member = (this.next() as { value: string }).value;
-        return { kind: "Call", callee: `${name}.${member}`, args: [], pos: t.pos };
+        return { kind: "Call", callee: qualifiedCallee(name, member), args: [], pos: t.pos };
       }
       if (
         isQualifierReceiver &&
@@ -370,7 +371,7 @@ export class ExpressionParser extends TypeParser {
           }
         }
         this.eat("op", ")");
-        return { kind: "Call", callee: `${name}.${sub}`, args, pos: t.pos };
+        return { kind: "Call", callee: qualifiedCallee(name, sub), args, pos: t.pos };
       }
       if (this.matchOp("(")) {
         this.next();
@@ -420,19 +421,27 @@ export class ExpressionParser extends TypeParser {
   }
 
   protected parseMatchExpr(): Expr {
+    return { kind: "MatchExpr", ...this.parseMatch(() => this.parseExpr()) };
+  }
+
+  // The value, statement and tile forms share this, so each holds a `match` to one arm or more.
+  protected parseMatch<B>(parseBody: () => B): {
+    scrutinee: Expr;
+    arms: { pattern: Pattern; body: B }[];
+    pos: Pos;
+  } {
     const start = this.eat("kw", "match");
     const scrutinee = this.parseExpr();
     this.eat("kw", "with");
-    const arms: MatchArm[] = [];
+    const arms: { pattern: Pattern; body: B }[] = [];
     while (this.matchOp("|")) {
       this.next();
       const pattern = this.parsePattern();
       this.eat("op", "->");
-      const body = this.parseExpr();
-      arms.push({ pattern, body });
+      arms.push({ pattern, body: parseBody() });
     }
     if (arms.length === 0) throw new ParseError("match requires at least one arm", start.pos);
-    return { kind: "MatchExpr", scrutinee, arms, pos: start.pos };
+    return { scrutinee, arms, pos: start.pos };
   }
 
   protected parsePattern(): Pattern {

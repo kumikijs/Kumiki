@@ -1,8 +1,10 @@
+import { writeFileSync } from "node:fs";
 import { feature } from "@kumikijs/examples";
+import { KumikiPanic, type TestResult } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { runTestsSource } from "../src/smoke.ts";
-import { runCli, SPAWN } from "./helpers/cli.ts";
-import { seed } from "./helpers/files.ts";
+import { runOne, runTests, runTestsSource } from "../src/smoke.ts";
+import { CHILD_TIMEOUT_MS, runCli, SPAWN, spawnCli, spawns, waitFor } from "./helpers/cli.ts";
+import { APP_A, seed } from "./helpers/files.ts";
 
 const TESTS = feature("28-tests");
 
@@ -56,6 +58,14 @@ describe("kumiki test", () => {
     expect(stdout).toContain("9/9 passed");
   });
 
+  it("runs a reducer-test whose given and expect name a variant called Time", SPAWN, () => {
+    const { stdout, code } = runCli(["test", feature("228-primitive-named-variants")]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("PASS  by-time-sets-the-time-variant");
+    expect(stdout).toContain("PASS  by-size-leaves-the-time-variant");
+    expect(stdout).toContain("2/2 passed");
+  });
+
   it("filters by a name prefix", SPAWN, () => {
     const { stdout } = runCli(["test", TESTS, "inc-i*"]);
     expect(stdout).toContain("PASS  inc-increments");
@@ -84,13 +94,13 @@ test starts-at-41 =
         expect = {slots: {count: 42}}
 `;
 
-  it("reports it with the file and the line and column `check` gives", SPAWN, () => {
+  it("reports it with the file and the line and column `check` gives", spawns(2), () => {
     const file = seed(NOT_A_RECORD);
     const checked = runCli(["check", file]);
     expect(checked.code).toBe(1);
     const lines = checked.stderr.trim().split("\n");
     expect(lines).toEqual([
-      "E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}`",
+      "error E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}`",
     ]);
 
     const tested = runCli(["test", file]);
@@ -100,7 +110,7 @@ test starts-at-41 =
     expect(tested.stderr).toContain('in test "starts-at-41"');
   });
 
-  it("prints the warnings `check` prints, before the errors", SPAWN, () => {
+  it("prints the warnings `check` prints, before the errors", spawns(2), () => {
     const file = seed(`slot f : Text = ""
 reducer recordFocus on=ui.focus(Card) do= f := "focused"
 tile Card = box(text("hi"))
@@ -109,8 +119,8 @@ ${NOT_A_RECORD}`);
     expect(checked.code).toBe(1);
     const lines = checked.stderr.trim().split("\n");
     expect(lines).toEqual([
-      expect.stringMatching(/^W0212 /),
-      expect.stringMatching(/^E0713 test-shape-invalid at 11:26: /),
+      expect.stringMatching(/^warning W0212 /),
+      expect.stringMatching(/^error E0713 test-shape-invalid at 11:26: /),
     ]);
 
     const tested = runCli(["test", file]);
@@ -133,7 +143,7 @@ ${NOT_A_RECORD}`);
     );
     const tested = runCli(["test", file]);
     expect(tested.code).toBe(1);
-    expect(tested.stderr).toMatch(/E0103 \S+ at 4:27: /);
+    expect(tested.stderr).toMatch(/error E0103 \S+ at 4:27: /);
     expect(tested.stderr).not.toContain("in test");
   });
 });
@@ -161,5 +171,87 @@ test replay =
       actual:
         "no episode log was read: compile was given no readEpisodeLog, so nothing was replayed",
     });
+  });
+});
+
+describe("a test whose body throws", () => {
+  it.each<[string, unknown, string]>([
+    [
+      "a panic, as its message",
+      new KumikiPanic("Index 3 is out of range for a List of length 1"),
+      "Index 3 is out of range for a List of length 1",
+    ],
+    ["a panic with no message, as its kind", new KumikiPanic(""), "KumikiPanic"],
+    [
+      "any other error, with its kind",
+      new TypeError("_s.runTileTest is not a function"),
+      "TypeError: _s.runTileTest is not a function",
+    ],
+    ["a thrown value that is not an error, as JSON", { code: 1 }, '{"code":1}'],
+  ])("fails alone, reporting %s", (_case, thrown, error) => {
+    const run = (): TestResult => {
+      throw thrown;
+    };
+    expect(runOne({ name: "t", kind: "reducer-test", run })).toEqual({
+      name: "t",
+      pass: false,
+      error,
+    });
+  });
+});
+
+describe("one file after another in one process", () => {
+  const WITH_TEST = `slot count : Int = 0
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+tile IncBtn = button(text="+1", onClick=inc)
+tile App = column(heading("Count: " + count.show), IncBtn)
+${APP_A}
+test inc-increments =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: 2}, effects: []}
+`;
+  const NO_TEST = WITH_TEST.slice(0, WITH_TEST.indexOf("\ntest "));
+
+  it("reports neither the tests nor the coverage of the file run before", async () => {
+    const first = await runTests(seed(WITH_TEST, "a.kumiki"), undefined, [], { coverage: true });
+    expect(first.results.map((r) => `${r.name}:${r.pass}`)).toEqual(["inc-increments:false"]);
+    expect(first.coverage?.reducers.used).toEqual(["inc"]);
+
+    const second = await runTests(seed(NO_TEST, "b.kumiki"), undefined, [], { coverage: true });
+    expect(second.results.map((r) => r.name)).toEqual([]);
+    expect({ total: second.total, failed: second.failed }).toEqual({ total: 0, failed: 0 });
+    expect(second.coverage).toEqual({
+      reducers: { total: ["inc"], used: [] },
+      tiles: { total: ["IncBtn", "App"], used: [] },
+      effects: { total: [], used: [] },
+    });
+  });
+
+  // Two waits of up to CHILD_TIMEOUT_MS each, and SPAWN's margin over one for the stop.
+  it("prints `no tests found` when --watch re-runs a file whose last test was deleted", {
+    timeout: CHILD_TIMEOUT_MS + SPAWN.timeout,
+  }, async () => {
+    const file = seed(WITH_TEST, "w.kumiki");
+    const cli = spawnCli(["test", file, "--watch"]);
+    const CHANGED = "— change detected —";
+    const rerun = (): string =>
+      cli.stdout.includes(CHANGED) ? cli.stdout.slice(cli.stdout.indexOf(CHANGED)) : "";
+    try {
+      await waitFor(cli, () => cli.stdout.includes("watching for changes"), "the first run");
+      expect(cli.stdout).toContain("FAIL  inc-increments");
+
+      writeFileSync(file, NO_TEST);
+      await waitFor(
+        cli,
+        () =>
+          /no tests found|\d+\/\d+ passed/.test(rerun()) || cli.stderr.includes("test run failed"),
+        "the re-run's report",
+      );
+      expect(rerun()).toContain("no tests found");
+      expect(rerun()).not.toContain("inc-increments");
+    } finally {
+      await cli.stop();
+    }
   });
 });

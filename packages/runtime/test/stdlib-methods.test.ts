@@ -42,10 +42,12 @@ describe("stdlib collection methods", () => {
     expect(_stdlib.mapErr(Ok(1), (e) => `${e}!`)).toEqual(Ok(1));
   });
 
-  it("diff is numeric for Time/Duration and set-difference for Sets", () => {
+  it("diff is the receiver minus the argument for Time and set-difference for Sets", () => {
     expect(_stdlib.diff(10, 3)).toBe(7);
-    expect(_stdlib.diff(3, 10)).toBe(7);
+    expect(_stdlib.diff(3, 10)).toBe(-7);
+    expect(_stdlib.diff(3, 3)).toBe(0);
     expect(_stdlib.diff({ a: true, b: true }, { b: true })).toEqual({ a: true });
+    expect(_stdlib.diff({ b: true }, { a: true, b: true })).toEqual({});
   });
 });
 
@@ -103,14 +105,44 @@ describe("stdlib argument-less methods", () => {
     expect(() => _stdlib.panic("boom")).toThrow("boom");
   });
 
-  it.each([
+  // Only an optional sign and decimal digits (and for a Float a fraction and an exponent) read: a
+  // fraction is no Int rather than truncated into one, and a number handed in is no text.
+  const rows: [fn: "parseIntOpt" | "parseFloatOpt", text: unknown, result: unknown][] = [
     ["parseIntOpt", "42", Some(42)],
-    ["parseIntOpt", "3.7", Some(3)],
+    ["parseIntOpt", "+5", Some(5)],
+    ["parseIntOpt", "007", Some(7)],
+    ["parseIntOpt", "9007199254740991", Some(9007199254740991)],
+    ["parseIntOpt", "-9007199254740991", Some(-9007199254740991)],
+    ["parseIntOpt", "9007199254740992", None],
+    ["parseIntOpt", "3.7", None],
+    ["parseIntOpt", "0x10", None],
+    ["parseIntOpt", "1e3", None],
+    ["parseIntOpt", " 12 ", None],
+    ["parseIntOpt", "12\n", None],
+    ["parseIntOpt", `1${"0".repeat(400)}`, None],
     ["parseIntOpt", "x", None],
     ["parseIntOpt", "", None],
+    ["parseIntOpt", 12, None],
     ["parseFloatOpt", "3.5", Some(3.5)],
+    ["parseFloatOpt", "1e3", Some(1000)],
+    ["parseFloatOpt", "-1.5e-3", Some(-0.0015)],
+    ["parseFloatOpt", "0x10", None],
+    ["parseFloatOpt", " 1.5 ", None],
+    ["parseFloatOpt", "12\n", None],
+    ["parseFloatOpt", ".5", None],
+    ["parseFloatOpt", "1.", None],
+    ["parseFloatOpt", "Infinity", None],
+    ["parseFloatOpt", "1e400", None],
     ["parseFloatOpt", "nope", None],
-  ] as const)("%s(%j) is %j", (fn, text, result) => {
+    ["parseFloatOpt", 1.5, None],
+  ];
+  const shown = (text: unknown): string =>
+    typeof text === "string" && text.length > 24
+      ? `${text.slice(0, 4)}… (${text.length} characters)`
+      : JSON.stringify(text);
+  it.each(
+    rows.map(([fn, text, result]) => ({ fn, text, result, shown: shown(text) })),
+  )("$fn($shown) is $result", ({ fn, text, result }) => {
     expect(_stdlib[fn](text)).toEqual(result);
   });
 });

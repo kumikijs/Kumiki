@@ -1,6 +1,6 @@
-import { type TypeEnv, unaliasType } from "../assignable.ts";
+import type { TypeEnv } from "../assignable.ts";
 import type { EffectDef, PolicyExpr, RetryExpr } from "../ast.ts";
-import { failsWithText } from "../capabilities.ts";
+import { declaresNoInput, failsWithText, STORAGE_READ_FIELDS } from "../capabilities.ts";
 import { bindRef, type GenCtx, makeEvalCtx } from "./context.ts";
 import { jsOfExpr, policyKeyOfJs } from "./expr.ts";
 
@@ -21,15 +21,15 @@ export function storageHandlerOf(eff: EffectDef, env: TypeEnv): StorageHandler |
         : null;
   if (!backend) return null;
   if (eff.cap.endsWith(".read")) return `${backend}Read`;
-  const inType = unaliasType(eff.inType, env);
-  const clears = !eff.mapRequest && inType?.kind === "TypePrim" && inType.name === "Unit";
+  const clears = !eff.mapRequest && declaresNoInput(eff.inType, env);
   return clears ? `${backend}Clear` : `${backend}Write`;
 }
 
 export function builtinEffectCall(eff: EffectDef, reqVar: string, env: TypeEnv): string | null {
   const storage = storageHandlerOf(eff, env);
   if (storage?.endsWith("Read")) {
-    return `${storage}(${eff.mapRequest ? `{ key: ${reqVar}.key, decode: ${reqVar}.decode }` : reqVar})`;
+    const fields = STORAGE_READ_FIELDS.map((f) => `${f}: ${reqVar}.${f}`);
+    return `${storage}(${eff.mapRequest ? `{ ${fields.join(", ")} }` : reqVar})`;
   }
   if (storage?.endsWith("Clear")) return `${storage}()`;
   if (storage) return `${storage}(${reqVar})`;
