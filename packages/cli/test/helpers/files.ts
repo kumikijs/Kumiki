@@ -11,10 +11,16 @@ export const APP_A = `app A
     init   = []
 `;
 
-/** A fresh directory under the OS temp dir, removed when the current test finishes. */
-export function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "kumiki-cli-test-"));
-  onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+/**
+ * A fresh directory under `parent` (the OS temp dir by default), removed when the current test
+ * finishes.
+ */
+export function tempDir(parent = tmpdir()): string {
+  const dir = mkdtempSync(join(parent, "kumiki-cli-test-"));
+  // Retried: on Windows a server or watcher that closed a moment before can still hold the files.
+  onTestFinished(() =>
+    rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
+  );
   return dir;
 }
 
