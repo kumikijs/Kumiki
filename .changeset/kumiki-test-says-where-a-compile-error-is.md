@@ -21,7 +21,7 @@ the `test` the diagnostic sits inside:
 ```
 $ kumiki test app.kumiki
 Error: compile failed (/path/to/app.kumiki):
-E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")
+error E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")
 ```
 
 `kumiki smoke` and `kumiki run` compile through the same loader and report a

@@ -1,0 +1,3 @@
+{
+  "GET /api/logs/today": { "text": "3 entries" }
+}

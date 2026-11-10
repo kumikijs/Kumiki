@@ -18,9 +18,11 @@ type KumikiError = {
 
 `code` is a permanent contract; once assigned, its meaning does not change. `kind` is a sub-classification under the same `code`, used to branch diagnostic logic. `severity` defaults to `"error"`: a missing field means the same as `"error"` for backward compatibility with existing diagnostics. The `"warning"` tier is non-fatal — it is surfaced to stderr (CLI) and to Rollup's `this.warn` (Vite) but does not change the exit code or block the build.
 
-A parse error is `throw`n as a `ParseError` (`message` + `pos`), and a lexical one as a `LexError`. Neither carries a `code`: the stage stops at the first error, so there is no set of diagnostics for one to index into. A tool whose output *is* such a set — `kumiki fix`'s rollback report, the MCP tools' JSON envelope — synthesizes [E0000](#e0000-parse-error) so that "no diagnostics" keeps meaning "clean".
+`kumiki check` prints each diagnostic as one line that leads with its severity: `<severity> <code> <kind> at <line>:<col>: <message>`, as in `error E0103 undef-ref at 4:30: Reference to undefined name "totl"` or `warning W0212 ui-event-tile-mismatch at 2:17: …`. The word is the `severity` field, so a reader tells an advisory diagnostic from a failure without knowing what a code's first letter stands for. `build`, `test`, `smoke`, `run` and `replay` print a diagnostic in the same form. So does `fix`, for every diagnostic it lists, each at the start of its line: the diagnostic a patch is proposed for, with the edit indented under it as `fix: …`; an error it has no patch for, followed by `[<reason>]`; the errors that remain; the warnings; and under `--auto-patch`, the compile errors and the errors a refused patch would introduce. The MCP `kumiki_fix` dry run lists them the same way, with `(no auto-patch)` after an error it has no patch for. The MCP tools that answer in JSON carry `severity` on each diagnostic instead.
 
-The checker's codes come from `packages/compiler/src/typecheck.ts` and the modules under `packages/compiler/src/typecheck/`; `E0000` is assigned by the two tools named above.
+A parse error is `throw`n as a `ParseError` (`message` + `pos`), and a lexical one as a `LexError`. Neither carries a `code`: the stage stops at the first error, so there is no set of diagnostics for one to index into. A tool whose output *is* such a set — `kumiki fix`'s rollback report, the MCP tools' JSON envelope — synthesizes [E0000](#e0000-parse-error) so that "no diagnostics" keeps meaning "clean". Every diagnostic in an MCP tool's JSON carries `severity`, never omitted, so a client never has to know the default above.
+
+The checker's codes come from `packages/compiler/src/typecheck.ts` and the modules under `packages/compiler/src/typecheck/`; `E0000` is built by `parseFailure` in `packages/compiler/src/compile.ts`, which the two tools named above call.
 
 ## The Code System
 
@@ -59,13 +61,13 @@ typo` is still caught rather than accepted, because the two differ by code.
 
 | Code | Auto-patch | Strategy |
 |---|---|---|
-| `E0001` | yes | Add `"/404" -> NotFound` to the app's own `routes` (never to a tile's `sub-routes`), and inject a `NotFound` tile unless the program already defines one. No patch when the app has no `routes` clause, or when `/404` is a redirect: E0001 does not count a redirect, and a second `/404` entry would be `E0008`. |
+| `E0001` | yes | Add `"/404" -> NotFound` to the app's own `routes` (never to a tile's `sub-routes`), and inject a `NotFound` tile unless the program already defines one. Only `missing-404` is patched. No patch when the app has no `routes` clause; for `404-is-redirect`, which is repaired by replacing the redirect (an entry added beside it would be a second `/404`, `E0008`); or for `404-in-sub-routes`, which is repaired by removing the entry. |
 | `E0102` | yes | Close-name suggestion (Levenshtein ≤ 2 or ≤ 25%) against known reducer names. |
-| `E0103` | yes | Close-name suggestion against known slot / binding names. |
+| `E0103` | yes | Close-name suggestion against known slot / binding names. No patch for a name read, later in the same definition, after the scope that declared it ended — a reducer's `if` branch, `for` body or match arm, a `let … in` body, a tile's `for` body or an arm of a `match` expression (the diagnostic's `endedScope` is set): the read is out of scope, not misspelled, and a renamed read can type-check and read a different value. Whether to move the declaration or the read is user intent. |
 | `E0104` | yes | Close-name suggestion against declared `effect` names plus the [standard effects](./stdlib.md#_2-6-standard-effects), which no program declares (scoped — a tile or slot whose name is close is not a candidate). |
 | `E0105` | yes | Close-name suggestion against known tile names. |
 | `E0107` | yes | Close-name suggestion against declared motion names. |
-| `E0116` | yes | Close-name suggestion against declared `fn` names plus the built-in calls (scoped — a slot or tile whose name is close is not a candidate). |
+| `E0116` | yes | Close-name suggestion against declared `fn` names plus the built-in calls (scoped — a slot or tile whose name is close is not a candidate). `undef-variant` is suggested against the tags of every union the program writes plus the standard library's, and `undef-qualifier` against those tags, the type names and the built-in-call namespaces — the candidates the message's own suggestion is drawn from. |
 | `E0211` | yes | Close-name suggestion against declared tile names for the selector target. |
 | `E0301` | yes | Append the required capability to the app's `caps = [...]` array, right after its last entry, so a comment after that entry stays a comment. |
 | `E0106` | yes | Close-name suggestion against timer names collected from `on=timer(d, name=N)` triggers (scoped — top-level defs are not candidates). |
@@ -91,6 +93,23 @@ typo` is still caught rather than accepted, because the two differ by code.
 | `E0306` | no | Rewriting `E` to `Text` is mechanical, but every `.err` read written to the old `E` (`$e.message`, `$e.code`) then needs rewriting to the message, and what the program wanted from those fields is user intent. |
 | Others | no | Not currently auto-repairable (open an issue if a common shape emerges). |
 
+Every close-name suggestion above is one ranking. The candidates nearest to the
+name written by Levenshtein distance are kept when that distance is at most 2
+or at most a quarter of the name's length, rounded up. Where a namespace has
+built-in names beside the program's own (`E0104`, `E0116`, `E0117`), a name the
+program declares outranks a built-in one at the same distance: `Filtre` is two
+edits from a declared `Filter` and from the built-in `File`, and the patch
+writes `Filter`. A patch is written only when one candidate is left. Two or
+more left are a **tie** — `count` is one edit from both `countA` and `countB` —
+and nothing in the program says which was meant, so `kumiki fix` writes neither
+and reports the diagnostic as skipped with the reason `close-names-tied`,
+naming the tied candidates in sorted order in the skip's `candidates`. When
+that is the first skip, `kumiki_auto_patch`'s `no-patch` outcome carries the
+same `reason` and `candidates`. The verification tiers' unknown-reducer message
+names every tied candidate instead: a `{dispatch}` step naming no reducer
+([Testing §8.10](./testing.md#_8-10-the-three-layers-of-tooling-verification))
+fails with `no reducer named "add" — did you mean "addA" or "addB"?`.
+
 Behavioral repair from a failing `test` (`kumiki fix --auto-patch <test-name>`)
 is a separate tier and works whenever the failing leaf can be traced to a
 unique source position:
@@ -114,13 +133,18 @@ The source could not be lexed or parsed. Not produced by the checker: the parser
 
 **Fix**: Correct the syntax at the reported position. Every other code in this document presumes a file that parses.
 
-### E0001 `missing-404`
+### E0001 `missing-404` / `404-is-redirect` / `404-in-sub-routes`
 
-An app that declares `app.routes` must include a route for the `/404` pattern. Unmatched paths fall back here.
+`/404` is the fallback for paths no route matches. It belongs to `app.routes`, and it renders a tile ([Routing §3.1.3](./routing.md#_3-1-3-404-is-reserved)).
 
-> `app.routes must include a "/404" entry`
+- `missing-404`: `app.routes` has no `/404` entry. Reported at the app.
+  > `app.routes must include a "/404" entry`
+- `404-is-redirect`: the `/404` entry of `app.routes` is a redirect (`"/404" ->> "/"`). Reported at the redirect. The map has a `/404` entry, but not the tile the fallback renders, and a second `/404` entry would be [E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) — so this is not `missing-404`. A `/404` redirect beside a `/404` tile is that E0008 alone: the tile serves the fallback.
+  > `Route "/404" is a redirect, but "/404" is the fallback for paths no route matches and has to render a tile — write "/404" -> <Tile>`
+- `404-in-sub-routes`: a tile's `sub-routes` map has an entry at `/404`, whether it names a tile or redirects. Reported at the entry, and the entry's only report: a target it names is not checked as well, nor is a redirect loop through it. Two entries at `/404` in one map are each reported, and the pair is also [E0112](#e0112-duplicate-sub-route). No sub-route is matched against `/404`, so the entry is never used; a child path that no sub-route matches renders the sub-route tile at the parent's own path if there is one, or else the app's `/404` ([Routing §3.6.3](./routing.md#_3-6-3-matching-rules)).
+  > `Tile "<tile>" has a sub-route at "/404", which is reserved for the app's fallback — no sub-route is matched against it. Remove it: a child path that no sub-route matches renders the sub-route tile at the parent's own path if there is one, or else the app's "/404"`
 
-**Fix**: Add a route to a 404 tile, such as `route "/404" -> NotFound`. See [Routing](./routing.md) for details.
+**Fix**: Route `/404` to a tile in the app's own `routes`, such as `"/404" -> NotFound`, in place of a redirect there. To send unmatched paths to another page, redirect a wildcard (`"/*" ->> "/"`) and keep the `/404` tile. Remove a `/404` entry from a `sub-routes` map. See [Routing](./routing.md) for details.
 
 ### E0002 `duplicate-timer-name`
 
@@ -178,7 +202,7 @@ Two definitions of the same layer share a name. Symbol collection keeps one entr
 
 Which declaration survives is not uniform, which is why the message does not say. Symbol collection keeps the **last**, so that is what the checker validated — but two `reducer`s of one name both reach the artifact and the runtime dispatches the **first**. The two halves of the toolchain disagreed about which definition existed.
 
-The namespace is per layer, and only within a layer: a `slot` and a `tile` sharing a name is legal — code generation resolves a bare identifier child to a tile before anything else — and a program's own `type Route = …` shadowing the standard library's is legal too. A second `app` is `E0004`, which predates this and keeps its own code.
+The namespace is per layer, and only within a layer: a `slot` and a `tile` sharing a name is legal — code generation resolves a bare identifier child to a tile before anything else. A `type` named like one of the standard library's domain types is not a second declaration of it either: a program's own `type Email = …` replaces the standard library's for that program, and one under a reserved name (`type Route = …`) is [E0231](#e0231-reserved-type-name). A second `app` is `E0004`, which predates this and keeps its own code.
 
 **Fix**: Remove one, or rename it. `kumiki rename` refuses to create a duplicate, and `kumiki add` rolls back on one.
 
@@ -220,7 +244,7 @@ type Shape   = Leaf | Branch(Shape, Shape)
 
 Each reaches a structural type before it reaches itself. Comparing two of them terminates because the relation is read co-inductively over the types *as written*, not because their values are finite — `Node` above has none at all, its `next` being neither optional nor a container, and is the spec's own lead example of a legal recursive type. `type A = Option(A)` and `type A = Alias(Option(A))` are legal for the same reason: the container is the type.
 
-A name that denotes no `type` definition ends the chain rather than closing it: a generic constructor (`List`, `Option`, `Map`) has no body to come back along, and an undeclared name is [E0117](#e0117-undef-type)'s to report rather than a second name for one mistake. A standard-library *domain* type is a definition like any other, so a program that redeclares one (`type Route = Route`) closes a loop through its own. A parameter is read as the parameter and never as a global of the same spelling ([§1.3.6](./language.md#_1-3-6-invariants), inv. 5).
+A name that denotes no `type` definition ends the chain rather than closing it: a generic constructor (`List`, `Option`, `Map`) has no body to come back along, and an undeclared name is [E0117](#e0117-undef-type)'s to report rather than a second name for one mistake. A standard-library *domain* type is a definition like any other and is followed like one. A program that declares one it may declare (`type Email = Email`) has replaced it, and closes a loop through its own. A reserved one cannot be declared ([E0231](#e0231-reserved-type-name)), so in `type Route = Route` the body names the standard library's record and closes no loop. A parameter is read as the parameter and never as a global of the same spelling ([§1.3.6](./language.md#_1-3-6-invariants), inv. 5).
 
 **Fix**: Give one name on the chain a body. A type that was meant to be recursive wants a record or a union at the point it names itself (`type A = {next: A}`); a type that was meant to be an alias wants the definition it was aliasing.
 
@@ -266,6 +290,22 @@ That holds anywhere inside the fragment, a `$2` in another method's argument inc
 > `"$2" is not bound here — the .map fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
 
 A `let` is declared for the scope it is written in ([Language §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)), and each branch of an `if`, a `for` body and each match arm is a scope of its own. So a name one `if` branch declares is undefined in the other branch and on every statement after the `if`, just as one a `for` body or match arm declares is undefined after it. To choose the value by the condition, declare it once before the `if` with an `if` expression — `let n = if c then "a" else "b"` — or move the read into the branch.
+
+An expression that binds a name binds it for its own body — a `let … in`, a tile's `for`, each arm of a `match` expression, a value's or a tile's — so the name is undefined after the expression too: in a later statement or operand, and in a sibling argument of a tile, as the second `idx` in `column(for idx in xs text(idx.show), text(idx.show))`.
+
+When the name was declared earlier in the same definition in such a scope — a `let` in a body, a `for` bind, a match-arm pattern, a `let … in` — the diagnostic's `endedScope` field says which kind of scope it was — `if`, `for` or `match` for a reducer's statement body, and `let-in`, `for-expr` (a tile's `for`) or `match-expr` (an arm of a `match` expression) for an expression — and the message gives the repair for that kind. Where several scopes declared it, the message names the one that ended last: of nested statement bodies, the outermost one that ended before the read. Inside a statement body an expression is still the scope named, also when a statement nested earlier in that body ended the name too, because a read moved into that body would still be after the expression. A name carries no value out of a loop, so a read after a `for` moves into its body, or the body writes the value to a slot:
+
+> `Reference to undefined name "idx" — it was declared in a "for" loop, and a name carries no value out of a loop: move the read into the loop's body, or write the value to a slot there (see docs/spec/language.md)`
+
+After an `if` or a match, the name is declared once before it with an `if` or match expression, or the read moves into the branch or arm. A `let n = 0` before it would not do: the body's own `n` only shadows it.
+
+> `Reference to undefined name "n" — it was declared in an "if" branch, which ended before this read: declare it once before the "if" with an "if" expression (let n = if c then … else …), or move the read into that branch (see docs/spec/language.md)`
+
+A read in a later branch or arm of the same `if`, match or `match` expression is already in one, so the message points at the one that declares the name: `it was declared in the other branch of this "if"` … `the branch that declares it`, for a match `another arm of this match` … `the arm that declares it`, and for a `match` expression `another arm of this "match" expression` … `the arm that declares it`.
+
+After an expression, the read moves into it: into the body of the `let … in`, the body of the tile's `for` — a name carries no value out of that loop either — or the arm of the `match` expression. The value a `let … in` binds can instead be bound once where both reads see it, as the message says: with a `let` statement in a reducer; with one `let … in` around both reads in a `fn` or a slot initializer; in a tile, by moving both reads into a tile that declares `in=` and passing it the value. The entries of `app.init` share no expression, so there the read can only move into the `let … in`.
+
+The scope is named however close another name in scope is: the read is out of scope, not misspelled, so `kumiki fix` proposes no rename for it. A read of `idx` after `for idx in xs` renamed to a slot `id` would type-check and read the slot.
 
 **Fix**: Confirm that the referenced slot / binding is declared.
 
@@ -385,7 +425,9 @@ A `slot` is declared with a name the compiler resolves before it consults the sl
 
 **Fix**: Rename the slot.
 
-### E0116 `undef-call`
+### E0116 `undef-call` / `undef-variant` / `undef-qualifier`
+
+A name resolves to nothing: a callee (`undef-call`), a variant constructor (`undef-variant`) or a qualifier (`undef-qualifier`). The callee comes first, and the other two follow it.
 
 A call `f(...)` names no function. The candidate set is the program's `fn` definitions plus the built-in calls, which are spread across three documents:
 
@@ -397,7 +439,7 @@ A call `f(...)` names no function. The candidate set is the program's `fn` defin
 | `file-url` | [Forms §5.10](./forms.md#_5-10-file-upload) |
 | `prefers-dark` | [Style §4.6.1](./style.md#_4-6-1-following-os-settings) |
 
-A member of `Decoder`, `EffectId`, `Duration` or `Bytes` written **without parentheses** is a call given no arguments, not a value: that is how `Decoder.Text` and `EffectId.none` are written, and `Duration.s` / `Bytes.from-text` are read the same way even though neither of those namespaces has a zero-argument member. So a member such a namespace does not declare is reported here rather than evaluating to nothing — `Duration.nope` is an E0116 — and a real member given no argument is an [E0213](#e0213-call-arity-mismatch). The four are namespaces whose every member is a built-in call. `Time` is read the same way, because `Time.now` — the `now` above, written with its type's name ([Standard Library §2.4.2](./stdlib.md#_2-4-2-time)) — is one of its members written without parentheses: `Time.nope` is an E0116 and `Time.parse` with no text an [E0213](#e0213-call-arity-mismatch), with or without parentheses. Unlike the four, `Time` keeps all of the `fresh` / `parse` / `show` every type has, so `fresh` and an argument-less `parse` / `show` get the type member's report ([E0802](#e0802-unimplemented-function), E0213) rather than the E0116 the four give them ([E0117](#e0117-undef-type)). A bare `<Q>.<member>` on any other qualifier is **not** read as a call, and remains a field read that evaluates to nothing with no diagnostic: `Stamp.now` on a `type Stamp = nominal Time`, `T2.now` on a `type T2 = Time`, a parenthesised `(Time).now`, a misspelt `Tim.now`, and a bare `<T>.fresh` / `.parse` / `.show` all pass `check`. That is a known gap, not a rule. Written with parentheses, each is a call and gets its report: `Stamp.now()` is an E0116.
+A member of `Decoder`, `EffectId`, `Duration` or `Bytes` written **without parentheses** is a call given no arguments, not a value: that is how `Decoder.Text` and `EffectId.none` are written, and `Duration.s` / `Bytes.from-text` are read the same way even though neither of those namespaces has a zero-argument member. So a member such a namespace does not declare is reported here rather than evaluating to nothing — `Duration.nope` is an E0116 — and a real member given no argument is an [E0213](#e0213-call-arity-mismatch). The four are namespaces whose every member is a built-in call. `Time` is read the same way, because `Time.now` — the `now` above, written with its type's name ([Standard Library §2.4.2](./stdlib.md#_2-4-2-time)) — is one of its members written without parentheses: `Time.nope` is an E0116 and `Time.parse` with no text an [E0213](#e0213-call-arity-mismatch), with or without parentheses. Unlike the four, `Time` keeps all of the `fresh` / `parse` / `show` every type has, so `fresh` and an argument-less `parse` / `show` get the type member's report ([E0802](#e0802-unimplemented-function), E0213) rather than the E0116 the four give them ([E0117](#e0117-undef-type)). A bare `<Q>.<member>` on any other qualifier is **not** read as a call. On a qualifier that names a type it remains a field read that evaluates to nothing with no diagnostic: `Stamp.now` on a `type Stamp = nominal Time`, `T2.now` on a `type T2 = Time`, a parenthesised `(Time).now`, and a bare `<T>.fresh` / `.parse` / `.show` all pass `check`. That is a known gap, not a rule. On a qualifier that names nothing it is an `undef-qualifier` (below): a misspelt `Tim.now` is reported at `Tim`. Written with parentheses, each is a call and gets its report: `Stamp.now()` is an E0116.
 
 `run-reducer` is not in the set: it lowers only inside a generated property-test trial ([Testing §8.3](./testing.md#_8-3-property-tests)), and a property-test invariant is resolved by its own walk rather than through this check. In a program that declares no `fn run-reducer` ([Language §1.8.5](./language.md#_1-8-5-calling-from-tile-reducer)), writing it anywhere else is an E0116, and inside a test body it carries its own sentence, because the position is what is wrong rather than the name:
 
@@ -415,7 +457,25 @@ Code generation lowers an unrecognised callee to a call on a binding of the same
 
 `E0801` is the same relationship for `obj.method(...)`, which is a different expression form and resolved separately.
 
-**Fix**: Correct the spelling, or declare the `fn`.
+**A variant constructor** is any capitalised name in an expression, with a payload or without one. It is `undef-variant` when it names a tag no union declares:
+
+> `Reference to undefined variant "<name>"`
+
+The tags are those of every union the program writes — a `type` body, or a union written inline in a slot's type, a record field, a `fn` parameter or result, an `effect`'s `in=` / `out=`, or a property test's `for-all` — wherever in the file it is written, and the standard library's: `Some` / `None`, `Ok` / `Err`, `FormValue`'s `TextV` / `NumberV` / `BoolV` / `FileV`, and the request bodies `Json` / `Form` / `Multipart` / `Text` / `Bytes` / `Empty` ([HTTP / Storage §6.1.3](./http.md#_6-1-3-the-httpbody-type)). Code generation builds a variant from any spelling, so a tag no union declares lowers to `{_tag: "<name>"}`: a value no `match` arm matches, unequal to every other value, with `undefined` in every field.
+
+A position whose declared type judges the variant reports it there, naming that type: `slot s : Status = Zork` is [E0216](#e0216-unknown-variant), and a tag given to a type that is not a union is [E0201](#e0201-type-mismatch) — [E0202](#e0202-emit-arg-type-mismatch) as an `emit` argument. `undef-variant` is for the positions no declared type judges — a `let`, an `effect`'s `map-request`, an operand of `==` — so one mistake is one diagnostic.
+
+**A qualifier** is the `Q` of a `Q.member` written without an argument list. It may name a tag, whose value the member is read from (`Idle.show`), a type (`Time.now`), or one of the namespaces above, whose members are calls. One that names none of them is `undef-qualifier`, reported at the qualifier rather than as a variant of that name whose member evaluates to `undefined`:
+
+> `Reference to undefined qualifier "<name>" in "<name>.<member>"`
+
+So `decode: Decodr.None` is reported at `Decodr`. A qualifier written with an argument list is a call, and `undef-call` above.
+
+Both messages end with ` — did you mean "<name>"?` when a candidate is close: a tag for a variant, and a tag, a type name or a namespace for a qualifier.
+
+A capitalised name where a position takes a name rather than a value is not a constructor, and is resolved by that position's own check: a tile in an event trigger, a handler, a test event's target, `confirm`'s `onYes` / `onNo`, a route target, a tag in a pattern ([E0209](#e0209-pat-unknown-variant)), and the type `Decoder.Json(T)` decodes to.
+
+**Fix**: Correct the spelling, declare the `fn`, or add the tag to a union. `kumiki fix` proposes the closest name.
 
 ### E0117 `undef-type`
 
@@ -425,11 +485,13 @@ A type name resolves to nothing: it names no `type` definition, no [standard-lib
 
 An unresolved name is *opaque*, and an opaque type accepts every value — so before this check `slot v : NoSuchType = 1` was accepted, and so was every subsequent use of `v`. One misspelling turned off value checking for everything downstream of it.
 
-Type parameters are in scope inside the body of the definition that declares them, and only there: `type Box(T) = {v: T}` is fine, `type Box(T) = {v: U}` is not. No other declaration site (`slot`, `fn`, `effect`, `tile in=`) has type parameters, so an unresolved name at one of those is always an error.
+The name is the one mistake, so E0117 is the one report of it: past it the name is opaque, and neither a value written against it nor a use of that value is an [E0201](#e0201-type-mismatch) against a type that does not exist. An **application** of the name is opaque the same way — `slot y : Foo(Int) = 1` is E0117 alone, with no E0201 on the `1` — and so is an application of a misspelt constructor such as `Lst(Int)`, wherever the application is written: a record field, a `List(…)`, an alias, a `nominal`, a `where`. An application of a standard-library constructor (`List(Int)`, `Option(Text)`) or of a program's own generic (`G(Int)` for a `type G(T) = …`) is a type, and a value is checked against its arguments as usual.
 
-A **call's qualifier** is a type name too. `T.fresh()`, `T.parse(t)` and `T.show(v)` are lowered on any capitalised `T` — codegen matches the shape by regex — so a qualifier that names no type is lowered anyway unless it is refused here. `parse` reads its text by the base the qualifier resolves to ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)), and a name that resolves to no type has no base to read by. When `parse` branched on the qualifier's name instead, a misspelling did not fail, it changed which branch ran: `Itn.parse("12")` answered `Some("12")`, which an `Int` slot then held and every later sum concatenated. `fresh` and `show` discard the qualifier, so a misspelling there produces the same value — and the name is reported because a qualifier that resolves to no type is wrong on its own terms, which makes this check deliberately stricter than the lowering for those two. The qualifier resolves against the same namespace as any other type name, primitives included, and must be spelled as one: a name with a hyphen is not a qualifier, and a call written with one is [E0116](#e0116-undef-call) rather than this. A qualifier that resolves to a type **constructor** — `List`, or a `type Box(T)` — names a type and is not one; that is [E0124](#e0124-type-constructor-qualifier).
+Type parameters are in scope inside the body of the definition that declares them, and only there: `type Box(T) = {v: T}` is fine, `type Box(T) = {v: U}` is not. A parameter written with arguments (`T(Int)`) is in scope too, and is [E0210](#e0210-type-arity-mismatch) rather than this. No other declaration site (`slot`, `fn`, `effect`, `tile in=`) has type parameters, so an unresolved name at one of those is always an error.
 
-`Decoder`, `EffectId`, `Duration` and `Bytes` are the exception, in both spellings and whether or not the name is also a type: their members are exactly the built-in calls [E0116](#e0116-undef-call) lists, so `fresh` — and `parse` / `show` written with no argument — do not resolve inside them and are that E0116 rather than this. Given its argument, `parse` / `show` is the type member of [Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion) on these qualifiers as on any other: `Duration.parse(t)` is an `Option(Duration)` and `Duration.show(d)` a `Text`. What the exception is for is `fresh`, which ignores the qualifier it is written on, and a `parse` / `show` written with no argument, which is no member of these namespaces — `EffectId.fresh()` and `Duration.fresh()` both lowered to a freshly minted id, one where the author wrote the empty sentinel and one straight into a `Duration` slot, and neither was reported. `Duration` is a standard-library type and `Bytes` a primitive, so this is the one place a real type name does not answer for `fresh`, or for `parse` / `show` without an argument.
+A **call's qualifier** is a type name too. `T.fresh()`, `T.parse(t)` and `T.show(v)` are lowered on any capitalised `T` — codegen matches the shape by regex — so a qualifier that names no type is lowered anyway unless it is refused here. `parse` reads its text by the base the qualifier resolves to ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)), and a name that resolves to no type has no base to read by. When `parse` branched on the qualifier's name instead, a misspelling did not fail, it changed which branch ran: `Itn.parse("12")` answered `Some("12")`, which an `Int` slot then held and every later sum concatenated. `fresh` and `show` discard the qualifier, so a misspelling there produces the same value — and the name is reported because a qualifier that resolves to no type is wrong on its own terms, which makes this check deliberately stricter than the lowering for those two. The qualifier resolves against the same namespace as any other type name, primitives included, and must be spelled as one: a name with a hyphen is not a qualifier, and a call written with one is [E0116](#e0116-undef-call-undef-variant-undef-qualifier) rather than this. A qualifier that resolves to a type **constructor** — `List`, or a `type Box(T)` — names a type and is not one; that is [E0124](#e0124-type-constructor-qualifier).
+
+`Decoder`, `EffectId`, `Duration` and `Bytes` are the exception, in both spellings and whether or not the name is also a type: their members are exactly the built-in calls [E0116](#e0116-undef-call-undef-variant-undef-qualifier) lists, so `fresh` — and `parse` / `show` written with no argument — do not resolve inside them and are that E0116 rather than this. Given its argument, `parse` / `show` is the type member of [Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion) on these qualifiers as on any other: `Duration.parse(t)` is an `Option(Duration)` and `Duration.show(d)` a `Text`. What the exception is for is `fresh`, which ignores the qualifier it is written on, and a `parse` / `show` written with no argument, which is no member of these namespaces — `EffectId.fresh()` and `Duration.fresh()` both lowered to a freshly minted id, one where the author wrote the empty sentinel and one straight into a `Duration` slot, and neither was reported. `Duration` is a standard-library type and `Bytes` a primitive, so this is the one place a real type name does not answer for `fresh`, or for `parse` / `show` without an argument.
 
 **Fix**: Correct the spelling, define the type, or add the name to the enclosing definition's parameter list. `kumiki fix` proposes the closest type name.
 
@@ -518,13 +580,13 @@ A type-member call — `T.fresh()`, `T.parse(t)`, `T.show(v)` — is qualified b
 
 `Tuple` takes any number of arguments, and the message says `type arguments` without a count for it; variadic is still not zero. The second line is the one for `parse`: it names the bases a text has a reading as, because naming the application is not the whole repair there. The third is `fresh`'s, for the same reason: the applied type still has to be one a uuid `Text` goes into, or the call is [E0802](#e0802-unimplemented-function).
 
-The name is a type's, so [E0117](#e0117-undef-type) does not apply; the callee is one of the type members, so [E0116](#e0116-undef-call) does not either; and there is no type for the call to have, so nothing reaches [E0201](#e0201-type-mismatch). Each check was right on its own terms, and the call fell between them: `slot n : Int = Box.fresh()` stored a uuid string in an `Int` slot with nothing reported. On `parse` this is the one report, ahead of [E0802](#e0802-unimplemented-function): a qualifier that is no type has no reading to ask about.
+The name is a type's, so [E0117](#e0117-undef-type) does not apply; the callee is one of the type members, so [E0116](#e0116-undef-call-undef-variant-undef-qualifier) does not either; and there is no type for the call to have, so nothing reaches [E0201](#e0201-type-mismatch). Each check was right on its own terms, and the call fell between them: `slot n : Int = Box.fresh()` stored a uuid string in an `Int` slot with nothing reported. On `parse` this is the one report, ahead of [E0802](#e0802-unimplemented-function): a qualifier that is no type has no reading to ask about.
 
 **Fix**: Name the application as a type and qualify the call with that — `type OrderId = Tagged(Int)` for a `type Tagged(T) = nominal Text`, then `OrderId.fresh()`. For `fresh`, the applied type has to be one a `Text` goes into ([Standard Library §2.4.1](./stdlib.md#_2-4-1-id-generation)): `type IntBox = Box(Int)` for a `type Box(T) = nominal List(T)` names a type, and `IntBox.fresh()` is then [E0802](#e0802-unimplemented-function). For `parse`, the applied type also needs a base with a reading of a text ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)): `type Tagged(T) = nominal Text` then `type OrderId = Tagged(Int)` reads by `Text`, but a container never has one — `type IntList = List(Int)` then `IntList.parse(t)` is [E0802](#e0802-unimplemented-function) — so for `List.parse`, `Map.parse` and the like, parse the parts into `Int`, `Text`, … and build the value in a `fn`. `kumiki fix` does not repair this: which arguments to apply is the author's choice, and the skip reason says so.
 
 ### E0125 `redirect-unbound-param`
 
-A redirect's target names a parameter, or the wildcard `*`, that its source does not bind ([Routing §3.10](./routing.md#_3-10-redirects-static)). The runtime puts into the target what the source matched — for each `:name`, the segment it matched, and for `*`, the rest of the path — and leaves every other segment as written, so a name the source does not bind would reach the URL as written: `"/old" ->> "/items/:id"` would land on the path `/items/:id`, where `route.params.id` reads `":id"`. Reported once per name, at the redirect entry, in the app's `routes` and in a tile's `sub-routes` alike.
+A redirect's target names a parameter, or the wildcard `*`, that its source does not bind ([Routing §3.10](./routing.md#_3-10-redirects-static)). The runtime puts into the target what the source matched — for each `:name`, the segment it matched, and for `*`, the rest of the path — and leaves every other segment as written, so a name the source does not bind would reach the URL as written: `"/old" ->> "/items/:id"` would land on the path `/items/:id`, where `route.params.id` reads `":id"`. Reported once per name, at the redirect entry, in the app's `routes` and in a tile's `sub-routes` alike. An entry written at `/404` is not checked: it is never followed, and is reported as [E0001](#e0001-missing-404-404-is-redirect-404-in-sub-routes), or as [E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) beside a `/404` tile in `app.routes`.
 
 > `Redirect "<source>" ->> "<target>" names "<segment>", which "<source>" does not bind`
 
@@ -553,7 +615,7 @@ A name that a local bind ([Language §1.6.7](./language.md#_1-6-7-scoping-and-sh
 
 `xs.map(double)` is `xs.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. The named `fn` takes the first of those positionals, as many as it declares, so it must declare at least one and no more than the method binds — otherwise it is [E0213](#e0213-call-arity-mismatch). `fold`'s `fn` declares exactly two, because the element is the second: one of one would fold nothing in. A `filter` / `map` / `find` / `sort-by` `fn` declares two only where the fragment takes each value apart — a Map's filter or map, a pair ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)); over any other receiver whose type the checker can decide, a second parameter would receive nothing, or the JS index or the element again where the lowering falls back, and is E0213 too. Every other argument, including `fold`'s first, is a value and takes this check.
 
-The count is all the check compares. The `fn`'s parameter types are not checked against the element's, any more than the inline `f($1)` is: `xs.map(loud)` with `fn loud(t: Text)` over a `List(Int)` is not reported.
+Past the count, the name is checked as the call it stands for, in the scope the fragment binds: each parameter against the positional it is handed, of the type [Language §1.8.6](./language.md#_1-8-6-partial-application-and-higher-order-functions) gives it, and the `fn`'s result wherever the method checks the fragment's — the key of `sort-by`, the new value of `update`. So `xs.map(loud)` with `fn loud(t: Text)` over a `List(Int)` is [E0201](#e0201-type-mismatch) at `loud`, as `xs.map(loud($1))` is at the `$1`; over a `Map(Text, Int)`, `m.filter(keep)` takes `fn keep(k: Text, v: Int)` and reports `fn keep(k: Int, v: Int)`; and `xs.fold(0, f)` checks `f`'s first parameter against `Int`. A positional whose type the checker cannot decide is checked against nothing.
 
 **Fix**: Write the call — `label()`, or `greet(first, last)` with the arguments it declares.
 
@@ -612,11 +674,13 @@ A value does not have the type its position requires.
 > `Operator "<op>" cannot compare <type> with <type>`
 > `Condition of "<form>" must be Bool but got <type>`
 > `Expected <declared> but got variant "<name>"`
+> `Expected <declared> but got {}, an empty Map, Set or record`
 > `Tile "<name>" expects a value of type <type> but got a tile`
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
 > `link prefetch must be a reducer name`
 > `credentials "<mode>" is not one of omit / same-origin / include; a browser refuses the request`
+> `timeout <n> is not a number of milliseconds from 1 to 2147483647; every request is aborted before it can answer`
 > `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md)`
 > `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is <type>`
 
@@ -628,11 +692,13 @@ The parser gives the bare name, the argument-less call and the empty brace form 
 
 So what this error reports is a value that is no name: a literal, a call (`onClick=box(text("z"))`), or a capitalised name carrying arguments or props (`onClick=Some(1)`, `onClick=Card {x: 1}`). A bare name that names no reducer is [E0102](#e0102-undef-reducer) instead, whatever its capitalisation — including a tile written there, because the handler position resolves in one namespace and the tile layer is not it.
 
-The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, a builtin tile's prop that [stdlib §2.3.11](./stdlib.md#_2-3-11-prop-types) gives a type — `modal(open=…)`, `select(options=…)` — written on the builtin's own call, as a named argument or in the `{…}` block, the fallback of `.get-or`, an argument of a `Map` / `Set` / `List` member whose parameter is the receiver's key, value or element type or another container of its type (`xs.push(x)`, `m.insert(k, v)`, `s.add(x)`, `xs.concat(ys)`; [stdlib §2.2](./stdlib.md#_2-2-collection-methods)), `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose declared return type is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
+The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), the index of a `List`, an `Int` in `xs[i]`, `xs[i] := v` and `xs.get(i)` alike ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics), [stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, a builtin tile's prop that [stdlib §2.3.11](./stdlib.md#_2-3-11-prop-types) gives a type — `modal(open=…)`, `select(options=…)` — written on the builtin's own call, as a named argument or in the `{…}` block, the fallback of `.get-or`, an argument of a `Map` / `Set` / `List` member whose parameter is the receiver's key, value or element type or another container of its type (`xs.push(x)`, `m.insert(k, v)`, `s.add(x)`, `xs.concat(ys)`; [stdlib §2.2](./stdlib.md#_2-2-collection-methods)), `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose result is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
 
 An index `[k]` is checked against the type its receiver takes as an index, in a read as in a write: an `Int` on a `List`, and the key type `K` on a `Map(K, V)` ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)). With `TodoId` and `PostId` both declared `nominal Text`, `notes[postId]` on a `Map(TodoId, Text)` reports `Expected TodoId but got PostId` at the index, in a read and in `notes[postId] := v` alike, and so does `todos[postId].done := v` on a `Map(TodoId, Todo)`.
 
-One message in this code is not about a type. A `credentials` literal that names no Fetch mode has exactly the type its position requires — a `Text` — and is wrong only in its value: the three modes are a value-domain constraint on that field, reported under this code because the mistake is the same one at the same place, a value the position cannot take.
+Against a declared type, a value written as an `if`, a `match` or a `let … in` is checked, and reported, at what it evaluates to: each branch, each arm, the `let`'s body ([Language §1.9](./language.md#_1-9-expression-language)). An operator's operand is the exception: it is reported at the operator expression or at the operand as a whole, so `n := 1 + (let m = t in m)` is reported at `1 + …`, not at `m`.
+
+Two messages in this code are not about a type. A `credentials` literal that names no Fetch mode has exactly the type its position requires — a `Text` — and is wrong only in its value, and so is a `timeout` literal outside 1 to 2147483647, which is an `Int`: the three modes and the milliseconds a timer can hold are value-domain constraints on those fields, reported under this code because the mistake is the same one at the same place, a value the position cannot take. Both are checked after the type, on every literal that reaches the field, where it is written ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)).
 
 A `.get-or` fallback is checked against what the call answers, not against the receiver: it is the value the call produces on the empty case, so it carries the result type. That result comes out of the receiver's type argument — `Option(T)` and `Result(T, E)` answer `T`, `Map(K, V)` answers `V` — which is why `opt := opt.get-or(None)` on an `Option(S)` slot is reported twice: once at the fallback, which is not an `S`, and once at the assignment, because an `S` is not an `Option(S)`. Which of the two readings a call takes is decided by its argument count ([Runtime §10.3.7](./runtime.md#_10-3-7-polymorphic-collection-methods)), so a count that does not fit its receiver is not resolved here and is checked against nothing. It is still lowered — to the reading its count names, on the receiver it was given — which is a defect of its own rather than a silence.
 
@@ -642,6 +708,10 @@ A `Tuple`'s length is part of its type ([stdlib §2.1.2](./stdlib.md#_2-1-2-gene
 
 `()` is a value like any other: it is the one value of `Unit` ([stdlib §2.1](./stdlib.md#_2-1-built-in-types)), so it is accepted where `Unit` is declared and is this error against any other declared type (an `emit` argument reports E0202, and `emit e(())` on an `in=Unit` effect is E0213, since that effect takes no argument). `Card(())` against `tile Card in={label: Text}` reports `Expected {label: Text} but got Unit` at the `()`: `()` runs as `null`, which a tile reading `$1.label` cannot use.
 
+`{}` is three values at once — the empty `Map`, the empty `Set` and the empty record — so it is accepted where a `Map` or a `Set` is declared. Against a record type it is a record literal that names no field, so each field the type requires is [E0214](#e0214-missing-record-field) at the `{}`, as in any record literal. It is this error against every other type the checker can read: `slot n : Int = {}` reports `Expected Int but got {}, an empty Map, Set or record` at the `{}`, and so does a `{}` written in an `if` branch, a list item or a record field that the declared type reaches.
+
+A call to a `fn` has the type its `->` declares, or without one the type of its body ([Language §1.8.2](./language.md#_1-8-2-syntax)): with `fn greeting() = "hello"`, `slot n : Int = greeting()` is this error. A `fn` without `->` whose body's type the checker cannot decide, and every `fn` without `->` on a loop of calls ([E0006](#e0006-fn-cycle)), have no result type, and nothing is checked against what a call to them returns; the call's arguments are still checked against the parameters. A record read through a literal key, `cfg["label"]`, has the type of the field the key names, as `cfg.label` does; a key computed at runtime names no one field, and the read is not checked.
+
 `nominal` is the exception, and the one rule in this code that reports where *every* value of the actual type is a valid value of the declared one: `1.5` is not an `Int` and `{a, b}` is not an `{a: Int}`, but every `Yen` is a perfectly good `Cents`. A nominal type is identified by the name it is declared under ([§1.3.5](./language.md#_1-3-5-type-canonicalization)), so two declarations over one base reject each other — `Cents := Yen`, `postId := userId`. A type carrying no nominal name of its own still meets any nominal declared over it in both directions, which is what leaves `slot c : Cents = 1` and `c := c + 1` legal; a nominal declared over another nominal goes one way, toward the one it was declared as.
 
 The comparison operators are inside the rule. `==` is total over every *shape* — an `Int` and a `Text`, an `Option` and its `None` — and two nominal identities are the one thing it refuses, because `postId == userId` is the same mistake as `postId := userId` and is the spelling a router or a lookup is written in ([§1.9.4](./language.md#_1-9-4-operator-types)). Ordering refuses the same pair past its family question, which cannot see the identity: two nominals over `Int` are both numbers. So `cents < yen`, `cents == yen` and `postId == userId` all report, and name the types as written: `Operator "==" cannot compare Cents with Yen`. One diagnostic, not one per side — a comparison has no destination, so neither operand alone is the wrong one, and there is nothing to say twice. It is reported at the comparison expression, whose position is its left operand's.
@@ -650,7 +720,7 @@ Refused only when **both** sides carry a nominal name and neither was declared a
 
 The identity is read at the **top level** of each operand only, which is where the operators and assignment part company: `List(Cents) := List(Yen)` is this error because assignability descends into the type argument, while `lc == ly` on the same pair is not reported. A nominal inside a container, a record field or any other type argument is invisible to the comparison. The silence is a missing diagnostic and not a wrong one, which is the reading this whole code keeps.
 
-**The check is one-sided.** It reports what is definitely wrong and stays silent about everything it cannot resolve — an unknown type name, a method whose result nothing resolves (the members of [§2.2](./stdlib.md#_2-2-collection-methods) answer from their receiver — `xs.head` on a `List(T)` is an `Option(T)`, `m.keys` on a `Map(K, V)` is a `List(K)`, `.get` and `.get-or` unwrap an `Option(T)` / `Result(T, E)` to `T` and a `Map` lookup to `Option(V)` or to `V`; `.copy` answers its receiver unchanged, and a fixed table — `show`, `to-int`, `floor`, … — answers a primitive; a member a lambda body decides, such as `.map` and `.fold`, and every receiver whose own type is undecidable, stay dynamic), a `let` binding of an unresolvable expression. A wrong diagnostic rejects a program that runs; a missing one only fails to add a diagnostic that never existed. So a clean `check` is not a proof of type correctness, and [E0801](#e0801-unimplemented-method) / [E0116](#e0116-undef-call) remain the checks that a name exists at all.
+**The check is one-sided.** It reports what is definitely wrong and stays silent about everything it cannot resolve — an unknown type name, a method whose result nothing resolves (the members of [§2.2](./stdlib.md#_2-2-collection-methods) answer from their receiver — `xs.head` on a `List(T)` is an `Option(T)`, `m.keys` on a `Map(K, V)` is a `List(K)`, `.get` and `.get-or` unwrap an `Option(T)` / `Result(T, E)` to `T` and a `Map` lookup to `Option(V)` or to `V`; `.copy` answers its receiver unchanged, and a fixed table — `show`, `to-int`, `floor`, … — answers a primitive; a member a lambda body decides, such as `.map` and `.fold`, and every receiver whose own type is undecidable, stay dynamic), a `let` binding of an unresolvable expression. A wrong diagnostic rejects a program that runs; a missing one only fails to add a diagnostic that never existed. So a clean `check` is not a proof of type correctness, and [E0801](#e0801-unimplemented-method) / [E0116](#e0116-undef-call-undef-variant-undef-qualifier) remain the checks that a name exists at all.
 
 **Fix**: Correct the value, or widen the declared type. For a nominal mismatch that is deliberate, convert through the base the two types share and write it as a `fn` whose return type is the destination — `-> UserId = p + ""`, not `-> UserId = p`, which is this same error. The `fn` records the intent; what is enforced is that its body reached the base.
 
@@ -660,6 +730,7 @@ An `emit` argument does not match the effect's declared `in=` type. A standard e
 
 > `Expected <in-type> but got <actual>`
 > `Expected <in-type> but got variant "<name>"`
+> `Expected <in-type> but got {}, an empty Map, Set or record`
 > `emit "<effect>" expects an EffectId argument`
 
 The `EffectId` case keeps its own wording because its fix is different in kind. It is the shape of a mis-wired cancellation: `emit stopSearch(searchId)` where `searchId : EffectId` is correct, `emit stopSearch(42)` or `emit stopSearch("id")` is not. Codegen would pass the non-`EffectId` value through and the cancel path would silently no-op, indistinguishable from a successful cancel.
@@ -765,8 +836,15 @@ A `match` arm names a variant tag that is not declared by the scrutinee's union 
 A type-level application `T(...)` of a user-declared generic type passes a different number of type arguments than the declaration's parameters. Without this check, downstream type-param substitution would silently produce a short map and leave unresolved `TypeRef`s in payloads, which would then turn pattern checking into a no-op — exactly the silent-failure shape this error band is meant to catch.
 
 > `Type "<name>" expects <m> type argument(s) but got <n>`
+> `Type parameter "<param>" of "<type>" takes no type arguments, but is written "<application>"`
 
-**Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list.
+A type parameter takes none. It names a type — the one its generic is applied to — not a type constructor, so inside `type H(T) = …` it is written bare: `T(Int)`, `T(Int, Text)` and `T()` are each reported here, at the application, wherever in the body it is written — a record field, a `List(…)`, a variant payload, a `nominal`, a `where`. The parameter shadows a top-level type of the same name ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 5), so `List(Int)` in the body of `type H(List) = …` is this too. This is the one report: past it the application is opaque, as an application of an undefined name is under [E0117](#e0117-undef-type), and a value written against `H(Text)` is not an [E0201](#e0201-type-mismatch) for it.
+
+`Tuple` takes any number of arguments, but at least one: a bare `Tuple` names no type.
+
+> `Type "Tuple" expects type arguments but got none`
+
+**Fix**: Adjust the call site to pass the declared number of type arguments, or change the declaration's parameter list. Write a type parameter bare (`T`), or apply a generic to it (`List(T)`) where a container of it was meant.
 
 ### E0211 `undef-tile-in-selector`
 
@@ -806,11 +884,23 @@ The id set is the ids of the elements the subscription is wired onto, since `#id
 
 ### W0212 `ui-event-tile-mismatch` (warning)
 
-A reducer subscribes to `ui.<ev>(<Tile>)` whose target tile has no descendant that fires `<ev>` in the DOM — e.g. `ui.focus(Card)` where `tile Card = box(...)`. Codegen silently drops the handler, so the reducer is dead code. Lifting that into a warning surfaces the silent failure at check time without breaking the build. The checker walks the tile's body (including child tiles), so a cascade pattern like `TodoRow = row(check(...), …)` + `ui.click(TodoRow)` does NOT trigger the warning — codegen routes the handler to the focusable descendant. "Including child tiles" is load-bearing on both sides: a body that names its descendant (`tile Row = box(Leaf)`) is walked exactly as the inline `box(input(...))` is, and codegen lifts the handler through the same edge ([§1.6.2](./language.md#_1-6-2-selectors)). The two used to disagree — the checker walked the reference and codegen did not — which produced the silent drop this warning exists to report, with no warning. Codegen follows the same edge when the descendant is reached through a call site that writes the same handler prop (`RemoveBtn {onClick: remove}`): that prop is joined with the lifted subscription, and the container's reducer fires beside it, in definition order ([§1.7.3](./language.md#_1-7-3-event-handler-props)).
+A reducer subscribes to `ui.<ev>(<Tile>)` whose target tile has no descendant where `<ev>` reaches the reducer — e.g. `ui.focus(Card)` where `tile Card = box(...)`. Codegen silently drops the handler, so the reducer is dead code. Lifting that into a warning surfaces the silent failure at check time without breaking the build. The checker walks the tile's body (including child tiles), so a cascade pattern like `TodoRow = row(check(...), …)` + `ui.click(TodoRow)` does NOT trigger the warning — codegen routes the handler to the focusable descendant. "Including child tiles" is load-bearing on both sides: a body that names its descendant (`tile Row = box(Leaf)`) is walked exactly as the inline `box(input(...))` is, and codegen lifts the handler through the same edge ([§1.6.2](./language.md#_1-6-2-selectors)). The two used to disagree — the checker walked the reference and codegen did not — which produced the silent drop this warning exists to report, with no warning. Codegen follows the same edge when the descendant is reached through a call site that writes the same handler prop (`RemoveBtn {onClick: remove}`): that prop is joined with the lifted subscription, and the container's reducer fires beside it, in definition order ([§1.7.3](./language.md#_1-7-3-event-handler-props)).
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
-The allowed root builtins per event are (current toolchain coverage: every kind listed receives the event, and a blank is a rule only where a note below says so; the implementation-side source of truth is `packages/compiler/src/ui-lifts.ts` — `UI_LIFTS`, which both the handler-emission gate (`propsFor` in `packages/compiler/src/codegen/selector.ts`) and the W0212 check in `typecheck.ts` derive from. Runtime DOM-event surfaces are owned by the per-tile modules under `packages/runtime/src/tiles/input/` — their shared listener registry is `_shared.ts`; `tiles-input.ts` is only the family aggregate — and the universal `applyUiEventHandlers` in `core.ts`):
+When `<ev>` is `focus` or `blur` and the body holds a `check`, `radio`, `switch` or `details`, the element of that kind which takes focus — a control's `<input>`, a details's `<summary>` — does fire the event, so the message gives the reason that holds instead (see the note on `key` / `focus` / `blur` below). `<kinds>` is the kinds in the body that share a wrapper, joined with ` / `. `<wrapper>` and `<focused>` print as `<label>` and `<input>` for a `check`, `radio` or `switch`, and as `<details>` and `<summary>` for a `details`; a body holding both gets one clause for each, joined with `; `:
+
+> `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a listener in tile "<Tile>": the runtime listens for "<ev>" on a <kinds>'s <wrapper>, and the "<ev>" its <focused> fires does not bubble to the <wrapper> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
+When `<ev>` is `key` and the body holds a `details`, the `keydown` its `<summary>` fires does bubble to the `<details>`. What keeps it from a listener is the panel the `<details>` holds as well (see the same note). The message says where the subscription goes instead, and which handler hears a key on the summary:
+
+> `Reducer "<r>" subscribes to ui.key(<Tile>) but "key" never reaches a listener in tile "<Tile>": a details takes no "key" listener on the <details> around its <summary>, since a control in its panel takes the subscription instead — write onKeyDown= on the details to hear a "key" on its <summary> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
+Where a kind's element does fire `<ev>` but its renderer never calls the handler for it — runtime policy, not a fact about the element — the message says what the renderer does instead (`<instead>`) and names the handler. Those absences are `link` under `click`, whose renderer listens for it only to navigate (see the note on `link` below), and these under `input`, whose elements all fire it: `slider`, whose renderer listens for it only to write the bind, and `check`, `radio`, `switch` and `select`, whose renderers listen for `change` instead. Under `click` the default wording is not yet true of the other kinds either: every element fires `click`, and what keeps it from a reducer on a `text` or a `box` is that their renderers never call `onClick` — [#823](https://github.com/kumikijs/Kumiki/issues/823). Kinds whose renderers do the same are joined with ` / `, and the clauses for different ones with `; `:
+
+> `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a reducer in tile "<Tile>": a <kinds> fires "<ev>", and its renderer <instead>, never calling <handler> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
+The allowed root builtins per event are (current toolchain coverage: every kind listed receives the event, and a blank is a rule only where a note below says so; the implementation-side source of truth is `packages/compiler/src/ui-lifts.ts` — `UI_LIFTS`, which the handler-emission gate (`propsFor` in `packages/compiler/src/codegen/selector.ts`), the W0212 check in `packages/compiler/src/typecheck/reducer.ts`, E0212 in `typecheck/tile-collect.ts` and W0213 in `typecheck/tile.ts` all derive from. Runtime DOM-event surfaces are owned by the per-tile modules under `packages/runtime/src/tiles/input/` (their shared listener registry is `_shared.ts`; `tiles-input.ts` is only the family aggregate) and `packages/runtime/src/tiles/text/link.ts`, and by the universal `applyUiEventHandlers` in `packages/runtime/src/core/ui-events.ts`):
 
 | `ui.<ev>` | allowed root tile kinds |
 |---|---|
@@ -818,20 +908,24 @@ The allowed root builtins per event are (current toolchain coverage: every kind 
 | `submit` | `form` |
 | `change` | `select`, `input`, `textarea`, `check`, `radio`, `switch`, `slider` |
 | `input`  | `input`, `textarea`, `editable` |
-| `key`    | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `check`, `radio`, `switch` |
-| `focus`  | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link` |
-| `blur`   | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link` |
+| `key`    | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video`, `check`, `radio`, `switch` |
+| `focus`  | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video` |
+| `blur`   | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video` |
 | `hover`  | any tile |
 
 **Fix**: Re-target the selector at a tile whose root is in the allowed set, or wire the handler explicitly on the focusable element (`input(onFocus=r)`). The wildcard `_` selector and the `ui.hover` event are exempt.
 
 The checker descends into control-flow bodies (`for` / `when` / `if` / `match`) too: both `if`'s `then`/`else` and every `match` arm contribute to the observed kind set. So `tile Dyn = for n in xs box(...)` triggers W0212 (only `box` reachable), while `tile T = if c then input(...) else button(...)` does not (both branches contribute an allowed root). The `error-boundary` fallback of a tile called inside the body is walked as well: it renders in that tile's place, and the subscription is wired onto it like the rest of the tree. The tile's own fallback is not, since it replaces the tile's tree from outside the tile. A tile whose body is entirely unresolvable (cycle, or a name no other tile defines) yields an empty observed set and the warning is suppressed — better silent than wrongly accusing.
 
-**Note on `link`**: `link` is intentionally not listed under `click` even though `<a>` fires click natively — the runtime reserves the click event on links for navigation interception and does not invoke user `onClick` reducers. Re-targeting a button or wiring `onClick=` on a parent tile is the current workaround. That reservation is about `click` only: an `<a href>` is focusable and in the tab order, so `link` is listed under `key`, `focus` and `blur`. A keydown on a link runs its `ui.key` reducer **before** the browser acts on the key; on Enter the browser then activates the link and the router navigates as it always does. The reducer sees the key and cannot cancel the navigation.
+**Note on `link`**: `link` is intentionally not listed under `click` even though `<a>` fires click natively — the runtime reserves the click event on links for navigation interception and does not invoke user `onClick` reducers. Re-target a button; `onClick=` on a parent tile reaches only a descendant in the `click` row. That reservation is about `click` only: an `<a href>` is focusable and in the tab order, so `link` is listed under `key`, `focus` and `blur`. A keydown on a link runs its `ui.key` reducer **before** the browser acts on the key; on Enter the browser then activates the link and the router navigates as it always does. The reducer sees the key and cannot cancel the navigation.
 
 **Note on `editable` and `change`**: `editable` is listed under `input`, `key`, `focus` and `blur` and **not** under `change`, and that one absence is the rule rather than a gap. A `<div contenteditable="true">` is an editing host, so it is focusable without a `tabindex` and the browser fires `focus`, `blur`, `keydown` and `input` on it — what differs between them is only which layer listens (`applyUiEventHandlers` for the first three, the `editable` renderer's own listener for `input`). It fires no `change` event at all, which no table row can supply. `ui.change(<editable tile>)` is therefore W0212 for a reason that is true; subscribe to `ui.input` and compare the new text against the slot holding the previous value, or use `ui.blur` if the wanted moment is when editing ends.
 
-**Note on `key` / `focus` / `blur`**: the runtime attaches these three to whatever element a renderer returned, so a kind is listed only where the event arrives at that element. Every kind whose element is itself focusable is in all three: `input`, `textarea`, `button`, `select`, `slider` (a bare `<input type="range">`), `editable` and `link`. `check`, `radio` and `switch` are listed under `key` and **not** under `focus` / `blur`. The two answers differ, although the three kinds look like one case: each renders a `<label>` around its `<input>`, and the listener sits on the label. `keydown` bubbles from the focused input to the label, so `ui.key` reaches it; `focus` and `blur` do not bubble, so a listener on the label never runs, and W0212 is correct to emit for them (its message says the tile has no descendant that fires the event; what is true is that the event never reaches the listener — [#526](https://github.com/kumikijs/Kumiki/issues/526)). The converse is not claimed: `video` (a `<video>` rendered with `controls`) and `details` (whose `<summary>` takes focus inside the returned `<details>`, the same shape as `check`) are not yet listed although those events plausibly reach them — [#525](https://github.com/kumikijs/Kumiki/issues/525). A row can also list a kind whose particular instance cannot fire: a `disabled` control is not focusable, and no compile-time table can see that.
+**Note on `key` / `focus` / `blur`**: the runtime attaches these three to whatever element a renderer returned, so a kind is listed only where the event arrives at that element. Every kind whose element is itself focusable is in all three: `input`, `textarea`, `button`, `select`, `slider` (a bare `<input type="range">`), `editable`, `link` and `video` (a `<video>` rendered with `controls`). `check`, `radio` and `switch` are listed under `key` and **not** under `focus` / `blur`. The two answers differ, although the three kinds look like one case: each renders a `<label>` around its `<input>`, and the listener sits on the label. `keydown` bubbles from the focused input to the label, so `ui.key` reaches it; `focus` and `blur` do not bubble, so a listener on the label never runs, and W0212 is correct to emit for them. Writing `onFocus=` / `onBlur=` on the control itself attaches the listener to the same `<label>`, so that does not run either — [#821](https://github.com/kumikijs/Kumiki/issues/821).
+
+`details` is listed under none of the three, and each blank is the rule. It renders a `<details>` around its `<summary>`, which is what takes focus, and the listener would sit on the `<details>`. `focus` and `blur` from the summary do not bubble to it, as with a check's label. `keydown` does, and so does the keydown of every tile in its panel. A control there that the `key` row lists already carries the same subscription lifted onto it, so a listener on the `<details>` as well would run the reducer twice for each key pressed in that control. W0212 is correct to emit for all three, and its message gives each reason. A key on the summary does reach a handler written on the details itself (`details(…, onKeyDown=r)`), which hears every key from its panel too. `onFocus=` / `onBlur=` written there never run either, for the reason given above for a check.
+
+In Chromium, with `controls`, Tab stops on the `<video>`, and `focus` and `blur` fire on it as focus enters and leaves it. A key pressed while the `<video>` has focus reaches its `ui.key` reducer. Without `controls` it is not focusable: Tab passes it by, and `.focus()` and a click leave it unfocused, so none of the three fires. Whether a `video` has `controls` is a property of the instance, which no compile-time table can see, so the rows list it either way. The same holds of a `disabled` control, which is not focusable although its kind is listed.
 
 ### E0213 `call-arity-mismatch`
 
@@ -890,13 +984,15 @@ One diagnostic is reported per missing field, at the literal.
 
 ### E0215 `unknown-record-field`
 
-A record literal, or a `.copy(f=v)` record update, names a field the declared type does not have.
+A record literal, or a `.copy(f=v)` record update, names a field the declared type does not have; or an effect's `map-request` writes a field the request of its capability does not have ([HTTP §6.6.1](./http.md#_6-6-1-request-fields)).
 
 > `Record type has no field "<name>"`
+> `The <cap> request has no field "<name>" — did you mean "<field>"? (accepted: <fields>)`
+> `The <cap> request has no field "<name>" (accepted: <fields>)`
 
-Both lower to a plain object spread, so an undeclared field became a property that nothing ever reads — the value was silently dropped rather than rejected.
+Both record forms lower to a plain object spread, so an undeclared field would be a property that nothing ever reads — the value silently dropped rather than rejected. A request is handed to the capability's built-in handler, which reads its own fields and nothing else, so a field outside them would be dropped the same way: `headrs: {"X": "1"}` on `http.get` is a header that is never sent. The request's message is reported at the field. It names the nearest field the request has when one is close, takes the last form above when none is, and lists the request's fields either way. An `indexed.read` request is named by whether it has a key (`The indexed.read request with a key has no field "index"`), since a read by key and a query have different fields.
 
-**Fix**: Correct the field name, or declare it on the type.
+**Fix**: Correct the field name, or declare it on the type. In a `map-request`, use a field the message lists: the method is the capability's, and `timeout` and `credentials` are set in `app.http`. A field a host provider reads belongs on a custom capability, whose request is the provider's to define.
 
 ### E0216 `unknown-variant`
 
@@ -905,6 +1001,8 @@ A variant constructor names a tag its declared union type does not have — `slo
 > `Variant "<name>" is not a member of type "<type>"`
 
 The tag lowers to `{_tag: "Zork"}`, which no `match` arm can match; the UI silently renders nothing and no runtime error is raised. [E0209](#e0209-pat-unknown-variant) is the same mistake on the pattern side.
+
+A tag no union declares at all is reported here as well, because the declared type names the tags the position takes. Where no declared type judges the position, the same tag is [E0116](#e0116-undef-call-undef-variant-undef-qualifier) `undef-variant`; a tag is never reported as both.
 
 **Fix**: Use one of the declared tags, or add the tag to the union. `kumiki fix` proposes the closest tag.
 
@@ -944,7 +1042,7 @@ The type is named as the program writes it, so an alias reads as its name (`Box`
 
 A `Map` holds two lists and they bind different things: `for k in m.keys` binds the key, `for v in m.values` binds the value. The message names `.keys` first because that is the form [§1.7.2](./language.md#_1-7-2-invariants) inv. 5 lists, and `kumiki fix` proposes that one — check which the loop body actually wanted. For a `Map` or a `Set` the diagnostic's `accessor` field names the member `kumiki fix` appends (`keys` / `to-list`); no other target carries it. `.get-or([])` iterates nothing for a `None` or an `Err`; a `match` is the form that does something else there.
 
-Fires for both forms of the loop — inside a tile and inside a reducer's `do=` block. A target whose type cannot be determined is not reported: a `fn` result with no `->`, an untyped reducer payload, a type parameter, or a type that names nothing ([E0117](#e0117-undef-type)). Nor is a target that already has an error reported at it — a call with the wrong arity, a name that resolves to nothing: that is one mistake, reported once. An error inside the target, such as a misspelt argument in `idx(rws)`, leaves the target's type decided, and E0218 is reported beside it.
+Fires for both forms of the loop — inside a tile and inside a reducer's `do=` block. A target whose type cannot be determined is not reported: the result of a `fn` with no `->` whose body's type is not decided, an untyped reducer payload, a type parameter, or a type that names nothing ([E0117](#e0117-undef-type)). Nor is a target that already has an error reported at it — a call with the wrong arity, a name that resolves to nothing: that is one mistake, reported once. An error inside the target, such as a misspelt argument in `idx(rws)`, leaves the target's type decided, and E0218 is reported beside it.
 
 **Fix**: Iterate `m.keys` for a `Map` and `s.to-list` for a `Set` — `kumiki fix` proposes the suffix. Unwrap an `Option` or a `Result` first: `xs.get-or([])` when its `None` / `Err` should iterate nothing, otherwise `match xs with | Some(ys) -> for y in ys … | None -> …`. Iterate `t.split(sep)` for a `Text`. For any other type, iterate the List the program meant — a field of the record, say.
 
@@ -969,7 +1067,7 @@ A fallback is applied to the panic ([Lifecycle §7.3](./lifecycle.md#_7-3-error-
 
 This is the same reasoning [E0119](#e0119-route-bind-out-of-scope) applies to `$route`, applied to `$1`: what the name holds is decided by where the tile is applied, and a boundary is the one position that applies a tile to a value the author never wrote.
 
-`PanicInfo` has to be assignable to the declared type — one-sided, like every `assignable` call, and unless a program shadows `PanicInfo` with a type of its own. Concretely that admits `PanicInfo` itself, an alias of it (`type Crash = PanicInfo`), a `nominal` over it, or a record declaring exactly its five fields ([Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)). A narrower record such as `{message: Text}` is not accepted: a record type matches only the same field set. An `in=` naming no type at all is [E0117](#e0117-undef-type) alone.
+`PanicInfo` has to be assignable to the declared type — one-sided, like every `assignable` call. The name is always the standard library's: a program cannot declare a `PanicInfo` of its own ([E0231](#e0231-reserved-type-name)). Concretely that admits `PanicInfo` itself, an alias of it (`type Crash = PanicInfo`), a `nominal` over it, or a record declaring exactly its five fields ([Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)). A narrower record such as `{message: Text}` is not accepted: a record type matches only the same field set. An `in=` naming no type at all is [E0117](#e0117-undef-type) alone.
 
 A fallback that declares no `in=` and never reads `$1` is not reported. The value it is applied to goes unread, and the tile stays one that renders with nothing — which is what a route or `sub-routes` target has to be ([E0213](#e0213-call-arity-mismatch)), so one tile can be both.
 
@@ -1016,16 +1114,27 @@ Coverage is judged once every arm's pattern fits the scrutinee: an arm that does
 
 **Fix**: Add an arm for each value the message lists, or end the `match` with `_ -> …` for every value the other arms leave out.
 
+### E0228 `undef-route-pattern`
+
+A `route.enter` / `route.leave` / `route.error` reducer names a pattern that is not a route the app renders ([Routing §3.4](./routing.md#_3-4-route-lifecycle)).
+
+> `Reducer "<name>" subscribes to route.<ev>("<pattern>"), but no route is declared at "<pattern>", so the subscription never fires: the argument is compared to the keys of app.routes and of every sub-routes map character for character. Declared routes: "<p>", …`
+> `Reducer "<name>" subscribes to route.<ev>("<pattern>"), but "<pattern>" is a redirect (->>), which the router follows before any route is shown, so the subscription never fires. Declared routes: "<p>", …`
+
+The runtime fires a route lifecycle event for each pattern the route being shown is matched under — its top-level pattern, and the sub-route pattern it matched below it — and compares the reducer's argument to those as written. So the argument has to be the key of an entry that renders a tile (`->`, not `->>`), in `app.routes` or a `sub-routes` map, and anything else is a subscription nothing fires: `route.enter("/*")` names a route declared as `"/*"`, not every route; `route.enter("/bb")` beside a declared `"/b"` is a typo; `route.enter("/users/:userId")` beside a declared `"/users/:id"` spells the key differently; and the key of a `->>` redirect is a path the router follows before any route is shown. Each compiles to a reducer that never runs — the same dead subscription [E0211](#e0211-undef-tile-in-selector) reports for a tile name. The position is the pattern's string literal, and the message lists the declared routes in declaration order, `app.routes` first. A program with no `app` has no routes to compare against: it is [E0003](#e0003-missing-app), and this check says nothing.
+
+**Fix**: Write the key of the route the reducer is for, as it appears in `app.routes` or in the `sub-routes` map. To run on every route, subscribe to each top-level pattern, or read the [`route` slot](./routing.md#_3-2-current-route-state) where the work is done.
+
 ### E0229 `bind-target-not-slot`
 
 The root of a `bind=` target is not a slot where the target is written ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)).
 
-> `<tile>(bind=…) cannot write to "<name>": it is <what>, not a slot — a bind writes back to a slot or a field path into one. <fix> (see docs/spec/forms.md)`
+> `<tile>(bind=…) cannot write to "<name>": it is <what>, not a slot — a bind writes back to a slot or a path into one. <fix> (see docs/spec/forms.md)`
 > `<tile>(bind=…) cannot write to the literal <v>: a literal is a value, not a slot — … (see docs/spec/forms.md)`
 > `<tile>(bind=…) cannot write to this expression: it computes a value, not a slot — … (see docs/spec/forms.md)`
 > `<tile>(bind=…) cannot write to "route": it is the route slot, which only navigation writes. Move it with link(to=…) or emit navigate(…) (see docs/spec/routing.md)`
 
-A control writes back to the slot its target's root names, through the field path below the root. A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are locals, with no slot behind them. Without this check the lowering writes the control's edits into the live slot table under the local's name, as a slot of its own that nothing reads: the field takes every edit, and the list the row came from, or the slot the caller passed, never changes. A literal or any other expression names no place, and the bind is dropped. Nothing else reports that the root is not a slot — the program checks, builds, mounts, and survives every edit.
+A control writes back to the slot its target's root names, through the path below the root. A name a `for` binds, a name a `match` arm binds and a tile's input `$1` are locals, with no slot behind them. Without this check the lowering writes the control's edits into the live slot table under the local's name, as a slot of its own that nothing reads: the field takes every edit, and the list the row came from, or the slot the caller passed, never changes. A literal or any other expression names no place, and the bind is dropped. Nothing else reports that the root is not a slot — the program checks, builds, mounts, and survives every edit.
 
 `<what>` is what the checker knows the root to be: `the variable of a for`, `this tile's input` (`$1` in a tile that declares `in=`), or `a local name` for any other local (a `match` binding). A text literal is named `the text literal "<v>"`. `route` is a slot, but the runtime manages it ([Routing §3.2](./routing.md#_3-2-current-route-state)) and only navigation moves it, so its message names it as the route slot and sends the edit to `link(to=…)` or `navigate` instead. A local named like a slot hides the slot, as it does for any read, so `for title in titles input(bind=title)` is reported beside a slot `title`. The controls asked are the ones that write back from a bind: `input`, `textarea`, `select`, `slider`, `check`, `switch`, `radio` and `editable`.
 
@@ -1037,7 +1146,7 @@ slot todos : List(Todo) = [{text: "milk"}]
 tile Rows = column(for t in todos input(bind=t.text))
 ```
 
-**Fix**: Bind the slot itself, or a field path into it. A text literal that spells a slot's name is that slot written with quotes: `bind=title`. Where a local of that name hides the slot, the unquoted name is the local, so the message gives the general fix instead. To edit one row of a list, show the row with `value=`, carry its key in its props, and update the list from a reducer on the row's event ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)):
+**Fix**: Bind the slot itself, or a path into it. A text literal that spells a slot's name is that slot written with quotes: `bind=title`. Where a local of that name hides the slot, the unquoted name is the local, so the message gives the general fix instead. To edit one row, bind it through the slot — a `Map` entry by its key (`for k in todos.keys input(bind=todos[k].text)` on a `Map(Text, Todo)`), a `List` element by an index the page holds (`input(bind=todos[i].text)`) — or show the row with `value=`, carry its key in its props, and update the list from a reducer on the row's event ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)):
 
 ```kumiki fragment
 type Todo = {text: Text}
@@ -1048,6 +1157,59 @@ reducer editTodo on=ui.input(TodoText) do= todos[$el.todoId].text := $event.valu
 ```
 
 A tile that edits a slot its caller chooses does the same: it takes the key as its input and the reducer writes the slot at that key, or the tile binds the slot by its name.
+
+### E0230 `error-field-not-path`
+
+An `error` tile names neither a slot nor a path into one ([Forms §5.7.1](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)).
+
+> `error(field=…) cannot show the failure of <what>: <why>. field= names a slot, or a path into one[ — write the slot's name without quotes: error(field=<slot>)] (see docs/spec/forms.md)`
+> `error() names no field, so it has no failure to show: field= names a slot, or a path into one (see docs/spec/forms.md)`
+> `error() {field: …} is not read: field is a named argument — write error(field=…) (see docs/spec/forms.md)`
+> `error(field=…) cannot step through ".<member>": it is a member of "<T>", not a field. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)`
+> `error(field=…) cannot step through ".<name>": "<T>" has no fields. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)`
+> `error(field=…) cannot step through ".<method>()": a call is not a step of a path. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)` — `".<method>(…)"` when the call has arguments
+> `error(field=…) cannot step through an index that is not a literal: a path names one element or entry by a literal key, such as [0] or ["k"] (see docs/spec/forms.md)`
+> `error(field=…) cannot step through an index into "<T>": a path's index names a List element or a Map entry (see docs/spec/forms.md)`
+
+The tile renders the failure of a place: the slot its field's root names, at or below the path the field's steps take. The first form is a root that is no slot: a literal, a local name (a `for` variable, a tile's `$1`), the `route` slot, whose type carries no refinement to fail, an expression that computes a value, or a `for` or a `when`, which a named argument holds as a tile. The second is an `error()` with no `field=` at all, and the third a `field` written in the `{…}` block, which the tile does not read. The others are a step that is no step of a path: a member that derives a value (`.length`, or `.get` on a `Map`), a step into a value that has no fields (a `Tuple`, a union), a call, an index whose key is not a literal, or an index into a value that is not a `List`, a `Map` or a `Set`. None of them names a place a failure could be at, so the tile could never render a message, whatever the slot held. A text literal that spells a slot's name gets the fix, since that slot is the likely meaning, unless a local of that name hides the slot there. Only the first step that names no place is reported.
+
+A computed index — `error(field=rows[i].email)` — is refused as an index that is not a literal: a path names its element by a literal key. This is a known limitation, not a rule ([#828](https://github.com/kumikijs/Kumiki/issues/828)). The other codes a field can carry are not reported again as E0230: a name that resolves to nothing is [E0103](#e0103-undef-ref-undef-slot), a `fn` named without a call [E0127](#e0127-fn-as-value), a field the record lacks [E0108](#e0108-undef-member), a member named without the arguments it takes [E0213](#e0213-call-arity-mismatch), a `List` index that is no `Int` or a `Map` key of another type [E0201](#e0201-type-mismatch), an index into a `Set` [E0232](#e0232-index-into-set), a call to a name no `fn` defines, such as a tile written as a value (`error(field=text("form"))`), [E0116](#e0116-undef-call), and a step into a slot whose type names nothing [E0117](#e0117-undef-type).
+
+**Fix**: Name the slot, or the field of it whose message belongs here — `error(field=form)` for any failure in `form`, `error(field=form.email)` for the email's alone. Write a literal key for an element: `error(field=rows[0].email)`.
+
+### E0232 `index-into-set`
+
+An index is read from a receiver whose type is known to be a `Set`, however it is reached — declared directly or through an alias or `nominal`, a field, a `List` element, a `Map` value, `.get`, or a call that answers a Set such as `s.add(x)`.
+
+> `Cannot read through an index into "<T>": a Set has members, not places — use .has`
+
+The message names the receiver's type as the program writes it, as E0602's do: a slot declared `Tags`, on `type Tags = Set(Text)`, is `"Tags"`. It is reported at the index's key, so in `sets[0][1]` it points at the `1` of the step into the Set.
+
+An index names a place — an entry of a `Map`, a position of a `List` ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)) — and a Set has membership and no places, so `tags[x]` has no value to answer. It is the step [E0602](#e0602-unassignable-member) refuses on the left of `:=`, taken by a read. What a Set says about a value is whether it holds it, and `tags.has(x)` is the read that asks.
+
+The read has no type, so the one mistake is reported once: a position that expects a type — `n := tags[x]`, `if tags[x] then …`, a `fn` body against its `->` — and a step after it, such as `tags[x].foo`, add nothing beside it. A `bind=` target shows the value at the target before it writes one, so `input(bind=tags[x])` and `check(bind=tags[x])` are this code too. So is the field of an `error` tile: `error(field=tags[x])` is read as a value first, and the step is E0232 rather than [E0230](#e0230-error-field-not-path). A receiver whose type cannot be decided — such as the accumulator `$1` of a `fold` from `{}` — is not reported.
+
+**Fix**: Ask for membership — `tags.has(x)` is a `Bool`. A `check` shows it with `value=tags.has(x)`, and a reducer on its click writes `tags := tags.toggle(x)` ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)). For a value stored under a key, declare a `Map(K, V)` instead. In `error(field=…)`, name the Set slot itself, `error(field=tags)`, for the failure of the Set.
+
+### E0233 `policy-key-type`
+
+A `policy=latest-per-key(<key>)` key has a type whose values the key does not tell apart by `==` ([Language §1.5.2](./language.md#_1-5-2-semantics)).
+
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Float, and NaN is one key though NaN == NaN is false (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it holds a Float, and inside it NaN, Infinity and -Infinity are one key (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it holds a File, and two Files with the same name, size and type are one key, while == holds only of a File and itself (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Set, whose == depends on how it was built (see docs/spec/language.md)`
+
+The dispatcher runs each request under its key and aborts an in-flight request when another starts under the same one ([HTTP §6.4](./http.md#_6-4-cancellation)). The key is written the way a Map key is stored ([Stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)), which makes two keys one key exactly when they are `==` but for two types — and, whatever its declared type, not for a non-finite number. A key that is one key for two values `==` calls different aborts a request for no reason the program can see:
+
+- a `Float`: `NaN` is one key, yet `NaN == NaN` is `false`; and inside a record, a tuple, a `List`, a `Map`'s value or a variant, `NaN`, `Infinity` and `-Infinity` are all one key
+- a `File`: two Files with the same name, size and type are one key, while `==` holds only of a File and itself
+
+A `Set`'s key is its `==`, which itself depends on how the Set was built ([Language §1.9.4](./language.md#_1-9-4-operator-types)), so a Set key aborts requests by a rule the program cannot rely on, and is reported too.
+
+The message says `it is` when the key's type is one of them, and `it holds` when it holds one in a record field, a variant payload, a container element or a `Map`'s value, through any alias, generic or `nominal`: `type Spot = {lat: Float, lng: Float}` keyed by `$1` is reported, and so are a `List(Set(Text))` and a `Box(Box(Float))` for a `type Box(A) = {v: A}`. A `Map`'s own keys are stored the same way, so `==` on two Maps agrees with their key, and a `Map(Float, Text)` is not reported. A key whose type the checker cannot decide is not reported, and neither is an `Int`, though one can hold a non-finite number (`n % 0`, an overflowing `pow`, a `.round` of a non-finite Float) and is then keyed as a Float is.
+
+**Fix**: Key on a value of another type — a field of the input that identifies the request (`latest-per-key($1.id)`), a Float's `.show`, a File's `{name: $1.name, size: $1.size}`, or a record of such fields (`latest-per-key({user: $1.user, page: $1.page})`).
 
 ### W0213 `handler-on-inert-tile` (warning)
 
@@ -1106,6 +1268,46 @@ A `radio` writes both `group` and `name`, as arguments or in its props block.
 `name` spells a radio's `group`, because the group is the `name` attribute of its `<input>` ([Forms §5.5.2](./forms.md#_5-5-2-radio)). With both, `group` is the one read, so `name` is a second answer to which set the radio is in, and like the argument [W0216](#w0216-selection-beside-bind-warning) reports, it leaves nothing behind.
 
 **Fix**: Remove one of them. `group` is the spelling this spec uses.
+
+### E0231 `reserved-type-name`
+
+A `type` is declared under the name of a standard-library domain type whose values the runtime or the standard library supplies ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)). Reported at the declaration, once per declaration.
+
+> `Type "<name>" collides with the standard library's <name>; uses of it never see this type`
+
+| Name | What supplies or reads its values |
+|---|---|
+| `PanicInfo` | the runtime: the record an `error-boundary` fallback's `$1` and an `app.error` reducer's `$event` are bound to |
+| `RouteErrorInfo` | the runtime: the record a `route.error(<pattern>)` reducer's `$event` is bound to |
+| `Route` | the runtime: the `route` slot it maintains |
+| `HttpError` | the runtime: the record a failed `http.*` effect delivers |
+| `HttpStatus` | the runtime: that record's `status`, which `HttpError` names |
+| `Duration` | the standard library: what `Duration.ms(…)` and its siblings build, and the toast effect's `duration` |
+| `FormValue` | the runtime: a `Multipart` body sends a `FileV` entry as a file |
+
+A program's own definition under one of these names would change what the checker reasons about and nothing the runtime supplies. Were `type PanicInfo = Text` to take the name, a fallback declaring `in=PanicInfo` would have its `$1` checked as a `Text` while the runtime binds the panic record: reading `$1.message`, as the fix for [E0220](#e0220-boundary-fallback-input) says to, would be refused as a member `Text` does not have, and the `in=Text` fallback E0220 exists to catch would pass under the name `PanicInfo`.
+
+The declaration is refused and the name keeps the standard library's definition, so every use of it is checked against the value the runtime supplies. A report that follows from the program having meant its own type — an `E0201` on a value written for it — stands beside this one. This is [E0115](#e0115-reserved-slot-name)'s rule for the `route` slot, applied to type names ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 6).
+
+The other domain types the standard library declares — `Url`, `Email`, `Uuid`, `FormData` — name types only a program builds values of, and are not reserved: a program may declare its own (`type Email = {address: Text}`), and its uses of the name then mean that type. `File`, also in that table, is a primitive rather than a declared type, and is in neither list.
+
+Only a declaration is refused. Writing a reserved name is how a program uses the standard library's type — an annotation, a tile's `in=`, a record field, an alias (`type Crash = PanicInfo`), a refinement over it (`type Short = Duration where between(0, 1000)`). A type parameter of that spelling is scoped to its definition ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 5); a variant tag, a slot, a `fn` or a tile spelled the same way is in another namespace; and a type whose name merely starts or ends with one (`PanicInfoView`, `AppRoute`) is a name of its own.
+
+**Fix**: Rename the program's type — `type AppPanic = {…}` — along with every use that meant it.
+
+### E0234 `reserved-effect-name`
+
+An `effect` is declared under the name of a [standard effect](./stdlib.md#_2-6-standard-effects) — `navigate`, `navigate-replace`, `navigate-back`, `scroll-to`, `toast`, `confirm` or `log`. Reported at the declaration, once per declaration.
+
+> `Effect "<name>" collides with the built-in effect <name>; emits of it never run this effect`
+
+The runtime registers each standard effect under its own name when the app mounts, over the record the program's declaration compiled to — its capability, its request and its `policy` alike. A declared `effect log cap=http.get …` would never make its request: `emit log("x")` runs the built-in `log`, which needs `log.write` and writes to the console. The declared `policy` goes with the rest of the record: the `EffectId` the emit returns is minted under the built-in's default policy, so a `latest-per-key` cancellation the program declared never happens.
+
+Every use of the name is still checked against the declaration — an `emit`'s argument against its `in=`, a `.ok` bind against its `out=`, the capability against its `cap=` — because those are the uses the program wrote for it. So a program whose uses were all written for the declaration gets this one report. A use written for the built-in is held to the declaration and is reported beside it (an `E0202` on an `emit` with the built-in's record).
+
+Only an `effect` declaration is refused. Emitting a standard effect needs no declaration. A reducer, a slot or a `fn` spelled the same way is in another namespace, and an effect whose name merely starts or ends with one (`logger`, `toasts`, `navigate2`) is a name of its own.
+
+**Fix**: Rename the effect together with every `emit`, `app.init` entry and `on=<name>.ok` / `.err` reducer that meant it — `kumiki rename <file> effect.log logRequest` rewrites them all — and emit the standard effect under its own name where the built-in is what was meant. `kumiki rename` rewrites every use, whichever effect it was written for, so an `emit` written for the built-in keeps its `E0202` under the new name and the rename is refused; such a program is renamed by hand, leaving that `emit` as it is. A declaration that restates a standard effect (`effect navigate cap=nav.push in={path: Text, …}`) is deleted instead, since the standard effect needs none. Delete its line directly: `kumiki remove` counts the emits as references to the declaration and refuses.
 
 ## E03xx — Capabilities and Purity
 
@@ -1234,11 +1436,19 @@ Both messages name the receiver's type as the program writes it: a slot declared
 
 A union is judged here although a member on one is not: the member table has no row for a union, but whichever variant a union value holds, it is neither a `Map` nor a `List`. The error is at the step, with no type mismatch behind it: past a step that names no place the path has no type, so neither the steps after it nor the right-hand side is checked against one. Without this check the write passed silently: `r["a"] := "oops"` on `type R = {a: Int}` passed `check` and stored the Text in the Int field, while `r.a := "oops"` is [E0201](#e0201-type-mismatch), and on an `Int` or a `Text`, `n[0] := v` panicked at run time while `n["a"] := v` replaced the slot with the record `{"a": v}`, as a member write did. On a record, a key written as a literal that names one of its fields is answered with that field's step, `— write the field step ".a"`. A receiver whose type is not known — a type name that resolves to nothing — raises nothing; the name is [E0117](#e0117-undef-type) where it is written.
 
+A read `tags[x]` from a Set takes the same step and has nothing to answer either; it is [E0232](#e0232-index-into-set).
+
 A **`bind=` target** is written through the same way — it is the place the control writes to ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)) — and its steps are a path's, written without parentheses. A step written as a call names the value the call answers, not a place, so it is E0602 at the call, on any receiver:
 
 > `Cannot bind through ".get()": a bind target is a path, and a call is not a step of one — the unwrap step is written ".get"`
 
 Without this check the bind was dropped whole: `input(bind=d.get().title)` passed `check` and `build` and rendered an input bound to nothing. The unwrap step is `.get`, in a bind as on the left of `:=` — where `d.get().title := v` does not parse, since a path step is an identifier ([Language §1.6.1](./language.md#_1-6-1-syntax)).
+
+An index step of a bind target names the place it names on the left of `:=` — a `List` element, a `Map` entry — so an index into a record, a scalar, an `Option`, a `Result`, a `Tuple` or a union is E0602 there too, at the index. The message is the second index message above, with `bind` for `assign`:
+
+> `Cannot bind through an index into "<T>": an index names a place only in a Map or a List`
+
+An index into a `Set` is [E0232](#e0232-index-into-set) there instead: the control shows its target before it writes one, and that read is reported once.
 
 **Fix**: For a member, write the value the member would have derived — `name := "some text"` rather than `name.length := 9` — or, if the receiver is a record, use a field that exists. For a Set, change membership instead of indexing: `tags := tags.add(x)`, or `.remove(x)` / `.toggle(x)` in its place ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)). For an index into anything else, write the step that names a place: a record's field as `r.a := v`, an `Option` / `Result` payload through `.get` (`o.get := v`, which writes nothing on a `None` or an `Err`), and any other value whole (`n := v`). To write an `Option` / `Result` value whatever it holds, replace it whole: `o := Some(v)`, `res := Ok(v)`.
 
@@ -1286,7 +1496,7 @@ A literal `icon(name="<x>")` reference whose name is not in the `iconNames` set 
 
 **Fix**: Correct the typo, register the custom path in `theme.icons`, or install `@kumikijs/icons` so the built-in name is in scope.
 
-Testing-DSL invariants (currently E0712, E0713 and E0714; E0710–E0719 reserved for this purpose) fire only inside test-family definitions and do not require an opt-in flag.
+Testing-DSL invariants (currently E0712 to E0715; E0710–E0719 reserved for this purpose) fire only inside test-family definitions and do not require an opt-in flag.
 
 ### E0712 `episode-mock-invalid`
 
@@ -1346,6 +1556,47 @@ No name *inside* the unknown key is resolved: a name belonging to a section that
 
 **Fix**: Spell the section the way its kind writes it. The accepted set is in the message, and it is the same table `codegen/emit-test.ts` reads a section by — so a section the checker rejects is one nothing lowers, and an `episode-test` `expect` it does not recognise throws at codegen rather than lowering to an assertion about nothing.
 
+### E0715 `for-all-no-generator`
+
+A `property-test` `for-all` variable's type is one the generator cannot build ([Testing §8.3.2](./testing.md#_8-3-2-generators)). Every trial is run on a value of each `for-all` type, built in full; a type with a part the generator has no value for would be handed to the invariant with a stand-in there: the property would be checked over values the program can never hold, and a write of one would fail every trial with a rejection that blames the stand-in rather than the type.
+
+The type holds, somewhere in it, one of:
+
+- a `File` or an `EffectId`. A `File` comes from the platform and an `EffectId` from `emit`; neither has a value to make up. A `FormData` holds one, through its `FileV` variant.
+- a recursive type with no finite value — one that cannot be built without another of itself inside it, like `Inf` below. A recursive type with a way to end — a variant without the recursive payload, or an `Option` or a collection holding it — is generated, to a bounded depth.
+- a generic that nests a parameter deeper ([Language §1.3.6](./language.md#_1-3-6-invariants)): `type Grow(T) = Stop | Deeper(Grow(List(T)))` hands `T` back as `List(T)`, so `Grow(Int)` holds a `Grow(List(Int))`, which holds a `Grow(List(List(Int)))`, a new type at every step with no one body to step back into. A generic that only swaps or rotates its parameters (`type Alt(A, B) = Nil | Cons(A, Alt(B, A))`) reaches finitely many instantiations, each stepped back into, and one reached again under another argument is a type of its own, entered once. A parameter the body never holds needs no generator: `type Tag(T) = {name: Text}` builds `Tag(File)`.
+- refinements that leave no value. Stacked refinements narrow each other — each bound the tighter of the two, a `one-of` keeping only the values the others pass, an `email`, `url` or `uuid` built at a length the others allow — so a stack is refused when nothing passes all of it: `Int where positive where negative`, `Text where len-gt(5) where len-lt(3)`, `Text where email where url`, `Text where uuid where len-gt(36)` (a uuid is 36 characters, an email or a url at least 5), or a `one-of` every value of which another refinement refuses.
+
+```kumiki invalid
+type Inf = {v: Int, next: Inf}
+
+slot count : Int = 0
+
+reducer bump on=ui.click(B) do=
+    count := count + 1
+
+tile B = button(text="+")
+
+test inf-has-no-value =
+    property-test
+        for-all   = {x: Inf}
+        given     = {slots: {count: x.v}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(bump).slots.count == x.v + 1
+```
+
+Every `Inf` holds another `Inf`, so there is no first one to build: the field `x` is reported, and no trial is run.
+
+> `` No generator for `for-all` "<name>": "<type>" has none ``
+> `` No generator for `for-all` "<name>": "<type>" has no finite value ``
+> `` No generator for `for-all` "<name>": "<generic>" nests a parameter deeper at every step: "<type>" inside "<type>" ``
+> `` No generator for `for-all` "<name>": the refinements of "<type>" leave no value: <why> ``
+
+`<why>` is one of `none is at least <m> and at most <n>`, `none is at least <m> and at most <n> characters long`, `none is both <a shape> and <a shape>`, `<a shape> is at least 5 characters long`, `a uuid is 36 characters long`, and ``no value its `one-of` lists passes the rest``.
+
+It is reported at the `for-all` field. An error in the type, or in a definition it reaches, is reported by its own code instead, and the field is not asked about its generator as well: a name that resolves to nothing ([E0117](#e0117-undef-type)), a type given the wrong number of arguments, a bare `Tuple` among them ([E0210](#e0210-type-arity-mismatch)), a refinement that cannot be checked ([E0803](#e0803-unimplemented-refinement), [E0804](#e0804-refinement-args-invalid)), or a definition that resolves to itself ([E0009](#e0009-type-cycle)).
+
+**Fix**: Generate a type the property can be stated over — a recursive type given a way to end (`next: Option(Inf)`), the part of a type that does not hold the `File`, or refinements some value passes — or write the case as a reducer-test. Codegen asks the same question, so a caller that skips `check` gets this code as a thrown error rather than a descriptor with a hole in it.
+
 ## E08xx — Runtime Hazards
 
 A band for statically catching, at the `check` stage, "code" that passes type checking but breaks at runtime. For the three-layer verification model, see [The Three Layers of Tooling Verification](./testing.md#_8-10-the-three-layers-of-tooling-verification).
@@ -1372,7 +1623,7 @@ Currently three calls are in this state, one for each message. The first is `tra
 
 The second is `T.parse(text)` on a type whose base has no reading of a text — a record, a union, a container, `File`, `EffectId`, `Unit`, or a `nominal` over one of them. [Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion) lists the bases that do. Unlike `trace`, this is not a gap waiting on an implementation: there is no text a record is spelt as, so there is nothing for any lowering to produce, and the message says so rather than calling it unimplemented. The call's type is `Option(T)`, and the lowering used to wrap the raw text in `Some`, so the value a `T` reader unwrapped was a string. A `T` that names no type is [E0117](#e0117-undef-type) instead, a type constructor written without its arguments (`List.parse(t)`, `Box.parse(t)` for a `type Box(T) = …`) is [E0124](#e0124-type-constructor-qualifier) — it is not a type at all, so whether it has a reading never comes up — a `T` whose definition resolves to nothing (an alias of an undefined name, a cycle) is left to the report at that definition, and a `nominal` is judged by its base — `type Cents = nominal Int` parses the way `Int` does.
 
-The third is `T.fresh()` on a type a `Text` does not go into — `Int`, `Bool`, a record, a union, a container, or a `nominal` / `where` over one of them ([Standard Library §2.4.1](./stdlib.md#_2-4-1-id-generation)). `fresh` lowers to one uuid `Text` whatever `T` says, so for any other `T` there is no value it could produce, the way there is no text a record is spelt as. It used to be accepted and left untyped, so the uuid went wherever the call was written: a `type TaskId = nominal Int` id was a string in a place that declares a number, and a `Set(TaskId)` that read it back by its declared key type ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)) answered `NaN`, with `check` and `build` both saying ok. A `T` that names no type is [E0117](#e0117-undef-type), a type constructor without its arguments is [E0124](#e0124-type-constructor-qualifier), and `Duration` / `EffectId` / `Bytes` / `Decoder` are [E0116](#e0116-undef-call), each ahead of this.
+The third is `T.fresh()` on a type a `Text` does not go into — `Int`, `Bool`, a record, a union, a container, or a `nominal` / `where` over one of them ([Standard Library §2.4.1](./stdlib.md#_2-4-1-id-generation)). `fresh` lowers to one uuid `Text` whatever `T` says, so for any other `T` there is no value it could produce, the way there is no text a record is spelt as. It used to be accepted and left untyped, so the uuid went wherever the call was written: a `type TaskId = nominal Int` id was a string in a place that declares a number, and a `Set(TaskId)` that read it back by its declared key type ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)) answered `NaN`, with `check` and `build` both saying ok. A `T` that names no type is [E0117](#e0117-undef-type), a type constructor without its arguments is [E0124](#e0124-type-constructor-qualifier), and `Duration` / `EffectId` / `Bytes` / `Decoder` are [E0116](#e0116-undef-call-undef-variant-undef-qualifier), each ahead of this.
 
 **Fix**: Remove the call. Nothing in the language is blocked on `trace` — it is a debugging aid. For `T.parse`, read the text into a type that has a reading (`Int.parse`, `Text.parse`, …) and build the `T` from that in a `fn`. For `T.fresh()`, declare the id `nominal Text` — an id is a name, not a quantity — or, when the number is the point, keep a counter slot and build the next id from it.
 
@@ -1418,7 +1669,7 @@ The base is the other half of the same rule. Every predicate tests one shape of 
 
 `one-of` lowers to a strict membership test, so each literal has to be a value of the base: `Text where one-of(1, 2)` lists choices no text equals, and a `Bool`, a record or a union has no literal at all. A list with one wrong literal among right ones is reported too — that choice can never be taken.
 
-The base is read through the chain the refinement is written on — an alias, a `nominal`, an earlier `where` — so `type Handle = nominal Text` under `where positive` is reported and a `nominal Int` under `where between(0, 9)` is not. A record, a union or a container is not a base either family tests, and neither is an opaque type such as `EffectId`: whatever represents it at runtime, a program has no value of it the predicate is a question about.
+The base is read through the chain the refinement is written on — an alias, a `nominal`, an earlier `where` — so `type Handle = nominal Text` under `where positive` is reported and a `nominal Int` under `where between(0, 9)` is not. A record, a union or a container is not a base either family tests, and neither is an abstract handle type such as `EffectId`: whatever represents it at runtime, a program has no value of it the predicate is a question about.
 
 A type parameter says nothing about the base on its own, so the definition `type NonEmpty(T) = T where nonempty` is not reported. Its **application** is: the arguments are substituted into the body — through nested applications, record fields and union payloads — and a refinement they put over a base it cannot test is reported at the application, `NonEmpty(Int)` in `slot n : NonEmpty(Int)` or in `type N = NonEmpty(Int)`, and `W(Text)` for `type W(T) = nominal T where positive`. A problem the definition has whatever its arguments are is reported once, at the definition. A problem the arguments bring is reported at the application once for each refinement and base it is put over, however many paths through the body reach that refinement: `type D1(T) = D0(D0(D0(T)))` over `type D0(T) = T where nonempty` gives `D1(Int)` one E0804, not three, while `type P(T) = {a: T where nonempty, b: T where nonempty}` gives `P(Int)` two, one for each refinement.
 
