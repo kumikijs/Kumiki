@@ -48,7 +48,7 @@ type KumikiError = {
 |---|---|---|
 | `E0001` | あり | app 自身の `routes` に `"/404" -> NotFound` を追加する（tile の `sub-routes` には追加しない）。`NotFound` tile は、プログラムがまだ定義していなければ挿入する。パッチを出すのは `missing-404` だけである。app に `routes` 節がないとき、`404-is-redirect`（リダイレクトを置き換えて直すもので、その隣にエントリを追加すれば `/404` が 2 つになる：`E0008`）、および `404-in-sub-routes`（エントリを削除して直すもの）にはパッチを出さない。 |
 | `E0102` | あり | 既知の reducer 名に対する近傍名の提案（Levenshtein ≤ 2 または ≤ 25%）。 |
-| `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。reducer が、その reducer の `if` の枝・`for` の本体・match arm で宣言された名前をその本体の後で読んでいる場合（診断の `endedScope` が設定されている）はパッチを出さない：読み出しは綴りの誤りではなくスコープ外であり、名前を置き換えた読み出しは型検査を通って別の値を読むことがある。宣言と読み出しのどちらを動かすかはユーザの意図である。 |
+| `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。名前を宣言したスコープ — reducer の `if` の枝・`for` の本体・match arm、`let … in` の本体、tile の `for` の本体、`match` 式の arm — が終わった後で、同じ定義の中でその名前を読んでいる場合（診断の `endedScope` が設定されている）はパッチを出さない：読み出しは綴りの誤りではなくスコープ外であり、名前を置き換えた読み出しは型検査を通って別の値を読むことがある。宣言と読み出しのどちらを動かすかはユーザの意図である。 |
 | `E0104` | あり | 宣言済みの `effect` 名と、プログラムが宣言しない[標準 effect](./stdlib.md#_2-6-標準-effect) に対する近傍名の提案（スコープ限定 — 名前の近い tile や slot は候補にならない）。 |
 | `E0105` | あり | 既知の tile 名に対する近傍名の提案。 |
 | `E0106` | あり | `on=timer(d, name=N)` から収集したタイマー名に対する近傍名の提案（スコープ限定 — トップレベル定義は候補にならない）。 |
@@ -254,7 +254,9 @@ reducer 名がどの `reducer` 定義も指していない。名指す箇所は 
 
 `let` は書かれたスコープに宣言され（[言語 §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)）、`if` の各枝・`for` の本体・match の各 arm はそれぞれ独立したスコープである。したがって `if` の一方の枝で宣言した名前は、もう一方の枝でも `if` の後のどの文でも未定義であり、`for` の本体や match arm で宣言した名前もその後では未定義である。条件で値を選ぶなら、`if` の前で `if` 式を使って一度だけ宣言する — `let n = if c then "a" else "b"` — か、読み出しを枝の中へ移す。
 
-同じ reducer の中でそれより前に、そうした本体の中で名前が宣言されていた場合 — 本体の中の `let`、`for` の束縛、match arm のパターン — 診断の `endedScope` フィールドがその本体の種類を `if`・`for`・`match` で示し、メッセージはその種類に合った直し方を示す。複数の本体がその名前を宣言していた場合、メッセージは最後に終わった本体を名指す。入れ子の本体なら、読み出しより前に終わったもののうち最も外側の本体である。名前はループの外へ値を持ち出せないので、`for` の後の読み出しはその本体の中へ移すか、本体の中で値を slot に書き込む：
+名前を束縛する式 — `let … in`、tile の `for`、値のものも tile のものも含む `match` 式の各 arm — はその名前を自分の本体だけに束縛するので、名前は式の後でも未定義である：後の文やオペランドの中でも、tile の兄弟の引数の中でも同じで、`column(for idx in xs text(idx.show), text(idx.show))` の 2 つ目の `idx` がそれにあたる。
+
+同じ定義の中でそれより前に、そうしたスコープの中で名前が宣言されていた場合 — 本体の中の `let`、`for` の束縛、match arm のパターン、`let … in` — 診断の `endedScope` フィールドがそのスコープの種類を示し — reducer の文の本体なら `if`・`for`・`match`、式なら `let-in`・`for-expr`（tile の `for`）・`match-expr`（`match` 式の arm）— メッセージはその種類に合った直し方を示す。複数のスコープがその名前を宣言していた場合、メッセージは最後に終わったスコープを名指す。入れ子の文の本体なら、読み出しより前に終わったもののうち最も外側の本体である。文の本体の中にある式は、その本体の中でそれより前に入れ子の文が同じ名前を終わらせていても、それでも式自身が名指される：読み出しをその本体の中へ移しても、式の後であることに変わりはないからである。名前はループの外へ値を持ち出せないので、`for` の後の読み出しはその本体の中へ移すか、本体の中で値を slot に書き込む：
 
 > `Reference to undefined name "idx" — it was declared in a "for" loop, and a name carries no value out of a loop: move the read into the loop's body, or write the value to a slot there (see docs/spec/language.md)`
 
@@ -262,9 +264,11 @@ reducer 名がどの `reducer` 定義も指していない。名指す箇所は 
 
 > `Reference to undefined name "n" — it was declared in an "if" branch, which ended before this read: declare it once before the "if" with an "if" expression (let n = if c then … else …), or move the read into that branch (see docs/spec/language.md)`
 
-同じ `if` のもう一方の枝や、同じ match の後続の arm での読み出しは、すでに枝・arm の中にあるので、メッセージは名前を宣言している側を指す：`if` なら `it was declared in the other branch of this "if"` … `the branch that declares it`、match なら `another arm of this match` … `the arm that declares it` となる。
+同じ `if` のもう一方の枝や、同じ match・同じ `match` 式の後続の arm での読み出しは、すでに枝・arm の中にあるので、メッセージは名前を宣言している側を指す：`if` なら `it was declared in the other branch of this "if"` … `the branch that declares it`、match なら `another arm of this match` … `the arm that declares it`、`match` 式なら `another arm of this "match" expression` … `the arm that declares it` となる。
 
-スコープ内に近い名前がいくらあっても本体は名指される：読み出しは綴りの誤りではなくスコープ外なので、`kumiki fix` は名前の置き換えを提案しない。`for idx in xs` の後の `idx` の読み出しを slot `id` に置き換えると、型検査を通ってその slot を読んでしまう。
+式の後では、読み出しを式の中へ移す：`let … in` の本体、tile の `for` の本体 — このループの外へも名前は値を持ち出せない — 、`match` 式の arm である。`let … in` が束縛する値は、メッセージが示すとおり、代わりに両方の読みから見える場所で一度だけ束縛してもよい：reducer では `let` 文で、`fn` や slot の初期化式では両方の読みを囲む 1 つの `let … in` で、tile では両方の読みを `in=` を宣言した tile の中へ移してその値を渡すことで。`app.init` の各要素は式を共有しないので、そこでは読み出しを `let … in` の中へ移すしかない。
+
+スコープ内に近い名前がいくらあってもスコープは名指される：読み出しは綴りの誤りではなくスコープ外なので、`kumiki fix` は名前の置き換えを提案しない。`for idx in xs` の後の `idx` の読み出しを slot `id` に置き換えると、型検査を通ってその slot を読んでしまう。
 
 **修正**：参照先の slot / 束縛が宣言済みか確認する。
 
