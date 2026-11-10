@@ -1,4 +1,6 @@
-import { runOnPage } from "@kumikijs/e2e";
+import { readFileSync } from "node:fs";
+import { type Action, runOnPage } from "@kumikijs/e2e";
+import { feature } from "@kumikijs/examples";
 import { expect, test } from "@playwright/test";
 
 const SOURCE = `slot note : Text = ""
@@ -44,6 +46,79 @@ test("a selector matching nothing fails the step off the error channel", async (
   expect(report.steps[0]?.failures).toEqual([]);
   expect(report.steps[1]?.actionError).toBeTruthy();
   expect(report.steps[1]?.errors).toEqual([]);
+});
+
+// One test each, so a verb that waits out the test's own timeout is named rather than taking its
+// neighbours down with it.
+const UNMATCHED: Action[] = [
+  { submit: "#typo" },
+  { choose: "#typo", value: "x" },
+  { setProperty: "#typo", property: "value", value: "x" },
+];
+
+for (const action of UNMATCHED) {
+  test(`${Object.keys(action)[0]} on a selector matching nothing fails the step`, async ({
+    page,
+  }) => {
+    const report = await runOnPage(page, SOURCE, { steps: [{ do: action }] });
+    expect(report.ok).toBe(false);
+    expect(report.steps[0]?.actionError).toContain("#typo");
+    // Each waits as long as the element verbs do for a render to attach its element.
+    expect(report.steps[0]?.actionError).toContain("Timeout 3000ms");
+    expect(report.steps[0]?.errors).toEqual([]);
+  });
+}
+
+// What the example's browser fixture cannot hold: a step that fails without a refusal fails the
+// fixture. `packages/tests/src/scenario-action-faults.test.ts` asserts the same two at the
+// scenario tier.
+const CHOOSE_SOURCE = readFileSync(feature("264-choose-option"), "utf8");
+
+test("choose on anything that is no select fails the step, naming the element", async ({
+  page,
+}) => {
+  const report = await runOnPage(page, CHOOSE_SOURCE, {
+    steps: [{ do: { choose: "#box", value: "Ay" } }],
+  });
+  expect(report.ok).toBe(false);
+  expect(report.steps[0]?.actionError).toBe(
+    "#box matched <div>, which holds no options to choose — choose targets a select",
+  );
+  expect(report.steps[0]?.errors).toEqual([]);
+});
+
+test("choose on a select with no such option fails the step, naming the value", async ({
+  page,
+}) => {
+  const report = await runOnPage(page, CHOOSE_SOURCE, {
+    steps: [{ do: { choose: "#pick", value: "Zed" } }],
+  });
+  expect(report.ok).toBe(false);
+  expect(report.steps[0]?.actionError).toBe('no option "Zed" in select #pick');
+  expect(report.steps[0]?.errors).toEqual([]);
+  expect(report.steps[0]?.state.pick).toBe("a");
+});
+
+test("choose fails when the options move between finding one and taking it", async ({ page }) => {
+  // The rule reads `closest` on the option it found; moving that option to the end there stands
+  // in for a re-render landing between the two calls the browser tier makes.
+  await page.addInitScript(() => {
+    const closest = Element.prototype.closest;
+    HTMLOptionElement.prototype.closest = function (this: HTMLOptionElement, selectors: string) {
+      this.parentElement?.append(this);
+      return closest.call(this, selectors);
+    };
+  });
+  const report = await runOnPage(page, CHOOSE_SOURCE, {
+    steps: [{ do: { choose: "#pick", value: "Bee" } }],
+  });
+  expect(report.ok).toBe(false);
+  expect(report.steps[0]?.actionError).toBe(
+    'choose #pick="Bee": the options of select #pick changed under the step — option "Bee" had ' +
+      `the value ${JSON.stringify('"b"')}, and the select took ${JSON.stringify('"c"')}`,
+  );
+  // The select did take an option: the step says so rather than leaving it unnoticed.
+  expect(report.steps[0]?.state.pick).toBe("c");
 });
 
 const DISPATCH_SOURCE = `slot log : Text = ""
