@@ -42,6 +42,17 @@ Specificity is compared segment by segment from the left: at the first segment w
 
 `/404` is the fallback used **when no route matches**. Including `/404 -> X` in `app.routes` is mandatory (omitting it is a compile error).
 
+The fallback renders a tile, so `X` is a tile and **`/404` may not be a redirect**. `"/404" ->> "/"` is [E0001](./errors.md#e0001-missing-404-404-is-redirect-404-in-sub-routes) (`404-is-redirect`), reported at the redirect:
+
+```kumiki invalid
+tile Home = column(text("h"))
+app M caps=[] routes={"/" -> Home, "/404" ->> "/"} init=[]
+```
+
+To send paths no route matches to another page, redirect a wildcard instead: `"/*" ->> "/"` owns every path that no more specific entry owns ([§3.1.2](#_3-1-2-match-order), [§3.10](#_3-10-redirects-static)). The `/404` tile is still required.
+
+`/404` belongs to `app.routes` alone. A `sub-routes` map ([§3.6.2](#_3-6-2-child-route-map)) has no `/404` of its own, and no sub-route is matched against `/404`, so an entry written there is never used, whether it names a tile or redirects. It is E0001 (`404-in-sub-routes`), reported at the entry. A child path that no sub-route matches renders the sub-route tile at the parent's own path if there is one, or else the app's `/404` ([§3.6.3](#_3-6-3-matching-rules)). Under a `"/404/*"` parent that own path is `/404`, so the paths it matches and no sub-route does fall through to the app's `/404` as well.
+
 ### 3.1.4 A Route Target Takes No Argument
 
 A route entry names a tile and gives it nothing, so **the tile it names may not declare `in=`** — one that does is [E0213](./errors.md#e0213-call-arity-mismatch), reported at the entry.
@@ -65,7 +76,7 @@ The runtime provides the standard slot `route`:
 slot route : Route = Route.empty       # managed by the runtime
 ```
 
-The `Route` type is [provided by the standard library](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library):
+The `Route` type is [provided by the standard library](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library) — a program names it and does not declare it ([E0231](./errors.md#e0231-reserved-type-name)):
 
 ```kumiki fragment
 type Route = {
@@ -118,7 +129,7 @@ reducer save  on=ui.click(SaveBtn)
                   emit navigate({path: "/todos", params: {}})
 ```
 
-Built-in effects:
+Built-in effects — their signatures; a program emits them without declaring them ([E0234](./errors.md#e0234-reserved-effect-name)):
 
 ```kumiki fragment
 effect navigate         cap=nav.push     in={path: Text, params: Map(Text, Text)}    out=Unit
@@ -158,7 +169,11 @@ Events fired on route switches:
 | `route.enter(pattern)` | Just after entering the new route |
 | `route.error(pattern)` | A tile of that route threw while rendering ([Lifecycle](./lifecycle.md#_7-1-list-of-lifecycle-events)) |
 
-A navigation to another path is a switch, and fires both events in that order: `route.leave` for the route being left, then `route.enter` for the one being entered. That holds when the two share a pattern. Moving from `/todos/1/edit` to `/todos/2/edit` leaves todo 1 and enters todo 2, and switching child under a `sub-routes` parent leaves and re-enters the parent's pattern. A navigation that stays on the path already shown is not a switch: it stays on the route, so `route.leave` does not run and a leave guard (§3.5.2) never asks. If its target has a hash and keeps the query too (`#faq` on `/docs`), it is an in-page jump ([§3.9](#_3-9-scroll-restoration)): it updates `route.hash` and runs no `route.enter`. Back or Forward between two entries that differ only in the hash runs no `route.enter` either. Otherwise (the query changes, a link or effect drops the hash, or the URL already shown is followed without a hash) it still updates the `route` slot and runs `route.enter` again with the new `$route`, so a reducer that loads from `$route.query` sees the new query. The initial route fires only `route.enter` as well, since there is nothing to leave.
+**`pattern` names a declared route.** It is the key of an entry that renders a tile (`->`, not `->>`), in `app.routes` ([§3.1](#_3-1-declaring-routes)) or a `sub-routes` map ([§3.6.2](#_3-6-2-child-route-map)), and it is compared to those keys as written — it is not matched against the path. `route.enter("/todos/:id")` fires for the route declared as `"/todos/:id"`, whatever the id; `route.enter("/*")` would fire only for a route declared as `"/*"`, not for every route. A pattern that names no such key — a typo, a glob, or the key of a `->>` redirect, which the router follows before any route is shown — would never fire, and `kumiki check` reports it at the pattern ([E0228](./errors.md#e0228-undef-route-pattern)).
+
+**A route is matched under a chain of patterns**: its top-level pattern, then — when that route's tile declares `sub-routes` — the sub-route pattern it matched below it, the parent's default child included ([§3.6.3](#_3-6-3-matching-rules)). At `/settings/account`, with `"/settings/*" -> SettingsLayout` and the layout's `"/settings/account" -> AccountSettings`, the chain is `"/settings/*"`, `"/settings/account"`. A sub-route keyed like its parent (`"/docs/*"` in the map of `"/docs/*"`) is the parent's own pattern, and the chain holds it once. Every event fires for every pattern of the chain: `route.enter` for the parent and then its sub-route, `route.leave` for the sub-route and then its parent, and the reducers on one pattern in definition order. Each of them gets the same `$route`, whose `pattern` is the top-level one ([§3.2](#_3-2-current-route-state)). Once one of them moves the app to another route, with a `navigate` or `navigate-replace` it emits, the rest of that event's reducers do not run: the app has left the route they were fired for, and the navigation fires its own move's events instead.
+
+A navigation to another path is a switch, and fires both events in that order: `route.leave` for every pattern of the route being left, then `route.enter` for every pattern of the one being entered. That holds when the two share a pattern. Moving from `/todos/1/edit` to `/todos/2/edit` leaves todo 1 and enters todo 2, and switching child under a `sub-routes` parent leaves the old child and the parent, then enters the parent and the new child. A navigation that stays on the path already shown is not a switch: it stays on the route, so `route.leave` does not run and a leave guard (§3.5.2) never asks. If its target has a hash and keeps the query too (`#faq` on `/docs`), it is an in-page jump ([§3.9](#_3-9-scroll-restoration)): it updates `route.hash` and runs no `route.enter`. Back or Forward between two entries that differ only in the hash runs no `route.enter` either. Otherwise (the query changes, a link or effect drops the hash, or the URL already shown is followed without a hash) it still updates the `route` slot and runs `route.enter` again for the chain with the new `$route`, so a reducer that loads from `$route.query` sees the new query. The initial route fires only `route.enter` as well, for every pattern of its chain, since there is nothing to leave. A render that panics with no `error-boundary` to catch it fires `route.error` for every pattern of the route being shown, the parent first, and each reducer's `$event.pattern` is the pattern it names ([Lifecycle §7.5](./lifecycle.md#_7-5-404-and-error-pages)).
 
 ```kumiki fragment
 reducer loadTodoOnEnter
@@ -195,6 +210,8 @@ reducer requireAuth
         else ()
 ```
 
+Once the guard has redirected, the rest of the chain's `route.enter` reducers do not run ([§3.4](#_3-4-route-lifecycle)), so a loader on `route.enter("/admin/users")` does not run on the way to `/login`.
+
 ### 3.5.2 leave Guard
 
 When you want to stop a transition if there are unsaved changes:
@@ -210,6 +227,8 @@ reducer guardEdit
 ```
 
 `confirm` is a standard effect (→ [Standard Library](./stdlib.md)) that delivers the answer to a separate reducer. See [Lifecycle](./lifecycle.md) for details.
+
+A guard holds the move, not the rest of the chain: every `route.leave` reducer of the route being left runs in the same pass, the guard and the others, the parent's included. So after No the route is still shown, and what those other reducers wrote stays.
 
 While the dialog is open the move is **held**: the route being left stays on screen, and the `route` slot and `route.enter` wait. The answer's reducer runs first; then Yes completes the move, and No puts the URL back to the route still shown. Only a dialog the route's leave guards open settles the move, not a `confirm` another reducer opens meanwhile. When two guards each open one, the first answer settles the move and the other dialog closes unanswered. The dialog is the runtime's own even when the host has registered a `notification.show` provider ([Standard Library §2.5](./stdlib.md#_2-5-standard-capabilities)).
 
@@ -261,7 +280,7 @@ It need not be written in the parent's own body. A tile the body renders — a l
 - A parent's `sub-routes` map applies only when [§3.1.2](#_3-1-2-match-order) selects that parent for the path; a more specific sibling (`"/settings/:section"` beside `"/settings/*"`) takes the path and renders its own target, without the parent
 - Child routes are re-matched within the parent pattern `/settings/*`
 - If no child route matches, the parent's `/settings` (default) is used
-- If that also fails, fall through to the global `/404`
+- If that also fails, fall through to the global `/404`, the one in `app.routes` ([§3.1.3](#_3-1-3-404-is-reserved))
 - Multiple `route-outlet()` calls in the tree a single parent tile renders are **undefined** — the runtime renders the matched child into the first outlet it encounters and leaves the rest empty. Design tiles with exactly one outlet.
 - The child renders **under** the parent: an `error-boundary` on the parent covers it, and a boundary the child declares itself wins ([Lifecycle §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)).
 
@@ -319,10 +338,10 @@ tile Chat
     = scroll(...)
 ```
 
-Scroll to the top on entering a specific route:
+Scroll to the top on entering a specific route. The argument names a route the app declares — here `"/todos/:id"` from [§3.1](#_3-1-declaring-routes) — and is compared to it as written ([§3.4](#_3-4-route-lifecycle)), so `route.enter("/*")` would not mean "every route":
 
 ```kumiki fragment
-reducer scrollTop on=route.enter("/*") do= emit scroll-to({x: 0, y: 0})
+reducer scrollTop on=route.enter("/todos/:id") do= emit scroll-to({x: 0, y: 0})
 ```
 
 `scroll-to` is a standard effect.

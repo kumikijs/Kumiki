@@ -1,0 +1,39 @@
+# Feature (language.md, http.md): a `latest-per-key` key may be a
+# record — or a tuple, a List, an Option or a variant — and two emits share a
+# key, so that the second aborts the first, exactly when their keys are `==`.
+# The key is written the way a Map key is stored (stdlib.md), so
+# `{user: "ada", page: 1}` and `{user: "ada", page: 2}` are two keys: the two
+# requests `both` starts in one reducer body are in flight at once, and both
+# complete.
+#
+# `smoke` makes the requests through the real HTTP path against
+# `241-latest-per-key-record-key.http.json`. `loadPage` has no `.err` reducer,
+# so a request the other one aborted would be an error no reducer takes, and
+# the run fails on it. The abort two `==` keys do cause is pinned beside this
+# in `packages/tests`.
+#
+# A key whose type holds a `Float`, a `File` or a `Set` is not keyed by its
+# value, and is E0233 at the key.
+
+type PageQuery = {user: Text, page: Int}
+
+slot pages : List(Text) = []
+
+effect loadPage cap=http.get
+                in=PageQuery
+                out=Result(Text, HttpError)
+                policy=latest-per-key($1)
+                map-request={url: "/api/users/" + $1.user + "/pages/" + $1.page.show, decode: Decoder.Text}
+
+reducer both   on=ui.click(Both)     do= emit loadPage({user: "ada", page: 1})
+                                         emit loadPage({user: "ada", page: 2})
+reducer loaded on=loadPage.ok($t, _) do= pages := pages.push($t)
+
+tile Both = button(text="load pages 1 and 2") {id: "both"}
+
+tile App = column(Both, text("pages: " + pages.join(", "))) {pad: "lg", gap: "md"}
+
+app LatestPerKeyRecordKey
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

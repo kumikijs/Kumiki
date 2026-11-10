@@ -1,8 +1,10 @@
 import {
   batchRejections,
   type EmitSpec,
+  isPanic,
   type ReducerSpec,
   type RefinementRejection,
+  rejectedBatchText,
   reportRejectedBatch,
   standInValue,
 } from "./core.ts";
@@ -17,6 +19,7 @@ import {
   compareReducerExpect,
   type ReducerExpect,
   type TestResult,
+  unexpectedPanic,
 } from "./testkit/expect.ts";
 import {
   _hashStr,
@@ -30,22 +33,44 @@ import { serializeTileNode, tileStructEqual } from "./testkit/tile-match.ts";
 import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard.ts";
 
 // `before` must be the whole table `resetLive` built: that is what puts a slot the test neither
-// seeds nor writes in the answer. `runReducerTest` and `runReducerStep` share it so the two agree.
+// seeds nor writes in the answer. `runReducerTest` and `runReducerStep` share it so the two agree
+// on a batch that commits; a `run-reducer` step fails its trial on a rejected one instead.
 function settleBatch(
-  reducer: string,
   before: Record<string, unknown>,
   result: Partial<ReturnType<ReducerSpec["apply"]>> | null | undefined,
   slotMetas: Record<string, SlotMetaLike>,
-): { slots: Record<string, unknown>; emits: EmitSpec[] } {
+): { rejected: RefinementRejection[] } | { slots: Record<string, unknown>; emits: EmitSpec[] } {
   const rejected = batchRejections(result, slotMetas);
-  if (rejected.length > 0) {
-    reportRejectedBatch(reducer, rejected);
-    return { slots: { ...before }, emits: [] };
-  }
+  if (rejected.length > 0) return { rejected };
   return { slots: { ...before, ...(result?.slots ?? {}) }, emits: result?.emits ?? [] };
 }
 
+/** A `run-reducer` step whose batch a refinement rejected: its batch did not commit, so the trial fails. */
+class RejectedStep extends Error {
+  /** The reducer and each refusing slot's predicate, not the values written, which differ per input. */
+  readonly way: string;
+  constructor(reducer: string, rejected: readonly RefinementRejection[]) {
+    super(rejectedBatchText(reducer, rejected));
+    this.way = JSON.stringify([reducer, rejected.map((r) => [r.slot, r.kind, r.args])]);
+  }
+}
+
+/** Why a trial that threw failed, with a panic told apart from any other error. */
+function thrownReason(e: unknown): string {
+  if (e instanceof RejectedStep) return e.message;
+  const message = e instanceof Error ? e.message : String(e);
+  return isPanic(e) ? `panicked: ${message}` : `threw: ${message}`;
+}
+
+/** The failure a shrink candidate has to repeat: the same refusal, a panic, or another throw. */
+function failureWay(e: unknown): string {
+  if (e instanceof RejectedStep) return e.way;
+  return isPanic(e) ? "panicked" : "threw";
+}
+
 export const _stdlibTest = {
+  /** Whether a throw in the code under test is a panic, which is the test's outcome. */
+  isPanic,
   /** The wildcard map-key sentinel; codegen lowers a `<any-id>` map key to it. */
   WILD_KEY,
   /** The Set-literal wildcard count; codegen lowers the `<any-id>` members of a Set literal to it. */
@@ -75,8 +100,13 @@ export const _stdlibTest = {
     this.resetLive(app.live, app.slots, state?.slots ?? {});
     const r = app.reducers.find((x) => x.name === name);
     if (!r) throw new Error(`reducer "${name}" not found`);
-    const res = r.apply(app.live, { $el: event, $event: event });
-    return { slots: settleBatch(name, app.live, res, app.slots).slots };
+    const settled = settleBatch(
+      app.live,
+      r.apply(app.live, { $el: event, $event: event }),
+      app.slots,
+    );
+    if ("rejected" in settled) throw new RejectedStep(name, settled.rejected);
+    return { slots: settled.slots };
   },
   runPropertyTest(input: {
     name: string;
@@ -90,24 +120,27 @@ export const _stdlibTest = {
     const count = input.count ?? 100;
     const doShrink = input.shrink ?? true;
     const rng = _rng(input.seed ?? _hashStr(name));
-    // `fails` is true when the invariant does NOT hold (a throw counts as a fail).
-    const fails = (b: Record<string, unknown>): boolean => {
+    const failure = (b: Record<string, unknown>): { reason?: string; way: string } | undefined => {
       try {
-        return trial(b) !== true;
-      } catch {
-        return true;
+        return trial(b) === true ? undefined : { way: "false" };
+      } catch (e) {
+        return { reason: thrownReason(e), way: failureWay(e) };
       }
     };
     for (let i = 0; i < count; i++) {
       const binds: Record<string, unknown> = {};
       for (const k of Object.keys(vars)) binds[k] = genValue(vars[k] as GenDesc, rng);
-      if (fails(binds)) {
-        const minimal = doShrink ? shrinkCounterexample(vars, fails, binds) : binds;
+      const first = failure(binds);
+      if (first) {
+        // A candidate counts only when it fails the way the generated case did.
+        const sameWay = (b: Record<string, unknown>): boolean => failure(b)?.way === first.way;
+        const minimal = doShrink ? shrinkCounterexample(vars, sameWay, binds) : binds;
+        const reason = failure(minimal)?.reason;
         return {
           name,
           pass: false,
           expected: "invariant holds for all generated inputs",
-          actual: `counterexample (case ${i + 1}/${count}): ${_jsonStr(minimal)}`,
+          actual: `counterexample (case ${i + 1}/${count}): ${_jsonStr(minimal)}${reason ? ` — ${reason}` : ""}`,
           diffAt: "(property)",
           cases: i + 1,
         };
@@ -151,8 +184,12 @@ export const _stdlibTest = {
   }): TestResult {
     const { name, target, givenSlots, slotMetas, result, panic, expect } = input;
     // No `?? {}` fallback: a caller that forgets `slotMetas` must throw here, not silently lose every refinement check and pass a batch the app refuses.
-    const after = settleBatch(target, givenSlots, result, slotMetas);
-    return compareReducerExpect(name, after.slots, after.emits, panic, expect);
+    const settled = settleBatch(givenSlots, result, slotMetas);
+    if (!("rejected" in settled)) {
+      return compareReducerExpect(name, settled.slots, settled.emits, panic, expect);
+    }
+    reportRejectedBatch(target, settled.rejected);
+    return compareReducerExpect(name, { ...givenSlots }, [], panic, expect);
   },
   runReducerTestFlow(input: {
     name: string;
@@ -264,20 +301,8 @@ export const _stdlibTest = {
       expectedSlots = expect.slotsEqual as Record<string, unknown>;
     }
 
-    if (expectedSlots) {
-      for (const [k, v] of Object.entries(expectedSlots)) {
-        if (!valueEqual(app.live[k], v)) {
-          return {
-            name,
-            pass: false,
-            expected: _jsonStr(expectedSlots),
-            actual: _jsonStr(app.live),
-            diffAt: `slots.${k}`,
-            leaf: { expected: v, actual: app.live[k] },
-          };
-        }
-      }
-    }
+    // A panic or a dropped err leaves the slots it would have written at their old values, so
+    // compared first those slots would be reported in its place.
     if (expect.noPanics && report.panics.length > 0) {
       return {
         name,
@@ -296,10 +321,32 @@ export const _stdlibTest = {
         diffAt: "errors",
       };
     }
+    if (expectedSlots) {
+      for (const [k, v] of Object.entries(expectedSlots)) {
+        if (!valueEqual(app.live[k], v)) {
+          return {
+            name,
+            pass: false,
+            expected: _jsonStr(expectedSlots),
+            actual: _jsonStr(app.live),
+            diffAt: `slots.${k}`,
+            leaf: { expected: v, actual: app.live[k] },
+          };
+        }
+      }
+    }
     return { name, pass: true };
   },
-  /** Structurally compare a rendered tile against the expected tile structure. */
-  runTileTest(input: { name: string; actual: unknown; expected: unknown }): TestResult {
+  /** A tile-test has no form that expects a panic, so a panic as its target renders is always unexpected. */
+  runTileTest(input: {
+    name: string;
+    actual: unknown;
+    panic: string | null;
+    expected: unknown;
+  }): TestResult {
+    if (input.panic !== null) {
+      return unexpectedPanic(input.name, serializeTileNode(input.expected), input.panic);
+    }
     const cmp = tileStructEqual(input.expected, input.actual);
     return {
       name: input.name,
