@@ -1,8 +1,9 @@
 import { writeFileSync } from "node:fs";
 import { feature } from "@kumikijs/examples";
+import { KumikiPanic, type TestResult } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { runTests, runTestsSource } from "../src/smoke.ts";
-import { CHILD_TIMEOUT_MS, runCli, SPAWN, spawnCli, waitFor } from "./helpers/cli.ts";
+import { runOne, runTests, runTestsSource } from "../src/smoke.ts";
+import { CHILD_TIMEOUT_MS, runCli, SPAWN, spawnCli, spawns, waitFor } from "./helpers/cli.ts";
 import { APP_A, seed } from "./helpers/files.ts";
 
 const TESTS = feature("28-tests");
@@ -93,13 +94,13 @@ test starts-at-41 =
         expect = {slots: {count: 42}}
 `;
 
-  it("reports it with the file and the line and column `check` gives", SPAWN, () => {
+  it("reports it with the file and the line and column `check` gives", spawns(2), () => {
     const file = seed(NOT_A_RECORD);
     const checked = runCli(["check", file]);
     expect(checked.code).toBe(1);
     const lines = checked.stderr.trim().split("\n");
     expect(lines).toEqual([
-      "E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}`",
+      "error E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}`",
     ]);
 
     const tested = runCli(["test", file]);
@@ -109,7 +110,7 @@ test starts-at-41 =
     expect(tested.stderr).toContain('in test "starts-at-41"');
   });
 
-  it("prints the warnings `check` prints, before the errors", SPAWN, () => {
+  it("prints the warnings `check` prints, before the errors", spawns(2), () => {
     const file = seed(`slot f : Text = ""
 reducer recordFocus on=ui.focus(Card) do= f := "focused"
 tile Card = box(text("hi"))
@@ -118,8 +119,8 @@ ${NOT_A_RECORD}`);
     expect(checked.code).toBe(1);
     const lines = checked.stderr.trim().split("\n");
     expect(lines).toEqual([
-      expect.stringMatching(/^W0212 /),
-      expect.stringMatching(/^E0713 test-shape-invalid at 11:26: /),
+      expect.stringMatching(/^warning W0212 /),
+      expect.stringMatching(/^error E0713 test-shape-invalid at 11:26: /),
     ]);
 
     const tested = runCli(["test", file]);
@@ -142,7 +143,7 @@ ${NOT_A_RECORD}`);
     );
     const tested = runCli(["test", file]);
     expect(tested.code).toBe(1);
-    expect(tested.stderr).toMatch(/E0103 \S+ at 4:27: /);
+    expect(tested.stderr).toMatch(/error E0103 \S+ at 4:27: /);
     expect(tested.stderr).not.toContain("in test");
   });
 });
@@ -169,6 +170,32 @@ test replay =
       expected: 'the episodes in "log.jsonl"',
       actual:
         "no episode log was read: compile was given no readEpisodeLog, so nothing was replayed",
+    });
+  });
+});
+
+describe("a test whose body throws", () => {
+  it.each<[string, unknown, string]>([
+    [
+      "a panic, as its message",
+      new KumikiPanic("Index 3 is out of range for a List of length 1"),
+      "Index 3 is out of range for a List of length 1",
+    ],
+    ["a panic with no message, as its kind", new KumikiPanic(""), "KumikiPanic"],
+    [
+      "any other error, with its kind",
+      new TypeError("_s.runTileTest is not a function"),
+      "TypeError: _s.runTileTest is not a function",
+    ],
+    ["a thrown value that is not an error, as JSON", { code: 1 }, '{"code":1}'],
+  ])("fails alone, reporting %s", (_case, thrown, error) => {
+    const run = (): TestResult => {
+      throw thrown;
+    };
+    expect(runOne({ name: "t", kind: "reducer-test", run })).toEqual({
+      name: "t",
+      pass: false,
+      error,
     });
   });
 });

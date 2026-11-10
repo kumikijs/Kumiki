@@ -1,5 +1,5 @@
 import { applyRefine, type GenDescData, refinementToJs } from "@kumikijs/compiler";
-import { _stdlibTest, type GenDesc } from "@kumikijs/runtime";
+import { _stdlibCore, _stdlibTest, type GenDesc } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
 const NO_POS = { line: 0, col: 0 };
@@ -54,6 +54,77 @@ describe("a generated value passes the check the runtime applies to a write", ()
     expect(
       generatedValuesPass(descriptor(base, pred, args), predicate(pred, args)),
     ).toBeUndefined();
+  });
+});
+
+/**
+ * Every value a never-holding property over `desc` hands its trial (the generated one, then each
+ * shrink candidate), those the predicate refuses, and the counterexample shrinking settles on.
+ */
+function shrinkPath(
+  desc: GenDesc,
+  accepts: (v: unknown) => boolean,
+  seed?: number,
+): { tried: unknown[]; refused: unknown[]; settled: unknown } {
+  const tried: unknown[] = [];
+  const report = _stdlibTest.runPropertyTest({
+    name: `shrunk ${JSON.stringify(desc)}`,
+    ...(seed === undefined ? {} : { seed }),
+    vars: { v: desc },
+    trial: (binds) => {
+      tried.push(binds.v);
+      return false;
+    },
+  });
+  const settled = /^counterexample \(case \d+\/\d+\): (.*)$/.exec(report.actual ?? "")?.[1];
+  if (settled === undefined) throw new Error(`not a counterexample: ${report.actual}`);
+  return {
+    tried,
+    refused: tried.filter((v) => !accepts(v)),
+    settled: (JSON.parse(settled) as { v: unknown }).v,
+  };
+}
+
+/** The descriptor a stack of refinements over `Text` folds to. */
+const stacked = (stack: [string, (number | string)[]][]): GenDesc =>
+  stack.reduce<GenDesc>((d, [pred, args]) => applyRefine(d, refinement(pred, args)), {
+    t: "Text",
+  });
+
+/** Whether every refinement of `stack` accepts a value. */
+const accepting = (stack: [string, (number | string)[]][]) => {
+  const checks = stack.map(([pred, args]) => predicate(pred, args));
+  return (v: unknown): boolean => checks.every((p) => p(v));
+};
+
+describe("a shrunk value passes the check the generator honoured", () => {
+  it.each<[string, GenDescData, (number | string)[]]>([
+    ["email", { t: "Text" }, []],
+    ["url", { t: "Text" }, []],
+    ["uuid", { t: "Text" }, []],
+    ["one-of", { t: "Text" }, ["sm", "md", "lg"]],
+    ["one-of", { t: "Int" }, [3, 5, 9]],
+    ["positive", { t: "Int" }, []],
+    ["positive", { t: "Float" }, []],
+    ["negative", { t: "Int" }, []],
+    ["negative", { t: "Float" }, []],
+    ["between", { t: "Int" }, [5, 11]],
+    ["between", { t: "Float" }, [-9, -2]],
+    ["nonempty", { t: "Text" }, []],
+    ["len-gt", { t: "Text" }, [3]],
+    ["len-eq", { t: "Text" }, [4]],
+    ["len-lt", { t: "Text" }, [6]],
+  ])("shrinks through values the %s check over %o accepts", (pred, base, args) => {
+    const accepts = predicate(pred, args);
+    const { refused, settled } = shrinkPath(descriptor(base, pred, args), accepts);
+    expect(refused).toEqual([]);
+    expect(accepts(settled)).toBe(true);
+  });
+
+  // The check above means something for a form only if shrinking reached a shorter value.
+  it.each(["email", "url"])("shrinks a Text where %s through shorter values it accepts", (pred) => {
+    const { tried, settled } = shrinkPath(descriptor({ t: "Text" }, pred), predicate(pred));
+    expect((settled as string).length).toBeLessThan((tried[0] as string).length);
   });
 });
 
@@ -126,5 +197,89 @@ describe("a generated value passes every refinement stacked on its type", () => 
     );
     const checks = stack.map(([pred, args]) => predicate(pred, args));
     expect(generatedValuesPass(desc, (v) => checks.every((p) => p(v)))).toBeUndefined();
+  });
+});
+
+describe("a shrunk value passes every refinement stacked on its type", () => {
+  // A shape built at a length shrinks inside the lengths the rest allow, down to the shortest
+  // value of the shape it was generated in.
+  it.each<[[string, (number | string)[]][], number, RegExp]>([
+    [
+      [
+        ["email", []],
+        ["len-gt", [10]],
+      ],
+      11,
+      /^[a-z]+@[a-z]+\.[a-z]{1,3}$/,
+    ],
+    [
+      [
+        ["email", []],
+        ["len-lt", [20]],
+      ],
+      5,
+      /^[a-z]@[a-z]\.[a-z]$/,
+    ],
+    [
+      [
+        ["url", []],
+        ["len-lt", [9]],
+      ],
+      5,
+      /^[a-z]:\/\/[a-z]$/,
+    ],
+    [
+      [
+        ["url", []],
+        ["len-gt", [8]],
+        ["len-lt", [22]],
+      ],
+      9,
+      /^https:\/\/[a-z]$/,
+    ],
+    [
+      [
+        ["url", []],
+        ["len-gt", [21]],
+      ],
+      22,
+      /^https:\/\/[a-z]\.example\.com\/$/,
+    ],
+  ])("shrinks a Text under %j through values it accepts, to %i characters", (stack, shortest, shape) => {
+    const { refused, settled } = shrinkPath(stacked(stack), accepting(stack));
+    expect(refused).toEqual([]);
+    expect(settled).toHaveLength(shortest);
+    expect(settled).toMatch(shape);
+  });
+
+  // Beside a length, a url is built in one of three shapes by its length. Each row's seed generates
+  // a url in its band.
+  it.each<[string, number, RegExp, number, number]>([
+    ["from 22 characters", 4, /^https:\/\/[a-z]+\.example\.com\/[a-z]*$/, 22, 99],
+    ["from 9 to 21 characters", 8, /^https:\/\/[a-z]+$/, 9, 21],
+    ["up to 8 characters", 7, /^[a-z]+:\/\/[a-z]$/, 5, 8],
+  ])("keeps a url under len-lt(100) generated %s in that shape", (_, seed, shape, min, max) => {
+    const stack: [string, (number | string)[]][] = [
+      ["url", []],
+      ["len-lt", [100]],
+    ];
+    const inBand = (v: unknown): boolean =>
+      typeof v === "string" && shape.test(v) && v.length >= min && v.length <= max;
+    const { tried, settled } = shrinkPath(stacked(stack), accepting(stack), seed);
+    expect(tried[0]).toSatisfy(inBand);
+    expect(settled).not.toBe(tried[0]);
+    expect(settled).toSatisfy(inBand);
+  });
+});
+
+// Besides the generated values above, the runtime makes up fresh ids, and the compiler's `uuid`
+// predicate accepts them too.
+describe("a fresh id passes the check a uuid refinement applies", () => {
+  it("mints ids the uuid predicate accepts", () => {
+    const accepts = predicate("uuid");
+    for (let i = 0; i < 200; i++) {
+      const id = _stdlibCore.freshId();
+      expect(accepts(id), id).toBe(true);
+    }
   });
 });

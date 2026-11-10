@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { AppShape, MountedApp, ParsedRoute } from "../src/core.ts";
+import type { AppShape, MountedApp, ParsedRoute, ReducerSpec } from "../src/core.ts";
 import { mount } from "../src/index.ts";
 import { bareApp } from "./helpers/app.ts";
 import { answer, dialogs } from "./helpers/confirm.ts";
@@ -697,5 +697,83 @@ describe("route.leave guard — unmounting while a move is held", () => {
     expect(dialogs()).toHaveLength(1);
     handle.dispose();
     expect(dialogs()).toHaveLength(0);
+  });
+});
+
+describe("confirm — unmounting while a dialog no move holds is open", () => {
+  function askingApp(answers: string[]): Hooked {
+    const answerWith = (outcome: string): ReducerSpec => ({
+      name: outcome,
+      event: { kind: "ui", ev: "click" },
+      apply: (slots) => {
+        answers.push(outcome);
+        return { slots, emits: [] };
+      },
+    });
+    return bareApp({
+      caps: ["notification.show"],
+      reducers: [
+        {
+          name: "ask",
+          event: { kind: "ui", ev: "click" },
+          apply: (slots) => ({
+            slots,
+            emits: [
+              { effect: "confirm", args: [{ title: "Sure?", onYes: "agreed", onNo: "declined" }] },
+            ],
+          }),
+        },
+        answerWith("agreed"),
+        answerWith("declined"),
+      ],
+    }) as Hooked;
+  }
+
+  it("closes the dialog unanswered", async () => {
+    const answers: string[] = [];
+    const app = askingApp(answers);
+    const handle = mount(app, target);
+    app._dispatch?.("ask", {});
+    await settle();
+    expect(dialogs()).toHaveLength(1);
+    handle.dispose();
+    expect(dialogs()).toHaveLength(0);
+    expect(answers).toEqual([]);
+  });
+
+  // The shape's seams belong to whichever mount owns it now, so a dialog left live would
+  // answer into the next one.
+  it("leaves nothing that answers into the next mount of the same app", async () => {
+    const answers: string[] = [];
+    const app = askingApp(answers);
+    const first = mount(app, target);
+    app._dispatch?.("ask", {});
+    await settle();
+    const [dialog] = dialogs();
+    first.dispose();
+    const other = freshRoot();
+    const second = mount(app, other);
+    try {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      dialog?.querySelector<HTMLButtonElement>("button[data-kumiki-confirm-action='yes']")?.click();
+      await settle();
+      expect(answers).toEqual([]);
+    } finally {
+      second.dispose();
+      other.remove();
+    }
+  });
+
+  it("settles the effect, so nothing waits on the dialog", async () => {
+    const app = askingApp([]);
+    const handle = mount(app, target);
+    const results: unknown[] = [];
+    const caps = { has: () => false, provider: () => undefined };
+    void app.effects.confirm?.invoke({ title: "Sure?" }, caps).then((r) => results.push(r));
+    await settle();
+    expect(results).toEqual([]);
+    handle.dispose();
+    await settle();
+    expect(results).toEqual([{ kind: "ok", value: null }]);
   });
 });
