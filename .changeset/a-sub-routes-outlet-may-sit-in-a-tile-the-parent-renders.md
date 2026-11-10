@@ -19,7 +19,7 @@ app M caps=[] routes={"/settings/*" -> SettingsLayout, "/404" -> NotFound} init=
 ```
 
 ```
-E0113 sub-routes-without-outlet at 4:1: Tile "SettingsLayout" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render
+error E0113 sub-routes-without-outlet at 4:1: Tile "SettingsLayout" declares sub-routes but its body never calls "route-outlet" — the matched child would have nowhere to render
 ```
 
 Yet code generation inlines `Outlet` into the parent's tree, and the runtime

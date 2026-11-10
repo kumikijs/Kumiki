@@ -1,7 +1,17 @@
-import type { AppShape, EffectSpec, EpisodeStep, userPanicInfo } from "@kumikijs/runtime";
-import { createEpisodeLogger, mount, renderToString } from "@kumikijs/runtime";
+import type { AppShape, EffectSpec, EmitSpec, EpisodeStep, userPanicInfo } from "@kumikijs/runtime";
+import {
+  createEpisodeLogger,
+  hydrate,
+  mount,
+  mountCore,
+  renderToString,
+  textPatchers,
+  textTiles,
+} from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { lifecycleReducer } from "./helpers/app.ts";
 import { captureConsole } from "./helpers/console.ts";
+import { defined } from "./helpers/defined.ts";
 import { freshRoot } from "./helpers/dom.ts";
 
 type PanicInfo = ReturnType<typeof userPanicInfo>;
@@ -254,5 +264,364 @@ describe("a refused effect is reported to the log (SSR)", () => {
       "panic",
       "effect-cancel",
     ]);
+  });
+});
+
+/** `save` misspelled: an emit naming no effect in `app.effects`. */
+const TYPO = { effect: "sve", args: ["draft"] } satisfies EmitSpec;
+const TYPO_MESSAGE = `effect "sve" is not declared in app.effects`;
+const TYPO_LINE = `[kumiki] panic in effect "sve": ${TYPO_MESSAGE}`;
+
+/**
+ * The kinds of an episode's steps, less the `signal-update`s each render adds:
+ * the order of the reducers, effects and panics is what these cases read.
+ */
+const stepKinds = (steps: readonly EpisodeStep[] = []): string[] =>
+  steps.map((s) => s.kind).filter((k) => k !== "signal-update");
+
+/**
+ * {@link makeApp} with its capability declared, so `save` runs wherever it is
+ * emitted, and with `emits` coming out of an `app.start` reducer rather than
+ * out of `app.init` — so a dispatch episode is open around them.
+ */
+function emitOnStart(emits: EmitSpec[]): ReturnType<typeof makeApp> {
+  const made = makeApp(["storage.write"]);
+  made.app.init = [];
+  made.app.reducers.push(lifecycleReducer("app.start", (live) => ({ slots: live, emits })));
+  return made;
+}
+
+/** Names every plain object inherits, none of them an own key of `app.effects`. */
+const INHERITED = ["toString", "constructor", "__proto__"];
+
+describe("an emit naming no effect is reported to the app (live)", () => {
+  it("fires app.error with the effect category", () => {
+    const { app, seen } = emitOnStart([TYPO]);
+
+    const { dispose } = mount(app, root);
+
+    // No waitFor: the name is looked up the moment the emit reaches the dispatcher, before any
+    // policy could defer it.
+    expect(seen).toMatchObject([
+      {
+        message: TYPO_MESSAGE,
+        location: `effect "sve"`,
+        "episode-id": { _tag: "None" },
+        cause: { _tag: "None" },
+        category: "effect",
+      },
+    ]);
+    expect(seen[0]).not.toHaveProperty("stack");
+    dispose();
+  });
+
+  it.each(INHERITED)("reports %s, an inherited key, as naming no effect", (name) => {
+    const { app, seen } = emitOnStart([{ effect: name, args: ["draft"] }]);
+
+    const { dispose } = mount(app, root);
+
+    expect(seen).toMatchObject([{ category: "effect", location: `effect "${name}"` }]);
+    expect(errors).toEqual([
+      `[kumiki] panic in effect "${name}": effect "${name}" is not declared in app.effects`,
+    ]);
+    dispose();
+  });
+
+  it("reports on the channel the verification tiers watch, in the same header", () => {
+    const { app } = emitOnStart([TYPO]);
+
+    const { dispose } = mount(app, root);
+
+    // One line: nothing was thrown, so there is no stack to continue it with.
+    expect(errors).toEqual([TYPO_LINE]);
+    expect(warnings).toEqual([]);
+    dispose();
+  });
+
+  it("leaves the emits beside it to run", async () => {
+    const { app, seen, ran } = emitOnStart([TYPO, { effect: "save", args: ["draft"] }]);
+
+    const { dispose } = mount(app, root);
+    await vi.waitFor(() => expect(ran).toEqual(["draft"]));
+
+    expect(seen.map((s) => s.location)).toEqual([`effect "sve"`]);
+    dispose();
+  });
+
+  it("records a panic step on the episode the emit came from, and no effect-start", () => {
+    const logger = createEpisodeLogger({ memoryMax: 10 });
+    const { app, seen } = emitOnStart([TYPO]);
+
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+
+    const owner = logger.list().find((e) => panicSteps(e.steps).length > 0);
+    expect(owner?.trigger).toMatchObject({ kind: "lifecycle", target: "app.start" });
+    // The emitting reducer, the report, then the `app.error` reducer joining
+    // the same episode. No `effect-start` and no `effect-cancel`: nothing was
+    // claimed, so there is nothing to release.
+    expect(stepKinds(owner?.steps)).toEqual(["reducer", "panic", "reducer"]);
+    const step = panicSteps(owner?.steps ?? [])[0];
+    expect(step).toMatchObject({
+      category: "effect",
+      location: `effect "sve"`,
+      message: TYPO_MESSAGE,
+    });
+    expect(step).not.toHaveProperty("stack");
+    expect(owner?.status).toBe("panic");
+    expect(seen[0]?.["episode-id"]).toEqual({ _tag: "Some", _0: owner?.id });
+    dispose();
+  });
+
+  it("records the panic on the episode a deferred effect's result reopens", async () => {
+    // A queued effect launches from a promise tail, after the episode that
+    // emitted it closed. Its `.ok` reducer runs with that episode back in
+    // focus, so an emit from there belongs to it — the step lands there, and
+    // `episode-id` names it, rather than an episode of its own or none.
+    const logger = createEpisodeLogger({ memoryMax: 10 });
+    const { app, seen } = emitOnStart([{ effect: "save", args: ["draft"] }]);
+    defined(app.effects.save, "the fixture's effect").policy = { kind: "queue" };
+    app.reducers.push({
+      name: "onSaved",
+      event: { kind: "effect", effect: "save", outcome: "ok" },
+      apply: (live) => ({ slots: live, emits: [TYPO] }),
+    });
+
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+
+    const owner = logger.list().find((e) => panicSteps(e.steps).length > 0);
+    expect(owner?.trigger).toMatchObject({ kind: "lifecycle", target: "app.start" });
+    expect(stepKinds(owner?.steps)).toEqual([
+      "reducer",
+      "effect-start",
+      "effect-end",
+      "reducer",
+      "panic",
+      "reducer",
+    ]);
+    expect(seen[0]?.["episode-id"]).toEqual({ _tag: "Some", _0: owner?.id });
+    dispose();
+  });
+
+  it("still reports an init-time emit, which no episode is open around", () => {
+    const logger = createEpisodeLogger({ memoryMax: 10 });
+    const { app, seen } = makeApp(["storage.write"]);
+    app.init = [TYPO];
+
+    const { dispose } = mount(app, root, { episodeLogger: logger });
+
+    // The answer the refusal above gets at the same moment: no episode to hold
+    // the step, so the console and `app.error` are the whole report.
+    expect(logger.list().flatMap((e) => panicSteps(e.steps))).toEqual([]);
+    expect(errors).toEqual([TYPO_LINE]);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.category).toBe("effect");
+    expect(seen[0]?.["episode-id"]).toEqual({ _tag: "None" });
+    dispose();
+  });
+
+  it("does not re-enter app.error when the handler itself emits it", () => {
+    const { app, seen } = makeApp(["storage.write"]);
+    app.init = [TYPO];
+    defined(app.reducers[0], "the fixture's handler").apply = (live, payload) => {
+      seen.push(payload.$event as PanicInfo);
+      return { slots: live, emits: [TYPO] };
+    };
+
+    const { dispose } = mount(app, root);
+
+    // Two reports, one dispatch into `app.error`.
+    expect(errors).toEqual([TYPO_LINE, TYPO_LINE]);
+    expect(seen).toHaveLength(1);
+    dispose();
+  });
+
+  it("runs a standard effect, which the mount installs before anything dispatches", async () => {
+    // The program declares no `log`; the mount registers it, so the name is a
+    // key of `app.effects` by the time `app.start` emits it.
+    const logged: unknown[] = [];
+    vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+      logged.push(args[1]);
+    });
+    const entry = { level: "info", message: "boot", data: {} };
+    const { app, seen } = emitOnStart([{ effect: "log", args: [entry] }]);
+    app.caps = ["log.write"];
+
+    const { dispose } = mount(app, root);
+    await vi.waitFor(() => expect(logged).toEqual([entry]));
+
+    expect(errors).toEqual([]);
+    expect(seen).toEqual([]);
+    dispose();
+  });
+
+  it.each([
+    "toast",
+    "confirm",
+    "navigate",
+  ])("reports %s when the mountCore host installed nothing that registers it", (name) => {
+    // No `builtins` and no `routing`: the only way a compiled program reaches this branch.
+    const { app, seen } = emitOnStart([{ effect: name, args: [{}] }]);
+
+    const { dispose } = mountCore(app, root, { tiles: textTiles, tilePatchers: textPatchers });
+
+    expect(errors).toEqual([
+      `[kumiki] panic in effect "${name}": effect "${name}" is not declared in app.effects`,
+    ]);
+    expect(seen).toMatchObject([{ category: "effect", location: `effect "${name}"` }]);
+    dispose();
+  });
+
+  it("says nothing for an http.cancel naming an id nothing is running under", () => {
+    // The effect is known and only the id it is handed is not: cancellation's
+    // idempotent no-op (http.md), not an emit the dispatcher cannot run.
+    const { app, seen } = emitOnStart([{ effect: "cancel", args: ["save:_"] }]);
+    app.caps = ["storage.write", "http.cancel"];
+    app.effects.cancel = {
+      name: "cancel",
+      cap: "http.cancel",
+      invoke: async () => ({ kind: "ok", value: null }),
+    };
+
+    const { dispose } = mount(app, root);
+
+    expect(errors).toEqual([]);
+    expect(seen).toEqual([]);
+    dispose();
+  });
+});
+
+describe("an emit naming no effect is reported to the log (SSR)", () => {
+  it("records the panic step the live path does, with no effect-start / effect-cancel pair", async () => {
+    const { app, seen } = makeApp(["storage.write"]);
+    app.init = [TYPO];
+
+    const { snapshot } = await renderToString(app);
+
+    // A refused capability is bracketed by a start and a cancel, because the
+    // pass has an effect to claim a start for. Here it has none, so the step
+    // is the whole record — and with no start claimed, nothing is left
+    // pending to keep the bootstrap episode from committing.
+    expect(snapshot.bootstrap.steps.map((s) => s.kind)).toEqual(["panic"]);
+    expect(snapshot.bootstrap.steps[0]).toMatchObject({
+      category: "effect",
+      location: `effect "sve"`,
+      message: TYPO_MESSAGE,
+    });
+    expect(snapshot.bootstrap.status).toBe("panic");
+    // The server pass has no `app.error` to fire, here as for the refusal.
+    expect(seen).toEqual([]);
+  });
+
+  it("prints the same console line the live path prints", async () => {
+    const { app } = makeApp(["storage.write"]);
+    app.init = [TYPO];
+
+    await renderToString(app);
+
+    expect(errors).toEqual([TYPO_LINE]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("leaves the init emits beside it to run", async () => {
+    const { app, ran } = makeApp(["storage.write"]);
+    app.init = [TYPO, { effect: "save", args: ["draft"] }];
+
+    const { snapshot } = await renderToString(app);
+
+    expect(ran).toEqual(["draft"]);
+    expect(snapshot.bootstrap.steps.map((s) => s.kind)).toEqual([
+      "panic",
+      "effect-start",
+      "effect-end",
+    ]);
+  });
+
+  it.each(INHERITED)("reports %s, an inherited key, as naming no effect", async (name) => {
+    const { app } = makeApp(["storage.write"]);
+    app.init = [{ effect: name, args: ["draft"] }];
+
+    const { snapshot } = await renderToString(app);
+
+    expect(snapshot.bootstrap.steps).toMatchObject([
+      { kind: "panic", category: "effect", location: `effect "${name}"` },
+    ]);
+  });
+
+  it("reports one a follow-up emits, and the bootstrap episode still commits", async () => {
+    // The `.ok` reducer runs inside the effect's own scope, so the report lands there, before the
+    // scope closes; with no start claimed for it, nothing is left pending.
+    const { app } = makeApp(["storage.write"]);
+    app.reducers.push({
+      name: "onSaved",
+      event: { kind: "effect", effect: "save", outcome: "ok" },
+      apply: (live) => ({ slots: live, emits: [TYPO] }),
+    });
+
+    const { snapshot } = await renderToString(app);
+
+    expect(stepKinds(snapshot.bootstrap.steps)).toEqual([
+      "effect-start",
+      "effect-end",
+      "reducer",
+      "panic",
+    ]);
+    expect(snapshot.bootstrap.status).toBe("panic");
+    expect(errors).toEqual([TYPO_LINE]);
+  });
+
+  it("adds no second line and no app.error when the client hydrates it", async () => {
+    const { app, seen } = makeApp(["storage.write"]);
+    app.init = [TYPO];
+    const rendered = await renderToString(app);
+
+    const handle = hydrate(app, root, rendered, { episodeLogger: createEpisodeLogger() });
+
+    expect(errors).toEqual([TYPO_LINE]);
+    expect(seen).toEqual([]);
+    expect(handle.episodes()[0]).toMatchObject({
+      id: rendered.bootstrapEpisode.id,
+      status: "panic",
+    });
+    handle.dispose();
+  });
+});
+
+/** The standard effects a full mount registers onto an app that declares none. */
+const installed = ((): string[] => {
+  const { app } = makeApp([]);
+  app.effects = {};
+  app.init = [];
+  const at = freshRoot();
+  mount(app, at).dispose();
+  at.remove();
+  return Object.keys(app.effects);
+})();
+
+describe("an emit of a standard effect is skipped on the server", () => {
+  it("knows all seven, so the cases below cannot pass on an empty list", () => {
+    expect([...installed].sort()).toEqual([
+      "confirm",
+      "log",
+      "navigate",
+      "navigate-back",
+      "navigate-replace",
+      "scroll-to",
+      "toast",
+    ]);
+  });
+
+  it.each(installed)("skips %s, a standard effect the pass does not run", async (name) => {
+    // Reporting it would put a panic on the console of every server render of a valid program
+    // whose `init` emits one, and ship its bootstrap as `"panic"`.
+    const { app } = makeApp([]);
+    app.effects = {};
+    app.init = [{ effect: name, args: [{}] }];
+
+    const { snapshot } = await renderToString(app);
+
+    expect(errors).toEqual([]);
+    expect(snapshot.bootstrap.steps).toEqual([]);
+    expect(snapshot.bootstrap.status).toBe("completed");
   });
 });

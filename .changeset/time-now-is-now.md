@@ -20,7 +20,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
 ```
 before: ok
-after:  E0201 type-mismatch at 2:21: Expected Bool but got Time
+after:  error E0201 type-mismatch at 2:21: Expected Bool but got Time
 ```
 
 The parser now reads `Time.now` and `Time.now()` as a call to `now` itself, so

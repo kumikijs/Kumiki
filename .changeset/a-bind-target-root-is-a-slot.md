@@ -34,7 +34,7 @@ root has to be a slot where the target is written. Each of these is now
 **E0229 `bind-target-not-slot`**, at the target, naming the root and what the
 checker knows it to be:
 
-> `input(bind=…) cannot write to "t": it is the variable of a for, not a slot — a bind writes back to a slot or a field path into one. To edit a row, show it with value= and update the list from a reducer (see docs/spec/forms.md)`
+> `input(bind=…) cannot write to "t": it is the variable of a for, not a slot — a bind writes back to a slot or a path into one. To edit a row, bind it through the slot by a Map key or an index the page holds (bind=rows[i].title), or show it with value= and update the list from a reducer (see docs/spec/forms.md)`
 >
 > `input(bind=…) cannot write to "$1": it is this tile's input, not a slot — …`
 >
