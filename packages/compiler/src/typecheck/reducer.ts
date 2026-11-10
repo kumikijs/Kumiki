@@ -1,32 +1,53 @@
-import { recordFieldType, typeToString, unaliasType } from "../assignable.ts";
-import type { Expr, Lvalue, ReducerDef, Statement, TypeExpr } from "../ast.ts";
+import { unaliasType } from "../assignable.ts";
+import type { AppDef, Lvalue, ReducerDef, Statement, TypeExpr, UiEventKind } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
-import { PANIC_INFO_TYPE, ROUTE_ERROR_INFO_TYPE } from "../stdlib-types.ts";
-import { UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
+import { refType } from "../stdlib-types.ts";
+import {
+  firesUnheardClauses,
+  kindsPhrase,
+  UI_EVENT_TILE_KINDS,
+  type WrappedUnreached,
+  wrappedUnreached,
+} from "../ui-lifts.ts";
 import {
   checkAgainst,
   checkEmitTarget,
-  type IndexStep,
-  indexStep,
+  checkIndexStep,
   lvalueType,
   unwrappedType,
 } from "./against.ts";
-import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
+import {
+  bindLocal,
+  type Ctx,
+  innerScope,
+  type KumikiError,
+  type StatementScope,
+  type SymbolTable,
+} from "./context.ts";
 import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
-import { inferType, prim, runtimeBuilt } from "./infer.ts";
+import { inferType, prim } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct } from "./patterns.ts";
+import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
 import { bindsRoute, namedByHandler, subscribedKinds, subscriptionIds } from "./tile-collect.ts";
 
+/** The scope a reducer's statements are checked in. */
+type ReducerCtx = Ctx & {
+  /** The names a statement nested in the body being checked ended: they end with the body too. */
+  endedInBody: Set<string>;
+};
+
 export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
-  const ctx: Ctx = {
+  const ctx: ReducerCtx = {
     kind: "reducer",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     capsAvailable: new Set(sym.app?.caps ?? []),
     routeBind: routeBindOf(r, sym),
+    endedScopes: new Map(),
+    endedInBody: new Set(),
   };
   if (r.on.kind === "EffectEvent") {
     const boundAt = new Map<string, number>();
@@ -82,6 +103,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
       pos: lifecycleTile.pos,
     });
   }
+  checkRoutePattern(r, sym, errors);
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_" && !sym.tiles.has(r.on.selector.tile)) {
     errors.push({
       code: "E0211",
@@ -112,18 +134,19 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   if (r.on.kind === "UiEvent" && r.on.selector.tile !== "_") {
-    const allowed = UI_EVENT_TILE_KINDS[r.on.ev];
+    const { ev, selector } = r.on;
+    const allowed = UI_EVENT_TILE_KINDS[ev];
     if (allowed != null) {
-      const descendants = subscribedKinds(r.on.selector.tile, sym);
+      const descendants = subscribedKinds(selector.tile, sym);
       const hasMatch = [...descendants].some((k) => allowed.has(k));
       if (descendants.size > 0 && !hasMatch) {
+        const reason = uiEventMismatchReason(ev, selector.tile, descendants);
         errors.push({
           code: "W0212",
           kind: "ui-event-tile-mismatch",
           severity: "warning",
           message:
-            `Reducer "${r.name}" subscribes to ui.${r.on.ev}(${r.on.selector.tile}) ` +
-            `but tile "${r.on.selector.tile}" has no descendant that fires "${r.on.ev}" ` +
+            `Reducer "${r.name}" subscribes to ui.${ev}(${selector.tile}) but ${reason} ` +
             `(DOM-allowed: ${[...allowed].join(", ")}; observed in body: ${[...descendants].sort().join(", ")}). ` +
             `The handler is silently dropped.`,
           pos: r.on.pos,
@@ -132,10 +155,71 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   ctx.localBinds.add("$el");
-  bindLocal(ctx, "$event", eventPayloadType(r.on, sym));
+  bindLocal(ctx, "$event", eventPayloadType(r.on));
 
   const writtenRoots = new Set<string>();
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
+}
+
+// A wrapped kind's focused element, and a kind whose renderer never calls the handler, do fire
+// the event; "no descendant fires it" would be untrue of them. No row records a kind that fires
+// unheard under key, focus or blur, so the two reasons never both apply.
+function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet<string>): string {
+  const unheard = firesUnheardClauses(ev, kinds);
+  if (unheard.length > 0) {
+    return `"${ev}" never reaches a reducer in tile "${tile}": ${unheard.join("; ")}`;
+  }
+  const unreached = wrappedUnreached(ev, kinds).map((g) => wrappedClause(ev, g));
+  if (unreached.length > 0) {
+    return `"${ev}" never reaches a listener in tile "${tile}": ${unreached.join("; ")}`;
+  }
+  return `tile "${tile}" has no descendant that fires "${ev}"`;
+}
+
+function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
+  const kinds = kindsPhrase(g.kinds);
+  return g.bubbles
+    ? `${kinds} takes no "${ev}" listener on the <${g.wrapper}> around its <${g.focused}>, ` +
+        `since a control in its panel takes the subscription instead — ` +
+        `write ${g.handler}= on the ${g.kinds.join(" / ")} to hear a "${ev}" on its <${g.focused}>`
+    : `the runtime listens for "${ev}" on ${kinds}'s <${g.wrapper}>, ` +
+        `and the "${ev}" its <${g.focused}> fires does not bubble to the <${g.wrapper}>`;
+}
+
+function declaredRoutePatterns(
+  app: AppDef,
+  sym: SymbolTable,
+): { renders: string[]; redirects: Set<string> } {
+  const renders: string[] = [];
+  const redirects = new Set<string>();
+  const subRoutes = [...sym.tiles.values()].flatMap((t) => t.subRoutes ?? []);
+  for (const { path, tile } of [...app.routes, ...subRoutes]) {
+    if (tile.startsWith(">>")) redirects.add(path);
+    else if (!renders.includes(path)) renders.push(path);
+  }
+  return { renders, redirects };
+}
+
+// With no `app` there are no routes to compare against, and E0003 is the report.
+function checkRoutePattern(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
+  const target = r.on.kind === "LifecycleEvent" ? r.on.routePattern : undefined;
+  if (!target || !sym.app) return;
+  const { renders, redirects } = declaredRoutePatterns(sym.app, sym);
+  if (renders.includes(target.pattern)) return;
+  const quoted = JSON.stringify(target.pattern);
+  const why = redirects.has(target.pattern)
+    ? `${quoted} is a redirect (->>), which the router follows before any route is shown, so the subscription never fires`
+    : `no route is declared at ${quoted}, so the subscription never fires: the argument is compared to the keys of app.routes and of every sub-routes map character for character`;
+  const declared =
+    renders.length > 0
+      ? `Declared routes: ${renders.map((p) => JSON.stringify(p)).join(", ")}`
+      : "The app declares no routes";
+  errors.push({
+    code: "E0228",
+    kind: "undef-route-pattern",
+    message: `Reducer "${r.name}" subscribes to ${target.event}(${quoted}), but ${why}. ${declared}`,
+    pos: target.pos,
+  });
 }
 
 // A route trigger hands `$route` the route on every firing; a prefetch target on another trigger
@@ -145,12 +229,10 @@ function routeBindOf(r: ReducerDef, sym: SymbolTable): Ctx["routeBind"] {
   return bindsRoute(r, sym) ? "prefetch" : "unbound";
 }
 
-function eventPayloadType(on: ReducerDef["on"], sym: SymbolTable): TypeExpr | null {
+function eventPayloadType(on: ReducerDef["on"]): TypeExpr | null {
   if (on.kind !== "LifecycleEvent") return null;
-  if (on.name === "app.error") return runtimeBuilt("PanicInfo", PANIC_INFO_TYPE, sym);
-  if (on.name.startsWith("route.error(")) {
-    return runtimeBuilt("RouteErrorInfo", ROUTE_ERROR_INFO_TYPE, sym);
-  }
+  if (on.name === "app.error") return refType("PanicInfo");
+  if (on.name.startsWith("route.error(")) return refType("RouteErrorInfo");
   return null;
 }
 
@@ -158,46 +240,33 @@ function checkStmt(
   s: Statement,
   sym: SymbolTable,
   errors: KumikiError[],
-  ctx: Ctx,
+  ctx: ReducerCtx,
   writtenRoots: Set<string>,
 ): void {
   if (s.kind === "ForStmt") {
-    checkExpr(s.iter, sym, errors, ctx);
     checkIterationTarget(s.iter, sym, errors, ctx);
-    const inner = innerScope(ctx);
-    bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx));
-    const bodyWrites = new Set<string>(writtenRoots);
-    for (const st of s.body) checkStmt(st, sym, errors, inner, bodyWrites);
-    for (const r of bodyWrites) writtenRoots.add(r);
+    const bind = (inner: Ctx) => bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx));
+    checkBodies("for", [{ stmts: s.body, bind }], sym, errors, ctx, writtenRoots);
     return;
   }
   if (s.kind === "IfStmt") {
     checkExpr(s.cond, sym, errors, ctx);
     checkCondition(s.cond, inferType(s.cond, sym, ctx), sym, errors, '"if"');
-    const thenWrites = new Set<string>(writtenRoots);
-    const thenScope = innerScope(ctx);
-    for (const st of s.consequent) checkStmt(st, sym, errors, thenScope, thenWrites);
-    const elseWrites = new Set<string>(writtenRoots);
-    const elseScope = innerScope(ctx);
-    for (const st of s.alternate) checkStmt(st, sym, errors, elseScope, elseWrites);
-    for (const r of thenWrites) writtenRoots.add(r);
-    for (const r of elseWrites) writtenRoots.add(r);
+    const branches = [{ stmts: s.consequent }, { stmts: s.alternate }];
+    checkBodies("if", branches, sym, errors, ctx, writtenRoots);
     return;
   }
   if (s.kind === "MatchStmt") {
     checkExpr(s.scrutinee, sym, errors, ctx);
-    const scrutType = inferType(s.scrutinee, sym, ctx);
-    // Arms are mutually exclusive — each starts fresh from the parent set.
-    const armSets: Set<string>[] = [];
-    for (const arm of s.arms) {
-      const inner = innerScope(ctx);
-      checkPatternBindsAreDistinct(arm.pattern, errors);
-      checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
-      const armWrites = new Set<string>(writtenRoots);
-      for (const st of arm.body) checkStmt(st, sym, errors, inner, armWrites);
-      armSets.push(armWrites);
-    }
-    for (const set of armSets) for (const r of set) writtenRoots.add(r);
+    const scrutType = matchedType(inferType(s.scrutinee, sym, ctx), s.arms, sym);
+    const arms = s.arms.map((arm) => ({
+      stmts: arm.body,
+      bind: (inner: Ctx) => {
+        checkPatternBindsAreDistinct(arm.pattern, errors);
+        checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
+      },
+    }));
+    checkBodies("match", arms, sym, errors, ctx, writtenRoots);
     return;
   }
   if (s.kind === "NoopStmt") return;
@@ -211,7 +280,8 @@ function checkStmt(
     const confirmArg = s.effect === "confirm" && s.args.length === 1 ? s.args[0] : undefined;
     if (confirmArg && confirmArg.kind === "RecordLit") {
       for (const f of confirmArg.fields) {
-        if ((f.name === "onYes" || f.name === "onNo") && f.value.kind === "Ref") {
+        const names = f.name === "onYes" || f.name === "onNo";
+        if (names && f.value.kind === "Ref") {
           if (!sym.reducers.has(f.value.name)) {
             errors.push({
               code: "E0103",
@@ -222,6 +292,9 @@ function checkStmt(
           }
           continue;
         }
+        // A capitalised reducer name parses as a tag; the `ReducerRef` check
+        // already reports it, and resolving it as a tag would report it twice.
+        if (names && f.value.kind === "Variant" && f.value.payload.length === 0) continue;
         checkExpr(f.value, sym, errors, ctx);
       }
       return;
@@ -269,6 +342,51 @@ function checkStmt(
   checkAgainst(s.rhs, lvalueType(s.lvalue, sym), sym, errors, ctx);
 }
 
+// A read moved into the body would still be after an expression that ended the name last.
+function endedByStatement(ctx: Ctx, name: string): boolean {
+  const kind = ctx.endedScopes.get(name)?.kind;
+  return kind === "if" || kind === "for" || kind === "match";
+}
+
+/**
+ * The bodies of one `if`, `for` or `match`, checked in order. They are mutually exclusive, so
+ * each starts from the slots written before the statement.
+ *
+ * A name the body declares and `ctx` does not bind ends with the body, as does a name a statement
+ * nested in it ended, unless an expression later in the body ended it again; `ctx.endedScopes`
+ * records it under `kind`. A read of it in a later body of the same statement is in a sibling of
+ * the body that declared it.
+ */
+function checkBodies(
+  kind: StatementScope,
+  bodies: readonly { stmts: Statement[]; bind?: (inner: Ctx) => void }[],
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: ReducerCtx,
+  writtenRoots: Set<string>,
+): void {
+  const ended = new Set<string>();
+  const writes: Set<string>[] = [];
+  for (const { stmts, bind } of bodies) {
+    const inner: ReducerCtx = { ...innerScope(ctx), endedInBody: new Set() };
+    const bodyWrites = new Set(writtenRoots);
+    bind?.(inner);
+    for (const st of stmts) checkStmt(st, sym, errors, inner, bodyWrites);
+    for (const name of [...inner.localBinds, ...inner.endedInBody]) {
+      if (ctx.localBinds.has(name)) continue;
+      if (!inner.localBinds.has(name) && !endedByStatement(ctx, name)) continue;
+      ctx.endedScopes.set(name, { kind, sibling: true });
+      ended.add(name);
+    }
+    writes.push(bodyWrites);
+  }
+  for (const name of ended) {
+    ctx.endedScopes.set(name, { kind, sibling: false });
+    ctx.endedInBody.add(name);
+  }
+  for (const set of writes) for (const r of set) writtenRoots.add(r);
+}
+
 function lvalueShape(lv: Lvalue): string {
   if (lv.kind === "LSlot") return lv.name;
   const parts: string[] = [];
@@ -294,7 +412,7 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
   checkLvalue(lv.base, sym, errors, ctx);
   if (lv.kind === "LIndex") {
     checkExpr(lv.index, sym, errors, ctx);
-    checkIndexLvalue(lv, sym, errors, ctx);
+    checkIndexStep(lvalueType(lv.base, sym), lv.index, "write", lv.pos, sym, errors, ctx);
   } else {
     const raw = lvalueType(lv.base, sym);
     const base = unaliasType(raw, sym);
@@ -303,36 +421,6 @@ function checkLvalue(lv: Lvalue, sym: SymbolTable, errors: KumikiError[], ctx: C
       checkMemberLvalue(lv, raw, base, sym, errors);
     }
   }
-}
-
-function checkIndexLvalue(
-  lv: Lvalue & { kind: "LIndex" },
-  sym: SymbolTable,
-  errors: KumikiError[],
-  ctx: Ctx,
-): void {
-  const step = indexStep(lvalueType(lv.base, sym), sym);
-  if (step.kind === "place" && step.key) checkAgainst(lv.index, step.key, sym, errors, ctx);
-  if (step.kind !== "no-place") return;
-  errors.push({
-    code: "E0602",
-    kind: "unassignable-member",
-    message: noPlaceMessage(step, lv.index),
-    pos: lv.pos,
-  });
-}
-
-function noPlaceMessage(step: IndexStep & { kind: "no-place" }, index: Expr): string {
-  const { raw, base } = step;
-  const into = `Cannot assign through an index into "${typeToString(raw)}"`;
-  if (base.kind === "TypeApp" && base.name === "Set") {
-    return `${into}: a Set has members, not places — use .add / .remove / .toggle`;
-  }
-  const field =
-    base.kind === "TypeRecord" && index.kind === "Str" && recordFieldType(base, index.value)
-      ? ` — write the field step ".${index.value}"`
-      : "";
-  return `${into}: an index names a place only in a Map or a List${field}`;
 }
 
 function checkMemberLvalue(

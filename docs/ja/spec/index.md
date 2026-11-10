@@ -51,7 +51,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | コード | kind | 層 | 機能 |
 |---|---|---|---|
 | [E0000](./errors.md#e0000-parse-error) | `parse-error` | all | コア |
-| [E0001](./errors.md#e0001-missing-404) | `missing-404` | app | ルーティング |
+| [E0001](./errors.md#e0001-missing-404-404-is-redirect-404-in-sub-routes) | `missing-404` / `404-is-redirect` / `404-in-sub-routes` | app / tile | ルーティング |
 | [E0002](./errors.md#e0002-duplicate-timer-name) | `duplicate-timer-name` | app | ライフサイクル |
 | [E0003](./errors.md#e0003-missing-app) | `missing-app` | app | コア |
 | [E0004](./errors.md#e0004-duplicate-app) | `duplicate-app` | app | コア |
@@ -75,7 +75,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0113](./errors.md#e0113-sub-routes-without-outlet) | `sub-routes-without-outlet` | tile | ルーティング |
 | [E0114](./errors.md#e0114-sub-routes-without-wildcard-parent) | `sub-routes-without-wildcard-parent` | tile | ルーティング |
 | [E0115](./errors.md#e0115-reserved-slot-name) | `reserved-slot-name` | slot | コア |
-| [E0116](./errors.md#e0116-undef-call) | `undef-call` | fn | コア |
+| [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier) | `undef-call` / `undef-variant` / `undef-qualifier` | fn | コア |
 | [E0117](./errors.md#e0117-undef-type) | `undef-type` | type | コア |
 | [E0118](./errors.md#e0118-undef-theme) | `undef-theme` | app | スタイル |
 | [E0119](./errors.md#e0119-route-bind-out-of-scope) | `route-bind-out-of-scope` | reducer | ルーティング |
@@ -111,6 +111,9 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0225](./errors.md#e0225-radio-bind-without-value) | `radio-bind-without-value` | tile | フォーム |
 | [E0226](./errors.md#e0226-input-bind-type) | `input-bind-type` | tile | フォーム |
 | [E0227](./errors.md#e0227-non-exhaustive-match) | `non-exhaustive-match` | type | コア |
+| [E0229](./errors.md#e0229-bind-target-not-slot) | `bind-target-not-slot` | tile | フォーム |
+| [E0231](./errors.md#e0231-reserved-type-name) | `reserved-type-name` | type | コア |
+| [E0234](./errors.md#e0234-reserved-effect-name) | `reserved-effect-name` | effect | 標準ライブラリ |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | フォーム |
@@ -125,7 +128,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0402](./errors.md#e0402-motion-invalid-timing) | `motion-invalid-timing` | tile | スタイル |
 | [E0403](./errors.md#e0403-motion-malformed) | `motion-malformed` | tile | スタイル |
 | [E0601](./errors.md#e0601-duplicate-write) | `duplicate-write` | reducer | コア |
-| [E0602](./errors.md#e0602-unassignable-member) | `unassignable-member` | reducer | コア |
+| [E0602](./errors.md#e0602-unassignable-member) | `unassignable-member` | reducer / tile | コア |
 | [E0701](./errors.md#e0701-a11y-button) | `a11y-button` | tile | ライフサイクル |
 | [E0702](./errors.md#e0702-a11y-image) | `a11y-image` | tile | ライフサイクル |
 | [E0703](./errors.md#e0703-a11y-link) | `a11y-link` | tile | ライフサイクル |
@@ -134,6 +137,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0712](./errors.md#e0712-episode-mock-invalid) | `episode-mock-invalid` | effect | テスト |
 | [E0713](./errors.md#e0713-test-shape-invalid) | `test-shape-invalid` | effect | テスト |
 | [E0714](./errors.md#e0714-test-section-unknown) | `test-section-unknown` | effect | テスト |
+| [E0715](./errors.md#e0715-for-all-no-generator) | `for-all-no-generator` | effect | テスト |
 | [E0801](./errors.md#e0801-unimplemented-method) | `unimplemented-method` | fn | 標準ライブラリ |
 | [E0802](./errors.md#e0802-unimplemented-function) | `unimplemented-function` | fn | 標準ライブラリ |
 | [E0803](./errors.md#e0803-unimplemented-refinement) | `unimplemented-refinement` | type | コア |

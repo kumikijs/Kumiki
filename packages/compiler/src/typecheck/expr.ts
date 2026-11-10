@@ -1,31 +1,37 @@
-import {
-  assignable,
-  elementType,
-  nominallyComparable,
-  typeToString,
-  unaliasType,
-} from "../assignable.ts";
+import { nearestName } from "@kumikijs/runtime/text-distance";
+import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
-import { RUN_REDUCER } from "../builtin-calls.ts";
-import { FRAGMENT_ARGUMENTS, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
-import { receiverParams } from "../stdlib-members.ts";
+import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
+import { fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
+import { showShapeOf } from "../show-shape.ts";
+import {
+  type FragmentArgument,
+  fragmentArgument,
+  fragmentBinds,
+  readsShortCall,
+  receiverParams,
+  TYPE_ARGUMENT_OF,
+} from "../stdlib-members.ts";
 import {
   checkAgainst,
   checkEmitTarget,
   checkGetArity,
   checkGetOrArity,
+  checkIndexStep,
   checkRecordUpdate,
   getOrResultType,
-  indexStep,
 } from "./against.ts";
-import { arithmeticHint, checkCallee, reportRunReducerPosition } from "./callee.ts";
+import { arithmeticHint, checkCallee, endedScopeHint, reportRunReducerPosition } from "./callee.ts";
 import {
   bindLocal,
   type Ctx,
+  checkArms,
+  endScope,
   innerScope,
   isBuiltinCall,
   type KumikiError,
   type SymbolTable,
+  severityOf,
   wildcardText,
 } from "./context.ts";
 import { currentFnName } from "./fn.ts";
@@ -53,6 +59,7 @@ import {
   checkMatchCovers,
   checkPatternAgainstType,
   checkPatternBindsAreDistinct,
+  matchedType,
 } from "./patterns.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
 
@@ -61,23 +68,80 @@ export function elementTypeOf(iter: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr 
   return elementType(inferType(iter, sym, ctx), sym);
 }
 
+// Checks the expression itself, so callers don't. An error reported at the expression is one
+// mistake, reported once; one inside it leaves the type decided, and E0218 is reported beside it.
 export function checkIterationTarget(
   iter: Expr,
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  const t = unaliasType(inferType(iter, sym, ctx), sym);
-  if (t?.kind !== "TypeApp") return;
-  const remedy = t.name === "Map" ? "keys" : t.name === "Set" ? "to-list" : null;
-  if (!remedy) return;
-  const alternative = t.name === "Map" ? " (or .values, which binds the value)" : "";
+  const before = errors.length;
+  checkExpr(iter, sym, errors, ctx);
+  const atTarget = (p: Pos) => p.line === iter.pos.line && p.col === iter.pos.col;
+  if (errors.slice(before).some((e) => severityOf(e) === "error" && atTarget(e.pos))) return;
+  const written = inferType(iter, sym, ctx);
+  const target = written && nonListTarget(written, sym);
+  if (!target) return;
   errors.push({
     code: "E0218",
     kind: "for-over-non-list",
-    message: `"for" iterates a List, but this is a ${t.name} — iterate its .${remedy}${alternative}`,
+    message: `"for" iterates a List, but this is ${target.shown}${target.remedy ? ` — ${target.remedy}` : ""}`,
     pos: iter.pos,
+    ...(target.accessor ? { accessor: target.accessor } : {}),
   });
+}
+
+type NonListTarget = {
+  shown: string;
+  remedy: string | null;
+  accessor?: KumikiError["accessor"];
+};
+
+// The message names the type as written, so an alias reads as the author's name for it; the
+// remedy is chosen from what the alias stands for. A `Map` or a `Set` written as one reads
+// "a Map" / "a Set".
+function nonListTarget(written: TypeExpr, sym: SymbolTable): NonListTarget | null {
+  const t = unaliasType(written, sym);
+  if (t === null || t.kind === "TypeRef") return null;
+  const shown = typeToString(written);
+  const asWritten = (name: string) =>
+    written.kind === "TypeApp" && written.name === name ? `a ${name}` : shown;
+  if (t.kind === "TypeApp") {
+    switch (t.name) {
+      case "List":
+        return null;
+      // A `Map` has two lists and they bind different things, so the message names both.
+      case "Map":
+        return {
+          shown: asWritten("Map"),
+          remedy: "iterate its .keys (or .values, which binds the value)",
+          accessor: "keys",
+        };
+      case "Set":
+        return { shown: asWritten("Set"), remedy: "iterate its .to-list", accessor: "to-list" };
+      case "Option":
+        return { shown, remedy: unwrapRemedy(t, "Some / None", sym) };
+      case "Result":
+        return { shown, remedy: unwrapRemedy(t, "Ok / Err", sym) };
+      case "Tuple":
+        return { shown, remedy: null };
+      default:
+        return null;
+    }
+  }
+  if (t.kind === "TypePrim" && t.name === "Text") {
+    return { shown, remedy: ".split(sep) breaks it into a List(Text)" };
+  }
+  return { shown, remedy: null };
+}
+
+// `.get-or([])` is offered only when the payload is a List, the one case its answer iterates.
+function unwrapRemedy(t: TypeExpr & { kind: "TypeApp" }, tags: string, sym: SymbolTable): string {
+  const payload = unaliasType(t.args[0] ?? null, sym);
+  return payload?.kind === "TypeApp" && payload.name === "List"
+    ? `iterate its .get-or([]), or match on ${tags}`
+    : `match on ${tags} to take out its value`;
 }
 
 /** A handle's text is whatever the runtime represents it as, so a page that showed it would change when that does. */
@@ -205,6 +269,17 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         });
         return;
       }
+      const ended = ctx.endedScopes.get(e.name);
+      if (ended !== undefined) {
+        errors.push({
+          code: "E0103",
+          kind: "undef-ref",
+          message: `Reference to undefined name "${e.name}"${endedScopeHint(e.name, ended, ctx)}`,
+          pos: e.pos,
+          endedScope: ended.kind,
+        });
+        return;
+      }
       errors.push({
         code: "E0103",
         kind: "undef-ref",
@@ -214,6 +289,18 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     }
     case "Variant":
+      // Codegen builds a variant from any spelling, so a tag no type declares is
+      // a record that equals nothing and reads `undefined` off every field.
+      if (!sym.constructorTags.has(e.name)) {
+        const report: KumikiError = {
+          code: "E0116",
+          kind: "undef-variant",
+          message: `Reference to undefined variant "${e.name}"${didYouMean(e.name, sym.constructorTags)}`,
+          pos: e.pos,
+        };
+        errors.push(report);
+        sym.undefinedVariants.set(report, e);
+      }
       for (const p of e.payload) checkExpr(p, sym, errors, ctx);
       return;
     case "BinOp": {
@@ -234,6 +321,10 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkExpr(e.lhs, sym, errors, ctx);
       checkExpr(e.rhs, sym, errors, ctx);
       if (!effectIdMisuse) checkBinOpOperands(e, sym, errors, ctx);
+      if (e.op === "+" && isPrimNamed(binOpResult(e, sym, ctx), sym, "Text")) {
+        noteShown(e.lhs, sym, ctx);
+        noteShown(e.rhs, sym, ctx);
+      }
       return;
     }
     case "UnaryOp": {
@@ -251,14 +342,28 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     }
     case "FieldAccess":
-      checkExpr(e.base, sym, errors, ctx);
+      // A bare `Q.member`'s `Q` is resolved as a qualifier (a tag, a type or a
+      // call namespace), not as the variant it parsed as: a type is no tag, and
+      // a misspelt one is reported once.
+      if (e.base.kind === "Variant" && e.base.payload.length === 0) {
+        if (!sym.qualifiers.has(e.base.name)) {
+          errors.push({
+            code: "E0116",
+            kind: "undef-qualifier",
+            message: `Reference to undefined qualifier "${e.base.name}" in "${e.base.name}.${e.field}"${didYouMean(e.base.name, sym.qualifiers)}`,
+            pos: e.base.pos,
+          });
+          return;
+        }
+      } else checkExpr(e.base, sym, errors, ctx);
       classifyFieldAccess(e, sym, errors, ctx);
+      // The member, not a record's own field that happens to be named `show`.
+      if (e.field === "show" && e.accessKind !== "field") noteShown(e.base, sym, ctx);
       return;
     case "Index": {
       checkExpr(e.base, sym, errors, ctx);
       checkExpr(e.index, sym, errors, ctx);
-      const step = indexStep(inferType(e.base, sym, ctx), sym);
-      if (step.kind === "place" && step.key) checkAgainst(e.index, step.key, sym, errors, ctx);
+      checkIndexStep(inferType(e.base, sym, ctx), e.index, "read", e.index.pos, sym, errors, ctx);
       return;
     }
     case "Call":
@@ -266,8 +371,12 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         reportRunReducerPosition(ctx, e.pos, errors);
         return;
       }
-      for (const a of e.args) checkExpr(a, sym, errors, ctx);
+      for (const a of e.args) {
+        if (e.callee === "Decoder.Json") checkTypeSpelling(a, sym, errors, ctx);
+        else checkExpr(a, sym, errors, ctx);
+      }
       checkCallee(e.callee, e.args, e.pos, sym, errors, ctx);
+      for (const a of shownArgs(e)) noteShown(a, sym, ctx);
       return;
     case "MethodCall": {
       // The chained spelling of the same thing: `run-reducer(inc).run-reducer(dec)`.
@@ -310,6 +419,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       }
       checkExpr(e.receiver, sym, errors, ctx);
       if (e.method === "copy") checkRecordUpdate(e, sym, errors, ctx);
+      if (e.method === "show") noteShown(e.receiver, sym, ctx);
       {
         const recvType =
           e.args.length > 0 || KEY_READER_NAMES.has(e.method)
@@ -317,9 +427,9 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             : null;
         const kind = keyKindOfReader(recvType, e.method, sym);
         if (kind) e.keyKind = kind;
-        const fragment = FRAGMENT_ARGUMENTS.get(e.method);
+        const fragment = fragmentArgument(e.method);
         const shape =
-          fragment?.second === "pair-value" ? fragmentShape(recvType, e.method, sym) : undefined;
+          fragment?.second === "pair-value" ? fragmentShape(recvType, e, sym, ctx) : undefined;
         if (shape !== undefined) e.fragmentShape = shape ?? "undecided";
         for (const [i, a] of e.args.entries()) {
           if (fragment?.index !== i) {
@@ -328,33 +438,33 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             if (declared !== null) checkAgainst(a, declared, sym, errors, ctx);
             continue;
           }
+          // A bare `fn` name is checked as the call the lowering makes of it.
+          let body: Expr = a;
           if (isFragmentFnName(a, sym, ctx)) {
             ctx.fragmentFnCallsSeen?.push({ name: a.name, pos: a.pos });
             if (lacksMember) continue;
-            const fits = checkFragmentFnArity(a, e.method, fragment, recvType, shape, sym, errors);
-            if (fits && e.method === "sort-by" && i === 0) {
-              checkSortKey(sym.fns.get(a.name)?.ret ?? null, a.pos, recvType, sym, errors);
+            const arity = sym.fns.get(a.name)?.params.length ?? 0;
+            if (!checkFragmentFnArity(a, arity, e.method, fragment, recvType, shape, errors)) {
+              continue;
             }
-            const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
-            if (fits && declared !== null) checkFragmentFnResult(a, declared, sym, errors);
-            continue;
+            body = fragmentCall(a.name, arity, a.pos);
           }
-          const [p1, p2] = fragmentBindings(recvType, e.method, i, sym);
+          const [p1, p2] = fragmentBindings(recvType, e, sym, ctx);
           const inner = innerScope(ctx);
           bindLocal(inner, "$1", p1);
           if (shape === "value") {
             inner.localBinds.delete("$2");
             inner.localTypes.delete("$2");
             inner.oneValueFragment = { method: e.method, hides: ctx.localBinds.has("$2") };
-          } else if (fragment.binds === 2) {
+          } else if (fragmentBinds(fragment) === 2) {
             bindLocal(inner, "$2", p2);
           }
-          checkExpr(a, sym, errors, inner);
+          checkExpr(body, sym, errors, inner);
           if (e.method === "sort-by" && i === 0) {
-            checkSortKey(inferType(a, sym, inner), a.pos, recvType, sym, errors);
+            checkSortKey(inferType(body, sym, inner), a.pos, recvType, sym, errors);
           }
           const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
-          if (declared !== null) checkAgainst(a, declared, sym, errors, inner);
+          if (declared !== null) checkAgainst(body, declared, sym, errors, inner);
         }
       }
       if (e.method === "get-or") {
@@ -391,16 +501,15 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     case "MatchExpr": {
       checkExpr(e.scrutinee, sym, errors, ctx);
-      const scrutType = inferType(e.scrutinee, sym, ctx);
+      const scrutType = matchedType(inferType(e.scrutinee, sym, ctx), e.arms, sym);
       let patternsFit = true;
-      for (const arm of e.arms) {
-        const inner = innerScope(ctx);
+      checkArms(e.arms, ctx, (arm, inner) => {
         checkPatternBindsAreDistinct(arm.pattern, errors);
         const before = errors.length;
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         if (errors.length > before) patternsFit = false;
         checkExpr(arm.body, sym, errors, inner);
-      }
+      });
       if (patternsFit) checkMatchCovers(e, scrutType, sym, errors);
       return;
     }
@@ -412,7 +521,9 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     case "LetIn": {
       checkExpr(e.value, sym, errors, ctx);
-      checkExpr(e.body, sym, errors, letInScope(e, sym, ctx));
+      const inner = letInScope(e, sym, ctx);
+      checkExpr(e.body, sym, errors, inner);
+      endScope("let-in", inner, ctx);
       return;
     }
     case "TokenRef":
@@ -441,6 +552,25 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
   }
 }
 
+function didYouMean(written: string, candidates: Iterable<string>): string {
+  const near = nearestName(written, candidates);
+  return near === null ? "" : ` — did you mean "${near}"?`;
+}
+
+// `Decoder.Json(T)` takes a type written in expression position, so its
+// capitalised names are a type's and not tags; codegen reads them back as one.
+function checkTypeSpelling(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  if (e.kind === "Variant") {
+    for (const p of e.payload) checkTypeSpelling(p, sym, errors, ctx);
+    return;
+  }
+  if (e.kind === "RecordLit") {
+    for (const f of e.fields) checkTypeSpelling(f.value, sym, errors, ctx);
+    return;
+  }
+  checkExpr(e, sym, errors, ctx);
+}
+
 function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { kind: "Ref" } {
   return (
     a.kind === "Ref" && !ctx.localBinds.has(a.name) && !sym.slots.has(a.name) && sym.fns.has(a.name)
@@ -449,14 +579,13 @@ function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { ki
 
 function checkFragmentFnArity(
   a: Expr & { kind: "Ref" },
+  n: number,
   method: string,
-  fragment: { binds: 1 | 2; second?: "element" | "pair-value" },
+  fragment: FragmentArgument,
   receiver: TypeExpr | null,
   shape: FragmentShape | null | undefined,
-  sym: SymbolTable,
   errors: KumikiError[],
 ): boolean {
-  const n = sym.fns.get(a.name)?.params.length ?? 0;
   const report = (why: string): false => {
     errors.push({
       code: "E0213",
@@ -470,7 +599,9 @@ function checkFragmentFnArity(
     return n === 2 || report(`.${method} supplies exactly 2 — the accumulator and the element`);
   }
   if (n === 0) return report(`.${method} needs at least 1`);
-  if (n > fragment.binds) return report(`.${method} supplies at most ${fragment.binds}`);
+  if (n > fragmentBinds(fragment)) {
+    return report(`.${method} supplies at most ${fragmentBinds(fragment)}`);
+  }
   if (n === 2 && (shape === "value" || shape === null)) {
     const on = receiver ? ` on "${typeToString(receiver)}"` : "";
     return report(
@@ -478,24 +609,6 @@ function checkFragmentFnArity(
     );
   }
   return true;
-}
-
-// A fn named as a fragment answers what an inline fragment would, so its declared result is read
-// against the parameter as the fragment's value is.
-function checkFragmentFnResult(
-  a: Expr & { kind: "Ref" },
-  declared: TypeExpr,
-  sym: SymbolTable,
-  errors: KumikiError[],
-): void {
-  const ret = sym.fns.get(a.name)?.ret ?? null;
-  if (ret === null || !isKnown(ret, sym) || assignable(ret, declared, sym)) return;
-  pushMismatch(
-    errors,
-    "E0201",
-    `Expected ${typeToString(declared)} but "${a.name}" answers ${typeToString(ret)}`,
-    a.pos,
-  );
 }
 
 const COMPARISON_OPS: ReadonlySet<string> = new Set(["<", ">", "<=", ">="]);
@@ -527,6 +640,19 @@ function checkSortKey(
     message: `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is ${typeToString(t as TypeExpr)}`,
     pos,
   });
+}
+
+export function noteShown(e: Expr, sym: SymbolTable, ctx: Ctx): void {
+  const shape = showShapeOf(inferType(e, sym, ctx), sym);
+  if (shape !== 0) e.showShape = shape;
+}
+
+function shownArgs(e: Expr & { kind: "Call" }): Expr[] {
+  if (e.callee === "fmt") return e.args;
+  const dot = e.callee.indexOf(".");
+  return dot > 0 && isQualifierName(e.callee.slice(0, dot)) && e.callee.slice(dot + 1) === "show"
+    ? e.args
+    : [];
 }
 
 export function binOpResult(
@@ -650,17 +776,15 @@ export function pushMismatch(
 
 /** The scope a `let … in` body is read in: the enclosing one, with the name bound. */
 export function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: Ctx): Ctx {
-  const inner: Ctx = {
-    ...ctx,
-    localBinds: new Set(ctx.localBinds),
-    localTypes: new Map(ctx.localTypes),
-  };
+  const inner = innerScope(ctx);
   bindLocal(inner, e.name, inferType(e.value, sym, ctx));
   return inner;
 }
 
 // A call given fewer arguments than the signature takes has none read against it: which argument
 // it meant as which is not decided (`m.get-or(d)` is the Option reading, whose argument is no key).
+// A call that can only drop trailing arguments, as `xs.slice(start)` does, still has the ones it
+// was given read.
 function memberArgType(
   recv: TypeExpr | null,
   member: string,
@@ -671,17 +795,17 @@ function memberArgType(
   const t = unaliasType(recv, sym);
   if (t?.kind !== "TypeApp") return null;
   const params = receiverParams(t.name, member);
-  if (params === undefined || argCount < params.length) return null;
+  if (params === undefined) return null;
+  if (argCount < params.length && !readsShortCall(t.name, member)) return null;
   const param = params[index] ?? null;
   switch (param) {
     case null:
       return null;
-    case "K":
-    case "T":
-      return t.args[0] ?? null;
-    case "V":
-      return t.args[1] ?? null;
     case "self":
       return recv;
+    case "Int":
+      return prim("Int", t.pos);
+    default:
+      return t.args[TYPE_ARGUMENT_OF[param]] ?? null;
   }
 }
