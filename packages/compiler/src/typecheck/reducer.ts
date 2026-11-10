@@ -19,7 +19,6 @@ import {
 import {
   bindLocal,
   type Ctx,
-  type EndedScope,
   innerScope,
   type KumikiError,
   type StatementScope,
@@ -34,7 +33,6 @@ import { bindsRoute, namedByHandler, subscribedKinds, subscriptionIds } from "./
 
 /** The scope a reducer's statements are checked in. */
 type ReducerCtx = Ctx & {
-  endedScopes: Map<string, EndedScope>;
   /** The names a statement nested in the body being checked ended: they end with the body too. */
   endedInBody: Set<string>;
 };
@@ -285,7 +283,8 @@ function checkStmt(
     const confirmArg = s.effect === "confirm" && s.args.length === 1 ? s.args[0] : undefined;
     if (confirmArg && confirmArg.kind === "RecordLit") {
       for (const f of confirmArg.fields) {
-        if ((f.name === "onYes" || f.name === "onNo") && f.value.kind === "Ref") {
+        const names = f.name === "onYes" || f.name === "onNo";
+        if (names && f.value.kind === "Ref") {
           if (!sym.reducers.has(f.value.name)) {
             errors.push({
               code: "E0103",
@@ -296,6 +295,9 @@ function checkStmt(
           }
           continue;
         }
+        // A capitalised reducer name parses as a tag; the `ReducerRef` check
+        // already reports it, and resolving it as a tag would report it twice.
+        if (names && f.value.kind === "Variant" && f.value.payload.length === 0) continue;
         checkExpr(f.value, sym, errors, ctx);
       }
       return;
@@ -343,13 +345,20 @@ function checkStmt(
   checkAgainst(s.rhs, lvalueType(s.lvalue, sym), sym, errors, ctx);
 }
 
+// A read moved into the body would still be after an expression that ended the name last.
+function endedByStatement(ctx: Ctx, name: string): boolean {
+  const kind = ctx.endedScopes.get(name)?.kind;
+  return kind === "if" || kind === "for" || kind === "match";
+}
+
 /**
  * The bodies of one `if`, `for` or `match`, checked in order. They are mutually exclusive, so
  * each starts from the slots written before the statement.
  *
  * A name the body declares and `ctx` does not bind ends with the body, as does a name a statement
- * nested in it ended; `ctx.endedScopes` records it under `kind`. A read of it in a later body of
- * the same statement is in a sibling of the body that declared it.
+ * nested in it ended, unless an expression later in the body ended it again; `ctx.endedScopes`
+ * records it under `kind`. A read of it in a later body of the same statement is in a sibling of
+ * the body that declared it.
  */
 function checkBodies(
   kind: StatementScope,
@@ -368,6 +377,7 @@ function checkBodies(
     for (const st of stmts) checkStmt(st, sym, errors, inner, bodyWrites);
     for (const name of [...inner.localBinds, ...inner.endedInBody]) {
       if (ctx.localBinds.has(name)) continue;
+      if (!inner.localBinds.has(name) && !endedByStatement(ctx, name)) continue;
       ctx.endedScopes.set(name, { kind, sibling: true });
       ended.add(name);
     }

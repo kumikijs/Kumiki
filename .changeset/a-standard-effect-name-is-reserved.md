@@ -39,7 +39,7 @@ After:
 
 ```
 $ kumiki check app.kumiki
-E0234 reserved-effect-name at 2:1: Effect "log" collides with the built-in effect log; emits of it never run this effect
+error E0234 reserved-effect-name at 2:1: Effect "log" collides with the built-in effect log; emits of it never run this effect
 ```
 
 It is reported once per declaration. The program's uses of the name are still

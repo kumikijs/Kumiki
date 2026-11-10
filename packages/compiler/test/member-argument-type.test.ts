@@ -2,7 +2,7 @@
 // `Text` into a `List(Int)` slot.
 
 import { describe, expect, it } from "vitest";
-import { RECEIVER_PARAMS } from "../src/stdlib-members.ts";
+import { RECEIVER_PARAMS, readsShortCall } from "../src/stdlib-members.ts";
 import { codesOf, locatedOf, pointedErrorsOf, summariesOf } from "./helpers/diagnostics.ts";
 import { withApp, withButtonApp } from "./helpers/programs.ts";
 
@@ -158,7 +158,6 @@ slot ts     : List(Text)             = ["a"]
 slot s      : Set(Text)              = []
 slot byNum  : Map(Int, Text)         = {}
 slot flags  : Map(Int, Bool)         = {}
-slot chunks : List(List(Text))       = []
 slot shown  : List(Text)             = []
 slot pairs  : List(Tuple(Int, Text)) = []
 slot first  : Text                   = ""
@@ -167,8 +166,7 @@ slot folded : Text                   = ""
 slot found  : Int                    = 0
 reducer go on=ui.click(Btn) do=
     first := ts.get(0).get-or("")
-    ts := ts.slice(0, 1).sort-by($1.length)
-    chunks := ts.chunk(2)
+    ts := ts.sort-by($1.length)
     joined := nums.join(",")
     byNum := byNum.filter($2 != "")
     flags := byNum.map($2 == "")
@@ -232,12 +230,13 @@ reducer go on=ui.click(Btn) do=
 // A member argument the receiver types as an `Int` is an `Int` position, so a literal there past
 // the safe range is one E0217 at its sign, as it is as a slot's value or a Map literal's key.
 describe("an Int literal past the safe range as a member argument the receiver types", () => {
-  const INTS = `slot m  : Map(Int, Int) = {}
-slot mf : Map(Int, Float) = {}
-slot s  : Set(Int) = []
-slot xs : List(Int) = []
-slot b  : Bool = false
-slot n  : Int = 0`;
+  const INTS = `slot m   : Map(Int, Int) = {}
+slot mf  : Map(Int, Float) = {}
+slot s   : Set(Int) = []
+slot xs  : List(Int) = []
+slot xss : List(List(Int)) = []
+slot b   : Bool = false
+slot n   : Int = 0`;
   const BIG = "-9007199254740993";
   const reported = (stmt: string) =>
     pointedErrorsOf(app(`${INTS}\nreducer go on=ui.click(Btn) do= ${stmt}`)).map(
@@ -274,6 +273,10 @@ reducer r on=ui.click(B) do= m := m.insert(${BIG}, 1)`);
     ["List.contains", `b := xs.contains(${BIG})`],
     ["List.get's index", `n := xs.get(${BIG}).get-or(0)`],
     ["List.concat, a literal's item", `xs := xs.concat([${BIG}])`],
+    ["List.slice's start", `xs := xs.slice(${BIG}, 1)`],
+    ["List.slice's end", `xs := xs.slice(0, ${BIG})`],
+    ["List.slice's one argument", `xs := xs.slice(${BIG})`],
+    ["List.chunk's size", `xss := xs.chunk(${BIG})`],
   ])("%s is one E0217, at the literal's sign", (_member, stmt) => {
     expect(reported(stmt)).toEqual([
       { code: "E0217", text: expect.stringMatching(/^-9007199254740993/) },
@@ -289,22 +292,26 @@ reducer r on=ui.click(B) do= m := m.insert(${BIG}, 1)`);
   });
 });
 
-// A call given fewer arguments than a row lists has none read against it, so a row longer than
-// the arity `check` enforces would turn the check off for every call that arity allows.
+// A call given fewer arguments than a row lists has none read against it, unless `readsShortCall`
+// names its member, so a row longer than the arity `check` enforces would turn the check off for
+// every call that arity allows.
 describe("each row of the parameter table is the member's arity", () => {
   /** A call of `member` on the parameter `recv`, one row per member that takes arguments. */
   const rowsOf = (
     receiver: string,
     recv: string,
-    row: Readonly<Record<string, readonly unknown[]>>,
+    row: Readonly<Record<string, readonly (string | null)[]>>,
   ) =>
     Object.entries(row)
       .filter(([, params]) => params.length > 0)
       .map(([member, params]) => ({
         name: `${receiver}.${member}`,
+        receiver,
+        member,
+        params,
         n: params.length,
-        call: (count: number) =>
-          `${recv}.${member}(${Array.from({ length: count }, () => "1").join(", ")})`,
+        call: (count: number, arg = "1") =>
+          `${recv}.${member}(${Array.from({ length: count }, () => arg).join(", ")})`,
       }));
   const rows = [
     ...rowsOf("Map", "m", RECEIVER_PARAMS.Map),
@@ -317,11 +324,25 @@ describe("each row of the parameter table is the member's arity", () => {
 tile App = column(text("x"))`),
     );
 
-  // stdlib.md writes `slice(start, end)`, but `check` sets `slice` no lower bound yet.
-  const bounded = rows.filter(({ name }) => name !== "List.slice");
+  // A member whose short call is read takes one, as `xs.slice(start)` runs to the list's end.
+  const shortCalls = rows.filter(({ receiver, member }) => readsShortCall(receiver, member));
+  const bounded = rows.filter(({ receiver, member }) => !readsShortCall(receiver, member));
 
   it.each(bounded)("$name with one argument fewer than its row is E0213", ({ n, call }) => {
     expect(codes(call(n - 1))).toContain("E0213");
+  });
+
+  // A `Text` is none of the receivers' key, value, element or own type, nor an `Int`.
+  it.each(
+    shortCalls,
+  )("$name with one argument fewer than its row has each argument it was given read", ({
+    n,
+    params,
+    call,
+  }) => {
+    const typed = params.slice(0, n - 1).filter((p) => p !== null);
+    expect(typed).not.toEqual([]);
+    expect(codes(call(n - 1, '"x"'))).toEqual(typed.map(() => "E0201"));
   });
 
   it.each(rows)("$name with as many arguments as its row is no E0213", ({ n, call }) => {

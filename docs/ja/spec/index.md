@@ -51,7 +51,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | コード | kind | 層 | 機能 |
 |---|---|---|---|
 | [E0000](./errors.md#e0000-parse-error) | `parse-error` | all | コア |
-| [E0001](./errors.md#e0001-missing-404) | `missing-404` | app | ルーティング |
+| [E0001](./errors.md#e0001-missing-404-404-is-redirect-404-in-sub-routes) | `missing-404` / `404-is-redirect` / `404-in-sub-routes` | app / tile | ルーティング |
 | [E0002](./errors.md#e0002-duplicate-timer-name) | `duplicate-timer-name` | app | ライフサイクル |
 | [E0003](./errors.md#e0003-missing-app) | `missing-app` | app | コア |
 | [E0004](./errors.md#e0004-duplicate-app) | `duplicate-app` | app | コア |
@@ -75,7 +75,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0113](./errors.md#e0113-sub-routes-without-outlet) | `sub-routes-without-outlet` | tile | ルーティング |
 | [E0114](./errors.md#e0114-sub-routes-without-wildcard-parent) | `sub-routes-without-wildcard-parent` | tile | ルーティング |
 | [E0115](./errors.md#e0115-reserved-slot-name) | `reserved-slot-name` | slot | コア |
-| [E0116](./errors.md#e0116-undef-call) | `undef-call` | fn | コア |
+| [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier) | `undef-call` / `undef-variant` / `undef-qualifier` | fn | コア |
 | [E0117](./errors.md#e0117-undef-type) | `undef-type` | type | コア |
 | [E0118](./errors.md#e0118-undef-theme) | `undef-theme` | app | スタイル |
 | [E0119](./errors.md#e0119-route-bind-out-of-scope) | `route-bind-out-of-scope` | reducer | ルーティング |

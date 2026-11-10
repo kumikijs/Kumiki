@@ -27,7 +27,15 @@ import {
   checkSecondSpelling,
   checkToggleBind,
 } from "./bind.ts";
-import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
+import {
+  bindLocal,
+  type Ctx,
+  checkArms,
+  endScope,
+  innerScope,
+  type KumikiError,
+  type SymbolTable,
+} from "./context.ts";
 import {
   checkCondition,
   checkExpr,
@@ -49,6 +57,7 @@ export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]
     localTypes: new Map(),
     localBinders: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
   };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
@@ -99,6 +108,7 @@ function readsUndeclaredInput(tile: TileDef, sym: SymbolTable): boolean {
     localTypes: new Map(),
     localBinders: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
     undeclaredInputReads: seen,
   };
   checkTileExpr(tile.body, sym, [], ctx);
@@ -149,6 +159,21 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
   const subRoutes = tile.subRoutes;
   if (!subRoutes) return;
   for (const sr of subRoutes) {
+    if (sr.path === "/404") {
+      // The router matches no sub-route against `/404`, so the entry is dead whatever it targets;
+      // removing it is the repair, which leaves its target nothing to answer for.
+      errors.push({
+        code: "E0001",
+        kind: "404-in-sub-routes",
+        message:
+          `Tile "${tile.name}" has a sub-route at "/404", which is reserved for the app's ` +
+          `fallback — no sub-route is matched against it. Remove it: a child path that no ` +
+          `sub-route matches renders the sub-route tile at the parent's own path if there ` +
+          `is one, or else the app's "/404"`,
+        pos: sr.pathPos,
+      });
+      continue;
+    }
     if (sr.tile.startsWith(">>")) continue; // a redirect names a path, not a tile
     const where = `Sub-route "${sr.path}" in tile "${tile.name}"`;
     if (!sym.tiles.has(sr.tile)) {
@@ -217,6 +242,7 @@ export function checkTileExpr(
       const inner = innerScope(ctx);
       bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx), "for");
       checkTileExpr(t.body, sym, errors, inner);
+      endScope("for-expr", inner, ctx);
       return;
     }
     case "TileWhen":
@@ -233,12 +259,11 @@ export function checkTileExpr(
     case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
       const scrutType = matchedType(inferType(t.scrutinee, sym, ctx), t.arms, sym);
-      for (const arm of t.arms) {
-        const inner = innerScope(ctx);
+      checkArms(t.arms, ctx, (arm, inner) => {
         checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         checkTileExpr(arm.body, sym, errors, inner);
-      }
+      });
       return;
     }
     case "TileCall":
