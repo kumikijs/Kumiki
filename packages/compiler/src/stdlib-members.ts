@@ -125,7 +125,8 @@ export type Receiver = keyof typeof RECEIVER_MEMBERS;
 export type MemberOf<R extends Receiver> = (typeof RECEIVER_MEMBERS)[R][number];
 
 // `self` is the receiver's own type: the `other` of `Map.merge`, `Set.union` or `List.concat`.
-// `Int` is an `Int` whatever the receiver's type arguments: the index of `List.get`.
+// `Int` is an `Int` whatever the receiver's type arguments: the index of `List.get`, the bounds of
+// `slice` and the size of `chunk`.
 type MapParam = "K" | "V" | "self";
 type SetParam = "T" | "self";
 type ListParam = "T" | "self" | "Int";
@@ -179,7 +180,7 @@ export const RECEIVER_PARAMS = {
     push: ["T"],
     prepend: ["T"],
     concat: ["self"],
-    slice: [null, null],
+    slice: ["Int", "Int"],
     reverse: [],
     sort: [],
     "sort-by": [null],
@@ -190,7 +191,7 @@ export const RECEIVER_PARAMS = {
     find: [null],
     fold: [null, null],
     join: [null],
-    chunk: [null],
+    chunk: ["Int"],
     zip: [null],
   },
 } as const satisfies {
@@ -308,6 +309,20 @@ export function receiverParams(
   member: string,
 ): readonly (ReceiverParam | null)[] | undefined {
   return PARAM_ROWS.get(receiver)?.get(member);
+}
+
+// `xs.slice(start)` drops only the trailing end, so its one argument is still the start.
+const SHORT_CALLS_READ: { readonly [R in Receiver]?: readonly MemberOf<R>[] } = {
+  List: ["slice"],
+};
+
+const SHORT_CALL_ROWS = new Map<string, ReadonlySet<string>>(
+  Object.entries(SHORT_CALLS_READ).map(([r, ms]) => [r, new Set<string>(ms)]),
+);
+
+/** Whether a call of `receiver.member` that leaves off trailing arguments still has the ones it was given read. */
+export function readsShortCall(receiver: string, member: string): boolean {
+  return SHORT_CALL_ROWS.get(receiver)?.has(member) ?? false;
 }
 
 const MEMBER_SETS = new Map<string, ReadonlySet<string>>(
