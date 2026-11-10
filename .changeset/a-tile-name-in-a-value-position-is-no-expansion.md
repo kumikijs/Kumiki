@@ -51,7 +51,7 @@ no longer counts as a rendered `button`: a `ui.click(Row)` subscription or an
 `onClick` on a `Row` that renders only that text is now reported as dropped,
 where it was passed silently. Nor does a tile written under a builtin that
 drops it: `tile Row = row(spinner(Btn))` renders no `Btn`, so `ui.click(Row)`
-is now W0212.
+is now W0212 and an `onClick` on `Row` is W0213.
 
 `docs/spec/errors.md` E0005 (both language tracks) says a value position adds
 no edge, nor does a positional argument of a builtin that renders none, and

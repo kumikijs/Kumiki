@@ -88,6 +88,15 @@ tile App = column(Row, Btn)`;
     expect(codes(src)).toEqual(["W0212"]);
   });
 
+  it("W0213 does not count a tile under a builtin that drops it as rendered", () => {
+    const src = `slot n : Int = 0
+reducer tap on=ui.click(_) do= n := n + 1
+tile Btn = button(text="go")
+tile Row = row(spinner(Btn))
+tile App = column(Row {onClick: tap}, Btn)`;
+    expect(codes(src)).toEqual(["W0213"]);
+  });
+
   it("both still see a builtin the tile does render", () => {
     // The control: a `button` written as a child is a rendered kind, so the
     // subscription and the handler are wired and neither is reported.
