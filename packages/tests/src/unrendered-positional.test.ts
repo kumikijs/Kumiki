@@ -7,6 +7,7 @@ import { withApp } from "./helpers/source.ts";
 const program = (home: string) =>
   withApp(
     `tile Header = text("header")
+slot n : Int = 0
 tile Home = ${home}`,
     "Home",
   );
@@ -31,10 +32,14 @@ async function outcome(home: string): Promise<string> {
   return (await shown(home)).includes("header") ? "shown" : "dropped";
 }
 
+/** What a builtin needs beside its positional tile for the tile to be all `check` reports on. */
+const NEEDS: Readonly<Record<string, string>> = { error: ", field=n" };
+
 describe("a positional tile is refused or rendered", () => {
   const notValueBuiltins = [...BUILTIN_TILES].filter((name) => !VALUE_ARG_BUILTINS.has(name));
   it.each(notValueBuiltins)("%s", async (builtin) => {
-    expect(["E0129", "shown"]).toContain(await outcome(`column(${builtin}(Header), text("end"))`));
+    const call = `${builtin}(Header${NEEDS[builtin] ?? ""})`;
+    expect(["E0129", "shown"]).toContain(await outcome(`column(${call}, text("end"))`));
   });
 });
 

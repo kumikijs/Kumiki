@@ -47,25 +47,26 @@ app M
     expect(diagnostics(home)).toEqual([`E0129 ${at(home, '"Go"')} ${shows("button", "`text=`")}`]);
   });
 
+  // The third column is what the builtin needs beside the tile for E0129 to be its only report.
   it.each([
-    ["button", shows("button", "`text=`")],
-    ["toast", shows("toast", "`text=`")],
-    ["video", shows("video", "`src=`")],
-    ["progress", shows("progress", "`value=` or `max=`")],
-    ["input", shows("input", "`bind=`, `value=` or `placeholder=`")],
-    ["textarea", shows("textarea", "`bind=`, `value=` or `placeholder=`")],
-    ["select", shows("select", "`options=`, `bind=`, `value=` or `placeholder=`")],
-    ["check", shows("check", "`bind=` or `value=`")],
-    ["switch", shows("switch", "`bind=` or `value=`")],
-    ["radio", shows("radio", "`bind=` or `selected=`")],
-    ["slider", shows("slider", "`bind=`")],
-    ["error", shows("error", "`field=`")],
-    ["divider", showsNothing("divider")],
-    ["spinner", showsNothing("spinner")],
-    ["skeleton", showsNothing("skeleton")],
-    ["route-outlet", showsNothing("route-outlet")],
-  ])("a tile in %s is E0129 at the tile", (builtin, message) => {
-    const home = `column(${builtin}(text("a")))`;
+    ["button", shows("button", "`text=`"), ""],
+    ["toast", shows("toast", "`text=`"), ""],
+    ["video", shows("video", "`src=`"), ""],
+    ["progress", shows("progress", "`value=` or `max=`"), ""],
+    ["input", shows("input", "`bind=`, `value=` or `placeholder=`"), ""],
+    ["textarea", shows("textarea", "`bind=`, `value=` or `placeholder=`"), ""],
+    ["select", shows("select", "`options=`, `bind=`, `value=` or `placeholder=`"), ""],
+    ["check", shows("check", "`bind=` or `value=`"), ""],
+    ["switch", shows("switch", "`bind=` or `value=`"), ""],
+    ["radio", shows("radio", "`bind=` or `selected=`"), ""],
+    ["slider", shows("slider", "`bind=`"), ""],
+    ["error", shows("error", "`field=`"), ", field=n"],
+    ["divider", showsNothing("divider"), ""],
+    ["spinner", showsNothing("spinner"), ""],
+    ["skeleton", showsNothing("skeleton"), ""],
+    ["route-outlet", showsNothing("route-outlet"), ""],
+  ])("a tile in %s is E0129 at the tile", (builtin, message, needs) => {
+    const home = `column(${builtin}(text("a")${needs}))`;
     expect(diagnostics(home)).toEqual([`E0129 ${at(home, 'text("a")')} ${message}`]);
   });
 
