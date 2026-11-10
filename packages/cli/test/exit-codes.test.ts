@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runCli, SPAWN, spawns } from "./helpers/cli.ts";
+import { warningLinesOf } from "./helpers/diagnostics.ts";
 import { seed, tempDir } from "./helpers/files.ts";
 import { asAgent } from "./helpers/op-log.ts";
 import { tiedCounts } from "./helpers/tie.ts";
@@ -46,6 +47,27 @@ app Demo
     caps   = []
     routes = {"/" -> App, "/404" -> App}
     init   = []
+test inc-works =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: 1}, effects: []}
+`;
+
+/** In `first-shows` the list is empty, so `First` panics as it renders. */
+const WITH_RENDER_PANIC = `slot count : Int = 0
+slot items : List(Int) = []
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+tile IncBtn = button(text="+1", onClick=inc)
+tile First = heading("First: " + items[0].show)
+tile App = column(heading("Count: " + count.show), IncBtn)
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+test first-shows =
+    tile-test First
+        given  = {slots: {items: []}}
+        expect = heading("First: 1")
 test inc-works =
     reducer-test inc
         given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
@@ -378,6 +400,26 @@ describe("kumiki test", () => {
     expect(stdout).toContain("1/2 passed");
     expect(code).toBe(1);
   });
+
+  it("reports a tile that panics as it renders as its test's unexpected panic", SPAWN, () => {
+    // Nothing under the diff line, so the panic reads as the tile's and not as a throw in the
+    // test's body.
+    const { stdout, code } = runCli(["test", write("test-render-panic.kumiki", WITH_RENDER_PANIC)]);
+    expect(stdout).toMatch(
+      new RegExp(
+        [
+          "^FAIL {2}first-shows \\(\\d+ms\\)",
+          ' {2}expected: heading\\("First: 1"\\)',
+          ' {2}actual: {3}panic: "Index 0 is out of range for a List of length 0"',
+          " {2}diff at: {2}\\(unexpected panic\\)",
+          "PASS {2}inc-works \\(\\d+ms\\)$",
+        ].join("\n"),
+        "m",
+      ),
+    );
+    expect(stdout).toContain("1/2 passed");
+    expect(code).toBe(1);
+  });
 });
 
 describe("kumiki refs / view", () => {
@@ -643,4 +685,126 @@ test inc-adds-two =
     expect(readFileSync(file, "utf8")).toBe(src);
     expect(code).toBe(1);
   });
+});
+
+describe("the warnings of the compile that smoke, run and test start with", () => {
+  const WARN_WITH_TEST = (count: number): string => `${WARN_ONLY}test bump-works =
+    reducer-test bump
+        given  = {slots: {count: 0}, event: {type: ui.focus, target: Card}}
+        expect = {slots: {count: ${count}}, effects: []}
+`;
+
+  /** WARN_ONLY's warning at the same line, and a click that panics. */
+  const WARN_AND_PANIC = `slot count : Int = 0
+reducer bump on=ui.focus(Card) do= count := count + 1
+reducer boom on=ui.click(BoomBtn) do= panic("boom")
+tile Card = box(heading("Count: " + count.show))
+tile BoomBtn = button(text="go", onClick=boom)
+tile App = column(Card, BoomBtn)
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  /** A `fmt` with a placeholder it has no argument for, inside the test's `given`: W0214 there. */
+  const WARN_IN_TEST = WITH_TESTS.replace(
+    "given  = {slots: {count: 0}",
+    'given  = {slots: {count: fmt("{0} {1}", 1).length}',
+  ).replace("expect = {slots: {count: 1}", "expect = {slots: {count: 6}");
+
+  // As `kumiki check` prints them, computed in-process: no line names its file.
+  const warning = warningLinesOf(WARN_ONLY);
+  const inTest = warningLinesOf(WARN_IN_TEST);
+
+  it("each source warns once, where these cases assume", () => {
+    expect(warning).toMatch(/^[^\n]*\bW0212 ui-event-tile-mismatch at 2:\d+: [^\n]+\n$/);
+    expect(warningLinesOf(WARN_AND_PANIC)).toBe(warning);
+    expect(warningLinesOf(WARN_WITH_TEST(1))).toBe(warning);
+    expect(inTest).toMatch(/^[^\n]*\bW0214 [^\n]+ at 11:\d+: [^\n]+\n$/);
+  });
+
+  it.each([
+    {
+      verb: "smoke",
+      args: (): string[] => [],
+      stdout: "ok — mounted, rendered, 0 interaction(s), no runtime errors\n",
+    },
+    {
+      verb: "run",
+      args: (): string[] => [
+        write("warned-run.json", JSON.stringify({ steps: [{ expect: { noErrors: true } }] })),
+      ],
+      stdout: "[ok] step 0\n\nscenario passed\n",
+    },
+  ])(
+    "$verb prints them on stderr and its output as for a clean file",
+    spawns(2),
+    ({ verb, args, stdout }) => {
+      const file = write(`warned-${verb}.kumiki`, WARN_ONLY);
+      expect(runCli([verb, file, ...args()])).toMatchObject({ stdout, stderr: warning, code: 0 });
+      const clean = write(`clean-${verb}.kumiki`, CLEAN);
+      expect(runCli([verb, clean, ...args()])).toMatchObject({ stdout, stderr: "", code: 0 });
+    },
+  );
+
+  it("test prints them on stderr and its report as for a clean file", spawns(2), () => {
+    const warned = runCli(["test", write("warned-test.kumiki", WARN_WITH_TEST(1))]);
+    expect(warned).toMatchObject({
+      stdout: expect.stringMatching(/^PASS {2}bump-works \(\d+ms\)\n\n1\/1 passed\n$/),
+      stderr: warning,
+      code: 0,
+    });
+    const clean = runCli(["test", write("clean-test.kumiki", WITH_TESTS)]);
+    expect(clean).toMatchObject({
+      stdout: expect.stringMatching(/^PASS {2}inc-works \(\d+ms\)\n\n1\/1 passed\n$/),
+      stderr: "",
+      code: 0,
+    });
+  });
+
+  it("smoke that fails prints them on stderr ahead of the failure", SPAWN, () => {
+    const res = runCli(["smoke", write("warned-panics.kumiki", WARN_AND_PANIC)]);
+    expect(res).toMatchObject({ stdout: "", code: 1 });
+    expect(res.stderr.split("runtime smoke failed (")[0]).toBe(warning);
+  });
+
+  it.each([
+    {
+      verb: "run",
+      source: WARN_ONLY,
+      args: (): string[] => [
+        write(
+          "failing-run.json",
+          JSON.stringify({ steps: [{ expect: { state: { count: 99 } } }] }),
+        ),
+      ],
+      stdout: /\nscenario FAILED\n$/,
+    },
+    {
+      verb: "test",
+      source: WARN_WITH_TEST(7),
+      args: (): string[] => [],
+      stdout: /^FAIL {2}bump-works /,
+    },
+  ])("$verb that fails still prints them on stderr", SPAWN, ({ verb, source, args, stdout }) => {
+    const res = runCli([verb, write(`failing-${verb}.kumiki`, source), ...args()]);
+    expect(res).toMatchObject({ stdout: expect.stringMatching(stdout), stderr: warning, code: 1 });
+  });
+
+  it.each([
+    { verb: "test", stdout: /^PASS {2}inc-works / },
+    { verb: "smoke", stdout: /^ok — mounted, rendered, / },
+  ])(
+    "$verb names the test a warning sits in, as a failed compile does",
+    SPAWN,
+    ({ verb, stdout }) => {
+      const res = runCli([verb, write(`in-test-${verb}.kumiki`, WARN_IN_TEST)]);
+      expect(res).toMatchObject({
+        stdout: expect.stringMatching(stdout),
+        stderr: `${inTest.trimEnd()} (in test "inc-works")\n`,
+        code: 0,
+      });
+    },
+  );
 });

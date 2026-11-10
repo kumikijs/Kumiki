@@ -176,6 +176,15 @@ test addTodo-empty =
         expect = {panic: "draft cannot be empty"}
 ```
 
+A test that expects a panic passes when the reducer panics with a message that contains `expect.panic`, and fails at `diff at: (panic)` on another message or on no panic. A reducer that panics where its test expects state fails that test as an **unexpected panic**, with the panic's message where the state would be — here, the test above written with `expect = {slots: {todos: {}, draft: ""}}`:
+
+```
+FAIL  addTodo-empty
+  expected: {"todos":{},"draft":""}
+  actual:   panic: "draft cannot be empty"
+  diff at:  (unexpected panic)
+```
+
 ### 8.2.5 The route slot
 
 `route` is maintained by the runtime rather than declared by a program ([§3.2](./routing.md#_3-2-current-route-state)), so there is no `slot route` for `given.slots` to override — and the harness would otherwise build its slot table without one, leaving a reducer that reads `route.path` to panic on an absent slot.
@@ -342,6 +351,27 @@ Each `aria-*` attribute is a field of its own, however it was written (as `aria-
 
 A mismatch reports the field's path and the value arrow, as `image.src  "/a.png" -> "/b.png"`. The `expected:` and `actual:` lines print only the compared fields: each actual node shows the fields the expected node in its position states, so a placeholder or a `bind` that only the actual node carries is not printed.
 
+A tile that panics as it renders fails its test as an **unexpected panic**, in the lines a reducer-test prints when its reducer panics ([§8.2.4](#_8-2-4-expecting-a-panic)), with the snapshot as what was expected:
+
+```kumiki fragment
+slot items : List(Int) = []
+tile First = heading("First: " + items[0].show)
+
+test first-shows =
+    tile-test First
+        given  = {slots: {items: []}}
+        expect = heading("First: 1")
+```
+
+```
+FAIL  first-shows
+  expected: heading("First: 1")
+  actual:   panic: "Index 0 is out of range for a List of length 0"
+  diff at:  (unexpected panic)
+```
+
+A tile-test renders its target's body, so the target's own `error-boundary=` does not apply and its panic is still unexpected; a tile the body renders keeps its boundary, and its fallback is what is compared. A tile-test cannot expect the panic: its `expect` is a tile, with no section to write one in, so a panic is expected only in a reducer-test. Only a panic in the target's render is reported this way: the test's own `given` and `expect` are evaluated apart from the render, so a panic in one of them is a throw in the test's body, reported on an `error:` line ([§8.7.1](#_8-7-1-output)).
+
 ```
 tile-test ::= 'tile-test' identifier
               'given'  '=' '{' (tile-given (',' tile-given)*)? '}'
@@ -478,7 +508,7 @@ FAIL  counter-display
   diff at:  [0].text  "Count: 5" -> "Count: 0"
 ```
 
-A test whose body throws is a `FAIL` of that test alone, with what it threw on an `error:` line under it; the file's other tests still run and report. A panic is shown by its message, or as `KumikiPanic` when it has none. Anything else keeps its kind — `TypeError: …` — since it points at the compiler or the runtime rather than at the program, and a thrown value that is not an error is shown as JSON.
+A test whose body throws is a `FAIL` of that test alone, with what it threw on an `error:` line under it; the file's other tests still run and report. A panic is shown by its message, or as `KumikiPanic` when it has none. Anything else keeps its kind — `TypeError: …` — since it points at the compiler or the runtime rather than at the program, and a thrown value that is not an error is shown as JSON. A panic in the reducer or the tile under test is not such a throw: it is the test's outcome, expected or unexpected ([§8.2.4](#_8-2-4-expecting-a-panic), [§8.4](#_8-4-tile-snapshot-tests)).
 
 A file that does not compile runs no test. The runner names the file by its resolved (absolute) path and prints each diagnostic as `kumiki check` does, warnings before errors — `<severity> <code> <kind> at <line>:<col>: <message>` — adding the `test` a diagnostic sits inside:
 
@@ -486,6 +516,8 @@ A file that does not compile runs no test. The runner names the file by its reso
 compile failed (/path/to/app.kumiki):
 error E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")
 ```
+
+A file that compiles with warnings runs its tests: each warning is printed to stderr in that same form, ahead of the report, and changes neither the report nor the exit code.
 
 ### 8.7.2 Fixing from a failing test
 
@@ -543,6 +575,8 @@ Separate from the `test` definitions above (in-language tests), the toolchain pr
 
 `kumiki smoke <file>` mounts a compiled app to a headless DOM (happy-dom), fires events at all operable elements after the initial render, and at each step monitors for runtime exceptions, console errors, unhandled rejections, and empty rendering. **Empty** means the render carries neither text nor an element that is content on its own (an image, a control, a status region) — a tree of empty containers is a blank page, not a render. Forms are submitted directly, after the fields inside them: a `form` usually has no submit button to click, and where it has one, whether a synthetic click submits it is activation behaviour that differs per DOM — dispatching on the form means the same thing in all of them, and is the only path that reaches a `ui.submit` reducer for a form written without a button. It automatically detects the class of bugs previously verified by a human in the browser, such as "the type passes, but it calls a method that doesn't exist in the runtime and crashes on operation" or "it doesn't render." It is general-purpose and has no app-specific knowledge.
 
+Like `kumiki test` ([Output](#_8-7-1-output)), it prints the warnings of its compile on stderr ahead of its own output; they change neither the output nor the exit code.
+
 Real rendering in a browser (CSS layout, real focus, etc.) cannot be fully reproduced by a headless DOM. The **real-browser tier** for that is `@kumikijs/e2e` (Chromium / Playwright), which runs in the **same scenario format** as the headless-DOM tier. The state oracle is likewise `window.__kumikiApp.live`, and displayed text is `innerText` (visible only). In addition, it has browser-only assertions:
 
 - `focused`: that the specified selector is actually focused (detects focus-stealing bugs on re-render)
@@ -574,6 +608,8 @@ These run in default CI, with no browser binaries.
 ### Scenario Execution (the bridge from layer 2 to 3) and the Autonomous Loop
 
 `kumiki run <file> <scenario.json>` (MCP: `kumiki_run_scenario`) drives the app with a **scenario** and returns a structured trace for each step. This becomes the foundation for a "generate → execute → observe → fix loop without a human in the loop."
+
+Like `kumiki test` ([Output](#_8-7-1-output)), it prints the warnings of its compile on stderr ahead of its own output; they change neither the output nor the exit code.
 
 - **Action**: `{dispatch, payload?}` (fire a reducer by name) / `{clickText}` / `{click}` / `{focus}` / `{blur}` / `{key, value}` / `{hover}` / `{fill, value}` / `{choose, value}` / `{navigate}` / `{submit}` / `{wait}`. `{focus}`, `{blur}`, `{key}` and `{hover}` dispatch a real DOM event on a selector match — `FocusEvent`, a `KeyboardEvent` carrying `value` as its `key`, and a `mouseenter` — so the scenario tier alone verifies the `addEventListener` wiring that feeds `ui.focus` / `ui.blur` / `ui.key` / `ui.hover` reducers. Each is dispatched on the element the selector matches, which is where the runtime attaches its listener. `keydown` bubbles from there, which is what lets `ui.key(Container)` be driven from a focusable descendant; `focus`, `blur` and `mouseenter` do not bubble, and a browser fires a separate `mouseenter` on each ancestor rather than propagating one. A `ui.key` reducer's payload carries `key` and `code`: only `key` is set from this tier, since a `code` names a physical key that a scenario asking for `"Enter"` has not chosen. `{submit}` dispatches the form event a `ui.submit` reducer listens for; its selector may name the form or anything inside it, since a `form` tile carries no id unless its author gave it one. A form whose bound fields fail validation does not call its reducer ([forms.md §5.2.2](./forms.md#_5-2-2-submit-behavior)), and a `{submit}` it holds back is refused rather than passed ([below](#a-submit-the-form-holds-back-is-refused)). `{fill, value}` writes to an `input`, a `textarea` or an `editable`, and is refused — naming the element it did match — on anything else, so a selector that drifts onto a wrapper fails rather than assigning a property nothing reads. `{choose, value}` takes, from a `select`, the option whose label is `value`, compared with whitespace trimmed and runs of it collapsed on both sides, and only when no option carries that label, the one whose value is `value` exactly. An option's value is the key the `select` tile writes into it ([Value Matching of select](./runtime.md#_10-3-8-value-matching-of-select)): `"b"`, quotes included, for the Text `b`. A selector matching a `<label>` drives the control it labels. `{choose}` aimed at anything else, an element inside a `<label>` included, is refused, naming the element it matched (`#box matched <div>, which holds no options to choose`); one whose `select` has no option matching either way fails as `no option "Zed" in select #pick`; and one naming a disabled option is refused as a disabled control is ([below](#a-step-cannot-drive-a-control-the-platform-refuses)). Both tiers apply this one rule, so a step lands on the same option at both. `{wait}` settles for that many milliseconds on top of the step's own settle, which is how a debounce window, a retry backoff or a timer is observed — a step with no action does not settle at all.
 - **Observation**: after each step, record `state` (a slot snapshot), `domText`, `errors`, and `emits` (the fired effects). An action that could **not run** — a selector matching nothing, a `fill` aimed at an element that holds no text, a `{choose}` that leads to no `select` or names none of its options, a `{dispatch}` naming a reducer the app does not have (`no reducer named "<name>"`, followed by `— did you mean "<declared>"?` when a declared name is close, or by every declared name tied for closest, as in `— did you mean "addA" or "addB"?`) or one whose `#id` scope the payload does not carry, **a control the platform would refuse to drive** (see [below](#a-step-cannot-drive-a-control-the-platform-refuses)), or a `{submit}` **the form held back** or the browser's constraint validation stopped (see [below](#a-submit-the-form-holds-back-is-refused)) — is recorded separately, as `actionError`, and fails the step. It is not an `error`: nothing was observed about the app, so neither `noErrors` nor `errorIncludes` sees it. Folding the two together let a fixture assert that its own mistake happened (`{"do": {"key": "#typo", "value": "Enter"}, "expect": {"errorIncludes": ["no element"]}}` passed, having pressed nothing).

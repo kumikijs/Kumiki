@@ -95,13 +95,22 @@ effect-list ::= '[' (effect-call (',' effect-call)*)? ']'
 
 reducer テストは*実行中のアプリ*の挙動を表明するものなので、refinement が拒否したバッチはすべての slot を `given` の値のまま残し、effect も発行しない（[batching](./runtime.md#a-batch-commits-all-or-nothing)）。拒否は `expect` ではなく `console.error` に報告される。このティアには `errorIncludes` に相当するものが無いため、`expect` ブロックだけでは「バッチが拒否された」と「reducer が何もしなかった」を区別できない。
 
-### 8.2.4 panic を期待
+### 8.2.4 panic を期待 {#_8-2-4-expecting-a-panic}
 
 ```kumiki fragment
 test addTodo-empty =
     reducer-test addTodo
         given = {slots: {todos: {}, draft: ""}, event: {type: ui.submit, target: NewTodoForm}}
         expect = {panic: "draft cannot be empty"}
+```
+
+panic を期待するテストは、reducer が `expect.panic` を含むメッセージで panic したときに通り、別のメッセージのとき、または panic しなかったときは `diff at: (panic)` で失敗する。テストが状態を期待しているところで reducer が panic すると、そのテストは**予期しない panic** として失敗し、状態があるはずの位置に panic のメッセージを示す——上のテストを `expect = {slots: {todos: {}, draft: ""}}` で書いた場合：
+
+```
+FAIL  addTodo-empty
+  expected: {"todos":{},"draft":""}
+  actual:   panic: "draft cannot be empty"
+  diff at:  (unexpected panic)
 ```
 
 ### 8.2.5 route slot {#_8-2-5-the-route-slot}
@@ -270,6 +279,27 @@ snapshot は深い構造比較。クラス名やスタイルは比較対象外�
 
 不一致はフィールドのパスと値の矢印（`image.src  "/a.png" -> "/b.png"`）で報告する。`expected:` / `actual:` の行は比較したフィールドだけを表示する。実際のノードには同じ位置の期待するノードが述べるフィールドを表示するので、実際のノードだけが持つ `placeholder` や `bind` は表示されない。
 
+描画中に panic する tile は、そのテストを**予期しない panic** として失敗させる。示す行は reducer-test が panic した reducer に示すものと同じで（[§8.2.4](#_8-2-4-expecting-a-panic)）、期待した値として snapshot を示す：
+
+```kumiki fragment
+slot items : List(Int) = []
+tile First = heading("First: " + items[0].show)
+
+test first-shows =
+    tile-test First
+        given  = {slots: {items: []}}
+        expect = heading("First: 1")
+```
+
+```
+FAIL  first-shows
+  expected: heading("First: 1")
+  actual:   panic: "Index 0 is out of range for a List of length 0"
+  diff at:  (unexpected panic)
+```
+
+tile-test はターゲットの本体を描画するので、ターゲット自身の `error-boundary=` は適用されず、その panic はやはり予期しない panic になる。本体が描画する tile は自分の境界を保ち、比較されるのはそのフォールバックである。tile-test はこの panic を期待できない。`expect` は tile であり、panic を書くセクションが無いので、panic を期待できるのは reducer-test だけである。このように報告されるのはターゲットの描画で起きた panic だけである：テスト自身の `given` と `expect` は描画とは別に評価されるので、そのどちらかで起きた panic はテスト本体が投げたものであり、`error:` 行で報告される（[§8.7.1](#_8-7-1-output)）。
+
 ```
 tile-test ::= 'tile-test' identifier
               'given'  '=' '{' (tile-given (',' tile-given)*)? '}'
@@ -404,7 +434,7 @@ FAIL  counter-display
   diff at:  [0].text  "Count: 5" -> "Count: 0"
 ```
 
-本体が例外を投げたテストは、そのテストだけの `FAIL` となり、投げた内容をその下の `error:` 行に示す。ファイル内の他のテストはそのまま実行され、結果を報告する。panic はそのメッセージで示し、メッセージが空なら `KumikiPanic` と示す。それ以外の例外は種類も添えて示す — `TypeError: …` — プログラムではなくコンパイラかランタイムの不具合を指すからである。エラーでない値が投げられた場合は JSON で示す。
+本体が例外を投げたテストは、そのテストだけの `FAIL` となり、投げた内容をその下の `error:` 行に示す。ファイル内の他のテストはそのまま実行され、結果を報告する。panic はそのメッセージで示し、メッセージが空なら `KumikiPanic` と示す。それ以外の例外は種類も添えて示す — `TypeError: …` — プログラムではなくコンパイラかランタイムの不具合を指すからである。エラーでない値が投げられた場合は JSON で示す。テスト対象の reducer や tile の panic はこの例外ではなく、テストの結果——期待したもの、または予期しないもの——である（[§8.2.4](#_8-2-4-expecting-a-panic)、[§8.4](#_8-4-tile-snapshot-tests)）。
 
 コンパイルできないファイルではテストはひとつも走らない。ランナーはファイルを解決済みの（絶対）パスで示し、各診断を `kumiki check` と同じく警告、エラーの順に同じ形 — `<severity> <code> <kind> at <line>:<col>: <message>` — で出力し、診断が `test` の中にあればその名前を添える：
 
@@ -412,6 +442,8 @@ FAIL  counter-display
 compile failed (/path/to/app.kumiki):
 error E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")
 ```
+
+警告を伴ってコンパイルできるファイルではテストが走る。各警告は同じ形でレポートより先に stderr へ出力され、レポートも終了コードも変えない。
 
 ### 8.7.2 失敗テストからの修正 {#_8-7-2-fixing-from-a-failing-test}
 
@@ -469,6 +501,8 @@ expect(Object.keys(todos)).toHaveLength(1)
 
 `kumiki smoke <file>` は、コンパイル済みアプリを headless DOM（happy-dom）に mount し、初期描画後にすべての操作可能要素へイベントを発火させ、各ステップでランタイム例外・コンソールエラー・未処理 rejection・空描画を監視する。ここでの**空**とは、テキストも、それ自体が内容となる要素（画像、コントロール、ステータス領域）もない描画を指す。空のコンテナが重なっただけの木は描画ではなく白紙である。フォームは、内側のフィールドを埋めた後に直接 submit される。`form` タイルは submit ボタンを持たないことが多く、持っていても合成クリックで submit されるかどうかは DOM ごとに異なる activation behaviour である——フォームへの直接 dispatch はどの DOM でも同じ意味になり、ボタンのないフォームで `ui.submit` reducer に到達する唯一の経路でもある。「型は通るが、ランタイムに存在しないメソッドを呼んで操作時に落ちる」「描画されない」といった、従来は人がブラウザで確認していたクラスのバグを自動で検出する。汎用であり、アプリ固有の知識を持たない。
 
+`kumiki test` と同じく（[出力](#_8-7-1-output)）、コンパイルの警告を自身の出力より先に stderr へ出力する。警告は出力も終了コードも変えない。
+
 ブラウザでの実描画（CSS レイアウト・実フォーカス等）は headless DOM では再現しきれない。そのための**実ブラウザ tier** が `@kumikijs/e2e`（Chromium / Playwright）であり、headless DOM tier と**同じシナリオ形式**で動く。状態 oracle は同じく `window.__kumikiApp.live`、表示テキストは `innerText`（可視のみ）。加えてブラウザ限定アサーションを持つ:
 
 - `focused`: 指定セレクタが実際にフォーカスされていること（再レンダリング時のフォーカス奪取バグを検出）
@@ -493,6 +527,8 @@ example コーパス（`packages/tests`）は「**壊れた example は決して
 ### シナリオ実行（層 2→3 の橋渡し）と自律ループ
 
 `kumiki run <file> <scenario.json>`（MCP: `kumiki_run_scenario`）は、アプリを**シナリオ**で駆動し、毎ステップの構造化 trace を返す。これが「人を介さない生成→実行→観測→修正ループ」の土台になる。
+
+`kumiki test` と同じく（[出力](#_8-7-1-output)）、コンパイルの警告を自身の出力より先に stderr へ出力する。警告は出力も終了コードも変えない。
 
 - **操作（action）**: `{dispatch, payload?}`（reducer を名前で発火）/ `{clickText}` / `{click}` / `{focus}` / `{blur}` / `{key, value}` / `{hover}` / `{fill, value}` / `{choose, value}` / `{navigate}` / `{submit}` / `{wait}`。`{focus}` `{blur}` `{key}` `{hover}` はセレクタ一致要素に対し実際の DOM イベント——`FocusEvent`、`value` を `key` に持つ `KeyboardEvent`、`mouseenter`——を dispatch するため、`ui.focus` / `ui.blur` / `ui.key` / `ui.hover` reducer が依存する `addEventListener` 配線層をシナリオ単独で検証できる。いずれもセレクタ一致要素に対して dispatch する。ランタイムがリスナを張るのがそこだからである。`keydown` はそこからバブルし、これが `ui.key(Container)` をフォーカス可能な子孫から駆動できる理由である。`focus` / `blur` / `mouseenter` はバブルしない（ブラウザは 1 つのイベントを伝播させるのではなく、祖先ごとに別々の `mouseenter` を発火する）。`ui.key` reducer のペイロードは `key` と `code` を運ぶが、この層で設定されるのは `key` だけである。`code` は物理キーを指し、`"Enter"` と書いたシナリオはそれを選んでいないためである。`{submit}` は `ui.submit` reducer が待ち受けるフォームイベントを dispatch する。`form` タイルは作者が付けない限り id を持たないため、セレクタはフォーム自身でもその内側の要素でもよい。bind されたフィールドがバリデーションに失敗している form は reducer を呼ばず（[forms.md §5.2.2](./forms.md#_5-2-2-submit-の挙動)）、form が送信を差し止めた `{submit}` は通過せず拒否される（[後述](#a-submit-the-form-holds-back-is-refused)）。`{fill, value}` は `input` / `textarea` / `editable` に書き込み、それ以外に当たった場合は一致した要素名を挙げて拒否する。セレクタがラッパーへずれたとき、誰も読まないプロパティを代入して通るのではなく失敗する。`{choose, value}` は `select` の option のうち、ラベルが `value` であるもの（両辺とも前後の空白を除き、連続する空白を 1 つにまとめて比べる）を選び、そのラベルを持つ option が無いときに限り、値が `value` と完全に一致するものを選ぶ。option の値は `select` タイルが書き込むキーである（[select の値マッチング](./runtime.md#_10-3-8-value-matching-of-select)）：Text の `b` なら引用符込みの `"b"`。`<label>` に一致したセレクタは、そのラベルが指すコントロールを操作する。`select` に行き着かない要素（`<label>` の内側の要素を含む）への `{choose}` は一致した要素名を挙げて拒否され（`#box matched <div>, which holds no options to choose`）、どちらにも一致する option の無い `select` への `{choose}` は `no option "Zed" in select #pick` として失敗し、無効な option を指す `{choose}` は無効なコントロールと同じく拒否される（[後述](#a-step-cannot-drive-a-control-the-platform-refuses)）。両ティアが同じ規則で option を決めるため、ステップはどちらでも同じ option に行き着く。`{wait}` はそのステップ本来の settle に指定ミリ秒を上乗せする。debounce の待ち・retry のバックオフ・タイマーはこれで観測する（操作のないステップは settle しない）。
 - **観測**: 各ステップ後に `state`（slot スナップショット）・`domText`・`errors`・`emits`（発火した effect）を記録。**実行できなかった操作**——何にも一致しないセレクタ、テキストを持たない要素への `fill`、`select` に行き着かないか、その option のどれも指さない `{choose}`、アプリに存在しない reducer 名を指す `{dispatch}`（`no reducer named "<name>"`。近い名前が宣言されていれば `— did you mean "<declared>"?` が続き、最も近い名前が同点で複数あれば `— did you mean "addA" or "addB"?` のようにそのすべてを挙げる）、`#id` スコープ付き reducer を payload でその id を渡さずに指す `{dispatch}`、**プラットフォームが操作を拒否するコントロール**（[後述](#a-step-cannot-drive-a-control-the-platform-refuses)）、および **form が差し止めた**、またはブラウザの constraint validation が止めた `{submit}`（[後述](#a-submit-the-form-holds-back-is-refused)）——は `actionError` として別に記録され、そのステップを失敗させる。これは `error` ではない。アプリについて何も観測していないため、`noErrors` も `errorIncludes` もこれを見ない。両者を同じ場所にまとめていたために、fixture が自分の間違いが起きたことを assert できてしまっていた（`{"do": {"key": "#typo", "value": "Enter"}, "expect": {"errorIncludes": ["no element"]}}` は、何も押さないまま通っていた）。
