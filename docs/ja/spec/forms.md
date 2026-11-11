@@ -342,7 +342,7 @@ error(field=form.age)
 
 インデックスのキーはインデックスの型の任意の式（`List` なら `Int`、`Map` ならキーの型）で、`bind=rows[i].title` と同じく描画のたびに読み直される（[§5.1](#_5-1-個別入力の双方向束縛)）。slot `i` が変われば、`error(field=rows[i].email)` はそのとき `i` が指す要素の失敗を描画する。`Map` のキーを回る `for` の中では、`error(field=book[k].email)` が各エントリのメッセージをその横に置く。どの要素も指さないキーは、リテラルのキーと同じく何も描画しない。
 
-パスは slot の型に照らして検査される：レコードにないフィールドは [E0108](./errors.md#e0108-undef-member)、`Int` でない `List` のインデックスや型の違う `Map` のキーは [E0201](./errors.md#e0201-type-mismatch)、`Set` へのインデックスは [E0232](./errors.md#e0232-index-into-set) である。それ以外は slot の中のどの場所も指さず、tile が描画しうる失敗がないので [E0230](./errors.md#e0230-error-field-not-path) になる：リテラル（`field="email"`）、`for` の変数や tile の `$1` のようなローカルな名前、`route` slot、値を導出するメンバー（`.length`）、`Tuple` や union へのステップ、呼び出し、そのほかの式、`List`・`Map`・`Set` のいずれでもないものへのインデックス。`field=` を持たない `error()` と、tile が読まない `{…}` ブロックに書かれた `field` も同じである。
+パスは slot の型に照らして検査される：レコードにないフィールドは [E0108](./errors.md#e0108-undef-member)、`Int` でない `List` のインデックスや型の違う `Map` のキーは [E0201](./errors.md#e0201-type-mismatch)、`Set` へのインデックスは [E0232](./errors.md#e0232-index-into-set) である。それ以外は slot の中のどの場所も指さず、tile が描画しうる失敗がないので [E0230](./errors.md#e0230-error-field-not-path) になる：リテラル（`field="email"`）、`for` の変数や tile の `$1` のようなローカルな名前、`route` slot、値を導出するメンバー（`.length`）、`Tuple` や union へのステップ、呼び出し、そのほかの式、`List`・`Map`・`Set` のいずれでもないものへのインデックス。`field=` を持たない `error()` も同じである。`{…}` ブロックに書かれた `field` は同じ prop であり、`field=` と同じように読まれ、判定される。ただし tile-test の `expect` ではブロックは比較されないので、そこに書いた `field` は読まれず、E0230 になる。
 
 ### 5.7.2 標準メッセージ {#_5-7-2-standard-messages}
 
