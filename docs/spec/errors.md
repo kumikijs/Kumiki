@@ -1006,6 +1006,8 @@ An `Int` position is given a literal outside the safe range, -9007199254740991 t
 
 The literal is named as written. The first message is for a literal that was rounded, and names every digit of the value it became; the second is for a literal held exactly, which is outside the range all the same.
 
+A refinement's number argument is held to the same bound where it stands for an `Int`: each number argument of `between` and `one-of` over an `Int` base, and the count of `len-eq` / `len-lt` / `len-gt` over any base ([§1.3.3](./language.md#_1-3-3-registered-refinement-predicates)). The check a refinement is built into compares with the number the literal was read as, so `Int where between(0, 9007199254740993)` would test `v <= 9007199254740992`; the literal is reported where it is written. Over a `Float` base a bound is a `Float`, which holds an approximation by nature, and it is not held to the range, as a `Float` slot's value is not.
+
 The sign is part of the literal ([§1.2](./language.md#_1-2-lexical)), so a negative literal is held to the same bound in every position a positive one is, reported at its `-`, and named with its sign: `-9007199254740993` is reported as rounded to `-9007199254740992`, and `-9007199254740992` as held exactly.
 
 A literal with a fractional part is [E0201](#e0201-type-mismatch) instead — that is a type mistake, not a precision one.

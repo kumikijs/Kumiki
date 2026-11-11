@@ -235,6 +235,13 @@ const ARG_DESCRIPTION: Record<ArgKind, string> = {
   literal: "a number or text literal",
 };
 
+/** Whether argument `index` of `pred` is a count, a whole number whatever the base. */
+export function isCountArgument(pred: string, index: number): boolean {
+  const params = REFINEMENTS.get(pred)?.params;
+  if (params === undefined) return false;
+  return ("rest" in params ? params.rest : params.fixed[index]) === "count";
+}
+
 function argFits(kind: ArgKind, arg: RefinementArg | undefined): boolean {
   switch (kind) {
     case "number":
