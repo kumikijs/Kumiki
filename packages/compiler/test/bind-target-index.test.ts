@@ -63,7 +63,9 @@ tile App = column(B)`);
     expect(lowered("tile App = column(input() {bind: rows[i].title})")).toContain(
       `bind: "rows", bindPath: [{ at: _live["i"] },"title"]`,
     );
-    expect(codesOf(program("tile App = column(input() {bind: i[0]})"))).toEqual(["E0602"]);
+    expect(codesOf(program(`tile App = column(input() {bind: draft.get["title"]})`))).toEqual([
+      "E0602",
+    ]);
   });
 
   it("checks clean on every control, from a slot index, a literal, and a for's key", () => {
