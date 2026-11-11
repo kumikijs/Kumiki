@@ -3,20 +3,21 @@ import type { Expr, TileExpr, TypeExpr } from "../ast.ts";
 import { builtinPropType } from "../builtin-props.ts";
 import { contentArg } from "../builtins.ts";
 import { checkAgainst } from "./against.ts";
-import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
+import { type Ctx, type KumikiError, propOf, type SymbolTable } from "./context.ts";
 import { letInScope, pushMismatch } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
 import { armScope } from "./patterns.ts";
-import { writtenValue } from "./tile-collect.ts";
 
 const BUTTON_TYPES = new Set(["submit", "button", "reset"]);
 
-export function checkButtonType(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+export function checkButtonType(
+  t: TileExpr & { kind: "TileCall" },
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
   if (t.name !== "button") return;
-  const arg = t.args.find((a) => a.name === "type");
-  if (!arg) return;
-  const v = arg.value as Expr;
-  if (v.kind !== "Str" || BUTTON_TYPES.has(v.value)) return;
+  const v = propOf(t, "type", ctx)?.value;
+  if (v?.kind !== "Str" || BUTTON_TYPES.has(v.value)) return;
   errors.push({
     code: "E0201",
     kind: "type-mismatch",
@@ -50,9 +51,10 @@ export function checkA11y(
   t: TileExpr & { kind: "TileCall" },
   sym: SymbolTable,
   errors: KumikiError[],
+  ctx: Ctx,
 ): void {
   if (t.name === "label") {
-    const forProp = writtenValue(t, "for");
+    const forProp = propOf(t, "for", ctx)?.value;
     if (forProp?.kind === "Str" && !sym.elementIds.has(forProp.value)) {
       errors.push({
         code: "E0705",
@@ -64,7 +66,7 @@ export function checkA11y(
   }
   if (t.name === "button") {
     const hasText = t.args.some((a) => a.name === "text");
-    if (!hasText && writtenValue(t, "aria-label") === undefined) {
+    if (!hasText && propOf(t, "aria-label", ctx) === undefined) {
       errors.push({
         code: "E0701",
         kind: "a11y-button",
@@ -74,7 +76,7 @@ export function checkA11y(
     }
   }
   if (t.name === "image") {
-    if (writtenValue(t, "alt") === undefined) {
+    if (propOf(t, "alt", ctx) === undefined) {
       errors.push({
         code: "E0702",
         kind: "a11y-image",
@@ -85,7 +87,7 @@ export function checkA11y(
   }
   if (t.name === "link") {
     const hasText = contentArg(t) !== undefined || t.props.some((p) => p.name === "text");
-    if (!hasText && writtenValue(t, "aria-label") === undefined) {
+    if (!hasText && propOf(t, "aria-label", ctx) === undefined) {
       errors.push({
         code: "E0703",
         kind: "a11y-link",

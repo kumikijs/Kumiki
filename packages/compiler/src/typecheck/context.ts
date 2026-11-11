@@ -1,14 +1,18 @@
-import type {
-  AppDef,
-  EffectDef,
-  Expr,
-  FnDef,
-  Pos,
-  ReducerDef,
-  SlotDef,
-  TileDef,
-  TypeDef,
-  TypeExpr,
+import {
+  type AppDef,
+  type EffectDef,
+  type Expr,
+  type FnDef,
+  type Pos,
+  type ReducerDef,
+  type SlotDef,
+  type TileDef,
+  type TileExpr,
+  type TileProp,
+  type TypeDef,
+  type TypeExpr,
+  type WrittenProp,
+  writtenProp,
 } from "../ast.ts";
 import { callsBuiltin } from "../builtin-calls.ts";
 
@@ -111,7 +115,23 @@ export type Ctx = {
   /** The effect whose own expressions are checked, when it declares `in=Unit` and so binds no `$1`. */
   noInputEffect?: string;
   oneValueFragment?: { method: string; hides: boolean };
+  /** A tile-test's expected tree, whose lowering reads no `{…}` block. */
+  expectedTree?: boolean;
 };
+
+/** The `{…}` block a call's props are read from: none in an expected tree, as its lowering reads. */
+export function propBlock(t: TileExpr & { kind: "TileCall" }, ctx: Ctx): readonly TileProp[] {
+  return ctx.expectedTree ? [] : t.props;
+}
+
+/** The prop `name` of `t`, read as the lowering reads it in this context. */
+export function propOf(
+  t: TileExpr & { kind: "TileCall" },
+  name: string,
+  ctx: Ctx,
+): WrittenProp | undefined {
+  return writtenProp(t, name, propBlock(t, ctx));
+}
 
 export function bindLocal(
   ctx: Ctx,
