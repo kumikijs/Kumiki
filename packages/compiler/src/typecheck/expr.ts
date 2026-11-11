@@ -8,6 +8,7 @@ import {
   type FragmentArgument,
   fragmentArgument,
   fragmentBinds,
+  readsShortCall,
   receiverParams,
   TYPE_ARGUMENT_OF,
 } from "../stdlib-members.ts";
@@ -786,6 +787,8 @@ export function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: C
 
 // A call given fewer arguments than the signature takes has none read against it: which argument
 // it meant as which is not decided (`m.get-or(d)` is the Option reading, whose argument is no key).
+// A call that can only drop trailing arguments, as `xs.slice(start)` does, still has the ones it
+// was given read.
 function memberArgType(
   recv: TypeExpr | null,
   member: string,
@@ -796,7 +799,8 @@ function memberArgType(
   const t = unaliasType(recv, sym);
   if (t?.kind !== "TypeApp") return null;
   const params = receiverParams(t.name, member);
-  if (params === undefined || argCount < params.length) return null;
+  if (params === undefined) return null;
+  if (argCount < params.length && !readsShortCall(t.name, member)) return null;
   const param = params[index] ?? null;
   switch (param) {
     case null:
