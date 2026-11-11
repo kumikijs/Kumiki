@@ -19,3 +19,7 @@ export const withReducer = (defs: string, body: string, opts: AppOptions = {}): 
 /** `defs` plus an `App` that is a column of `child`, routed for every path. */
 export const withRoot = (child: string, defs: string): string =>
   withApp(`${defs}\ntile App = column(${child})`);
+
+/** A type definition's name as a program writes it as a type: applied to `Int` for each parameter. */
+export const appliedName = (t: { name: string; params: readonly string[] }): string =>
+  t.params.length === 0 ? t.name : `${t.name}(${t.params.map(() => "Int").join(", ")})`;

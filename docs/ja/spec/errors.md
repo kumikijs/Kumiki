@@ -422,7 +422,7 @@ builtin tile の名前も候補に含まれない。tile は関数ではなく�
 
 > `Reference to undefined variant "<name>"`
 
-タグとは、プログラムが書くすべての union のタグ——`type` の本体か、slot の型・レコードのフィールド・`fn` の引数や戻り値・`effect` の `in=` / `out=`・property test の `for-all` にインラインで書かれた union のもので、ファイル内のどこに書かれていてもよい——と、標準ライブラリのタグである：`Some` / `None`、`Ok` / `Err`、`FormValue` の `TextV` / `NumberV` / `BoolV` / `FileV`、リクエストボディの `Json` / `Form` / `Multipart` / `Text` / `Bytes` / `Empty`（[HTTP / Storage §6.1.3](./http.md#_6-1-3-httpbody-型)）。コード生成はどんな綴りからも variant を作るため、どの union も宣言していないタグは `{_tag: "<name>"}` へ落ちる：どの `match` arm にも一致せず、他のどの値とも等しくならず、どのフィールドも `undefined` である値である。
+タグとは、プログラムが書くすべての union のタグ——`type` の本体か、slot の型・レコードのフィールド・`fn` の引数や戻り値・`effect` の `in=` / `out=`・property test の `for-all` にインラインで書かれた union のもので、ファイル内のどこに書かれていてもよい——と、標準ライブラリのタグである：`Some` / `None`、`Ok` / `Err`、`FormValue` の `TextV` / `NumberV` / `BoolV` / `FileV`、`HttpBody` の `Json` / `Form` / `Multipart` / `Text` / `Bytes` / `Empty`（[HTTP / Storage §6.1.3](./http.md#_6-1-3-httpbody-型)）。コード生成はどんな綴りからも variant を作るため、どの union も宣言していないタグは `{_tag: "<name>"}` へ落ちる：どの `match` arm にも一致せず、他のどの値とも等しくならず、どのフィールドも `undefined` である値である。
 
 宣言された型が variant を判定する位置では、その型を名指してその位置で報告される：`slot s : Status = Zork` は [E0216](#e0216-unknown-variant)、union でない型に与えたタグは [E0201](#e0201-type-mismatch)——`emit` の引数なら [E0202](#e0202-emit-arg-type-mismatch)——である。`undef-variant` は宣言された型が判定しない位置——`let`、`effect` の `map-request`（`Decoder` に照らす `decode` を除く）、`==` のオペランド——のためのものであり、1 つの誤りは 1 つの診断になる。
 
@@ -1233,6 +1233,8 @@ bind していないコントロールが選択状態を読む引数 — `check`
 | `Duration` | 標準ライブラリ：`Duration.ms(…)` などが組み立てる値、および toast effect の `duration` |
 | `FormValue` | ランタイム：`Multipart` の body は `FileV` のエントリをファイルとして送る |
 | `Decoder` | 標準ライブラリ：`Decoder.Json(T)`・`Decoder.Text`・`Decoder.Bytes`・`Decoder.None` が組み立てるもの。ランタイムはリクエストの応答をこれによって decode する |
+| `HttpBody` | ランタイム：`http.*` effect は `body` をそのタグで送る |
+| `IndexRange` | ランタイム：`indexed-query` はその `range` を IndexedDB のキー範囲として読む |
 
 これらの名前でプログラムが独自に定義しても、型検査が推論する対象が変わるだけで、ランタイムが供給するものは何も変わらない。仮に `type PanicInfo = Text` がその名前を取ったとすれば、`in=PanicInfo` を宣言したフォールバックの `$1` は、ランタイムが panic レコードを束縛するのに `Text` として検査されることになる：[E0220](#e0220-boundary-fallback-input) の修正が勧めるとおり `$1.message` を読むと `Text` にないメンバーとして拒否され、E0220 が捕らえるための `in=Text` のフォールバックが `PanicInfo` という名前で通ってしまうことになる。
 

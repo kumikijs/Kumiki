@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { TypeDef } from "../src/ast.ts";
 import { isReservedTypeName, RESERVED_TYPE_NAMES, STDLIB_TYPES } from "../src/stdlib-types.ts";
 import {
   checkSource,
@@ -6,6 +7,7 @@ import {
   locatedSummariesOf,
   reservedTypeNameMessage,
 } from "./helpers/diagnostics.ts";
+import { appliedName } from "./helpers/programs.ts";
 
 const TAIL = `tile App = column(text("x"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
@@ -19,6 +21,8 @@ const RESERVED = [
   "Duration",
   "FormValue",
   "Decoder",
+  "HttpBody",
+  "IndexRange",
 ];
 
 // Each use is one the standard library's definition would refuse, so a row
@@ -95,6 +99,11 @@ describe("a use of a reserved name keeps the standard library's type", () => {
       "FormValue",
       "fn f(v: FormValue) -> Text = match v with | TextV(t) -> t | NumberV(n) -> n.show | BoolV(b) -> b.show | FileV(x) -> x.name",
     ],
+    [
+      "HttpBody",
+      'fn f(b: HttpBody(Int)) -> Text = match b with | Json(n) -> n.show | Form(_) -> "f" | Multipart(_) -> "m" | Text(t) -> t | Bytes(_) -> "b" | Empty -> "e"',
+    ],
+    ["IndexRange", "fn f(r: IndexRange(Int)) -> Bool = r.lowerOpen"],
   ])("keeps the standard library's %s under a program's own declaration", (name, use) => {
     expect(codesOf(`type ${name} = Text\n${use}\n${TAIL}`)).toEqual(["E0231"]);
   });
@@ -146,13 +155,15 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 });
 
 describe("the standard library names everywhere else", () => {
-  const positions = (n: string): [string, string][] => {
+  const positions = (t: TypeDef): [string, string][] => {
+    const n = t.name;
+    const ty = appliedName(t);
     return [
-      ["a slot annotation", `slot x : Option(${n}) = None`],
-      ["a fn parameter and return", `fn f(a: Option(${n})) -> Option(${n}) = a`],
-      ["a tile in=", `tile T in=${n} = text("t")`],
-      ["a record field", `type Box = {v: ${n}}\nslot b : Option(Box) = None`],
-      ["an alias of it", `type Mine = ${n}\nslot b : Option(Mine) = None`],
+      ["a slot annotation", `slot x : Option(${ty}) = None`],
+      ["a fn parameter and return", `fn f(a: Option(${ty})) -> Option(${ty}) = a`],
+      ["a tile in=", `tile T in=${ty} = text("t")`],
+      ["a record field", `type Box = {v: ${ty}}\nslot b : Option(Box) = None`],
+      ["an alias of it", `type Mine = ${ty}\nslot b : Option(Mine) = None`],
       [
         "a type parameter of that spelling",
         `type Box(${n}) = {v: ${n}}\nslot b : Box(Int) = {v: 1}`,
@@ -166,7 +177,7 @@ describe("the standard library names everywhere else", () => {
     ];
   };
   const cases = STDLIB_TYPES.flatMap((t) =>
-    positions(t.name).map(([where, decls]) => ({ name: t.name, where, decls })),
+    positions(t).map(([where, decls]) => ({ name: t.name, where, decls })),
   );
   it.each(cases)("leaves $name in $where alone", ({ decls }) => {
     expect(locatedSummariesOf(`${decls}\n${TAIL}`)).toEqual([]);

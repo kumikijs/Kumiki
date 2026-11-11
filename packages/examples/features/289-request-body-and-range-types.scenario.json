@@ -1,0 +1,39 @@
+{
+  "effects": {
+    "http-post": [{ "outcome": "ok", "value": "ok" }, { "outcome": "ok", "value": "pong" }],
+    "indexed-query": [
+      {
+        "outcome": "ok",
+        "value": [
+          { "id": "n1", "title": "first", "at": 10 },
+          { "id": "n2", "title": "second", "at": 15 }
+        ]
+      }
+    ]
+  },
+  "steps": [
+    {
+      "label": "nothing has been sent or read yet",
+      "expect": { "noErrors": true, "state": { "status": "idle", "found": [] } }
+    },
+    {
+      "label": "a Json body declared HttpBody(Note) is sent",
+      "do": { "click": "#send" },
+      "expect": { "noErrors": true, "state": { "status": "sent ok" } }
+    },
+    {
+      "label": "an Empty body is sent through the same declaration",
+      "do": { "click": "#ping" },
+      "expect": { "noErrors": true, "state": { "status": "sent pong" } }
+    },
+    {
+      "label": "the query answers the List(Note) its out= declares",
+      "do": { "click": "#find" },
+      "expect": {
+        "noErrors": true,
+        "state": { "status": "found 2" },
+        "domIncludes": ["status: found 2", "titles: first, second"]
+      }
+    }
+  ]
+}
