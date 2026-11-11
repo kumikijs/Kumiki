@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { transformCode, writeKumiki } from "./helpers/plugin.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
+
+const TMP = scratchRoot(import.meta.url);
 
 const FIXTURE = `
 slot _ : Text = ""
@@ -14,7 +17,7 @@ app IconApp
 
 describe("vite-plugin-kumiki icon registry", () => {
   it("bakes referenced @kumikijs/icons paths into the emitted App.icons", async () => {
-    const code = await transformCode(FIXTURE, writeKumiki("icons", FIXTURE));
+    const code = await transformCode(FIXTURE, writeKumiki(TMP, "icons", FIXTURE));
     expect(code).toContain("App.icons = {");
     expect(code).toMatch(/"check":\s*"[mM][^"]+"/);
     expect(code).toMatch(/"alert-triangle":\s*"[mM][^"]+"/);

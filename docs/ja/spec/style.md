@@ -199,7 +199,7 @@ overlay(Content, when(modalOpen, Modal())) {align: "center"}
 | `panel` | グループ化ボックス。視覚的な境界 (border) や見出しを持つ |
 | `region` | a11y 上の名前付き領域。スクリーンリーダー向け landmark |
 | `scroll` | overflow auto なコンテナ。`h` 指定で固定高スクロール |
-| `fieldset` | form 内のフィールドグループ。`<fieldset>` 相当 |
+| `fieldset` | form 内のフィールドグループ。ブラウザ既定の枠線・パディング・マージン・最小幅をリセットした `<fieldset>` を描画する（[ランタイム §10.3.4](./runtime.md#_10-3-4-dom-レンダリングの不変条件)） |
 
 ```kumiki snippet
 panel(heading("Settings"), settingsForm) {bg: "surface", pad: "md"}

@@ -1,8 +1,10 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { runCli, SPAWN } from "./helpers/cli.ts";
+import { runCli, SPAWN, spawns } from "./helpers/cli.ts";
+import { warningLinesOf } from "./helpers/diagnostics.ts";
 import { seed, tempDir } from "./helpers/files.ts";
+import { tiedCounts } from "./helpers/tie.ts";
 
 const write = (name: string, source: string): string => seed(source, name);
 
@@ -50,6 +52,37 @@ test inc-works =
         expect = {slots: {count: 1}, effects: []}
 `;
 
+/** In `first-shows` the list is empty, so `First` panics as it renders. */
+const WITH_RENDER_PANIC = `slot count : Int = 0
+slot items : List(Int) = []
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+tile IncBtn = button(text="+1", onClick=inc)
+tile First = heading("First: " + items[0].show)
+tile App = column(heading("Count: " + count.show), IncBtn)
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+test first-shows =
+    tile-test First
+        given  = {slots: {items: []}}
+        expect = heading("First: 1")
+test inc-works =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: 1}, effects: []}
+`;
+
+/** `[1][3]` indexes past the end of a one-item list, so `expect-panics`' body throws. */
+const WITH_THROWING_TEST = WITH_TESTS.replace(
+  "test inc-works =",
+  `test expect-panics =
+    reducer-test inc
+        given  = {slots: {count: 0}, event: {type: ui.click, target: IncBtn}}
+        expect = {slots: {count: [1][3]}, effects: []}
+test inc-works =`,
+);
+
 describe("kumiki fix", () => {
   it("exits 1 in dry-run while the errors are still on disk", SPAWN, () => {
     const { stdout, code } = runCli(["fix", write("fix-dry.kumiki", FIXABLE)]);
@@ -69,10 +102,53 @@ describe("kumiki fix", () => {
     expect(code).toBe(0);
   });
 
+  // Writing either name would leave a file `check` calls clean: exit 0 on a coin flip, which
+  // `fix --apply && next-step` walks straight past.
+  describe.each([
+    ["countA", "countB"],
+    ["countB", "countA"],
+  ])("with %s declared before %s, two names equally close", (first, second) => {
+    it("proposes neither and exits 1", SPAWN, () => {
+      const { stdout, stderr, code } = runCli([
+        "fix",
+        write(`tie-${first}.kumiki`, tiedCounts(first, second)),
+      ]);
+      expect(stdout).not.toContain('replace "count"');
+      expect(stdout).toContain("(no auto-patches available)");
+      expect(stderr).toContain(
+        'error E0103 undef-ref at 7:49: Reference to undefined name "count"',
+      );
+      expect(code).toBe(1);
+    });
+
+    it("writes neither with --apply and exits 1", SPAWN, () => {
+      const source = tiedCounts(first, second);
+      const file = write(`tie-apply-${first}.kumiki`, source);
+      const { stdout, code } = runCli(["fix", file, "--apply"]);
+      expect(stdout).not.toContain("file now clean");
+      expect(readFileSync(file, "utf8")).toBe(source);
+      expect(code).toBe(1);
+    });
+  });
+
   it("exits 1 when --apply leaves errors behind", SPAWN, () => {
     const file = write("fix-apply-partial.kumiki", `${FIXABLE}tile Orphan = column(zzz.show)\n`);
     const { stdout, code } = runCli(["fix", file, "--apply"]);
     expect(stdout).toContain("error(s) remain");
+    expect(code).toBe(1);
+  });
+
+  it("writes the repair beside a tie with --apply, leaves the tie, and exits 1", SPAWN, () => {
+    // `countAA` is one edit from `countA` and two from `countB`, so it has one repair.
+    const source = tiedCounts("countA", "countB").replace(
+      "countA := countA + 1",
+      "countA := countAA + 1",
+    );
+    const file = write("fix-apply-beside-tie.kumiki", source);
+    const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
+    expect(readFileSync(file, "utf8")).toBe(tiedCounts("countA", "countB"));
+    expect(stdout).toContain("error(s) remain");
+    expect(stderr).toContain('error E0103 undef-ref at 7:49: Reference to undefined name "count"');
     expect(code).toBe(1);
   });
 
@@ -88,7 +164,7 @@ describe("kumiki fix", () => {
     expect(code).toBe(0);
   });
 
-  it("keeps a repair that clears an error and reveals a warning", SPAWN, () => {
+  it("keeps a repair that clears an error and reveals a warning", spawns(2), () => {
     const src = `slot count : Int = 0
 reducer bump on=ui.focus(Crd) do= count := count + 1
 tile Card = box(heading("Count: " + count.show))
@@ -125,7 +201,7 @@ app Demo
     expect(code).toBe(0);
   });
 
-  it("holds --auto-patch to the same rule as the diagnostic path", SPAWN, () => {
+  it("holds --auto-patch to the same rule as the diagnostic path", spawns(2), () => {
     const blocked = `slot count : Int = 0
 reducer inc on=ui.click(IncBtn) do= conut := count + 1
 tile IncBtn = button(text="+1", onClick=inc)
@@ -152,6 +228,46 @@ test inc-works =
     expect(passing.code).toBe(0);
   });
 
+  // `idx` is one edit from the slot `id`, and the read renamed to `id`
+  // type-checks: a rename would leave a clean file that reads another slot.
+  const OUT_OF_SCOPE = `slot id    : Int = 0
+slot total : Int = 0
+slot count : Int = 0
+reducer tally on=ui.click(Btn)
+    do= for idx in [1] { () }
+        total := idx
+tile Btn = button(text="go")
+tile App = column(Btn, heading("Total: " + total.show))
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("exits 1 proposing nothing for a read after the body that declared it", SPAWN, () => {
+    const { stdout, code } = runCli(["fix", write("scope-dry.kumiki", OUT_OF_SCOPE)]);
+    expect(stdout).toBe("(no auto-patches available)\n");
+    expect(code).toBe(1);
+  });
+
+  it("exits 1 under --apply with that read left as written", SPAWN, () => {
+    const file = write("scope-apply.kumiki", OUT_OF_SCOPE);
+    const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
+    expect(readFileSync(file, "utf8")).toBe(OUT_OF_SCOPE);
+    expect(stdout).toBe("(no auto-patches available)\n");
+    expect(stderr).toContain('error E0103 undef-ref at 6:18: Reference to undefined name "idx" — ');
+    expect(code).toBe(1);
+  });
+
+  it("still repairs a misspelling beside that read under --apply", SPAWN, () => {
+    const src = OUT_OF_SCOPE.replace("total := idx", "total := idx\n        count := cont");
+    const file = write("scope-misspelling.kumiki", src);
+    const { stdout, code } = runCli(["fix", file, "--apply"]);
+    expect(stdout).toContain("applied 1 fix(es) — 1 error(s) remain");
+    expect(readFileSync(file, "utf8")).toBe(src.replace("count := cont", "count := count"));
+    expect(code).toBe(1);
+  });
+
   it("applies a patch to a file that also has a warning", SPAWN, () => {
     const { stdout, code } = runCli([
       "fix",
@@ -164,6 +280,17 @@ test inc-works =
 });
 
 describe("kumiki check", () => {
+  it("names the severity of each diagnostic it prints, and exits 1 for the error", SPAWN, () => {
+    const src = WARN_ONLY.replace("column(Card)", "column(Card, text(totl.show))");
+    const { stdout, stderr, code } = runCli(["check", write("severity.kumiki", src)]);
+    expect(stderr.trimEnd().split("\n")).toEqual([
+      expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:17: /),
+      'error E0103 undef-ref at 4:30: Reference to undefined name "totl"',
+    ]);
+    expect(stdout).toBe("");
+    expect(code).toBe(1);
+  });
+
   it("unions the scope flags instead of keeping the first", SPAWN, () => {
     const src = `slot count : Int = "zero"
 tile App = column(heading("Count: " + cnt.show))
@@ -205,6 +332,38 @@ describe("kumiki test", () => {
     expect(stdout).toContain("no tests found");
     expect(code).toBe(0);
   });
+
+  it("fails a test whose body throws on its own, and still runs the rest", SPAWN, () => {
+    // The throwing test comes first, so the passing one after it only reports
+    // if the run goes on past the throw.
+    const { stdout, code } = runCli(["test", write("test-throws.kumiki", WITH_THROWING_TEST)]);
+    expect(stdout).toMatch(
+      /^FAIL {2}expect-panics \(\d+ms\)\n {2}error: {4}Index 3 is out of range for a List of length 1$/m,
+    );
+    expect(stdout).toMatch(/^PASS {2}inc-works \(\d+ms\)$/m);
+    expect(stdout).toContain("1/2 passed");
+    expect(code).toBe(1);
+  });
+
+  it("reports a tile that panics as it renders as its test's unexpected panic", SPAWN, () => {
+    // Nothing under the diff line, so the panic reads as the tile's and not as a throw in the
+    // test's body.
+    const { stdout, code } = runCli(["test", write("test-render-panic.kumiki", WITH_RENDER_PANIC)]);
+    expect(stdout).toMatch(
+      new RegExp(
+        [
+          "^FAIL {2}first-shows \\(\\d+ms\\)",
+          ' {2}expected: heading\\("First: 1"\\)',
+          ' {2}actual: {3}panic: "Index 0 is out of range for a List of length 0"',
+          " {2}diff at: {2}\\(unexpected panic\\)",
+          "PASS {2}inc-works \\(\\d+ms\\)$",
+        ].join("\n"),
+        "m",
+      ),
+    );
+    expect(stdout).toContain("1/2 passed");
+    expect(code).toBe(1);
+  });
 });
 
 describe("kumiki refs / view", () => {
@@ -214,16 +373,20 @@ describe("kumiki refs / view", () => {
     expect(code).toBe(1);
   });
 
-  it("fails on a qname that is not defined under view --with-deps, as without it", SPAWN, () => {
-    const file = write("view-deps.kumiki", CLEAN);
-    const res = runCli(["view", file, "slot.nope", "--with-deps"]);
-    expect(res).toMatchObject({
-      stdout: "",
-      stderr: 'Definition "slot.nope" not found\n',
-      code: 1,
-    });
-    expect(runCli(["view", file, "slot.nope"])).toEqual(res);
-  });
+  it(
+    "fails on a qname that is not defined under view --with-deps, as without it",
+    spawns(2),
+    () => {
+      const file = write("view-deps.kumiki", CLEAN);
+      const res = runCli(["view", file, "slot.nope", "--with-deps"]);
+      expect(res).toMatchObject({
+        stdout: "",
+        stderr: 'Definition "slot.nope" not found\n',
+        code: 1,
+      });
+      expect(runCli(["view", file, "slot.nope"])).toEqual(res);
+    },
+  );
 
   it("prints a defined qname after its dependencies under view --with-deps", SPAWN, () => {
     const res = runCli(["view", write("view-deps-ok.kumiki", CLEAN), "tile.App", "--with-deps"]);
@@ -344,7 +507,7 @@ describe("kumiki lock / unlock", () => {
     return locks;
   }
 
-  it("lock exits 1 for a pattern another agent's overlaps, and 0 for its holder", SPAWN, () => {
+  it("lock exits 1 for a pattern another agent's overlaps, and 0 for its holder", spawns(2), () => {
     const file = write("lock.kumiki", CLEAN);
     const locks = lockedByA(file);
     const granted = readFileSync(locks, "utf8");
@@ -366,7 +529,7 @@ describe("kumiki lock / unlock", () => {
     expect(existsSync(`${file}.kumiki-locks.json`)).toBe(false);
   });
 
-  it("unlock exits 1 for an agent that holds no lock, and 0 for one that does", SPAWN, () => {
+  it("unlock exits 1 for an agent that holds no lock, and 0 for one that does", spawns(2), () => {
     const file = write("unlock.kumiki", CLEAN);
     const none = runCli(["unlock", file, "agent:x"]);
     expect(none.stderr).toContain("agent:x holds no lock");
@@ -423,7 +586,7 @@ app Demo
     expect(code).toBe(1);
   });
 
-  it("test exits 1 when a test fails", SPAWN, () => {
+  it("test exits 1 when a test fails", spawns(2), () => {
     const failing = WITH_TESTS.replace(
       "expect = {slots: {count: 1}",
       "expect = {slots: {count: 7}",
@@ -466,4 +629,126 @@ test inc-adds-two =
     expect(readFileSync(file, "utf8")).toBe(src);
     expect(code).toBe(1);
   });
+});
+
+describe("the warnings of the compile that smoke, run and test start with", () => {
+  const WARN_WITH_TEST = (count: number): string => `${WARN_ONLY}test bump-works =
+    reducer-test bump
+        given  = {slots: {count: 0}, event: {type: ui.focus, target: Card}}
+        expect = {slots: {count: ${count}}, effects: []}
+`;
+
+  /** WARN_ONLY's warning at the same line, and a click that panics. */
+  const WARN_AND_PANIC = `slot count : Int = 0
+reducer bump on=ui.focus(Card) do= count := count + 1
+reducer boom on=ui.click(BoomBtn) do= panic("boom")
+tile Card = box(heading("Count: " + count.show))
+tile BoomBtn = button(text="go", onClick=boom)
+tile App = column(Card, BoomBtn)
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  /** A `fmt` with a placeholder it has no argument for, inside the test's `given`: W0214 there. */
+  const WARN_IN_TEST = WITH_TESTS.replace(
+    "given  = {slots: {count: 0}",
+    'given  = {slots: {count: fmt("{0} {1}", 1).length}',
+  ).replace("expect = {slots: {count: 1}", "expect = {slots: {count: 6}");
+
+  // As `kumiki check` prints them, computed in-process: no line names its file.
+  const warning = warningLinesOf(WARN_ONLY);
+  const inTest = warningLinesOf(WARN_IN_TEST);
+
+  it("each source warns once, where these cases assume", () => {
+    expect(warning).toMatch(/^[^\n]*\bW0212 ui-event-tile-mismatch at 2:\d+: [^\n]+\n$/);
+    expect(warningLinesOf(WARN_AND_PANIC)).toBe(warning);
+    expect(warningLinesOf(WARN_WITH_TEST(1))).toBe(warning);
+    expect(inTest).toMatch(/^[^\n]*\bW0214 [^\n]+ at 11:\d+: [^\n]+\n$/);
+  });
+
+  it.each([
+    {
+      verb: "smoke",
+      args: (): string[] => [],
+      stdout: "ok — mounted, rendered, 0 interaction(s), no runtime errors\n",
+    },
+    {
+      verb: "run",
+      args: (): string[] => [
+        write("warned-run.json", JSON.stringify({ steps: [{ expect: { noErrors: true } }] })),
+      ],
+      stdout: "[ok] step 0\n\nscenario passed\n",
+    },
+  ])(
+    "$verb prints them on stderr and its output as for a clean file",
+    spawns(2),
+    ({ verb, args, stdout }) => {
+      const file = write(`warned-${verb}.kumiki`, WARN_ONLY);
+      expect(runCli([verb, file, ...args()])).toMatchObject({ stdout, stderr: warning, code: 0 });
+      const clean = write(`clean-${verb}.kumiki`, CLEAN);
+      expect(runCli([verb, clean, ...args()])).toMatchObject({ stdout, stderr: "", code: 0 });
+    },
+  );
+
+  it("test prints them on stderr and its report as for a clean file", spawns(2), () => {
+    const warned = runCli(["test", write("warned-test.kumiki", WARN_WITH_TEST(1))]);
+    expect(warned).toMatchObject({
+      stdout: expect.stringMatching(/^PASS {2}bump-works \(\d+ms\)\n\n1\/1 passed\n$/),
+      stderr: warning,
+      code: 0,
+    });
+    const clean = runCli(["test", write("clean-test.kumiki", WITH_TESTS)]);
+    expect(clean).toMatchObject({
+      stdout: expect.stringMatching(/^PASS {2}inc-works \(\d+ms\)\n\n1\/1 passed\n$/),
+      stderr: "",
+      code: 0,
+    });
+  });
+
+  it("smoke that fails prints them on stderr ahead of the failure", SPAWN, () => {
+    const res = runCli(["smoke", write("warned-panics.kumiki", WARN_AND_PANIC)]);
+    expect(res).toMatchObject({ stdout: "", code: 1 });
+    expect(res.stderr.split("runtime smoke failed (")[0]).toBe(warning);
+  });
+
+  it.each([
+    {
+      verb: "run",
+      source: WARN_ONLY,
+      args: (): string[] => [
+        write(
+          "failing-run.json",
+          JSON.stringify({ steps: [{ expect: { state: { count: 99 } } }] }),
+        ),
+      ],
+      stdout: /\nscenario FAILED\n$/,
+    },
+    {
+      verb: "test",
+      source: WARN_WITH_TEST(7),
+      args: (): string[] => [],
+      stdout: /^FAIL {2}bump-works /,
+    },
+  ])("$verb that fails still prints them on stderr", SPAWN, ({ verb, source, args, stdout }) => {
+    const res = runCli([verb, write(`failing-${verb}.kumiki`, source), ...args()]);
+    expect(res).toMatchObject({ stdout: expect.stringMatching(stdout), stderr: warning, code: 1 });
+  });
+
+  it.each([
+    { verb: "test", stdout: /^PASS {2}inc-works / },
+    { verb: "smoke", stdout: /^ok — mounted, rendered, / },
+  ])(
+    "$verb names the test a warning sits in, as a failed compile does",
+    SPAWN,
+    ({ verb, stdout }) => {
+      const res = runCli([verb, write(`in-test-${verb}.kumiki`, WARN_IN_TEST)]);
+      expect(res).toMatchObject({
+        stdout: expect.stringMatching(stdout),
+        stderr: `${inTest.trimEnd()} (in test "inc-works")\n`,
+        code: 0,
+      });
+    },
+  );
 });

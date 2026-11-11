@@ -69,7 +69,7 @@ Each variant is sent as what it names:
 
 A `body` that is not an `HttpBody` variant (a record, a list, a bare `Text`) is sent as JSON, as `Json` would send it: `body: $1` with a `Text` input sends `"x"`, not `x`. To send raw text, write `Text($1)`.
 
-`GET` and `HEAD` send no body, whatever `body` holds.
+`GET` and `HEAD` send no body, whatever `body` holds. `http.get`'s request has no `body` field, so a `map-request` that writes one is refused ([6.6.1](#_6-6-1-request-fields)).
 
 ### 6.1.4 The Decoder Type
 
@@ -80,7 +80,9 @@ Decoder.Bytes        # keep it as a byte sequence
 Decoder.None         # discard the response body
 ```
 
-Response decoding is type-safe at compile time; at runtime the JSON syntax is checked, and so is every predicate the declared type carries. A 2xx body that does not parse as JSON is an `HttpError` with the response's own `status`, a `message` that starts with `decode failed:`, and the response text in `body`. A response arrived, so it is not a connection error (`status: 0`) and it is not retried ([6.5](#_6-5-retry)). A 2xx with no body (such as 204) needs `Decoder.None`; otherwise the default decoder reports `decode failed:` with that status.
+`Decoder.Text` delivers the body as `Text`, read as UTF-8. `Decoder.Bytes` delivers the body's bytes as received, as `Bytes`, so a body that is not UTF-8 text arrives intact. `Decoder.None` delivers `Unit` and does not read the body. A request with no `decode`, or with a `null` one, is parsed as JSON, as by a `Decoder.Json(T)` whose `T` carries no predicate. `map-request` builds an ordinary record, so its `decode` can hold any value; one that is none of these decoders fails the effect before any request is sent, with an `HttpError` whose `status` is `0` and whose `message` names the value, as in `decode is "TEXT", which is not a Decoder`. Whatever the decoder, the `body` of the `HttpError` a non-2xx response produces is `Some` of the response's text whenever its body was read.
+
+Response decoding is type-safe at compile time; at runtime the JSON syntax is checked, and so is every predicate the declared type carries. A 2xx body that does not parse as JSON is an `HttpError` with the response's own `status`, a `message` that starts with `decode failed:`, and the response text in `body` (`Some(text)`). A response arrived, so it is not a connection error (`status: 0`) and it is not retried ([6.5](#_6-5-retry)). A 2xx with no body (such as 204) needs `Decoder.None`; otherwise the default decoder reports `decode failed:` with that status.
 
 The decoded value is also checked against `T`: every predicate `T` carries, at every position it is written at — the check a write to a slot of type `T` gets ([§10.3.3](./runtime.md#_10-3-3-batching)). A value it refuses is the same `HttpError`, with a `message` that names the predicate and where the value failed it (`decode failed: uuid at .id`). Only the predicates are checked: a position where `T` carries none is taken as it arrives, so a body that parses but does not match the declared shape is not detected at runtime. A host provider registered for a read capability (`http.*`, `storage.read`, `session.read`, `indexed.read`; [Standard Library §2.5](./stdlib.md#_2-5-standard-capabilities)) receives this check as the request's `decode`, a function: given the parsed value it returns `undefined` when `T` accepts it and the failed predicate (`{kind, args, path}`) when `T` refuses it. For a `T` that carries no predicate, `decode` is the string `"json"`.
 
@@ -163,7 +165,7 @@ reducer added
 
 ### 6.3.1 Injecting Global Headers
 
-In `app.http` you can declare headers that are automatically applied to all HTTP effects:
+In `app.http` you can declare headers that are automatically applied to all HTTP effects (under a `base-url`, to those on its origin — see below):
 
 ```kumiki fragment
 app App
@@ -182,12 +184,25 @@ app App
 | http field | Meaning | Evaluated |
 |---|---|---|
 | `base-url` | Base for relative URLs — a `Text` or a type built on `Text` (`Url`, `Email`, `Uuid`, …) | per request |
-| `headers` | Applied to all requests — a `Map(Text, Text)`, the type of a request's own `headers` | per request |
-| `timeout` | Default timeout in milliseconds — anything assignable to `Int`: an `Int`, a `Duration`, a user `nominal Int` | per request |
-| `credentials` | fetch credentials mode (default in [§6.9](#_6-9-default-settings)) — a `Text`, one of `omit` / `same-origin` / `include` | per request |
+| `headers` | Applied to every request (under a `base-url`, only to its origin — below) — a `Map(Text, Text)`, the type of a request's own `headers` | per request |
+| `timeout` | Default timeout, a number of milliseconds from 1 to 2147483647 — anything assignable to `Int`: an `Int`, a `Duration`, a user `nominal Int` | per request |
+| `credentials` | fetch credentials mode (default in [§6.9](#_6-9-default-settings); under a `base-url`, only to its origin — below) — a `Text`, one of `omit` / `same-origin` / `include` | per request |
 | `on-401` | Reducer that receives a 401 (resolved by the compiler — an unknown name is [E0102](./errors.md#e0102-undef-reducer)) | resolved at compile time |
 | `on-403` | Reducer that receives a 403 (same) | resolved at compile time |
 | `on-5xx` | Reducer that receives a 5xx (same) | resolved at compile time |
+
+`base-url` and a request's `url` ([§6.1.2](#_6-1-2-standard-effect)) make the URL that is fetched:
+
+- With no `base-url`, or an empty one, every url is fetched as written.
+- A base that carries a `?` or a `#` has the url appended to it as written, whatever the url: `https://api.example.com/search?q=` with `term` fetches `https://api.example.com/search?q=term`, and `https://proxy.example.com/?url=` with `https://target/x` fetches `https://proxy.example.com/?url=https://target/x`.
+- Under any other base, an **absolute** url is fetched as written. A url is absolute when it starts with a scheme — an ASCII letter, then zero or more ASCII letters, digits, `+`, `-` or `.`, then `:` (`https:`, `data:`) — or with `//` (protocol-relative). A first segment of that shape up to its `:` reads as a scheme, so a path like `users:search` is written `/users:search`; `1a:b` and `a_b:c` are not of that shape, and are relative.
+- Any other url is **relative**. Unless it is empty or starts with `?` or `#` (below), it is joined to the base with exactly one `/` between them, whether the base ends in `/` and whether the url starts with one: under `https://api.example.com` and under `https://api.example.com/`, both `/items/1` and `items/1` fetch `https://api.example.com/items/1`.
+- A base that carries a path is a **prefix**: `https://api.example.com/v1` with `/users` fetches `https://api.example.com/v1/users`. The url is not resolved against the base the way a browser resolves a link (`new URL("/users", base)`), which would drop `/v1`; a request for another path on the host writes its whole URL. A base that is only a path is joined the same way: `/api` with `users` fetches `/api/users`.
+- An empty url, or one that starts with `?` or `#`, is appended to the base as written: `https://api.example.com/items` with `?page=2` fetches `https://api.example.com/items?page=2`.
+
+`query` is appended to the URL this gives ([§6.1.2](#_6-1-2-standard-effect)).
+
+With a `base-url`, `headers` and `credentials` go only with a request to the base's origin — its scheme, host and port: a url joined to the base, or an absolute url on that origin. A request to any other origin carries no global header and the default `credentials` ([§6.9](#_6-9-default-settings)), so a token in `headers` never leaves the base's origin; such a request names what it needs in its own `headers`. A path-only base and a relative url are on the page's origin, and a base that cannot be read as a URL has no origin a request is on. With no `base-url`, both go with every request.
 
 Every field that takes a value takes an **expression**, and may read a slot. All
 four are evaluated **when a request is made**, not when the app is built: a
@@ -221,16 +236,24 @@ field unless a bullet below says otherwise:
 - `timeout` takes anything assignable to `Int`, read as milliseconds. A
   `Duration` is one (it is milliseconds at run time), and so is a user
   `nominal Int`; a `Float` is not. A `Text` would reach `setTimeout` as `NaN`
-  and abort every request before it can answer.
+  and abort every request before it can answer. The milliseconds are ones a
+  timer can hold: every literal that reaches the field must be from `1` to
+  `2147483647` (2^31 − 1), since `setTimeout` fires the abort at once for `0`
+  or less, and for a longer delay too — a browser wraps it below `0` and Node
+  shortens it to 1 ms — with the same effect.
 - `credentials` takes anything assignable to `Text`, and every literal that
-  reaches the field — the field's own value, or a literal branch of an `if` —
-  must be one of the three Fetch modes, since a browser refuses a request whose
-  init names any other.
+  reaches the field must be one of the three Fetch modes, since a browser
+  refuses a request whose init names any other.
 
-What is compared is the type, and for `credentials` the literals: a value
-computed any other way — a slot, a call, a concatenation — is decided at run
-time, so one of the right type is accepted whatever it will hold. `timeout: 0`
-and a negative `Int` are an `Int`, and are accepted too.
+What is compared is the type, and for `timeout` and `credentials` the literals
+too. A literal reaches the field as the field's own value, or as what a branch
+of an `if`, an arm of a `match` or the body of a `let … in` yields, at any
+depth, and is reported where it is written; `-1`, a number with a minus before
+it, is a literal. Its type is compared first, so `timeout: -5.5` is reported as
+a `Float`. A value computed any other way — a slot, a name bound by `let`,
+arithmetic such as `1 - 1`, a call such as `Duration.ms(0)`, a concatenation —
+is decided at run time, so one of the right type is accepted whatever it will
+hold.
 
 ### 6.3.2 Global Handling of 401
 
@@ -267,16 +290,24 @@ reducer cancelSearch
 
 `emit` used as an expression returns the dispatched effect's `EffectId` (see [stdlib §2.1.1.1](./stdlib.md#_2-1-1-1-effectid)). The `EffectId.none` sentinel makes `emit cancel(EffectId.none)` a safe no-op.
 
-The id is `<effect-name>:<key>`. `<key>` is `_` unless the effect declares `policy=latest-per-key(<expr>)`, and then it is that expression, **evaluated once, where the `emit` runs**: a slot it reads has the value the reducer body has written up to that statement, and a write later in the same body is not seen. The dispatcher runs the request under that same key, so the id an `emit` yields names the request it started even when the body goes on to write the slot the key reads. An `app.init` entry is emitted outside any reducer body; its key is evaluated when it is dispatched, against the slots' values at that moment.
+The id an `emit` yields names the request that emit starts or, when the policy drops the emit, the request that absorbed it. What else it names depends on the effect's policy:
+
+- **`policy=latest` and `policy=latest-per-key(<expr>)`** run one request per key, and the id is that key's: `<effect-name>:<key>`. `<key>` is `_` under `latest`. Under `latest-per-key` it is that expression, **evaluated once, where the `emit` runs**: a slot it reads has the value the reducer body has written up to that statement, and a write later in the same body is not seen. The dispatcher runs the request under that same key, so the id names the request the `emit` started even when the body goes on to write the slot the key reads. A later emit under the same key aborts that request and runs its own under the same id, so a cancel through either id aborts the one that is running. An `app.init` entry is emitted outside any reducer body; its key is evaluated when it is dispatched, against the slots' values at that moment. A `latest-per-key` key is written the way a Map key is stored ([stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)) — a primitive as its text, a record, tuple, `List`, `Map` or variant as its JSON with each record's fields in sorted order — so two emits share an id exactly when their keys are `==` (whatever its declared type, not for a non-finite number), and a key type for which that does not hold is [E0233](./errors.md#e0233-policy-key-type) ([language §1.5.2](./language.md#_1-5-2-semantics)).
+- **Every other policy** — none, `queue`, `debounce`, `throttle`, `once` — makes each `emit` a request of its own, with an id of its own that no other emit yields: two emits of one effect, from one reducer body or from two, yield two ids, and cancelling the request one of them starts leaves the other's as it is. The id is `<effect-name>#` followed by a new id from the generator `<T>.fresh()` draws from ([stdlib §2.4.1](./stdlib.md#_2-4-1-id-generation)), recorded as an `effect-id` read of its own ([runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)), so a replayed reducer body yields the id the recorded one did.
+
+An emit the policy **drops** starts no request, and its id names the request that absorbed it: under `throttle`, an emit inside the window names the request that opened the window; under `once`, an emit of an input already seen names the request that input launched; under `debounce`, an emit that a later one replaced before the timer fired names what the later one names. So `lastId := emit work(x)` followed by `emit cancel(lastId)` reaches the request the policy kept, whichever emit `lastId` came from. Once that request settles, a dropped id names nothing, as a settled one does.
 
 An `effect ... cap=http.cancel` must declare `in=EffectId out=Unit`; any other shape is rejected at compile time ([E0303](./errors.md#e0303-invalid-cancel-target)).
 
 ### 6.4.1 Behavior
 
-- A cancel against an unknown / already-completed `EffectId` is a silent no-op (cancellation is an idempotent intent, not a contract violation).
-- The cancelled effect's `.err` reducer fires with `{status: 0, message: "aborted", body: ""}` so the same `HttpError`-shaped path covers both abort and network failure. This normalization also applies to the automatic cancellations triggered by `policy=latest` / `policy=latest-per-key`. `status: 0` means no HTTP response arrived — the same value a timeout and a network failure report — and it is a value of `HttpStatus`, which admits it ([stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)), so a slot holding the `HttpError` accepts it.
-- A `debounce` timer scheduled for the same effect is cleared by cancel, so a pending-but-not-yet-issued request never lands.
-- A `throttle` window marker is **left intact** by cancel — the original effect has already launched (cancel aborts that in-flight request), and clearing the marker would let an immediate next emit slip past the rate limit before the window closes.
+- A cancel against an unknown / already-completed `EffectId` is a silent no-op (cancellation is an idempotent intent, not a contract violation), and records no `effect-cancel` step in the episode log ([runtime §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)).
+- The cancelled effect's `.err` reducer fires with `{status: 0, message: "aborted", body: None}` so the same `HttpError`-shaped path covers both abort and network failure. This normalization also applies to the automatic cancellations triggered by `policy=latest` / `policy=latest-per-key`. `status: 0` means no HTTP response arrived — the same value a timeout and a network failure report — and it is a value of `HttpStatus`, which admits it ([stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)), so a slot holding the `HttpError` accepts it.
+- An `HttpError`'s `body` is an `Option(Text)`. It is `Some` of the response's body text whenever a response arrived and its body was read: a status outside 2xx, and a 2xx whose body does not decode ([6.1.4](#_6-1-4-the-decoder-type)). An empty body is `Some("")`, not `None`. `body` is `None` when no response arrived — an abort, a cancellation, a timeout, a network failure, a request body that cannot be sent, all with `status: 0` — and when a response arrived but its body could not be read. That error keeps the response's own `status`, a 2xx's included, so a 2xx is not retried ([6.5](#_6-5-retry)), unless what stopped the read is the request's own cancellation or timeout: that is the `aborted` error above, whatever the status.
+- A cancel acts on the one request its id names. Any other request of the same effect that is in flight keeps running and delivers its own `.ok` / `.err`.
+- Under `queue`, a cancel affects only the entry its id names. An entry still waiting is removed from the queue: its request is never made and no `.err` fires. An entry that is running is aborted like any in-flight request, and the queue goes on with the next entry. Every other entry runs as it would have.
+- A cancel with the id of an emit still waiting on its `debounce` timer, or of an emit that one replaced, clears that timer, so the pending-but-not-yet-issued request never lands and no `.err` fires. A request the timer has already fired is a request of its own: a cancel through the id of a later emit, still waiting on the timer, leaves it running.
+- A `throttle` window marker is **left intact** by cancel — the request that opened the window has already launched (a cancel through its id, or through the id of an emit the window dropped, aborts that in-flight request), and clearing the marker would let an immediate next emit slip past the rate limit before the window closes.
 
 ---
 
@@ -295,7 +326,9 @@ effect loadCritical cap=http.get
 | `linear(N, ms)` | Up to N times, retried at ms intervals |
 | `exponential(N, initial-ms, factor)` | Up to N times, initial-ms the first time, multiplied by factor each time |
 
-Retries only target **5xx and connection errors**. 4xx is not retried (by specification), and neither is a 2xx whose body does not parse as JSON or whose value `T` refuses ([6.1.4](#_6-1-4-the-decoder-type)): the server already accepted the request, so a retry would duplicate its effect.
+Retries only target **5xx and connection errors**. 4xx is not retried (by specification), and neither is a 2xx whose body cannot be read ([6.4.1](#_6-4-1-behavior)), does not parse as JSON, or holds a value `T` refuses ([6.1.4](#_6-1-4-the-decoder-type)): the server already accepted the request, so a retry would duplicate its effect. Nor is a request that fails before it is sent, though its `status` is `0` as a connection error's is: a request body that cannot be sent ([6.1.3](#_6-1-3-the-httpbody-type)) or a `decode` that is no decoder ([6.1.4](#_6-1-4-the-decoder-type)) fails every attempt the same way.
+
+A request waiting between attempts stops waiting at once when it is cancelled: by `http.cancel` ([6.4](#_6-4-cancellation)), by a newer emit under `policy=latest`, or by a newer emit for the same key under `policy=latest-per-key`. Its `.err` fires right away, before any request emitted later can deliver its own result, and no further attempt is made; under `policy=queue`, the next entry starts at once instead of after the rest of the interval. That err is the `aborted` `HttpError` of [6.4.1](#_6-4-1-behavior) on an `http.*` effect, the `Text` `"aborted"` on a capability that fails with `Text` ([6.7](#_6-7-storage-effects)), and `{message: "aborted"}`, the shape an invoke that throws delivers ([stdlib §2.5](./stdlib.md#_2-5-standard-capabilities)), on any other capability. Unmounting the app ends the wait too, with no further attempt; nothing is delivered, as no reducer runs once the app is unmounted. A request that is neither cancelled nor unmounted waits out every interval in full.
 
 ---
 
@@ -319,6 +352,29 @@ effect loadUser cap=http.get
 ```
 
 `map-request` is a pure function (expression fragment) that transforms into the input of the built-in effect. This **concentrates in one place** the relationship between the high-level effect name and the actual HTTP request.
+
+### 6.6.1 Request fields
+
+What `map-request` builds is the request its capability's built-in handler reads, and the handler reads the fields below and nothing else. They are the records [6.1.2](#_6-1-2-standard-effect), [6.7.2](#_6-7-2-the-declarations-localstorage) and [6.7.4](#_6-7-4-sessionstorage-indexeddb) declare:
+
+| capability | request fields |
+|---|---|
+| `http.get` | `url`, `headers`, `query`, `decode` |
+| `http.post`, `http.put`, `http.patch`, `http.delete` | `url`, `headers`, `query`, `body`, `decode` |
+| `storage.read`, `session.read` | `key`, `decode` |
+| `storage.write`, `session.write` | `key`, `value` |
+| `indexed.read` with a `key` (`indexed-read`) | `store`, `key`, `decode` |
+| `indexed.read` with no `key` (`indexed-query`) | `store`, `index`, `range` |
+| `indexed.write` | `store`, `key`, `value` |
+| `indexed.delete` | `store`, `key` |
+
+An `indexed.read` request that names `key` reads one record by it, and one that does not runs a query over `index` and `range` ([6.7.4](#_6-7-4-sessionstorage-indexeddb)), so its fields are the row for whichever it is: `index` beside a `key` is never read, and nor is `decode` without one.
+
+A field a `map-request` writes that its capability's row does not list is [E0215](./errors.md#e0215-unknown-record-field), reported at the field, naming the nearest field the row has when one is close, and listing the fields the row accepts: `headrs: {"X": "1"}` on `http.get` is a header that would never be sent. The method is the capability's, and `timeout` and `credentials` are `app.http`'s ([6.3.1](#_6-3-1-injecting-global-headers)), so none of the three is a request field. A host provider registered for one of these capabilities ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)) is handed the same request, so it is held to the same fields.
+
+A field is checked where a literal names it: the `map-request` record itself, or the record a branch of an `if`, an arm of a `match` or the body of a `let` yields there, at any depth. A map literal's `Text` keys count too, since it lowers to the same object. A request computed any other way — returned by a `fn`, read from a slot, or `$1` itself — has its fields decided at run time and is not checked.
+
+A capability with no row has no request schema, and its `map-request` builds whatever its host provider reads: a custom capability, and every other standard capability (`nav.*`, `log.write`, …), whose declared effects reach a provider and no built-in handler. `http.cancel` takes no `map-request` at all ([E0303](./errors.md#e0303-invalid-cancel-target)).
 
 ---
 
@@ -360,7 +416,9 @@ A request that is none of these is `err` and changes nothing: one that is not a 
 
 **The stored form.** A value JSON can hold is stored as its JSON text: `{n: 1}` is stored as `{"n":1}`. A value holding a `Bytes`, a non-finite number (`NaN`, `Infinity`, `-Infinity`) or a negative zero anywhere in it is stored in the **tagged form**: `~` followed by the value's JSON, in which each `Bytes` is written `{"$bytes": "<its base64>"}`, each such number `{"$float": "NaN"}` (or `"Infinity"`, `"-Infinity"`, `"-0"`), and each key of an object in the value (a tag's own key aside) that starts with `$`, as a `Map(Text, V)` key or a `Set(Text)` member can, is written with one more `$` in front. Escaped, such a key starts with `$$`, so in the tagged form only a tag is an object whose key starts with a single `$`. For example, `{data: Bytes.from-text("hi"), ratio: 1.0 / 0.0}` is stored as `~{"data":{"$bytes":"aGk="},"ratio":{"$float":"Infinity"}}`, and `storage-read` gives back the same two bytes and `Infinity`. No JSON text starts with `~`, so a read tells the two forms apart by the first character, and an entry stored as JSON reads back as that JSON, whichever build wrote it: a stored `{"$bytes":"aGk="}` is the one-entry `Map(Text, Text)` it was written from, not a `Bytes`.
 
-A read decodes the stored text by its form. In the tagged form, an object with a key that starts with a single `$` is a tag and nothing else: `{"$bytes": …}` holding standard base64 with its padding, or `{"$float": …}` holding `"NaN"`, `"Infinity"`, `"-Infinity"` or `"-0"`, with no other key. A stored text that is not JSON, or a tagged text with anything else where a tag belongs, does not decode, and the read is `.err` with a `Text` starting `decode failed:` that names the key and the storage. When the read's `Decoder.Json(T)` refuses the value it decoded, checked as [6.1.4](#_6-1-4-the-decoder-type) checks a response, the read is `.err` with a `Text` starting `decode failed:` too. So storage that an older build wrote, or that was edited by hand, and that the type now refuses reaches the program as a failure its `.err` reducer handles. It is not an `.ok` whose writes the reducer's batch then refuses ([§10.3.3](./runtime.md#_10-3-3-batching)), which would leave an app that ends its loading state in that reducer on the loading screen.
+The read's decoder reads the stored text as [6.1.4](#_6-1-4-the-decoder-type) reads a response body: `Decoder.Json(T)`, and a read with no `decode` (or a `null` one), decode the stored form, as the next paragraph says; `Decoder.Text` delivers the stored text as it is, so a value stored in the tagged form reads with its leading `~`; `Decoder.Bytes` delivers the stored text's UTF-8 bytes; `Decoder.None` delivers `Unit`, so the read answers only whether the key is there. One stored text `Decoder.Bytes` reads as what it holds: a single `Bytes` in the tagged form, which is what `storage-write` stores for a `Bytes`, reads as those bytes (`~{"$bytes":"aGk="}` as the two bytes of `hi`), so a `Bytes` written reads back under `Decoder.Bytes` as itself. Any other text, tagged or not, reads as its UTF-8, a tagged text that does not decode included. A missing key is `Ok(None)` whatever the decoder. A `Bytes` aside, what `storage-write` wrote (JSON, or the tagged form) is read back by `Decoder.Json`: a `Text` it wrote reads under `Decoder.Text` as its JSON, quotes included (`"dark"`). A plain text another writer stored (`dark`) is read by `Decoder.Text`. A `decode` that is no decoder makes the read `.err` with a `Text` naming it.
+
+`Decoder.Json(T)`, and a read with no `decode`, decode the stored text by its form. In the tagged form, an object with a key that starts with a single `$` is a tag and nothing else: `{"$bytes": …}` holding standard base64 with its padding, or `{"$float": …}` holding `"NaN"`, `"Infinity"`, `"-Infinity"` or `"-0"`, with no other key. A stored text that is not JSON, or a tagged text with anything else where a tag belongs, does not decode, and the read is `.err` with a `Text` starting `decode failed:` that names the key and the storage. When the read's `Decoder.Json(T)` refuses the value it decoded, checked as [6.1.4](#_6-1-4-the-decoder-type) checks a response, the read is `.err` with a `Text` starting `decode failed:` too. So storage that an older build wrote, or that was edited by hand, and that the type now refuses reaches the program as a failure its `.err` reducer handles. It is not an `.ok` whose writes the reducer's batch then refuses ([§10.3.3](./runtime.md#_10-3-3-batching)), which would leave an app that ends its loading state in that reducer on the loading screen.
 
 **The err value is the declared `Text`.** A storage / session / indexed effect that fails delivers the failure's message as a plain `Text` — `"SecurityError: …"` when a read finds the backend blocked, the message naming the call and the key when a write does, `"app.indexed-db is not declared"` when an `indexed-*` effect runs without one — not a record wrapping it. A throw from the effect's `map-request`, or from a host provider registered for the capability, is delivered as the same `Text`. So `.err($e, _)` binds `$e : Text` ([Positional Binding](./language.md#_1-6-5-positional-binding)): `problem := $e` stores the message, and `$e.message` is E0108.
 
@@ -397,7 +455,7 @@ reducer onChange
 
 ### 6.7.4 sessionStorage / IndexedDB
 
-`session-*` has the same shape and the same stored form ([6.7.2](#_6-7-2-the-declarations-localstorage)). `indexed-*` is the same except that the key specification becomes `{store: Text, key: Text}`. A refused `Decoder.Json(T)` is `.err` on `session-read` and `indexed-read` as on `storage-read`; IndexedDB holds structured values, so nothing is parsed there, but the check still runs. `indexed-*` has no tagged form: IndexedDB keeps a structured clone of the record `indexed-write` puts, so a `Bytes`, a non-finite number or a negative zero inside the written record comes back from `indexed-read` as itself. A `value` that is not a record has no place for the store's key and is not given back as written.
+`session-*` has the same shape and the same stored form ([6.7.2](#_6-7-2-the-declarations-localstorage)), and `session-read` decodes as `storage-read` does. `indexed-*` is the same except that the key specification becomes `{store: Text, key: Text}`. IndexedDB holds structured values rather than text, so `indexed-read` parses nothing: `Decoder.Json(T)`, and a read with no `decode`, deliver the record as it was stored, and the `Decoder.Json(T)` check still runs, so a refused one is `.err` on `indexed-read` as on `storage-read`. `Decoder.Text` and `Decoder.Bytes` have no text to read, so a read by key that names either is `.err` with a `Text` starting `decode failed:`, whether or not the key is there. `Decoder.None` delivers `Unit`, so the read answers only whether the key is there. A `decode` that is no decoder is `.err` too. `indexed-*` has no tagged form: IndexedDB keeps a structured clone of the record `indexed-write` puts, so a `Bytes`, a non-finite number or a negative zero inside the written record comes back from `indexed-read` as itself. A `value` that is not a record has no place for the store's key and is not given back as written.
 
 ```kumiki fragment
 effect indexed-read cap=indexed.read

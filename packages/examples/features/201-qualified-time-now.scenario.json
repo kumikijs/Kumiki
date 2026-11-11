@@ -1,0 +1,21 @@
+{
+  "steps": [
+    {
+      "label": "the slots initialised from the clock hold the current time",
+      "expect": {
+        "noErrors": true,
+        "state": { "stamps": 0 },
+        "domIncludes": ["after 2000: true", "in order: true", "stamps: 0"]
+      }
+    },
+    {
+      "label": "a click re-reads the clock through Time.now, Time.now() and now, and the instants stay in order",
+      "do": { "click": "#stamp" },
+      "expect": {
+        "noErrors": true,
+        "state": { "stamps": 1 },
+        "domIncludes": ["after 2000: true", "in order: true", "stamps: 1"]
+      }
+    }
+  ]
+}

@@ -1,10 +1,16 @@
-import type {
-  AppShape,
-  CapabilityProvider,
-  CapabilityRegistry,
-  EffectResult,
-  EffectSpec,
-  EmitSpec,
+import { newId, readEnv } from "./env.ts";
+import type { EmitRefusal } from "./panic.ts";
+import {
+  type AppShape,
+  type BuiltinEffects,
+  type CapabilityProvider,
+  type CapabilityRegistry,
+  type EffectResult,
+  type EffectSpec,
+  type EmitSpec,
+  type HttpError,
+  NONE,
+  own,
 } from "./types.ts";
 
 export function makeCapabilityRegistry(
@@ -42,6 +48,18 @@ export function withAnalyticsDefault(
   return { ...(hostProviders ?? {}), "analytics.send": provider };
 }
 
+// The id a reducer body keeps and the one the dispatcher runs the request under must agree, so
+// both ask here. `latest` and `latest-per-key` run one request per key, and the id names it.
+// Under every other policy each emit gets an id of its own. Inside a body its new part is recorded
+// as an `effect-id` environment read, so replay yields the same id; a statement `emit` or an
+// `app.init` entry is minted at dispatch, unrecorded, because no program value holds its id.
+export function emitId(eff: Pick<EffectSpec, "policy"> | undefined, emit: EmitSpec): string {
+  const p = eff?.policy;
+  if (p?.kind === "latest") return `${emit.effect}:_`;
+  if (p?.kind === "latest-per-key") return `${emit.effect}:${emit.key ?? p.keyOf(emit.args[0])}`;
+  return emit.id ?? `${emit.effect}#${readEnv("effect-id", newId)}`;
+}
+
 type Dispatcher = {
   dispatch(emit: EmitSpec): void;
   dispose(): void;
@@ -57,141 +75,184 @@ export function makeEffectDispatcher(
     key: unknown,
     token: string,
   ) => void,
-  onCapabilityRefusal: (effect: string, cap: string, token?: string) => void,
+  onRefusal: (effect: string, why: EmitRefusal, token?: string) => void,
   onLaunch?: (effect: string, input: unknown) => string,
   onCancel?: (targetId: string) => void,
   onPolicyCancel?: (token: string, effectName: string) => void,
 ): Dispatcher {
-  type TimerEntry = {
-    kind: "debounce" | "throttle";
-    h: ReturnType<typeof setTimeout>;
-    token?: string;
-    effectName?: string;
-  };
-  type QueueEntry = { token: string; effectName: string };
+  type Timer = ReturnType<typeof setTimeout>;
+  type TimerEntry =
+    | { kind: "debounce"; h: Timer; id: string; token: string }
+    | { kind: "throttle"; h: Timer; id: string };
+  type QueueEntry = { id: string; token: string };
   type Queue = { tail: Promise<void>; pending: QueueEntry[] };
   type RunState = {
+    // Keyed by `EffectId`: what `http.cancel` names and `latest` replaces.
     inflight: Map<string, AbortController>;
+    // The id of an emit a policy dropped, to the id of the request that absorbed it, so a cancel
+    // through either one reaches that request. An entry goes when that request settles.
+    absorbedBy: Map<string, string>;
+    // Keyed by effect name: a debounce or throttle window, a once table and a queue belong to the
+    // effect, not to one emit.
     timers: Map<string, TimerEntry>;
-    onceSeen: Map<string, Set<string>>;
+    onceSeen: Map<string, Map<string, string>>;
     queues: Map<string, Queue>;
   };
   const state: RunState = {
     inflight: new Map(),
+    absorbedBy: new Map(),
     timers: new Map(),
     onceSeen: new Map(),
     queues: new Map(),
   };
 
+  // `dropped` now names the request `into` names, and so does every id that named `dropped`.
+  const absorb = (dropped: string, into: string): void => {
+    for (const [from, to] of state.absorbedBy) {
+      if (to === dropped) state.absorbedBy.set(from, into);
+    }
+    state.absorbedBy.set(dropped, into);
+  };
+  // The request under `id` is over, so the ids it absorbed name nothing any more.
+  const settle = (id: string): void => {
+    for (const [from, to] of state.absorbedBy) {
+      if (to === id) state.absorbedBy.delete(from);
+    }
+  };
+
   const launch = async (
     eff: EffectSpec,
     input: unknown,
-    key: string,
+    id: string,
     presetToken?: string,
   ): Promise<void> => {
     // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
     if (eff.cap !== "" && !caps.has(eff.cap)) {
+      settle(id);
       try {
-        onCapabilityRefusal(eff.name, eff.cap, presetToken);
+        onRefusal(eff.name, { category: "capability", cap: eff.cap }, presetToken);
       } finally {
         if (presetToken) onPolicyCancel?.(presetToken, eff.name);
       }
       return;
     }
     const token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
-    const id = `${eff.name}:${key}`;
     const ctl = new AbortController();
     state.inflight.set(id, ctl);
+    let res: EffectResult;
     try {
-      const res = await runWithRetry(eff, input, caps, ctl.signal);
-      onResult(eff.name, res.kind, res.value, input, token);
+      res = await runWithRetry(eff, input, caps, ctl.signal);
     } catch (e) {
-      onResult(eff.name, "err", { message: String(e) }, input, token);
-    } finally {
-      if (state.inflight.get(id) === ctl) state.inflight.delete(id);
+      res = { kind: "err", value: { message: String(e) } };
     }
+    // Released before its result is delivered, so a cancel the `.ok` / `.err` reducers emit finds
+    // a request that is over. Under `latest` a newer request may hold the id by now.
+    if (state.inflight.get(id) === ctl) {
+      state.inflight.delete(id);
+      settle(id);
+    }
+    onResult(eff.name, res.kind, res.value, input, token);
   };
 
   return {
     dispatch(emit: EmitSpec): void {
-      const eff = app.effects[emit.effect];
-      if (!eff) return;
+      const eff = own(app.effects, emit.effect);
+      if (!eff) {
+        // No token: with no effect there is no policy to defer this emit, so it is reported now, on
+        // the episode in focus.
+        onRefusal(emit.effect, { category: "effect" });
+        return;
+      }
       if (eff.cap === "http.cancel") {
-        const target = String(emit.args[0] ?? "");
-        if (target.length > 0) {
+        const named = String(emit.args[0] ?? "");
+        // The episode records a cancel only when it released something; the reducer step's
+        // `emits` already names the cancel effect.
+        let released = false;
+        if (named.length > 0) {
+          const target = state.absorbedBy.get(named) ?? named;
           const ic = state.inflight.get(target);
           if (ic) {
             ic.abort();
             state.inflight.delete(target);
+            released = true;
           }
-          const q = state.queues.get(target);
-          if (q) {
-            const waiting = q.pending.splice(0, q.pending.length);
-            for (const e of waiting) {
-              if (e.token) onPolicyCancel?.(e.token, e.effectName);
-            }
+          for (const [name, q] of state.queues) {
+            const i = q.pending.findIndex((e) => e.id === target);
+            if (i === -1) continue;
+            const [e] = q.pending.splice(i, 1);
+            if (e?.token) onPolicyCancel?.(e.token, name);
+            released = true;
+            break;
           }
-          const t = state.timers.get(target);
-          if (t !== undefined && t.kind === "debounce") {
+          // A throttle timer marks an open window, not a pending launch, so it is not released.
+          for (const [name, t] of state.timers) {
+            if (t.kind !== "debounce" || t.id !== target) continue;
             clearTimeout(t.h);
-            state.timers.delete(target);
-            if (t.token && t.effectName) {
-              onPolicyCancel?.(t.token, t.effectName);
-            }
+            state.timers.delete(name);
+            released = true;
+            if (t.token) onPolicyCancel?.(t.token, name);
+            break;
           }
-          onCancel?.(target);
+          settle(target);
         }
+        if (released) onCancel?.(named);
         return;
       }
       const input = emit.args[0];
       const policy = eff.policy ?? { kind: "default" as const };
-      const key = policy.kind === "latest-per-key" ? (emit.key ?? policy.keyOf(input)) : "_";
-      const id = `${eff.name}:${key}`;
+      const id = emitId(eff, emit);
       if (policy.kind === "once") {
-        const seen = state.onceSeen.get(eff.name) ?? new Set<string>();
+        const seen = state.onceSeen.get(eff.name) ?? new Map<string, string>();
         const k = JSON.stringify(input ?? null);
-        if (seen.has(k)) return;
-        seen.add(k);
+        const first = seen.get(k);
+        if (first !== undefined) {
+          if (state.inflight.has(first)) absorb(id, first);
+          return;
+        }
+        seen.set(k, id);
         state.onceSeen.set(eff.name, seen);
-        void launch(eff, input, key);
+        void launch(eff, input, id);
         return;
       }
       if (policy.kind === "debounce") {
-        const prev = state.timers.get(id);
-        if (prev) {
+        const prev = state.timers.get(eff.name);
+        if (prev?.kind === "debounce") {
           clearTimeout(prev.h);
-          if (prev.token && prev.effectName) {
-            onPolicyCancel?.(prev.token, prev.effectName);
-          }
+          absorb(prev.id, id);
+          if (prev.token) onPolicyCancel?.(prev.token, eff.name);
         }
         const token = onLaunch?.(eff.name, input) ?? "";
         const h = setTimeout(() => {
-          state.timers.delete(id);
-          void launch(eff, input, key, token);
+          state.timers.delete(eff.name);
+          void launch(eff, input, id, token);
         }, policy.ms);
-        state.timers.set(id, { kind: "debounce", h, token, effectName: eff.name });
+        state.timers.set(eff.name, { kind: "debounce", h, id, token });
         return;
       }
       if (policy.kind === "queue") {
         const token = onLaunch?.(eff.name, input) ?? "";
-        const entry: QueueEntry = { token, effectName: eff.name };
-        const q = state.queues.get(id) ?? { tail: Promise.resolve(), pending: [] };
+        const entry: QueueEntry = { id, token };
+        const q = state.queues.get(eff.name) ?? { tail: Promise.resolve(), pending: [] };
         q.pending.push(entry);
         const runNext = async (): Promise<void> => {
           const idx = q.pending.indexOf(entry);
           if (idx === -1) return;
           q.pending.splice(idx, 1);
-          await launch(eff, input, key, token);
+          await launch(eff, input, id, token);
         };
         q.tail = q.tail.then(runNext, runNext);
-        state.queues.set(id, q);
+        state.queues.set(eff.name, q);
         return;
       }
       if (policy.kind === "throttle") {
-        if (state.timers.has(id)) return;
-        const h = setTimeout(() => state.timers.delete(id), policy.ms);
-        state.timers.set(id, { kind: "throttle", h });
-        void launch(eff, input, key);
+        const open = state.timers.get(eff.name);
+        if (open) {
+          if (state.inflight.has(open.id)) absorb(id, open.id);
+          return;
+        }
+        const h = setTimeout(() => state.timers.delete(eff.name), policy.ms);
+        state.timers.set(eff.name, { kind: "throttle", h, id });
+        void launch(eff, input, id);
         return;
       }
       if (policy.kind === "latest" || policy.kind === "latest-per-key") {
@@ -200,29 +261,28 @@ export function makeEffectDispatcher(
           ic.abort();
           state.inflight.delete(id);
         }
-        void launch(eff, input, key);
+        void launch(eff, input, id);
         return;
       }
-      void launch(eff, input, key);
+      void launch(eff, input, id);
     },
     dispose(): void {
-      const pendingTimers = [...state.timers.values()];
+      const pendingTimers = [...state.timers];
       state.timers.clear();
-      for (const t of pendingTimers) {
+      for (const [name, t] of pendingTimers) {
         clearTimeout(t.h);
-        if (t.kind === "debounce" && t.token && t.effectName) {
-          onPolicyCancel?.(t.token, t.effectName);
-        }
+        if (t.kind === "debounce" && t.token) onPolicyCancel?.(t.token, name);
       }
-      for (const q of state.queues.values()) {
+      for (const [name, q] of state.queues) {
         const waiting = q.pending.splice(0, q.pending.length);
         for (const e of waiting) {
-          if (e.token) onPolicyCancel?.(e.token, e.effectName);
+          if (e.token) onPolicyCancel?.(e.token, name);
         }
       }
       state.queues.clear();
       for (const c of state.inflight.values()) c.abort();
       state.inflight.clear();
+      state.absorbedBy.clear();
     },
   };
 }
@@ -238,8 +298,8 @@ export function overridableInvoke(
   };
 }
 
-export function installLogEffect(app: AppShape): void {
-  app.effects.log = {
+export function installLogEffect(effects: BuiltinEffects): void {
+  effects.log = {
     name: "log",
     cap: "log.write",
     invoke: overridableInvoke("log.write", async (input) => {
@@ -254,6 +314,21 @@ export function readStatus(value: unknown): number | null {
   if (!value || typeof value !== "object") return null;
   const s = (value as { status?: unknown }).status;
   return typeof s === "number" ? s : null;
+}
+
+export function abortedHttpError(): HttpError {
+  return { status: 0, message: "aborted", body: NONE };
+}
+
+// The value `.ok` / `.err` receives from a result that stands in for `eff`'s invoke: an err on
+// an effect that fails with `Text` reads through `eff.errText`, as that invoke's own err does.
+// Any other value goes through unchanged, and a missing one becomes `null`.
+export function standInValue(
+  eff: Pick<EffectSpec, "errText"> | undefined,
+  outcome: "ok" | "err",
+  value: unknown,
+): unknown {
+  return outcome === "err" && eff?.errText ? eff.errText(value) : (value ?? null);
 }
 
 async function runWithRetry(
@@ -272,12 +347,37 @@ async function runWithRetry(
     const retriable = status === null || status === 0 || status >= 500;
     if (!retriable) return last;
     const delay = policy.kind === "linear" ? policy.ms : policy.ms * policy.factor ** (attempt - 1);
-    await sleep(delay);
+    // An abort during the wait has no attempt running to answer it, so the aborted err
+    // comes from here.
+    if (!(await sleep(delay, signal))) return { kind: "err", value: abortedErr(eff) };
     last = await eff.invoke(input, caps, signal);
   }
   return last;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+/**
+ * The err of a request aborted between attempts: the aborted `HttpError` on an `http.*` effect,
+ * `"aborted"` through `eff.errText` on one that fails with `Text`, and on any other the
+ * `{message}` an invoke that throws delivers.
+ */
+function abortedErr(eff: EffectSpec): unknown {
+  if (eff.cap.startsWith("http.")) return abortedHttpError();
+  return standInValue(eff, "err", { message: "aborted" });
+}
+
+/** `true` when the wait ran its course, `false` when `signal` aborted it first. */
+function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
+  // An abort that already happened fires no `abort` event.
+  if (signal?.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const h = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(h);
+      resolve(false);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
