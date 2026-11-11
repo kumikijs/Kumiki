@@ -31,8 +31,9 @@ function under(chain: EnclosingTiles | undefined, name: string): EnclosingTiles 
   return outer.includes(name) ? outer : [...outer, name];
 }
 
-// A call site, a route target and another tile's fallback each place a user tile through here,
-// so each gets the `tile.mount` marker and, around it, the tile's own boundary.
+// Every position a user tile renders in (a call site, a bare child, a route target, another tile's
+// fallback) goes through here, so each gets the `tile.mount` marker and, around it, the tile's own
+// boundary.
 // `around` is what the position puts between the two, inside the boundary. An outer `_named` puts
 // its name in front of the ones a node already carries, so each of nested whole-body tiles fires
 // `tile.mount` / `tile.unmount`.
