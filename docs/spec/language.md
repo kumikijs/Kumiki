@@ -129,7 +129,7 @@ type-expr   ::= primitive
               | identifier
               | type-app
 
-primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time' | 'EffectId'
+primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time' | 'File' | 'EffectId'
 nominal-type ::= 'nominal' type-expr
 record-type ::= '{' field (',' field)* '}'
 field       ::= identifier ':' type-expr
@@ -300,8 +300,8 @@ It reaches a union before it reaches itself, so it is as legal as the three abov
 
 Every other comparison that unfolds an application of a generic — two different generics, or a generic against a type that is not one — unfolds both sides. A generic **nests a parameter deeper** when following where its parameters are handed, through the generics its body applies, leads back to one of them inside a larger argument, as `Nest` hands `T` back as `List(T)`. Unless a side applies such a generic, the comparison reaches finitely many pairs as written and ends at a repeated pair, however its generics swap or rotate their parameters. Where a side does, re-entering that pair of heads (the names applied on the two sides) on the way down, with a larger combined size than when it was last entered, counts once against the pair. One comparison, every field and payload included, counts at most 64 such re-entries for each pair of heads, and every re-entry past the 64th answers yes, as a repeated pair does; a re-entry that did not grow never counts. The bound only ever turns a mismatch into a yes, and the order of the fields can decide it: a field whose comparison never ends spends its pair's count, and a mismatch that a later field reaches only by re-entering that pair is let past. An `if`, a `match` or a list literal whose branches are joined by such a yes takes a type that a later comparison can refuse.
 
-5. **A type parameter is scoped to its definition** and shadows a top-level definition of the same name: in `type Alias(Cents) = Cents` the body is the parameter, whatever `Cents` is declared elsewhere.
-6. **A type name whose values the runtime or the standard library supplies is not the program's to declare.** `PanicInfo`, `RouteErrorInfo`, `Route`, `HttpError`, `HttpStatus`, `Duration` and `FormValue` ([stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)) mean the standard library's definition in every program: `type PanicInfo = …` is [E0231](./errors.md#e0231-reserved-type-name), every use of the name keeps the standard library's type, and a program's own type takes a name of its own (`type AppPanic = …`). The other domain types the standard library declares — `Url`, `Email`, `Uuid`, `FormData` — name types only a program builds values of (`File`, also in that table, is a primitive rather than a declared type). A program may declare its own under one of those names, and its uses then mean the program's type.
+5. **A type parameter is scoped to its definition** and shadows a top-level definition of the same name: in `type Alias(Cents) = Cents` the body is the parameter, whatever `Cents` is declared elsewhere. A primitive's name is the exception: it is read as the primitive wherever a type is written, so in `type Box(Int) = {v: Int}` the field is an `Int`.
+6. **A type name that already means a type in every program is not the program's to declare.** Three groups of names do: the primitives (the `primitive` names of [§1.3.1](#_1-3-1-syntax)), the built-in generic types ([stdlib §2.1.2](./stdlib.md#_2-1-2-generic-types)), and the seven domain types whose values the runtime or the standard library supplies — `PanicInfo`, `RouteErrorInfo`, `Route`, `HttpError`, `HttpStatus`, `Duration` and `FormValue` ([stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)). `type Int = …`, `type Option = …` and `type PanicInfo = …` are [E0231](./errors.md#e0231-reserved-type-name), every use of the name keeps its built-in meaning, and a program's own type takes a name of its own (`type AppPanic = …`, `type Box(T) = …`). The groups are the checker's own tables, so a primitive or a constructor added to the language is reserved with it. The other domain types the standard library declares — `Url`, `Email`, `Uuid`, `FormData` — name types only a program builds values of (`File`, also in that table, is a primitive, and is reserved with the primitives). A program may declare its own under one of those names, and its uses then mean the program's type.
 
 ---
 
@@ -386,6 +386,10 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
   [E0103](./errors.md#e0103-undef-ref-undef-slot)
 - Both are checked like any other expression — an undefined name in the key is
   [E0103](./errors.md#e0103-undef-ref-undef-slot), not a runtime failure at dispatch
+- A field a `map-request` record writes is held to the request of the effect's
+  capability when that capability has a row in
+  [http.md §6.6.1](./http.md#_6-6-1-request-fields): one the request does not have
+  is [E0215](./errors.md#e0215-unknown-record-field)
 - A `latest-per-key` key is evaluated where the `emit` runs, so a slot it reads
   sees the reducer body's writes up to that statement and none after it
   ([http.md §6.4](./http.md#_6-4-cancellation))
@@ -650,6 +654,8 @@ A name declared over one already in scope **shadows** it: every read below the d
 
 The scopes are the reducer body and every nested statement body inside it: a `for` body, each branch of an `if`, and each match arm including a catch-all `_`. A binding declared in one of those ends with it.
 
+An expression that binds a name is a scope of its own, wherever it is written: the body of a `let … in`, each arm of a `match` expression — a value's or a tile's — and the body of a tile's `for`. The binding ends with the expression, so a read after it — in a later statement or operand, or in a sibling argument of a tile — is [E0103](./errors.md#e0103-undef-ref-undef-slot). Move the read into the expression. The value a `let … in` binds can instead be bound where both reads see it: with a `let` statement in a reducer; with one `let … in` around both reads in a `fn` or a slot initializer; in a tile, by moving both reads into a tile that declares `in=` and passing it the value. The entries of `app.init` share no expression, so there the read can only move into the `let … in`.
+
 A declaration's own right-hand side is evaluated **before** the name it declares is in scope, so `let n = n + 1` reads the binding it shadows rather than the one being declared.
 
 Binds written **side by side** are peers rather than a shadowing pair, because nothing nests them: two binds of one pattern (`Both(a, a)`) are [E0122](./errors.md#e0122-duplicate-pattern-bind), and an `effect-event` bind list is the same shape ([E0123](./errors.md#e0123-duplicate-effect-bind)). A name repeated there is not a shadow — it is a value the pattern or the trigger has left with no name to read it by.
@@ -714,7 +720,7 @@ pattern      ::= identifier
 
 **Value context vs tile context for `if` and `match`**:
 - A tile argument is a tile only as a **positional argument of a builtin other than the value builtins** (`column`, `row`, `card`, `box`, …) — the one place a tile renders. There, `if` and `match` are tile expressions (`TileIf` / `TileMatch`) whose arms return tiles, a builtin's name followed by `(` or `{` is a call to that builtin, and a capitalised name is a user tile.
-- Every other tile argument is a value: a value builtin's content, a user tile's input, and **every named argument**, whatever it is called. There, `if` and `match` are value expressions (`IfExpr` / `MatchExpr`) whose arms return values (Text, Int, a variant, …), a call is a call (`Say(label("x"))` passes what the `fn` `label` returns, and a builtin tile's name called where no `fn` has that name is [E0116](./errors.md#e0116-undef-call)), and an expression that starts with a capitalised name is an expression (`selected=All == filter`). The one other shape is [§1.7.3](#_1-7-3-event-handler-props)'s: a capitalised name written as an event handler of a builtin other than the value builtins is a tile call.
+- Every other tile argument is a value: a value builtin's content, a user tile's input, and **every named argument**, whatever it is called. There, `if` and `match` are value expressions (`IfExpr` / `MatchExpr`) whose arms return values (Text, Int, a variant, …), a call is a call (`Say(label("x"))` passes what the `fn` `label` returns, and a builtin tile's name called where no `fn` has that name is [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier)), and an expression that starts with a capitalised name is an expression (`selected=All == filter`). The one other shape is [§1.7.3](#_1-7-3-event-handler-props)'s: a capitalised name written as an event handler of a builtin other than the value builtins is a tile call.
 - `when` and `for` have no value form, so they are tiles wherever they are written.
 - Example: `text(match m with | A -> "a" | B -> "b")` ← value match
 - Example: `button(text="Save", disabled=if busy then true else false)`, `Row(if wide then 2 else 1)` ← value if
