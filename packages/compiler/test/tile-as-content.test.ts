@@ -147,6 +147,12 @@ describe("a value as the content is not reported", () => {
     expect(codes("text(lower)", "slot lower : Int = 0\n")).toEqual([]);
   });
 
+  it("is a loop variable of the tile's name read after its loop, which is E0103", () => {
+    // Out of scope, as it is in a container: the read names the variable, not the tile.
+    const errors = checkSource(program(`column(for lower in xs text("a"), text(lower))`));
+    expect(errors.map((e) => [e.code, e.endedScope])).toEqual([["E0103", "for-expr"]]);
+  });
+
   it.each([
     ["a type", "type Part = Header | Footer\n"],
     ["a slot's type", "slot part : Header | Footer = Footer\n"],

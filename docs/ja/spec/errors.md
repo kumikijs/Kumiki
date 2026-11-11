@@ -1197,7 +1197,7 @@ dispatcher は各リクエストをその key で実行し、同じ key で別�
 - builtin の呼び出し（`text(column(…))`）か、プログラムが定義する tile の呼び出し（`text(Card({label: "a"}))`、`text(lower())`）、またはプログラムが定義する tile の名前（`text(Header)`）。
 - 値の `if` / `match` の腕にある tile —— `text(if c then Header else "b")`。その腕が選ばれたときの内容はそれである。tile の腕はそれぞれ報告する。
 
-内容は式として読まれるので、名前はまずそれが名指す値である：slot、`let` やループ変数、`match` の束縛、tile と同じ名前の `fn`（`fn label` がある場合の `heading(label(x))`）は値であり、union がタグとして持つ大文字の名前も値である。呼び出しを書かない builtin の名前（`text(code)`）は何も呼ばず、未定義の名前（[E0103](#e0103-undef-ref-undef-slot)）である。腕が値である値の `if` / `match`（`text(match m with | A -> "a" | B -> "b")`）は値である。
+内容は式として読まれるので、名前はまずそれが名指す値である：slot、`let` やループ変数、`match` の束縛、tile と同じ名前の `fn`（`fn label` がある場合の `heading(label(x))`）は値であり、union がタグとして持つ大文字の名前も値である。呼び出しを書かない builtin の名前（`text(code)`）は何も呼ばず、未定義の名前（[E0103](#e0103-undef-ref-undef-slot)）である。ループの後で読んだ、tile と同じ名前のループ変数（`column(for lower in xs text("a"), text(lower))`）も同じで、その E0103 はループが終わったことを告げる。腕が値である値の `if` / `match`（`text(match m with | A -> "a" | B -> "b")`）は値である。
 
 tile はそれぞれ書かれた位置で報告し、内容のそれ以外 —— tile 自身の引数、`if` の条件、もう一方の腕 —— は検査しない：内容は丸ごと、コンテナの中へ、あるいは値と入れ替えて移すものであり、その中の診断は移したときに出る。
 
