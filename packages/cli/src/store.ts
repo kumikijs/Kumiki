@@ -42,15 +42,15 @@ const LAYER_OF = {
 
 export const LAYERS = Object.values(LAYER_OF);
 
-// Asks only whether the path exists, not whether it parses: `view --history` is wanted most for a
-// file that no longer parses.
+// Asks only whether there is a file at the path, not whether it parses: `check` and `fix` exist to
+// diagnose and repair a file that does not parse. Only a directory is refused among what is there,
+// so a FIFO or a character device such as `/dev/stdin` is still read as a file.
 export function requireSourceFile(path: string): string {
   const abs = resolve(process.cwd(), path);
   // `undefined` is a path with no entry (ENOENT, ENOTDIR). Any other failure
   // to look, such as a directory that may not be searched, throws as it is.
-  if (statSync(abs, { throwIfNoEntry: false }) === undefined) {
-    throw new Error(`File "${abs}" not found`);
-  }
+  const entry = statSync(abs, { throwIfNoEntry: false });
+  if (entry === undefined || entry.isDirectory()) throw new Error(`File "${abs}" not found`);
   return abs;
 }
 

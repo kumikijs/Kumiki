@@ -22,9 +22,10 @@ file or directory, open '…'`, except `view --history`, which already said
 log. `kumiki dev` started serving a file that did not exist.
 
 Every verb that takes a `.kumiki` file now looks for it once its arguments have
-the right shape, before it reads or writes anything else. When nothing is
-there it exits `1` with one message naming the path, resolved against the
-working directory, and writes nothing beside it:
+the right shape, before it reads or writes anything other than the files its
+arguments name. When nothing is there, or a directory is, it exits `1` with one
+message naming the path, resolved against the working directory, and writes
+nothing beside it:
 
 ```
 $ kumiki lock missing.kumiki agent:a 'slot.*'

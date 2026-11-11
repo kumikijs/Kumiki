@@ -8,8 +8,6 @@ export function absPath(path: string): string {
   return resolve(process.cwd(), path);
 }
 
-export { requireSourceFile };
-
 export function readSource(input: {
   source?: string | undefined;
   path?: string | undefined;

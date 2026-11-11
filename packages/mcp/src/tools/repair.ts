@@ -3,11 +3,12 @@ import {
   formatDiagnostic,
   planFix,
   plural,
+  requireSourceFile,
   runFixFromTest,
   runTests,
 } from "@kumikijs/cli";
 import { z } from "zod";
-import { capsForInput, pathCapabilities, requireSourceFile } from "../input.ts";
+import { capsForInput, pathCapabilities } from "../input.ts";
 import {
   DIAGNOSTIC_SHAPE,
   failed,
