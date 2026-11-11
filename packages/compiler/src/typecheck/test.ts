@@ -209,6 +209,7 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
     routeBind: "no-payload",
     endedScopes: new Map(),
     nestedScopes: nestedScopes(t.expect),
+    expectedTree: true,
   });
 }
 
