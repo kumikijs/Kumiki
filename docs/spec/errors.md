@@ -1208,7 +1208,7 @@ A tile's tree nests deeper than 256 levels once the user tiles in it are inlined
 
 > `Tile "<root>" nests <depth> levels deep once the tiles in it are inlined, past the limit of 256; it goes over where "<from>" expands into "<to>"`
 
-The levels are counted as [§1.2.3](./language.md#_1-2-3-design-decisions) describes: each call, builtin or user, and each `for` / `when` / `if` / `match` is one, a user tile's body hangs below its call, and an `error-boundary` is one more, with the fallback's body beneath it beside the tile's own. A chain `tile T0 = column(T1)`, `tile T1 = column(T2)`, … is two levels a link, so its 129th link is over.
+The levels are counted as [§1.2.3](./language.md#_1-2-3-design-decisions) describes: each call, builtin or user, and each `for` / `when` / `if` / `match` is one, a user tile's body hangs below its call, and an `error-boundary` is one more, with the fallback's body beneath it beside the tile's own. A chain `tile T0 = column(T1)`, `tile T1 = column(T2)`, … is two levels a link, so its 129th link is over. A tile written where code generation renders nothing — a value position, or the positional argument of a builtin that renders none, as [E0005](#e0005-tile-cycle) describes — is not in the tree and adds no level.
 
 Reported once for each tile no other tile expands into — a route target, or a tile nothing names — since every tile further down is over only because of where it sits in that tree. The position is where the tree goes past the limit: following its deepest path down from `<root>`, the call (or `error-boundary` clause) in `<from>` whose target's body reaches beyond level 256. A tile that expands into itself has no depth and is [E0005](#e0005-tile-cycle)'s alone.
 

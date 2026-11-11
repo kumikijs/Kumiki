@@ -1171,7 +1171,7 @@ tile の木が、その中のユーザー tile を展開すると 256 段より�
 
 > `Tile "<root>" nests <depth> levels deep once the tiles in it are inlined, past the limit of 256; it goes over where "<from>" expands into "<to>"`
 
-段の数え方は [§1.2.3](./language.md#_1-2-3-設計判断) のとおりである：builtin でもユーザーでも呼び出しはそれぞれ 1 段、`for` / `when` / `if` / `match` もそれぞれ 1 段、ユーザー tile の本体はその呼び出しの下にぶら下がり、`error-boundary` はさらに 1 段で、フォールバックの本体は tile 自身の本体と並んでその下にある。`tile T0 = column(T1)`、`tile T1 = column(T2)`、… という連鎖は 1 リンクあたり 2 段なので、129 番目のリンクで上限を超える。
+段の数え方は [§1.2.3](./language.md#_1-2-3-設計判断) のとおりである：builtin でもユーザーでも呼び出しはそれぞれ 1 段、`for` / `when` / `if` / `match` もそれぞれ 1 段、ユーザー tile の本体はその呼び出しの下にぶら下がり、`error-boundary` はさらに 1 段で、フォールバックの本体は tile 自身の本体と並んでその下にある。`tile T0 = column(T1)`、`tile T1 = column(T2)`、… という連鎖は 1 リンクあたり 2 段なので、129 番目のリンクで上限を超える。コード生成が何も描画しない位置——値の位置、あるいは位置引数を描画しない builtin の位置引数（[E0005](#e0005-tile-cycle) のとおり）——に書かれた tile は木に無く、段を足さない。
 
 ほかのどの tile も展開しない tile——ルートの対象、あるいはどこからも名指されない tile——ごとに 1 件報告する。それより下の tile はすべて、その木の中での位置のせいで上限を超えているにすぎないからである。位置は木が上限を超える箇所である：`<root>` から最も深い経路をたどって下り、対象の本体が 256 段目より下へ届く、`<from>` の中の呼び出し（または `error-boundary` 節）。自分自身へ展開する tile には深さが無く、[E0005](#e0005-tile-cycle) だけが報告する。
 

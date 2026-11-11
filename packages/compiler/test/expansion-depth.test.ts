@@ -285,6 +285,14 @@ slot o : Option(Int) = None
     expect(build(program([`tile T0 = column(${calls})`, ...leaves])).kind).toBe("ok");
   });
 
+  it("does not count a tile written where nothing renders it", () => {
+    // A spinner drops its positional argument, so the tile named there is not inlined
+    // (see cycles.test.ts): `T1`'s chain is a tree of its own, exactly at the limit.
+    const src = (body: string) => program([`tile T0 = column(${body})`, ...chain(128, 1)]);
+    expect(codesOf(src("T1"))).toEqual(["E0237"]);
+    expect(codesOf(src("spinner(T1)"))).toEqual([]);
+  });
+
   it("counts an error-boundary's fallback beneath the boundary, beside the tile's body", () => {
     // `F` nests exactly `LIMIT` deep on its own. Every call of `A` inlines it
     // into the `catch` of the boundary that wraps the call: under `T0`'s
