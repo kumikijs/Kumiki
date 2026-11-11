@@ -16,6 +16,7 @@ Kumiki's standard library is designed with the goal of being "**minimal and comp
 | `Bytes` | byte sequence | no literal; `Bytes.from-text(text)` / `Bytes.from-base64(text)` / `Bytes.from-bytes(list)` (see [§2.2.10](#_2-2-10-bytes)) |
 | `Time` | milliseconds since the Unix epoch | no literal; `now` or `Time.parse(text)` |
 | `EffectId` | opaque handle returned by `emit` (see [§2.1.1.1](#_2-1-1-1-effectid)) | no literal; `EffectId.none` |
+| `File` | one file a file input picked (see [§2.1.3](#_2-1-3-domain-types-provided-by-the-standard-library)) | no literal; a file input reports it |
 
 #### 2.1.1.1 `EffectId`
 
@@ -42,6 +43,8 @@ The only operations defined on `EffectId` are equality (`==`, `!=`), storage in 
 | `Result(T, E)` | `Ok(T)` or `Err(E)` |
 | `Tuple(T1, ..., Tn)` | fixed length |
 
+These names and the primitives of [§2.1.1](#_2-1-1-primitives) mean the same type in every program: a `type` declared under one of them is [E0231](./errors.md#e0231-reserved-type-name), and every use of the name keeps the meaning given here ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 6).
+
 ### 2.1.3 Domain Types (provided by the standard library)
 
 | Type | Definition |
@@ -62,7 +65,7 @@ The only operations defined on `EffectId` are equality (`==`, `!=`), storage in 
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — the payload of `app.error` and of an `error-boundary` tile's `in=` ([Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)) |
 | `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — the payload of `route.error(<pattern>)`: a `PanicInfo`'s fields and the `pattern` the reducer names |
 
-A program uses these names without declaring them. `PanicInfo`, `RouteErrorInfo`, `Route`, `HttpError`, `HttpStatus`, `Duration`, `FormValue`, `Decoder`, `HttpBody` and `IndexRange` are **reserved**: the runtime or the standard library builds or reads their values, so a `type` declared under one of them is [E0231](./errors.md#e0231-reserved-type-name) and the name keeps the definition above. `Url`, `Email`, `Uuid` and `FormData` name types only a program builds values of; a program may declare its own type under one of them, and its uses of the name then mean that type ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 6). `File` is a primitive rather than a declared type, and is in neither group.
+A program uses these names without declaring them. `PanicInfo`, `RouteErrorInfo`, `Route`, `HttpError`, `HttpStatus`, `Duration`, `FormValue`, `Decoder`, `HttpBody` and `IndexRange` are **reserved**: the runtime or the standard library builds or reads their values, so a `type` declared under one of them is [E0231](./errors.md#e0231-reserved-type-name) and the name keeps the definition above. `Url`, `Email`, `Uuid` and `FormData` name types only a program builds values of; a program may declare its own type under one of them, and its uses of the name then mean that type ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 6). `File` is a primitive name — a type position reads it as itself — and is reserved with the primitives.
 
 ---
 

@@ -134,7 +134,7 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
 // program's own definition would be what the checker reasoned about while the
 // runtime kept to the entry above. The other entries name types only a program
 // builds values of, and a program may declare its own.
-export const RESERVED_TYPE_NAMES: ReadonlySet<string> = new Set([
+export const RUNTIME_SUPPLIED_TYPE_NAMES: ReadonlySet<string> = new Set([
   "PanicInfo",
   "RouteErrorInfo",
   "Route",
@@ -146,10 +146,6 @@ export const RESERVED_TYPE_NAMES: ReadonlySet<string> = new Set([
   "HttpBody",
   "IndexRange",
 ]);
-
-export function isReservedTypeName(name: string): boolean {
-  return RESERVED_TYPE_NAMES.has(name);
-}
 
 // A browser reads a file's bytes only asynchronously, so the record a `change` event
 // delivers cannot hold them; they are not a field. `File` stays a `TypePrim` with this
@@ -178,7 +174,7 @@ export const BUILTIN_UNION_TAGS: ReadonlyMap<string, readonly string[]> = new Ma
   ["Result", ["Ok", "Err"]],
 ]);
 
-const PRIM_TYPE_NAMES: readonly PrimName[] = [
+export const PRIM_TYPE_NAMES: readonly PrimName[] = [
   "Text",
   "Int",
   "Float",
@@ -194,6 +190,23 @@ const PRIM_TYPE_NAME_SET: ReadonlySet<string> = new Set(PRIM_TYPE_NAMES);
 
 export function isPrimTypeName(name: string): name is PrimName {
   return PRIM_TYPE_NAME_SET.has(name);
+}
+
+export type ReservedTypeReason = "primitive" | "constructor" | "runtime-supplied";
+
+// The primitives and the constructors are read from the tables the parser and
+// the checker resolve those names by, so a name added to either is reserved with
+// no second list to update; the runtime-supplied names are a list of their own.
+// A program's definition under any of them could only be half-applied.
+export function reservedTypeReason(name: string): ReservedTypeReason | undefined {
+  if (isPrimTypeName(name)) return "primitive";
+  if (BUILTIN_TYPE_CONSTRUCTORS.has(name)) return "constructor";
+  if (RUNTIME_SUPPLIED_TYPE_NAMES.has(name)) return "runtime-supplied";
+  return undefined;
+}
+
+export function isReservedTypeName(name: string): boolean {
+  return reservedTypeReason(name) !== undefined;
 }
 
 export function typeCandidates(userTypeNames: Iterable<string>): string[] {

@@ -202,7 +202,7 @@ Two definitions of the same layer share a name. Symbol collection keeps one entr
 
 Which declaration survives is not uniform, which is why the message does not say. Symbol collection keeps the **last**, so that is what the checker validated — but two `reducer`s of one name both reach the artifact and the runtime dispatches the **first**. The two halves of the toolchain disagreed about which definition existed.
 
-The namespace is per layer, and only within a layer: a `slot` and a `tile` sharing a name is legal — code generation resolves a bare identifier child to a tile before anything else. A `type` named like one of the standard library's domain types is not a second declaration of it either: a program's own `type Email = …` replaces the standard library's for that program, and one under a reserved name (`type Route = …`) is [E0231](#e0231-reserved-type-name). A second `app` is `E0004`, which predates this and keeps its own code.
+The namespace is per layer, and only within a layer: a `slot` and a `tile` sharing a name is legal — code generation resolves a bare identifier child to a tile before anything else. A `type` named like one of the standard library's domain types is not a second declaration of it either: a program's own `type Email = …` replaces the standard library's for that program, and one under a reserved name (`type Route = …`, `type Option = …`) is [E0231](#e0231-reserved-type-name). A second `app` is `E0004`, which predates this and keeps its own code.
 
 **Fix**: Remove one, or rename it. `kumiki rename` refuses to create a duplicate, and `kumiki add` rolls back on one.
 
@@ -244,7 +244,7 @@ type Shape   = Leaf | Branch(Shape, Shape)
 
 Each reaches a structural type before it reaches itself. Comparing two of them terminates because the relation is read co-inductively over the types *as written*, not because their values are finite — `Node` above has none at all, its `next` being neither optional nor a container, and is the spec's own lead example of a legal recursive type. `type A = Option(A)` and `type A = Alias(Option(A))` are legal for the same reason: the container is the type.
 
-A name that denotes no `type` definition ends the chain rather than closing it: a generic constructor (`List`, `Option`, `Map`) has no body to come back along, and an undeclared name is [E0117](#e0117-undef-type)'s to report rather than a second name for one mistake. A standard-library *domain* type is a definition like any other and is followed like one. A program that declares one it may declare (`type Email = Email`) has replaced it, and closes a loop through its own. A reserved one cannot be declared ([E0231](#e0231-reserved-type-name)), so in `type Route = Route` the body names the standard library's record and closes no loop. A parameter is read as the parameter and never as a global of the same spelling ([§1.3.6](./language.md#_1-3-6-invariants), inv. 5).
+A name that denotes no `type` definition ends the chain rather than closing it: a generic constructor (`List`, `Option`, `Map`) has no body to come back along — a program cannot give it one ([E0231](#e0231-reserved-type-name)), so in `type List(T) = List(T)` the body names the built-in constructor — and an undeclared name is [E0117](#e0117-undef-type)'s to report rather than a second name for one mistake. A standard-library *domain* type is a definition like any other and is followed like one. A program that declares one it may declare (`type Email = Email`) has replaced it, and closes a loop through its own. A reserved one cannot be declared ([E0231](#e0231-reserved-type-name)), so in `type Route = Route` the body names the standard library's record and closes no loop. A parameter is read as the parameter and never as a global of the same spelling ([§1.3.6](./language.md#_1-3-6-invariants), inv. 5).
 
 **Fix**: Give one name on the chain a body. A type that was meant to be recursive wants a record or a union at the point it names itself (`type A = {next: A}`); a type that was meant to be an alias wants the definition it was aliasing.
 
@@ -818,7 +818,7 @@ A `match` arm names a variant tag that is not declared by the scrutinee's union 
 
 ### E0210 `type-arity-mismatch`
 
-A type-level application `T(...)` of a user-declared generic type passes a different number of type arguments than the declaration's parameters. Without this check, downstream type-param substitution would silently produce a short map and leave unresolved `TypeRef`s in payloads, which would then turn pattern checking into a no-op — exactly the silent-failure shape this error band is meant to catch.
+A type-level application `T(...)` of a user-declared generic type passes a different number of type arguments than the declaration's parameters, or a built-in constructor (`List`, `Option`, `Map`, …) is given a different number than it takes ([Standard Library §2.1.2](./stdlib.md#_2-1-2-generic-types); `Tuple` takes any). Without this check, downstream type-param substitution would silently produce a short map and leave unresolved `TypeRef`s in payloads, which would then turn pattern checking into a no-op — exactly the silent-failure shape this error band is meant to catch.
 
 > `Type "<name>" expects <m> type argument(s) but got <n>`
 > `Type parameter "<param>" of "<type>" takes no type arguments, but is written "<application>"`
@@ -860,7 +860,7 @@ The id set is the ids of the elements the subscription is wired onto, since `#id
 - Its id is a non-literal expression (a `Ref`, method call, etc.) — its runtime value is not known at check time.
 - The outermost call site up such a chain that writes a prop writes no `id`, but a prop other than an event handler or `key` — what that leaves the element dispatching is not followed.
 - A handler names the reducer (`onClick=r`, wherever it is written): the reducer it dispatches is filtered by the same `#id`, on whatever element carries the handler.
-- No element of the tile fires `<ev>` — that is [W0212](#w0212-ui-event-tile-mismatch-warning)'s case, which it reports unless the walk finds no element at all.
+- No element of the tile hands `<ev>` to a reducer — that is [W0212](#w0212-ui-event-tile-mismatch-warning)'s case, which it reports unless the walk finds no element at all.
 - The selector has no `#id` portion.
 - The selector uses the `_` wildcard.
 - The target tile is undeclared (E0211 already fires; E0212 is suppressed to surface a single root cause).
@@ -881,9 +881,15 @@ When `<ev>` is `key` and the body holds a `details`, the `keydown` its `<summary
 
 > `Reducer "<r>" subscribes to ui.key(<Tile>) but "key" never reaches a listener in tile "<Tile>": a details takes no "key" listener on the <details> around its <summary>, since a control in its panel takes the subscription instead — write onKeyDown= on the details to hear a "key" on its <summary> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
-Where a kind's element does fire `<ev>` but its renderer never calls the handler for it — runtime policy, not a fact about the element — the message says what the renderer does instead (`<instead>`) and names the handler. Those absences are `link` under `click`, whose renderer listens for it only to navigate (see the note on `link` below), and these under `input`, whose elements all fire it: `slider`, whose renderer listens for it only to write the bind, and `check`, `radio`, `switch` and `select`, whose renderers listen for `change` instead. Under `click` the default wording is not yet true of the other kinds either: every element fires `click`, and what keeps it from a reducer on a `text` or a `box` is that their renderers never call `onClick` — [#823](https://github.com/kumikijs/Kumiki/issues/823). Kinds whose renderers do the same are joined with ` / `, and the clauses for different ones with `; `:
+Where a kind's element does fire `<ev>` and its renderer never calls the handler — runtime policy, not a fact about the element — the message says so, and says what the renderer does instead (`<instead>`) where it records one. Every element fires `click`, so every kind the `click` row leaves out is one of these: `link`, whose renderer listens for it only to navigate (see the note on `link` below), and every other kind, whose renderer never calls `onClick`. Under `input` they are these, whose elements all fire it: `slider`, whose renderer listens for it only to write the bind, and `check`, `radio`, `switch` and `select`, whose renderers listen for `change` instead. Kinds whose renderers do the same are joined with ` / `, after `a` or `an` as the first of them takes, and the clauses for different ones with `; `:
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a reducer in tile "<Tile>": a <kinds> fires "<ev>", and its renderer <instead>, never calling <handler> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
+A kind under `click` with no `<instead>` gets the clause `a <kinds> fires "click", and its renderer never calls onClick`. For `tile Label = text("click me")`:
+
+> `Reducer "hit" subscribes to ui.click(Label) but "click" never reaches a reducer in tile "Label": a text fires "click", and its renderer never calls onClick (DOM-allowed: button, check, switch, radio; observed in body: text). The handler is silently dropped.`
+
+The first form, that no descendant fires the event, is the message for kinds whose element does not fire the event: `ui.focus` on a `box`, `ui.change` on an `editable`, `ui.input` on a `text`.
 
 The allowed root builtins per event are (current toolchain coverage: every kind listed receives the event, and a blank is a rule only where a note below says so; the implementation-side source of truth is `packages/compiler/src/ui-lifts.ts` — `UI_LIFTS`, which the handler-emission gate (`propsFor` in `packages/compiler/src/codegen/selector.ts`), the W0212 check in `packages/compiler/src/typecheck/reducer.ts`, E0212 in `typecheck/tile-collect.ts` and W0213 in `typecheck/tile.ts` all derive from. Runtime DOM-event surfaces are owned by the per-tile modules under `packages/runtime/src/tiles/input/` (their shared listener registry is `_shared.ts`; `tiles-input.ts` is only the family aggregate) and `packages/runtime/src/tiles/text/link.ts`, and by the universal `applyUiEventHandlers` in `packages/runtime/src/core/ui-events.ts`):
 
@@ -1202,17 +1208,27 @@ A handler prop is written on a tile whose renderer never reads it — `row(text(
 
 > `"<handler>" on <tile>() is dropped — <tile> does not fire it. Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
 
+Where the tile's element does fire the handler's event and its renderer never calls the handler, the reason is the clause [W0212](#w0212-ui-event-tile-mismatch-warning) gives for that kind, read from the same record: every tile the `onClick` list above leaves out, since every element fires `click`, and `slider`, `check`, `radio`, `switch` and `select` under `onInput`:
+
+> `"onClick" on link() is dropped — a link fires "click", and its renderer listens for it only to navigate, never calling onClick. Put it on button / check / radio / switch, or subscribe with a reducer's on=ui.<event>(<Tile>)`
+>
+> `"onClick" on row() is dropped — a row fires "click", and its renderer never calls onClick. Put it on button / check / radio / switch, or subscribe with a reducer's on=ui.<event>(<Tile>)`
+
 A **user tile** is asked the same question, and answered in a second form. A handler written on one is merged onto the node that tile renders ([§1.7.3](./language.md#_1-7-3-event-handler-props)), so what fires is decided by what it renders — `Inner(onClick=open)` over `tile Inner = box(text("clickme"))` renders, wires nothing, and is the failure this warning exists to name. Nothing else can: this warning is non-fatal, so `check` still exits 0 (`ok (1 warning)`) and `build` still emits, and `smoke` sees a tile that renders fine with nothing to click.
 
 > `"<handler>" on <tile>() is dropped — <tile> renders nothing that fires it (observed in body: <kinds>). Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
 
-The kinds come from walking the tile's render tree, the same walk [W0212](#w0212-ui-event-tile-mismatch-warning) uses, except that it does not enter the `error-boundary` fallback of a tile called inside the body: that fallback is rendered without the handlers written at the call site. Only a tree with no firing kind anywhere in it is reported. That is deliberately less than the whole truth: the prop lands on the tile's **root** node, so `tile Card = box(button(...))` drops the handler too and is *not* reported, because the walk does not distinguish a root from a descendant. Everything it does report is a certain drop.
+Where kinds in its body fire the event and their renderers never call the handler, it gives W0212's clauses for them instead, joined with `; `. For `Inner(onClick=open)` over `tile Inner = box(text("clickme"))`:
+
+> `"onClick" on Inner() is dropped — Inner renders nothing that calls it: a box / text fires "click", and its renderer never calls onClick (observed in body: box, text). Put it on button / check / radio / switch, or subscribe with a reducer's on=ui.<event>(<Tile>)`
+
+The kinds come from walking the tile's render tree, the same walk [W0212](#w0212-ui-event-tile-mismatch-warning) uses, except that it does not enter the `error-boundary` fallback of a tile called inside the body: that fallback is rendered without the handlers written at the call site. Only a tree with no kind whose renderer calls the handler is reported. That is deliberately less than the whole truth: the prop lands on the tile's **root** node, so `tile Card = box(button(...))` drops the handler too and is *not* reported, because the walk does not distinguish a root from a descendant. Everything it does report is a certain drop.
 
 When the walk finds no kind at all, nothing is reported — the tile's own root is a name that resolves to neither a builtin nor a declared tile (`tile Inner = Nope()`, or a cycle `tile Inner = Inner()`), so the walk learned nothing and W0212 declines the same empty answer. Those shapes have their own codes ([E0005](#e0005-tile-cycle), [E0105](#e0105-undef-tile)). An unresolvable name *nested* inside a resolvable body (`tile Inner = box(Nope())`) is a different case: the kinds around it are a true answer about the root, so W0213 stands beside the code that names the unresolvable part.
 
 `onKeyDown`, `onMouseEnter`, `onFocus` and `onBlur` are never reported: the runtime attaches those listeners to whatever element the tile produced. That is about the listener, not about the event reaching it — `focus` and `blur` do not bubble, so a container that is not focusable never fires them, and `keydown` reaches a container only from a focusable descendant. Reporting those would take a focusability analysis this check does not do.
 
-[W0212](#w0212-ui-event-tile-mismatch-warning) is the same silent drop reached from the other side — a `ui.<ev>(Tile)` subscription whose target cannot fire `<ev>`. It cannot catch this one: a container passes it as soon as any descendant is clickable, which every card-with-a-button layout is.
+[W0212](#w0212-ui-event-tile-mismatch-warning) is the same silent drop reached from the other side — a `ui.<ev>(Tile)` subscription whose target hands `<ev>` to no reducer. It cannot catch this one: a container passes it as soon as any descendant is clickable, which every card-with-a-button layout is.
 
 **Fix**: Move the handler onto the tile that fires the event, or wrap the content in a `button` — on a user tile, either at the call site or inside the tile itself, so its root is the tile that fires. To react to a click anywhere in a region, subscribe a reducer with `on=ui.click(<the clickable child>)`.
 
@@ -1256,11 +1272,23 @@ A `radio` writes both `group` and `name`, as arguments or in its props block.
 
 ### E0231 `reserved-type-name`
 
-A `type` is declared under the name of a standard-library domain type whose values the runtime or the standard library supplies ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)). Reported at the declaration, once per declaration.
+A `type` is declared under a name that already means a type in every program. Reported at the declaration, once per declaration. The reserved names are the checker's own tables, in three groups, and the message names the group:
 
+| Group | Names | What gives the name its meaning |
+|---|---|---|
+| primitive | the `primitive` names of [Language §1.3.1](./language.md#_1-3-1-syntax) (`Int`, `Text`, `File`, …) | the parser, which reads one as the primitive wherever a type is written |
+| built-in type constructor | the generic types of [Standard Library §2.1.2](./stdlib.md#_2-1-2-generic-types) (`Option`, `List`, `Map`, …) | the checker, which knows their values, members and arity without a definition |
+| runtime-supplied | the ten domain types below ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)) | the runtime or the standard library, which builds or reads their values |
+
+> `Type "<name>" collides with the primitive type <name>; uses of it never see this type`
+>
+> `Type "<name>" collides with the built-in type constructor <name>; uses of it never see this type`
+>
 > `Type "<name>" collides with the standard library's <name>; uses of it never see this type`
 
-| Name | What supplies or reads its values |
+A primitive or a constructor added to the language is reserved with it: there is no second list of these names to keep in step.
+
+| Runtime-supplied name | What supplies or reads its values |
 |---|---|
 | `PanicInfo` | the runtime: the record an `error-boundary` fallback's `$1` and an `app.error` reducer's `$event` are bound to |
 | `RouteErrorInfo` | the runtime: the record a `route.error(<pattern>)` reducer's `$event` is bound to |
@@ -1273,15 +1301,15 @@ A `type` is declared under the name of a standard-library domain type whose valu
 | `HttpBody` | the runtime: an `http.*` effect sends a `body` by its tag |
 | `IndexRange` | the runtime: an `indexed-query` reads its `range` as IndexedDB's key range |
 
-A program's own definition under one of these names would change what the checker reasons about and nothing the runtime supplies. Were `type PanicInfo = Text` to take the name, a fallback declaring `in=PanicInfo` would have its `$1` checked as a `Text` while the runtime binds the panic record: reading `$1.message`, as the fix for [E0220](#e0220-boundary-fallback-input) says to, would be refused as a member `Text` does not have, and the `in=Text` fallback E0220 exists to catch would pass under the name `PanicInfo`.
+A program's own definition under one of these names could only be half-applied. A primitive is read as itself wherever a type is written, so `type Int = Text` would reach no use at all, and `slot t : Int = "x"` is a `Text` against the primitive whatever the program declared. A constructor's values, members and arity are built in, so a definition under its name would answer some questions and not others: `type List(T) = {v: T}` would let `List(Int)` take both `{v: 1}` and `[1, 2]` while `.length` would be looked up on the record, and `type Option = Int` would make `Option(Int)` an arity error. A runtime-supplied name would change what the checker reasons about and nothing the runtime supplies: were `type PanicInfo = Text` to take the name, a fallback declaring `in=PanicInfo` would have its `$1` checked as a `Text` while the runtime binds the panic record — reading `$1.message`, as the fix for [E0220](#e0220-boundary-fallback-input) says to, would be refused as a member `Text` does not have, and the `in=Text` fallback E0220 exists to catch would pass under the name `PanicInfo`.
 
-The declaration is refused and the name keeps the standard library's definition, so every use of it is checked against the value the runtime supplies. A report that follows from the program having meant its own type — an `E0201` on a value written for it — stands beside this one. This is [E0115](#e0115-reserved-slot-name)'s rule for the `route` slot, applied to type names ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 6).
+The declaration is refused and the name keeps its built-in meaning, so every use of it is checked against the primitive, the built-in constructor, or the value the runtime supplies. A report that follows from the program having meant its own type stands beside this one: an `E0201` on a value written for it (`slot a : List(Int) = {v: 1}`), or an [E0210](#e0210-type-arity-mismatch) on a bare `Option` written as if it took no arguments. This is [E0115](#e0115-reserved-slot-name)'s rule for the `route` slot, applied to type names ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 6).
 
-The other domain types the standard library declares — `Url`, `Email`, `Uuid`, `FormData` — name types only a program builds values of, and are not reserved: a program may declare its own (`type Email = {address: Text}`), and its uses of the name then mean that type. `File`, also in that table, is a primitive rather than a declared type, and is in neither list.
+The other domain types the standard library declares — `Url`, `Email`, `Uuid`, `FormData` — name types only a program builds values of, and are not reserved: a program may declare its own (`type Email = {address: Text}`), and its uses of the name then mean that type. `File`, also in that table, is a primitive, and is reserved in the first group above.
 
-Only a declaration is refused. Writing a reserved name is how a program uses the standard library's type — an annotation, a tile's `in=`, a record field, an alias (`type Crash = PanicInfo`), a refinement over it (`type Short = Duration where between(0, 1000)`). A type parameter of that spelling is scoped to its definition ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 5); a variant tag, a slot, a `fn` or a tile spelled the same way is in another namespace; and a type whose name merely starts or ends with one (`PanicInfoView`, `AppRoute`) is a name of its own.
+Only a declaration is refused. Writing a reserved name is how a program uses the type it names — an annotation, a tile's `in=`, a record field, an alias (`type Crash = PanicInfo`), a refinement over it (`type Short = Duration where between(0, 1000)`). A slot, a `fn` or a tile spelled the same way is in another namespace, and so is a variant tag spelled like any of these names (`type SortBy = Name | Time | Size`). A type parameter spelled like a constructor or a runtime-supplied name is scoped to its definition ([Language §1.3.6](./language.md#_1-3-6-invariants), inv. 5): in `type Box(List) = {v: List}`, the field has the parameter's type. A primitive's spelling is not: it is read as the primitive wherever a type is written, so in `type Box(Int) = {v: Int}` the field is an `Int` whatever `Box` is applied to. A type whose name merely starts or ends with one (`PanicInfoView`, `AppRoute`, `IntRange`, `TodoList`) is a name of its own.
 
-**Fix**: Rename the program's type — `type AppPanic = {…}` — along with every use that meant it.
+**Fix**: Rename the program's type — `type AppPanic = {…}`, `type Box(T) = {v: T}` — along with every use that meant it. A declaration that meant the built-in type itself is not needed: remove it.
 
 ### E0234 `reserved-effect-name`
 
