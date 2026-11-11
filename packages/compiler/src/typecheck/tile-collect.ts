@@ -86,9 +86,9 @@ function renderedTree(
       addElement(here, decided === undefined ? el : { kind: el.kind, id: decided });
     }
     for (const el of sub.inner.values()) addElement(inner, el);
-    // Only a call is lowered with its callee's boundary; an identifier
-    // argument standing in for the tile inlines the body alone.
-    for (const fb of fallbacks && edge.call ? fallbackChain(callee, sym) : []) {
+    // A bare child that names the tile is lowered as its call, so it is placed with its boundary
+    // as a call is.
+    for (const fb of fallbacks ? fallbackChain(callee, sym) : []) {
       const fallback = renderedTree(fb, sym, fallbacks, memo);
       for (const el of fallback.root.values()) addElement(here, el);
       for (const el of fallback.inner.values()) addElement(inner, el);
@@ -144,8 +144,8 @@ function usesByTile(sym: SymbolTable): Map<string, Use[]> {
     for (const edge of expansionTargets(def.body)) {
       const id = edge.call ? callSiteId(edge.call) : undefined;
       add(edge.to, { by: def.name, root: edge.root, id });
-      // A call's fallbacks render in its place, outside the props the call writes.
-      const callee = edge.call ? sym.tiles.get(edge.to) : undefined;
+      // A call's fallbacks, and a bare child's, render in its place, outside the props a call writes.
+      const callee = sym.tiles.get(edge.to);
       for (const fb of callee ? fallbackChain(callee, sym) : []) {
         add(fb, { by: def.name, root: edge.root, id: undefined });
       }

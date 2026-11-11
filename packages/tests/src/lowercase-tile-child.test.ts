@@ -1,3 +1,4 @@
+import { compile } from "@kumikijs/compiler";
 import { renderToString, routing } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { mountSource, press } from "./helpers/dom.ts";
@@ -111,5 +112,30 @@ ${APP}
 `);
     expect(root.textContent).toContain("name: the slot");
     expect(root.textContent).not.toContain("the loop");
+  });
+});
+
+describe("a subscription on the tile around a lower-cased bare child", () => {
+  // The only element that fires click is `Oops`'s button, which renders in `leaf`'s place in `Card`.
+  const RETRY = `slot leaf : Text = "hello"
+slot n : Option(Int) = None
+slot hits : Int = 0
+reducer onRetry on=ui.click(Card) do= hits := hits + 1
+tile Oops in=PanicInfo = button(text="retry")
+tile leaf error-boundary=Oops = text("w " + n.get.show)
+tile Card = column(text("card"), leaf)
+tile App = column(Card)
+${APP}
+`;
+
+  it("is not reported as reaching nothing", () => {
+    const result = compile(RETRY, { runtimeSpecifier: "./runtime.js" });
+    expect(result.warnings.map((w) => w.code)).not.toContain("W0212");
+  });
+
+  it("fires on a click on the button the bare child's fallback renders", async () => {
+    const { app, root } = await mountSource(RETRY);
+    await press(root, "retry");
+    expect(app.live?.hits).toBe(1);
   });
 });

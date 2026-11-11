@@ -42,6 +42,12 @@ the same JS as before. So the body also reads its own scope: in
 `column(for name in names column(leaf))`, a `name` that `leaf`'s body reads is
 the slot `name`, as `check` read it, not the loop's binding.
 
+`check` follows the same lowering. A subscription on the tile around the bare
+child, such as `ui.click(Card)` over `column(text("card"), leaf)`, reaches the
+elements of `leaf`'s fallback, so it is no longer reported as W0212 when only
+the fallback fires the event, and under `strictSelectorId` the fallback's ids
+count for E0212.
+
 Of the repository's examples, only `68-name-uniqueness` writes a tile this way
 (`entry` in `App`); its tree now carries the `entry` marker, and renders as
 before. `docs/spec/lifecycle.md` says that the case of the name makes no
