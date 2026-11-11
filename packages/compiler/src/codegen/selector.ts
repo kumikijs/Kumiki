@@ -1,12 +1,12 @@
-import { isTileExpr, type TileExpr, type UiEventKind } from "../ast.ts";
+import { type Expr, type TileExpr, type TileProp, type UiEventKind, writtenProp } from "../ast.ts";
 import { HANDLER_NAMES, handlerReducerName, UI_LIFTS } from "../ui-lifts.ts";
 import { type EnclosingTiles, type EvalCtx, fieldKey, handlerRef, jsProperty } from "./context.ts";
 import { jsOfExpr, showJs } from "./expr.ts";
 
 export function keyFor(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string | null {
-  const keyProp = t.props.find((p) => p.name === "key");
-  if (!keyProp) return null;
-  return showJs(jsOfExpr(keyProp.value, ctx), keyProp.value, ctx.gen);
+  const key = propValue(t, "key", ctx);
+  if (!key) return null;
+  return showJs(jsOfExpr(key, ctx), key, ctx.gen);
 }
 
 function isNotPropData(tile: string, name: string, forEl = false): boolean {
@@ -14,11 +14,26 @@ function isNotPropData(tile: string, name: string, forEl = false): boolean {
   if (name === "key") return true;
   if (tile === "link" && (name === "prefetch" || name === "prefetch-args")) return true;
   if (forEl && name === "style") return true;
-  if (forEl && name === "bind") return true;
+  // On every tile, in either spelling: a control's own `bind` field carries the lvalue, and as data
+  // it would read the slot for nothing, here or in a user tile's call-site props.
+  if (name === "bind") return true;
   // A read of an `error` tile's `field` can panic (`.get` on a `None`, an index
   // past a List's end) where the tile itself renders nothing.
   if (tile === "error" && name === "field") return true;
   return false;
+}
+
+// A tile-test's expected tree states what it compares with named arguments only.
+function blockOf(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): readonly TileProp[] {
+  return ctx.gen.expectedTree ? [] : t.props;
+}
+
+export function propValue(
+  t: TileExpr & { kind: "TileCall" },
+  name: string,
+  ctx: EvalCtx,
+): Expr | undefined {
+  return writtenProp(t, name, blockOf(t, ctx))?.value;
 }
 
 /** The ARIA a tile asked for: the `aria` map, plus each `aria-*` written on its own. */
@@ -88,7 +103,7 @@ export function propsFor(
   const entries: string[] = [];
   const aria: AriaParts = { map: null, direct: [] };
 
-  const block = ctx.gen.expectedTree ? [] : t.props;
+  const block = blockOf(t, ctx);
   for (const p of block) {
     if (HANDLER_NAMES.has(p.name)) continue;
     if (isNotPropData(t.name, p.name)) continue;
@@ -129,12 +144,12 @@ export function propsFor(
     if (p.name === "aria" || p.name.startsWith("aria-")) continue;
     elProps.push(`${fieldKey(p.name)}: ${jsOfExpr(p.value, ctx)}`);
   }
-  const written = new Set(block.map((p) => p.name));
   for (const a of t.args) {
-    if (!a.name || written.has(a.name)) continue;
-    if (isNotPropData(t.name, a.name, true)) continue;
-    if (isTileExpr(a.value)) continue;
-    const js = jsOfExpr(a.value, ctx);
+    if (a.name === undefined || isNotPropData(t.name, a.name, true)) continue;
+    // Not when the block writes the same prop (it wins), nor for a child written as an argument.
+    const written = writtenProp(t, a.name, block);
+    if (written === undefined || written.value !== a.value) continue;
+    const js = jsOfExpr(written.value, ctx);
     if (collectAria(a.name, () => js, aria)) continue;
     entries.push(`${jsProperty(a.name)}: ${js}`);
     elProps.push(`${fieldKey(a.name)}: ${js}`);
