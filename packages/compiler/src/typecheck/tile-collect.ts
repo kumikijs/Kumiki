@@ -21,6 +21,22 @@ export function collectTileBuiltinKinds(
   return renderedKinds(tiles, false);
 }
 
+/**
+ * Of those, the kinds a handler written at the tile's call site is merged onto: its root's. A
+ * tile called at the root lends its own root, and a nested tile's fallback is left out as above.
+ */
+export function collectTileRootKinds(
+  tiles: ReadonlyMap<string, TileDef>,
+): (tileName: string) => ReadonlySet<string> {
+  return reachedFrom(
+    (name) => {
+      const def = BUILTIN_TILES.has(name) ? undefined : tiles.get(name);
+      return def ? expansionTargets(def.body).filter((edge) => edge.root) : [];
+    },
+    (name) => (BUILTIN_TILES.has(name) ? [name] : []),
+  );
+}
+
 /** The kinds a subscription on the tile is wired onto (W0212), a nested tile's fallback included. */
 export function subscribedKinds(
   tiles: ReadonlyMap<string, TileDef>,

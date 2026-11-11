@@ -156,6 +156,47 @@ describe("a check that follows tiles into the tiles they inline reaches the repo
     expect(result.warnings).toHaveLength(LONG - 1);
   });
 
+  // Each link renders the next at its root, so the check at the end is every link's root.
+  const rootChain = (call: (next: string) => string) =>
+    Array.from({ length: LONG }, (_, i) =>
+      i === LONG - 1 ? `tile T${i} = check(value=b)` : `tile T${i} = ${call(`T${i + 1}`)}`,
+    );
+  const atRoot = (e: { code: string; message: string }) =>
+    `${e.code} ${e.message.match(/observed at its root: [^)]*/)?.[0]}`;
+
+  it("answers an onFocus on a call to the head of a chain whose root is a check", () => {
+    const result = build(
+      program(
+        [
+          "tile Top = column(T0 {onFocus: r})",
+          ...rootChain((next) => `${next}()`),
+          "reducer r on=ui.click(_) do= c := c + 1",
+        ],
+        `${head}slot b : Bool = false\n`,
+      ),
+    );
+    expect(result.kind).toBe("fail");
+    if (result.kind !== "fail") return;
+    expect(result.errors.map((e) => e.code)).toEqual(["E0237"]);
+    expect(result.warnings.map(atRoot)).toEqual(["W0213 observed at its root: check"]);
+  });
+
+  it("walks each root once, however many links hand an onFocus to the next", () => {
+    const result = build(
+      program(
+        [...rootChain((next) => `${next} {onFocus: r}`), "reducer r on=ui.click(_) do= c := c + 1"],
+        `${head}slot b : Bool = false\n`,
+      ),
+    );
+    expect(result.kind).toBe("fail");
+    if (result.kind !== "fail") return;
+    expect(result.errors.map((e) => e.code)).toEqual(["E0237"]);
+    expect([...new Set(result.warnings.map(atRoot))]).toEqual([
+      "W0213 observed at its root: check",
+    ]);
+    expect(result.warnings).toHaveLength(LONG - 1);
+  });
+
   it("answers a ui.click(T0#id) reducer, reading the ids down the chain", () => {
     const links = chain(LONG).map((l) => l.replace('text("leaf")', 'button(text="go", id="leaf")'));
     const result = build(

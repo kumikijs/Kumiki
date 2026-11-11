@@ -29,6 +29,7 @@ import {
   collectPrefetchTargets,
   collectRenderedBuiltinKinds,
   collectTileBuiltinKinds,
+  collectTileRootKinds,
   subscribedKinds,
 } from "./typecheck/tile-collect.ts";
 import { checkTypeDef, reservedTypeName } from "./typecheck/types.ts";
@@ -118,6 +119,7 @@ function checkAll(
     unionsByTag: unionsByTag(program.defs),
     // Read as the definitions are checked, by which point every tile has been registered.
     builtinKindsIn: collectTileBuiltinKinds(tiles),
+    rootKindsIn: collectTileRootKinds(tiles),
     subscribedKindsIn: subscribedKinds(tiles),
     renderedKindsIn: collectRenderedBuiltinKinds(tiles),
   };

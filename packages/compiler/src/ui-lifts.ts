@@ -95,6 +95,13 @@ export function wrappedUnreached(ev: UiEventKind, kinds: Iterable<string>): Wrap
   return [...groups.values()];
 }
 
+// A group whose `ev` bubbles is left out: its wrapper does receive the event,
+// so a handler written there runs (`details(onKeyDown=r)`), although no
+// selector lifts a listener onto it.
+export function wrapperNeverReceives(ev: UiEventKind, kinds: Iterable<string>): WrappedUnreached[] {
+  return wrappedUnreached(ev, kinds).filter((g) => !g.bubbles);
+}
+
 // Grouped by this exact text into one clause, so the four kinds share the constant.
 const LISTENS_FOR_CHANGE = 'listens for "change" instead';
 
@@ -164,6 +171,16 @@ export function firesUnheardClauses(ev: UiEventKind, kinds: Iterable<string>): s
 export function kindsPhrase(kinds: readonly string[]): string {
   const named = kinds.join(" / ");
   return `${/^[aeiou]/.test(named) ? "an" : "a"} ${named}`;
+}
+
+export function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
+  const kinds = kindsPhrase(g.kinds);
+  return g.bubbles
+    ? `${kinds} takes no "${ev}" listener on the <${g.wrapper}> around its <${g.focused}>, ` +
+        `since a control in its panel takes the subscription instead — ` +
+        `write ${g.handler}= on the ${g.kinds.join(" / ")} to hear a "${ev}" on its <${g.focused}>`
+    : `the runtime listens for "${ev}" on ${kinds}'s <${g.wrapper}>, ` +
+        `and the "${ev}" its <${g.focused}> fires does not bubble to the <${g.wrapper}>`;
 }
 
 /** Derived view for the W0212 typecheck — keyed by ui-kind. */
