@@ -44,6 +44,7 @@ import {
   endScope,
   innerScope,
   type KumikiError,
+  propOf,
   type SymbolTable,
 } from "./context.ts";
 import {
@@ -475,14 +476,14 @@ function checkContentArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiErro
  * The values a builtin renders as text, as its lowering reads them: its content, `button`'s `text=`,
  * `link`'s `{text: …}` prop when no content is written, and the value `editable` binds.
  */
-function renderedText(t: TileExpr & { kind: "TileCall" }): Expr[] {
+function renderedText(t: TileExpr & { kind: "TileCall" }, ctx: Ctx): Expr[] {
   const named = (name: string) => t.args.find((a) => a.name === name)?.value;
   const content = contentArg(t)?.value;
   const values = [
     content,
     t.name === "button" ? named("text") : undefined,
     t.name === "link" && !content ? t.props.find((p) => p.name === "text")?.value : undefined,
-    t.name === "editable" ? named("bind") : undefined,
+    t.name === "editable" ? propOf(t, "bind", ctx)?.value : undefined,
   ];
   return values.filter((v): v is Expr => v !== undefined && !isTileExpr(v));
 }
@@ -505,26 +506,24 @@ function checkTileCall(
   }
   const userTile = sym.tiles.get(t.name);
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
-  checkA11y(t, sym, errors);
+  checkA11y(t, sym, errors, ctx);
   checkContentArgs(t, errors);
-  for (const value of renderedText(t)) {
+  for (const value of renderedText(t, ctx)) {
     refuseRenderedEffectId(value, `${t.name}(...)`, sym, errors, ctx);
   }
   checkIconName(t, sym, errors);
-  checkButtonType(t, errors);
+  checkButtonType(t, errors, ctx);
   checkBindStrictProp(t, errors);
   checkBindTargetSteps(t, sym, errors, ctx);
   checkBindTargetRoot(t, sym, errors, ctx);
   checkToggleBind(t, sym, errors, ctx);
-  checkSecondSpelling(t, errors);
+  checkSecondSpelling(t, errors, ctx);
   checkInputBindType(t, sym, errors, ctx);
   if (t.name === "input") {
-    const bindArg = t.args.find((a) => a.name === "bind");
-    const typeArg = t.args.find((a) => a.name === "type");
-    const typeVal = typeArg?.value as Expr | undefined;
+    const bindVal = propOf(t, "bind", ctx)?.value;
+    const typeVal = propOf(t, "type", ctx)?.value;
     const isFileType = typeVal?.kind === "Str" && typeVal.value === "file";
-    if (bindArg && isFileType) {
-      const bindVal = bindArg.value as Expr;
+    if (bindVal && isFileType) {
       const slotName = bindVal.kind === "Ref" ? bindVal.name : "<expr>";
       errors.push({
         code: "E0205",
@@ -540,14 +539,14 @@ function checkTileCall(
         typeVal === undefined
           ? `no type, defaults to "text"`
           : `type="${(typeVal as Expr & { kind: "Str" }).value}"`;
-      for (const arg of t.args) {
-        if (arg.name !== "accept" && arg.name !== "multiple") continue;
-        const argVal = arg.value as Expr;
+      for (const name of ["accept", "multiple"]) {
+        const written = propOf(t, name, ctx);
+        if (!written) continue;
         errors.push({
           code: "E0206",
           kind: "file-only-prop",
-          message: `input prop "${arg.name}" requires type="file" (got ${observedType}); accept/multiple are only valid on file inputs (see docs/spec/forms.md)`,
-          pos: argVal.pos,
+          message: `input prop "${name}" requires type="file" (got ${observedType}); accept/multiple are only valid on file inputs (see docs/spec/forms.md)`,
+          pos: written.value.pos,
         });
       }
     }
@@ -575,46 +574,16 @@ function checkTileCall(
         continue;
       }
     }
+    if (arg.name !== undefined && checkNamingProp(t.name, arg.name, v, sym, errors, ctx)) continue;
     checkExpr(v, sym, errors, ctx);
     // Only codegen knows which of a builtin's arguments it renders as text.
-    if (BUILTIN_TILES.has(t.name)) noteShown(v, sym, ctx);
+    if (arg.name === "key" || BUILTIN_TILES.has(t.name)) noteShown(v, sym, ctx);
     if (arg.name !== undefined) checkBuiltinProp(t.name, arg.name, v, sym, errors, ctx);
   }
   for (const prop of t.props) {
     if (HANDLER_NAMES.has(prop.name)) {
       checkHandlerBinding(t.name, prop.name, "prop", prop.value, sym, errors);
-    } else if (prop.name === "motion" && prop.value.kind === "Str") {
-      if (!sym.motions.has(prop.value.value)) {
-        errors.push({
-          code: "E0107",
-          kind: "undef-motion",
-          message: `Reference to undefined motion "${prop.value.value}"`,
-          pos: prop.value.pos,
-        });
-      }
-    } else if (t.name === "link" && prop.name === "prefetch") {
-      const ref = prop.value;
-      const name = ref.kind === "Ref" ? ref.name : ref.kind === "Str" ? ref.value : null;
-      if (name === null) {
-        errors.push({
-          code: "E0201",
-          kind: "type-mismatch",
-          message: `link prefetch must be a reducer name`,
-          pos: ref.pos,
-        });
-      } else if (!sym.reducers.has(name)) {
-        errors.push({
-          code: "E0102",
-          kind: "undef-reducer",
-          message: `Reference to undefined reducer "${name}"`,
-          pos: ref.pos,
-        });
-      }
-    } else if (t.name === "link" && prop.name === "prefetch-args") {
-      // Handed on as the prefetch target's `$route.params`.
-      checkExpr(prop.value, sym, errors, ctx);
-      checkAgainst(prop.value, PREFETCH_ARGS_TYPE, sym, errors, ctx);
-    } else {
+    } else if (!checkNamingProp(t.name, prop.name, prop.value, sym, errors, ctx)) {
       checkExpr(prop.value, sym, errors, ctx);
       if (prop.name === "key" || BUILTIN_TILES.has(t.name)) noteShown(prop.value, sym, ctx);
       checkBuiltinProp(t.name, prop.name, prop.value, sym, errors, ctx);
@@ -624,6 +593,56 @@ function checkTileCall(
 }
 
 const PREFETCH_ARGS_TYPE = appType("Map", primType("Text"), primType("Text"));
+
+/**
+ * Checks a prop whose value names a motion or a link's prefetch target, or is that target's
+ * `$route.params`, in either spelling; false for any other prop.
+ */
+function checkNamingProp(
+  tile: string,
+  name: string,
+  value: Expr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): boolean {
+  if (name === "motion" && value.kind === "Str") {
+    if (!sym.motions.has(value.value)) {
+      errors.push({
+        code: "E0107",
+        kind: "undef-motion",
+        message: `Reference to undefined motion "${value.value}"`,
+        pos: value.pos,
+      });
+    }
+    return true;
+  }
+  if (tile !== "link") return false;
+  if (name === "prefetch") {
+    const reducer = value.kind === "Ref" ? value.name : value.kind === "Str" ? value.value : null;
+    if (reducer === null) {
+      errors.push({
+        code: "E0201",
+        kind: "type-mismatch",
+        message: `link prefetch must be a reducer name`,
+        pos: value.pos,
+      });
+    } else if (!sym.reducers.has(reducer)) {
+      errors.push({
+        code: "E0102",
+        kind: "undef-reducer",
+        message: `Reference to undefined reducer "${reducer}"`,
+        pos: value.pos,
+      });
+    }
+    return true;
+  }
+  if (name !== "prefetch-args") return false;
+  // Handed on as the prefetch target's `$route.params`.
+  checkExpr(value, sym, errors, ctx);
+  checkAgainst(value, PREFETCH_ARGS_TYPE, sym, errors, ctx);
+  return true;
+}
 
 function checkHandlerBinding(
   tileName: string,
