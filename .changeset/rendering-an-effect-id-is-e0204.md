@@ -18,9 +18,9 @@ checked `ok`, and after the emit the page showed the runtime's internal
 `<effect>:<key>` string. Now each rendering is refused:
 
 ```
-E0204 effect-id-misuse at 4:26: text(...) cannot render EffectId — it is an opaque handle
-E0204 effect-id-misuse at 4:38: heading(...) cannot render EffectId — it is an opaque handle
-E0204 effect-id-misuse at 4:47: .show cannot render EffectId — it is an opaque handle
+error E0204 effect-id-misuse at 4:26: text(...) cannot render EffectId — it is an opaque handle
+error E0204 effect-id-misuse at 4:38: heading(...) cannot render EffectId — it is an opaque handle
+error E0204 effect-id-misuse at 4:47: .show cannot render EffectId — it is an opaque handle
 ```
 
 A value whose type is `EffectId`, through an alias, a `nominal` or a `let`

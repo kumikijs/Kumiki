@@ -39,8 +39,8 @@ const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
 /**
  * The record the runtime keeps in the `route` slot; its field names must be `emptyRoute()`'s keys,
  * or a test's `route` seed is refused or left partly undefined. The runtime's `ParsedRoute` also
- * carries an optional `childPattern` for `route-outlet`; that is runtime bookkeeping, not part of
- * the type.
+ * carries an optional `childPattern`, which picks the tile `route-outlet` renders and the sub-route
+ * a route event fires for; that is runtime bookkeeping, not part of the type.
  */
 export const ROUTE_TYPE: RecordType = record({
   path: prim("Text"),
@@ -61,15 +61,13 @@ const PANIC_INFO_FIELDS = {
 export const PANIC_INFO_TYPE: RecordType = record(PANIC_INFO_FIELDS);
 
 // What a `route.error(<pattern>)` reducer is handed as `$event`: a `PanicInfo`'s fields and the
-// matched `pattern`. It is not a `PanicInfo`, because a record type matches only its own field set.
+// `pattern` the reducer names. It is not a `PanicInfo`, because a record type matches only its own field set.
 export const ROUTE_ERROR_INFO_TYPE: RecordType = record({
   ...PANIC_INFO_FIELDS,
   pattern: prim("Text"),
 });
 
-// A program's own `type Route`, `type PanicInfo` or `type RouteErrorInfo` shadows the entry here.
-// The values the runtime builds (`route`, `$route`, a panic reducer's `$event`) are typed from the
-// exports above instead, because the runtime builds them whatever the program declares.
+// `route`, `$route` and a panic reducer's `$event` are typed from the exports above.
 export const STDLIB_TYPES: readonly TypeDef[] = [
   def("HttpStatus", nominal(prim("Int"), "between", [0, 599])),
   def(
@@ -100,6 +98,20 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   }),
 ];
 
+// The runtime or the standard library builds or reads values of these, so a
+// program's own definition would be what the checker reasoned about while the
+// runtime kept to the entry above. The other entries name types only a program
+// builds values of, and a program may declare its own.
+export const RUNTIME_SUPPLIED_TYPE_NAMES: ReadonlySet<string> = new Set([
+  "PanicInfo",
+  "RouteErrorInfo",
+  "Route",
+  "HttpError",
+  "HttpStatus",
+  "Duration",
+  "FormValue",
+]);
+
 // A browser reads a file's bytes only asynchronously, so the record a `change` event
 // delivers cannot hold them; they are not a field. `File` stays a `TypePrim` with this
 // side table, not a record in `STDLIB_TYPES` like `Route`: a record type would accept any
@@ -120,7 +132,15 @@ export const BUILTIN_TYPE_CONSTRUCTORS: ReadonlyMap<string, number | null> = new
   ["Tuple", null],
 ]);
 
-const PRIM_TYPE_NAMES: readonly PrimName[] = [
+// `Option` and `Result` have no body to read tags from, and `HttpBody` is read
+// by the HTTP runtime by tag alone. `FormValue`'s tags come from its definition.
+export const BUILTIN_UNION_TAGS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["Option", ["Some", "None"]],
+  ["Result", ["Ok", "Err"]],
+  ["HttpBody", ["Json", "Form", "Multipart", "Text", "Bytes", "Empty"]],
+]);
+
+export const PRIM_TYPE_NAMES: readonly PrimName[] = [
   "Text",
   "Int",
   "Float",
@@ -138,10 +158,24 @@ export function isPrimTypeName(name: string): name is PrimName {
   return PRIM_TYPE_NAME_SET.has(name);
 }
 
+export type ReservedTypeReason = "primitive" | "constructor" | "runtime-supplied";
+
+// The primitives and the constructors are read from the tables the parser and
+// the checker resolve those names by, so a name added to either is reserved with
+// no second list to update; the runtime-supplied names are a list of their own.
+// A program's definition under any of them could only be half-applied.
+export function reservedTypeReason(name: string): ReservedTypeReason | undefined {
+  if (isPrimTypeName(name)) return "primitive";
+  if (BUILTIN_TYPE_CONSTRUCTORS.has(name)) return "constructor";
+  if (RUNTIME_SUPPLIED_TYPE_NAMES.has(name)) return "runtime-supplied";
+  return undefined;
+}
+
+export function isReservedTypeName(name: string): boolean {
+  return reservedTypeReason(name) !== undefined;
+}
+
 export function typeCandidates(userTypeNames: Iterable<string>): string[] {
-  // The program's own names come first so an equidistant tie resolves to one
-  // of them: `Filtre` is two edits from both the declared `Filter` and the
-  // built-in `File`, and the declared type is the one the author meant.
   return [
     ...userTypeNames,
     ...STDLIB_TYPES.map((t) => t.name),

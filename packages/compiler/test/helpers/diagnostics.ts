@@ -18,6 +18,18 @@ export const errorsOf = (src: string): KumikiError[] =>
 
 export const errorCodesOf = (src: string): string[] => errorsOf(src).map((e) => e.code);
 
+/** Each diagnostic as `"<code> <line>:<col> <message>"`. */
+export const locatedSummariesOf = (src: string): string[] =>
+  checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
+
+/** E0231's message for a program's own definition of `name`, which already means `meaning`. */
+export const reservedTypeNameMessage = (name: string, meaning = "the standard library's"): string =>
+  `Type "${name}" collides with ${meaning} ${name}; uses of it never see this type`;
+
+/** E0234's message for a program's own `effect` under the standard effect `name`. */
+export const reservedEffectNameMessage = (name: string): string =>
+  `Effect "${name}" collides with the built-in effect ${name}; emits of it never run this effect`;
+
 /** Each diagnostic as `"<code> <message>"`. */
 export const summariesOf = (src: string): string[] =>
   checkSource(src).map((e) => `${e.code} ${e.message}`);
