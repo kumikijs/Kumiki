@@ -42,13 +42,13 @@ describe("a chain past the 256-level budget is a positioned parse error", () => 
       name: "a type with 300 `where`s",
       source: where(300),
       line: 1,
-      col: stepCol("type T = Int ", 21, 256),
+      col: stepCol("type T = Int ", 21, 255),
     },
     {
       name: "a type with 3,000 `where`s",
       source: where(3000),
       line: 1,
-      col: stepCol("type T = Int ", 21, 256),
+      col: stepCol("type T = Int ", 21, 255),
     },
     {
       name: "a 10,000-step `[0]` assignment path",
