@@ -6,6 +6,7 @@ import {
   type TileDef,
   type TileExpr,
   type TypeExpr,
+  type UiEventKind,
 } from "../ast.ts";
 import {
   BUILTIN_TILES,
@@ -21,7 +22,15 @@ import {
   unboundRedirectNames,
 } from "../redirects.ts";
 import { appType, primType } from "../stdlib-types.ts";
-import { HANDLER_NAMES, HANDLER_PROP_TILES, handlerReducerName } from "../ui-lifts.ts";
+import {
+  firesUnheardClauses,
+  HANDLER_NAMES,
+  HANDLER_PROP_TILES,
+  handlerReducerName,
+  liftForHandler,
+  wrappedClause,
+  wrapperNeverReceives,
+} from "../ui-lifts.ts";
 import { duplicateSubRoutes } from "../uniqueness.ts";
 import { checkAgainst } from "./against.ts";
 import {
@@ -53,7 +62,11 @@ import {
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
-import { collectRenderedBuiltinKinds, collectTileBuiltinKinds } from "./tile-collect.ts";
+import {
+  collectRenderedBuiltinKinds,
+  collectTileBuiltinKinds,
+  collectTileRootKinds,
+} from "./tile-collect.ts";
 import { checkA11y, checkBuiltinProp, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
 
@@ -675,26 +688,101 @@ function checkHandlerTarget(
   sym: SymbolTable,
   errors: KumikiError[],
 ): void {
-  const allowed = HANDLER_PROP_TILES[handler];
-  if (allowed == null) return;
-  if (BUILTIN_TILES.has(tileName)) {
-    if (allowed.has(tileName)) return;
-    errors.push(inertHandler(tileName, handler, `${tileName} does not fire it`, allowed, pos));
+  const reach = handlerReach(handler);
+  if (reach === null) return;
+  if (reach.via === "renderer") {
+    const because = notCalled(tileName, reach, sym);
+    if (because === null) return;
+    const fix = `Put it on ${tilesPhrase(reach.allowed)}, or subscribe with a reducer's on=ui.<event>(<Tile>)`;
+    errors.push(inertHandler(tileName, handler, because, fix, pos));
     return;
   }
-  if (!sym.tiles.has(tileName)) return;
+  const because = notReceived(tileName, reach, sym);
+  if (because === null) return;
+  // Subscribing on the same tile is W0212: a wrapper hears neither form.
+  const fix =
+    `Put it on ${tilesPhrase(reach.tiles)}, or subscribe with a reducer's ` +
+    `on=ui.${reach.ev}(<Tile>) on a tile that takes focus itself`;
+  errors.push(inertHandler(tileName, handler, because, fix, pos));
+}
+
+/**
+ * Where a handler prop runs. A `renderer` one runs only on the kinds whose renderer calls it. A
+ * `wrapper` one is attached to whatever element the tile produced, so it misses where that
+ * element wraps the one that fires `ev` and `ev` does not bubble to it.
+ */
+type HandlerReach =
+  | {
+      readonly via: "renderer";
+      readonly allowed: ReadonlySet<string>;
+      readonly ev: UiEventKind | undefined;
+    }
+  | { readonly via: "wrapper"; readonly ev: UiEventKind; readonly tiles: ReadonlySet<string> };
+
+function handlerReach(handler: string): HandlerReach | null {
+  const allowed = HANDLER_PROP_TILES[handler];
+  const lift = liftForHandler(handler);
+  if (allowed != null) return { via: "renderer", allowed, ev: lift?.ev };
+  if (lift === undefined || lift.tiles === null) return null;
+  // An event every wrapper receives (`key`) runs wherever the handler is attached.
+  if (wrapperNeverReceives(lift.ev, BUILTIN_TILES).length === 0) return null;
+  // A handler attached to whatever element the tile produced is reported only on a
+  // wrapped kind whose wrapper never receives the event; whether any other kind
+  // takes focus is not asked.
+  return { via: "wrapper", ev: lift.ev, tiles: lift.tiles };
+}
+
+/** Why `tileName` drops a handler no renderer it renders calls, or `null` where one does. */
+function notCalled(
+  tileName: string,
+  reach: HandlerReach & { via: "renderer" },
+  sym: SymbolTable,
+): string | null {
+  const unheard = (kinds: Iterable<string>): string[] =>
+    reach.ev === undefined ? [] : firesUnheardClauses(reach.ev, kinds);
+  if (BUILTIN_TILES.has(tileName)) {
+    if (reach.allowed.has(tileName)) return null;
+    const [because = `${tileName} does not fire it`] = unheard([tileName]);
+    return because;
+  }
+  if (!sym.tiles.has(tileName)) return null;
   const kinds = collectTileBuiltinKinds(tileName, sym);
-  if (kinds.size === 0) return;
-  if ([...kinds].some((k) => allowed.has(k))) return;
-  errors.push(
-    inertHandler(
-      tileName,
-      handler,
-      `${tileName} renders nothing that fires it (observed in body: ${[...kinds].sort().join(", ")})`,
-      allowed,
-      pos,
-    ),
+  if (kinds.size === 0 || [...kinds].some((k) => reach.allowed.has(k))) return null;
+  const observed = `(observed in body: ${[...kinds].sort().join(", ")})`;
+  const clauses = unheard(kinds);
+  return clauses.length === 0
+    ? `${tileName} renders nothing that fires it ${observed}`
+    : `${tileName} renders nothing that calls it: ${clauses.join("; ")} ${observed}`;
+}
+
+/**
+ * Why `tileName` drops a handler its event never reaches, or `null` where it may. The event
+ * does not bubble, so of a user tile only the elements the handler is merged onto are asked.
+ */
+function notReceived(
+  tileName: string,
+  reach: HandlerReach & { via: "wrapper" },
+  sym: SymbolTable,
+): string | null {
+  const { ev } = reach;
+  if (BUILTIN_TILES.has(tileName)) {
+    const [missed] = wrapperNeverReceives(ev, [tileName]);
+    return missed === undefined ? null : wrappedClause(ev, missed);
+  }
+  if (!sym.tiles.has(tileName)) return null;
+  const kinds = collectTileRootKinds(tileName, sym);
+  if (kinds.size === 0 || [...kinds].some((k) => wrapperNeverReceives(ev, [k]).length === 0)) {
+    return null;
+  }
+  const clauses = wrapperNeverReceives(ev, kinds).map((g) => wrappedClause(ev, g));
+  return (
+    `${tileName} renders nothing at its root where "${ev}" reaches it: ${clauses.join("; ")} ` +
+    `(observed at its root: ${[...kinds].sort().join(", ")})`
   );
+}
+
+function tilesPhrase(tiles: ReadonlySet<string>): string {
+  return [...tiles].sort().join(" / ");
 }
 
 /** One W0213, whichever side — builtin or user tile — asked for it. */
@@ -702,14 +790,14 @@ function inertHandler(
   tileName: string,
   handler: string,
   because: string,
-  allowed: ReadonlySet<string>,
+  fix: string,
   pos: Pos,
 ): KumikiError {
   return {
     code: "W0213",
     kind: "handler-on-inert-tile",
     severity: "warning",
-    message: `"${handler}" on ${tileName}() is dropped — ${because}. Put it on ${[...allowed].sort().join(" / ")}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+    message: `"${handler}" on ${tileName}() is dropped — ${because}. ${fix}`,
     pos,
   };
 }

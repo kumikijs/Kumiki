@@ -4,7 +4,7 @@ Kumiki の標準ライブラリは「**最小完備**」を目標に設計され
 
 ## 2.1 ビルトイン型
 
-### 2.1.1 プリミティブ
+### 2.1.1 プリミティブ {#_2-1-1-primitives}
 
 | 型 | 表現 | リテラル例 |
 |---|---|---|
@@ -16,6 +16,7 @@ Kumiki の標準ライブラリは「**最小完備**」を目標に設計され
 | `Bytes` | バイト列 | リテラルなし、`Bytes.from-text(text)` / `Bytes.from-base64(text)` / `Bytes.from-bytes(list)` で生成（[§2.2.10](#_2-2-10-bytes) 参照） |
 | `Time` | Unix エポックからのミリ秒 | リテラルなし、`now` または `Time.parse(text)` |
 | `EffectId` | `emit` が返す不透明ハンドル（[§2.1.1.1](#_2-1-1-1-effectid) 参照） | リテラルなし、`EffectId.none` |
+| `File` | ファイル入力で選ばれた 1 つのファイル（[§2.1.3](#_2-1-3-domain-types-provided-by-the-standard-library) 参照） | リテラルなし、ファイル入力が報告する |
 
 #### 2.1.1.1 `EffectId`
 
@@ -42,6 +43,8 @@ let id = emit fetchQuote()
 | `Result(T, E)` | `Ok(T)` または `Err(E)` |
 | `Tuple(T1, ..., Tn)` | 固定長 |
 
+これらの名前と [§2.1.1](#_2-1-1-primitives) のプリミティブは、どのプログラムでも同じ型を意味する：これらの名前で宣言した `type` は [E0231](./errors.md#e0231-reserved-type-name) であり、名前の使用はすべてここに書いた意味を保つ（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 6）。
+
 ### 2.1.3 ドメイン型（標準提供） {#_2-1-3-domain-types-provided-by-the-standard-library}
 
 | 型 | 定義 |
@@ -59,7 +62,7 @@ let id = emit fetchQuote()
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — `app.error` と `error-boundary` tile の `in=` に渡る値（[ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)） |
 | `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — `route.error(<pattern>)` に渡る値：`PanicInfo` のフィールドと、その reducer が指す `pattern` |
 
-プログラムはこれらの名前を宣言せずに使う。`PanicInfo`・`RouteErrorInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue` は**予約**されている：その値をランタイムまたは標準ライブラリが組み立てる、あるいは読むので、これらの名前で宣言した `type` は [E0231](./errors.md#e0231-reserved-type-name) であり、名前は上の定義を保つ。`Url`・`Email`・`Uuid`・`FormData` が名指すのは、プログラムだけが値を組み立てる型である。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はその型を意味する（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 6）。`File` は宣言された型ではなくプリミティブであり、どちらにも含まれない。
+プログラムはこれらの名前を宣言せずに使う。`PanicInfo`・`RouteErrorInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue` は**予約**されている：その値をランタイムまたは標準ライブラリが組み立てる、あるいは読むので、これらの名前で宣言した `type` は [E0231](./errors.md#e0231-reserved-type-name) であり、名前は上の定義を保つ。`Url`・`Email`・`Uuid`・`FormData` が名指すのは、プログラムだけが値を組み立てる型である。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はその型を意味する（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 6）。`File` はプリミティブの名前であり — 型の位置ではそれ自身として読まれる — プリミティブとともに予約されている。
 
 ---
 
@@ -77,7 +80,7 @@ let id = emit fetchQuote()
 | `List(T)` | 要素 `T` | `push` / `prepend` / `contains` |
 | | `other`（`List(T)`） | `concat` |
 
-引数はその型の場所へ書き込まれる値と同じようにその型と照合されるので、合わなければ引数の位置で [E0201](./errors.md#e0201-type-mismatch) になる：`List(Int)` に対する `xs.push("3")` は `xs := ["3"]` と同じく `"3"` で報告され、`Map(Text, Int)` に対する `m.insert(1, 0)` は `1` で報告される。同じ規則は slot が受け入れるものを受け入れる — 要素が `Float` の位置への `Int`、`Option(T)` の位置への `None`、キーが `nominal Text` と宣言された位置への `Text`。それ以外のパラメータはレシーバが型を与えるものではない：`update` 以外のフラグメント、`slice` / `chunk` の数値、`join` の区切り、`fold` の初期アキュムレータ、そして独自の要素型を持つ `List(U)` である `zip` の `other`。`get-or` の `default` は呼び出しが返す型と、`List.get` の添字は `xs[i]` の添字と同じく `Int` と照合される（[E0201](./errors.md#e0201-type-mismatch)）。型検査器がレシーバの型を決定できない場所では、どの引数もパラメータの型と照合されない（各引数の式そのものは検査される）。そうした場所は init が `{}` である `fold` のアキュムレータ `$1`、`->` を持たず本体の型も決まらない `fn` の結果、そして型検査器が結果の型を推論しないメンバーの結果 — `List.map` / `fold` / `zip`、`Map.map`、`Option.map` / `Result.map` — である。したがって `List(Int)` に対する `xs.map($1 * 2).push("w")` は `check` を通る。これはチェッカーが解決できる範囲の欠落であって、プログラムが頼ってよい規則ではない。
+引数はその型の場所へ書き込まれる値と同じようにその型と照合されるので、合わなければ引数の位置で [E0201](./errors.md#e0201-type-mismatch) になる：`List(Int)` に対する `xs.push("3")` は `xs := ["3"]` と同じく `"3"` で報告され、`Map(Text, Int)` に対する `m.insert(1, 0)` は `1` で報告される。同じ規則は slot が受け入れるものを受け入れる — 要素が `Float` の位置への `Int`、`Option(T)` の位置への `None`、キーが `nominal Text` と宣言された位置への `Text`。それ以外のパラメータはレシーバが型を与えるものではない：`update` 以外のフラグメント、`join` の区切り、`fold` の初期アキュムレータ、そして独自の要素型を持つ `List(U)` である `zip` の `other`。`get-or` の `default` は呼び出しが返す型と、`List.get` の添字、`slice` の両端と `chunk` の大きさは `xs[i]` の添字と同じく `Int` と照合される（[E0201](./errors.md#e0201-type-mismatch)）。型検査器がレシーバの型を決定できない場所では、どの引数もパラメータの型と照合されない（各引数の式そのものは検査される）。そうした場所は init が `{}` である `fold` のアキュムレータ `$1`、`->` を持たず本体の型も決まらない `fn` の結果、そして型検査器が結果の型を推論しないメンバーの結果 — `List.map` / `fold` / `zip`、`Map.map`、`Option.map` / `Result.map` — である。したがって `List(Int)` に対する `xs.map($1 * 2).push("w")` は `check` を通る。これはチェッカーが解決できる範囲の欠落であって、プログラムが頼ってよい規則ではない。
 
 ### 2.2.1 Map(K, V)
 
@@ -162,7 +165,7 @@ last                        : Option(T)
 push(x)                     : List(T)
 prepend(x)                  : List(T)
 concat(other)               : List(T)
-slice(start, end)           : List(T)
+slice(start, end)           : List(T)          ; start と end は Int。end を省くとリストの末尾まで
 reverse                     : List(T)
 sort                        : List(T)          ; T は Ord、昇順（< の順）
 sort-by(expr)               : List(T)          ; expr の昇順（< の順）、安定
@@ -173,7 +176,7 @@ contains(x)                 : Bool
 find(pred)                  : Option(T)
 fold(init, expr)            : Acc              ; expr の中で $1=acc, $2=elem
 join(sep)                   : Text             ; T が Text
-chunk(n)                    : List(List(T))
+chunk(n)                    : List(List(T))    ; n は Int
 zip(other)                  : List(Tuple(T, U))
 ```
 
