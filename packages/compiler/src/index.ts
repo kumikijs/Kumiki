@@ -75,3 +75,4 @@ export {
   servesNotFound,
   severityOf,
 } from "./typecheck.ts";
+export { UI_LIFTS, type UiLift } from "./ui-lifts.ts";
