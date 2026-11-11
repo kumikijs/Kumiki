@@ -552,9 +552,9 @@ function tilesInContent(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): (Expr |
       );
     }
     case "Call":
-      return namesTile(v.callee, sym) && !namesValue(v.callee, v.pos, sym, ctx) ? [v] : [];
+      return namesTile(v.callee, sym) && valueNamed(v.callee, v.pos, sym, ctx) === null ? [v] : [];
     case "Ref":
-      return sym.tiles.has(v.name) && !namesValue(v.name, v.pos, sym, ctx) ? [v] : [];
+      return sym.tiles.has(v.name) && valueNamed(v.name, v.pos, sym, ctx) === null ? [v] : [];
     case "Variant":
       return sym.tiles.has(v.name) && !isUnionTag(v.name, sym) ? [v] : [];
     default:
