@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { UI_LIFTS } from "../src/ui-lifts.ts";
 import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 import { withApp } from "./helpers/programs.ts";
 
@@ -478,6 +479,7 @@ describe("W0212 gives the reason that holds when the element fires the event", (
 
     it.each([
       ["change", "tile D = editable(bind=note)", "editable"],
+      ["input", 'tile D = text("hi")', "text"],
       ["input", 'tile D = button(text="b")', "button"],
     ])("keeps 'no descendant fires it' for ui.%s on `%s`", (ev, tiles, kind) => {
       const message = w0212(ev, tiles);
@@ -486,12 +488,201 @@ describe("W0212 gives the reason that holds when the element fires the event", (
     });
   });
 
-  // The <span> does fire click; this pins the wording that is still untrue of it, so that the
-  // change which gives a text its own reason changes this test on purpose.
-  it("still says no descendant fires click for a text, although its <span> fires it", () => {
-    const message = w0212("click", 'tile D = text("hi")');
-    expect(message).toContain(`but tile "D" has no descendant that fires "click" (`);
-    expect(message).toContain("observed in body: text)");
+  describe("under click, says the renderer never calls onClick", () => {
+    it.each([
+      ["a text", 'tile D = text("hi")', "text"],
+      ["a box, naming the kinds in its body together", 'tile D = box(text("hi"))', "box, text"],
+    ])("says so for %s", (_, tiles, observed) => {
+      const named = observed.replace(", ", " / ");
+      expect(w0212("click", tiles)).toBe(
+        `Reducer "r" subscribes to ui.click(D) but "click" never reaches a reducer in tile "D": ` +
+          `a ${named} fires "click", and its renderer never calls onClick ` +
+          `(DOM-allowed: button, check, switch, radio; observed in body: ${observed}). ` +
+          `The handler is silently dropped.`,
+      );
+    });
+
+    it.each([
+      ["an image", 'image(src="/a.png", alt="a")'],
+      ["a heading", 'heading("Title")'],
+      ["an input", "input(bind=note)"],
+      ["a select", "select(bind=size, options=sizes())"],
+      ["a video", 'video(src="/a.mp4", controls=true)'],
+    ])("says so for %s", (named, tile) => {
+      const message = w0212("click", `tile D = ${tile}`);
+      expect(message).toContain(
+        `"click" never reaches a reducer in tile "D": ` +
+          `${named} fires "click", and its renderer never calls onClick (`,
+      );
+      expect(message).not.toContain("has no descendant");
+    });
+
+    it("takes its article from the first kind it names", () => {
+      expect(w0212("click", 'tile D = row(image(src="/a.png", alt="a"), text("x"))')).toContain(
+        `an image / row / text fires "click", and its renderer never calls onClick (`,
+      );
+    });
+
+    it("gives a link its own reason, and the other kinds the default", () => {
+      expect(w0212("click", 'tile D = row(link(to="/", text="home"), text("x"))')).toContain(
+        `"click" never reaches a reducer in tile "D": ` +
+          `a link fires "click", and its renderer listens for it only to navigate, never calling onClick; ` +
+          `a row / text fires "click", and its renderer never calls onClick (`,
+      );
+    });
+  });
+
+  describe("W0213 gives the reason W0212 gives for the kind", () => {
+    const w0213 = (tiles: string) => {
+      const src = `
+        type Size = S | M
+        fn sizes() -> List({label: Text, value: Size})
+           = [{label: "Small", value: S}, {label: "Medium", value: M}]
+        slot size : Size = S
+        slot done : Bool = false
+        slot note : Text = ""
+        slot hits : Int = 0
+        reducer r on=app.start do= hits := hits + 1
+        ${tiles}
+        tile App = column(D)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const found = checkSource(src).filter((e) => e.code === "W0213");
+      expect(found).toHaveLength(1);
+      return found[0]!.message;
+    };
+    const reasonOf = (ev: string, tiles: string) => {
+      const message = w0212(ev, tiles);
+      const start = message.indexOf(`tile "D": `) + `tile "D": `.length;
+      return message.slice(start, message.indexOf(" (DOM-allowed"));
+    };
+    const ONTO = "Put it on button / check / radio / switch";
+
+    it("says a link listens for click only to navigate", () => {
+      const message = w0213('tile D = link(to="/", text="home", onClick=r)');
+      expect(message).toBe(
+        `"onClick" on link() is dropped — a link fires "click", and its renderer listens for it ` +
+          `only to navigate, never calling onClick. ${ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+      );
+      expect(message).toContain(`— ${reasonOf("click", 'tile D = link(to="/", text="home")')}. `);
+    });
+
+    it("says a container's renderer never calls onClick", () => {
+      const message = w0213('tile D = row(text("x"), onClick=r)');
+      expect(message).toBe(
+        `"onClick" on row() is dropped — a row fires "click", and its renderer never calls onClick. ` +
+          `${ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+      );
+      expect(w0213('tile D = text("x") {onClick: r}')).toContain(
+        `— ${reasonOf("click", 'tile D = text("x")')}. `,
+      );
+    });
+
+    // One builtin of each kind a firesUnheard record names: the event of its row, the handler
+    // that row lifts, the builtin as W0212 sees it, and the builtin carrying the handler.
+    const RECORDED = [
+      [
+        "link",
+        "click",
+        "onClick",
+        'link(to="/", text="home")',
+        'link(to="/", text="home", onClick=r)',
+      ],
+      [
+        "slider",
+        "input",
+        "onInput",
+        "slider(bind=hits, min=0, max=10)",
+        "slider(bind=hits, min=0, max=10, onInput=r)",
+      ],
+      ["check", "input", "onInput", "check(value=done)", "check(value=done, onInput=r)"],
+      [
+        "radio",
+        "input",
+        "onInput",
+        'radio(group="g", selected=done)',
+        'radio(group="g", selected=done, onInput=r)',
+      ],
+      ["switch", "input", "onInput", "switch(value=done)", "switch(value=done, onInput=r)"],
+      [
+        "select",
+        "input",
+        "onInput",
+        "select(bind=size, options=sizes())",
+        "select(bind=size, options=sizes(), onInput=r)",
+      ],
+    ] as const;
+
+    it("has a case for every kind a firesUnheard record names", () => {
+      const recorded = UI_LIFTS.flatMap((l) =>
+        Object.keys(l.firesUnheard ?? {}).map((kind) => `${l.ev} ${kind}`),
+      );
+      expect(RECORDED.map(([kind, ev]) => `${ev} ${kind}`).sort()).toEqual(recorded.sort());
+    });
+
+    it.each(
+      RECORDED,
+    )("gives W0212's reason for the handler on a %s", (kind, ev, handler, tile, withHandler) => {
+      expect(w0213(`tile D = ${withHandler}`)).toContain(
+        `"${handler}" on ${kind}() is dropped — ${reasonOf(ev, `tile D = ${tile}`)}. `,
+      );
+    });
+
+    it("says it of a user tile's body, and names the body", () => {
+      const inner = 'tile Inner = box(text("clickme"))';
+      const message = w0213(`${inner}\ntile D = column(Inner(onClick=r))`);
+      expect(message).toBe(
+        `"onClick" on Inner() is dropped — Inner renders nothing that calls it: ` +
+          `a box / text fires "click", and its renderer never calls onClick ` +
+          `(observed in body: box, text). ${ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+      );
+      expect(message).toContain(
+        `calls it: ${reasonOf("click", 'tile D = box(text("clickme"))')} (`,
+      );
+    });
+
+    it("joins a user tile's clauses with '; ', the link's first", () => {
+      const inner = 'tile Inner = row(link(to="/", text="h"), text("x"))';
+      expect(w0213(`${inner}\ntile D = column(Inner(onClick=r))`)).toBe(
+        `"onClick" on Inner() is dropped — Inner renders nothing that calls it: ` +
+          `a link fires "click", and its renderer listens for it only to navigate, never calling onClick; ` +
+          `a row / text fires "click", and its renderer never calls onClick ` +
+          `(observed in body: link, row, text). ${ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+      );
+    });
+
+    it("gives a clause only for the kinds in an onInput body that fire input", () => {
+      const inner = 'tile Inner = box(slider(bind=hits, min=0, max=10), text("x"))';
+      expect(w0213(`${inner}\ntile D = column(Inner(onInput=r))`)).toBe(
+        `"onInput" on Inner() is dropped — Inner renders nothing that calls it: ` +
+          `a slider fires "input", and its renderer listens for it only to write the bind, never calling onInput ` +
+          `(observed in body: box, slider, text). ` +
+          `Put it on editable / input / textarea, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+      );
+    });
+
+    it("keeps 'does not fire it' for a handler no ui event lifts to", () => {
+      const onto =
+        "Put it on drawer / modal / popover, or subscribe with a reducer's on=ui.<event>(<Tile>)";
+      expect(w0213('tile D = row(text("x")) {onClose: r}')).toBe(
+        `"onClose" on row() is dropped — row does not fire it. ${onto}`,
+      );
+      expect(w0213('tile Inner = box(text("x"))\ntile D = column(Inner() {onClose: r})')).toBe(
+        `"onClose" on Inner() is dropped — Inner renders nothing that fires it ` +
+          `(observed in body: box, text). ${onto}`,
+      );
+    });
+
+    it("keeps 'does not fire it' where the element does not fire the event", () => {
+      expect(w0213('tile D = row(text("x")) {onChange: r}')).toBe(
+        `"onChange" on row() is dropped — row does not fire it. ` +
+          `Put it on check / input / radio / select / slider / switch / textarea, ` +
+          `or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+      );
+      expect(
+        w0213('tile Inner = box(text("x"))\ntile D = column(Inner() {onChange: r})'),
+      ).toContain(`— Inner renders nothing that fires it (observed in body: box, text). `);
+    });
   });
 });
 

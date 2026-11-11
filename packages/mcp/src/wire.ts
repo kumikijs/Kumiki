@@ -1,15 +1,36 @@
 import type { AutoPatch, FixFromTestOutcome } from "@kumikijs/cli";
-import type { KumikiError } from "@kumikijs/compiler";
+import { type KumikiError, type Severity, severityOf } from "@kumikijs/compiler";
 import { CapabilityManifestError } from "@kumikijs/compiler/node";
 
-export type Diagnostic = { code: string; kind: string; message: string; line: number; col: number };
+export type Diagnostic = {
+  code: string;
+  kind: string;
+  message: string;
+  line: number;
+  col: number;
+  severity: Severity;
+};
 
-export function text(s: string) {
-  return { content: [{ type: "text" as const, text: s }] };
+export const DIAGNOSTIC_SHAPE =
+  'Each diagnostic is `{code, kind, message, line, col, severity}`; `severity` is `"error"` (the file fails `check`, and `build` too unless only a `strict*` toggle surfaced it) or `"warning"` (advisory: reported, but fails neither; docs/spec/errors.md).';
+
+export function text(...parts: string[]) {
+  return { content: parts.map((s) => ({ type: "text" as const, text: s })) };
 }
 
-export function failed(s: string) {
-  return { ...text(s), isError: true };
+export function failed(...parts: string[]) {
+  return { ...text(...parts), isError: true };
+}
+
+export const RUN_WARNINGS =
+  "When the compile it runs first succeeds with warnings, a second content item holds them, `warnings:` followed by a JSON list of diagnostics, whether the run then passed or failed; a warning does not fail it. A compile that fails runs nothing: the result is `isError` and its one item is the `{error: {kind, message}}` envelope, whose message lists every diagnostic, the warnings first.";
+
+// A second item rather than a suffix, so the first stays what the tool answers for a file
+// with no warning and a client can use it as it stands: the `includeJs` module, the test report's JSON.
+// The label marks where the first item ends for a client that joins the items into one text.
+export function withWarnings(head: string, warnings: KumikiError[]): string[] {
+  if (warnings.length === 0) return [head];
+  return [head, `warnings:\n${json(toDiagnostics(warnings))}`];
 }
 
 export function errText(e: unknown) {
@@ -29,12 +50,13 @@ export function toDiagnostics(errors: KumikiError[]): Diagnostic[] {
     message: e.message,
     line: e.pos.line,
     col: e.pos.col,
+    severity: severityOf(e),
   }));
 }
 
 export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
   const patchWire = (p: AutoPatch) => ({ code: p.code, description: p.description });
-  const base = { ok: o.ok, status: o.status };
+  const base = { ok: o.ok, status: o.status, warnings: toDiagnostics(o.warnings) };
   const withCompileFixes =
     "compileFixes" in o && o.compileFixes !== undefined ? { compileFixes: o.compileFixes } : {};
   switch (o.status) {
