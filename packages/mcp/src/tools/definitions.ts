@@ -10,12 +10,13 @@ import {
   removeDef,
   renameDef,
   replaceDef,
+  requireSourceFile,
   viewDef,
   viewHistory,
   viewWithDeps,
 } from "@kumikijs/cli";
 import { z } from "zod";
-import { absPath, requireSourceFile } from "../input.ts";
+import { absPath } from "../input.ts";
 import { json, text } from "../wire.ts";
 import type { RegisterTool } from "./registrar.ts";
 

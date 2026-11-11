@@ -1,0 +1,34 @@
+import { mkdirSync, rmSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterAll, beforeAll } from "vitest";
+
+/** Removes `dir` and everything in it; a `dir` that is not there is already removed. */
+export function removeScratch(dir: string): void {
+  // `force` absorbs only ENOENT. A file another process holds for a moment (EBUSY or EPERM on
+  // Windows) is free again a retry later; one still held after the retries is worth a failure.
+  rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+}
+
+/**
+ * The calling test file's own scratch directory, `test-tmp/<file>-<pid>` beside it: empty when
+ * the file's first test starts and removed after its last, pass or fail. Write under it from a
+ * test or a hook, not at collection: a file that `-t` filters out entirely runs no hooks.
+ *
+ * It sits under the package because the projects written there resolve `@kumikijs/runtime` from
+ * the workspace. A copy of the compiler's helper: a package's typecheck takes in nothing outside
+ * the package.
+ */
+export function scratchRoot(testFileUrl: string): string {
+  const file = fileURLToPath(testFileUrl);
+  const root = join(dirname(file), "test-tmp", `${basename(file, ".test.ts")}-${process.pid}`);
+  beforeAll(() => {
+    // The name repeats whenever the pid does: whatever is there is an earlier run's.
+    removeScratch(root);
+    mkdirSync(root, { recursive: true });
+  });
+  afterAll(() => {
+    removeScratch(root);
+  });
+  return root;
+}

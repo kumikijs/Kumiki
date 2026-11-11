@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { lockDef, readOpLog, replaceDef, unlockDef } from "@kumikijs/cli";
 import { app } from "@kumikijs/examples";
 import { beforeEach, describe, expect, it } from "vitest";
-import { seedCopy } from "./helpers/files.ts";
+import { NOT_A_FILE, seedCopy } from "./helpers/files.ts";
 import { asAgent } from "./helpers/op-log.ts";
 
 const COUNTER = app("01-counter");
@@ -199,12 +199,13 @@ describe("lock", () => {
 });
 
 describe("lock and unlock", () => {
-  it("refuse a file that does not exist, creating no lock file", () => {
-    const missing = join(dirname(file), "missing.kumiki");
-    const refusal = `File "${missing}" not found`;
-    expect(() => lockDef(missing, "agent:a", "slot.*")).toThrowError(refusal);
-    expect(() => unlockDef(missing, "agent:a")).toThrowError(refusal);
-    expect(existsSync(`${missing}.kumiki-locks.json`)).toBe(false);
+  it.each(NOT_A_FILE)("refuse a path that %s, creating no lock file", (_what, make) => {
+    const path = join(dirname(file), "other.kumiki");
+    make(path);
+    const refusal = `File "${path}" not found`;
+    expect(() => lockDef(path, "agent:a", "slot.*")).toThrowError(refusal);
+    expect(() => unlockDef(path, "agent:a")).toThrowError(refusal);
+    expect(existsSync(`${path}.kumiki-locks.json`)).toBe(false);
   });
 });
 

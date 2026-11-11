@@ -1,7 +1,10 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { APP_A, failureOf, TMP, transformCode } from "./helpers/plugin.ts";
+import { APP_A, failureOf, transformCode } from "./helpers/plugin.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
+
+const TMP = scratchRoot(import.meta.url);
 
 describe("a source that does not parse", () => {
   const BAD_PARSE = `tile App = column(text("x")\n${APP_A}`;
