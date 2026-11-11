@@ -5,6 +5,7 @@ import {
   type ReducerDef,
   type TileDef,
   type TileExpr,
+  writtenProp,
 } from "../ast.ts";
 import { BUILTIN_TILES, CHILD_RENDERING_BUILTINS } from "../builtins.ts";
 import { boundaryTarget, expansionTargets } from "../def-graph.ts";
@@ -17,6 +18,11 @@ import type { SymbolTable } from "./context.ts";
  */
 export function collectTileBuiltinKinds(tileName: string, sym: SymbolTable): Set<string> {
   return kindsIn(renderedTree(tileName, sym, false));
+}
+
+/** Of those, the kinds a handler written at the tile's call site is merged onto: its root's. */
+export function collectTileRootKinds(tileName: string, sym: SymbolTable): Set<string> {
+  return new Set([...renderedTree(tileName, sym, false).root.values()].map((e) => e.kind));
 }
 
 /** The kinds a subscription on the tile is wired onto (W0212), a nested tile's fallback included. */
@@ -69,7 +75,7 @@ function renderedTree(
   for (const edge of expansionTargets(def.body)) {
     const here = edge.root ? root : inner;
     if (BUILTIN_TILES.has(edge.to)) {
-      const id = edge.call ? writtenValue(edge.call, "id") : undefined;
+      const id = edge.call ? writtenProp(edge.call, "id")?.value : undefined;
       addElement(here, { kind: edge.to, id: id?.kind === "Str" ? id.value : null });
       continue;
     }
@@ -104,7 +110,7 @@ type Imposed = string | null | undefined;
 // A call site's props are merged onto its tile's root elements one prop at a time, so a literal
 // id written there replaces theirs, and a call site that writes no id leaves theirs.
 function callSiteId(call: TileExpr & { kind: "TileCall" }): Imposed {
-  const id = writtenValue(call, "id");
+  const id = writtenProp(call, "id")?.value;
   if (id === undefined) return undefined;
   return id.kind === "Str" ? id.value : null;
 }
@@ -306,7 +312,7 @@ export function collectPrefetchTargets(expr: TileExpr, out: Set<string>): void {
       return;
     case "TileCall": {
       if (expr.name === "link") {
-        const v = expr.props.find((p) => p.name === "prefetch")?.value;
+        const v = writtenProp(expr, "prefetch")?.value;
         if (v?.kind === "Ref") out.add(v.name);
         else if (v?.kind === "Str") out.add(v.value);
       }
@@ -316,13 +322,6 @@ export function collectPrefetchTargets(expr: TileExpr, out: Set<string>): void {
     default:
       assertNever(expr);
   }
-}
-
-export function writtenValue(t: TileExpr & { kind: "TileCall" }, name: string): Expr | undefined {
-  const fromProp = t.props.find((p) => p.name === name)?.value;
-  if (fromProp !== undefined) return fromProp;
-  const fromArg = t.args.find((a) => a.name === name)?.value;
-  return fromArg === undefined || isTileExpr(fromArg) ? undefined : fromArg;
 }
 
 export function collectElementIds(expr: TileExpr, out: Set<string>): void {
@@ -339,7 +338,7 @@ export function collectElementIds(expr: TileExpr, out: Set<string>): void {
       for (const arm of expr.arms) collectElementIds(arm.body, out);
       return;
     case "TileCall": {
-      const id = writtenValue(expr, "id");
+      const id = writtenProp(expr, "id")?.value;
       if (id?.kind === "Str") out.add(id.value);
       for (const a of expr.args) if (isTileExpr(a.value)) collectElementIds(a.value, out);
       return;
