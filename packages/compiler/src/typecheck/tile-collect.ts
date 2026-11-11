@@ -20,6 +20,11 @@ export function collectTileBuiltinKinds(tileName: string, sym: SymbolTable): Set
   return kindsIn(renderedTree(tileName, sym, false));
 }
 
+/** Of those, the kinds a handler written at the tile's call site is merged onto: its root's. */
+export function collectTileRootKinds(tileName: string, sym: SymbolTable): Set<string> {
+  return new Set([...renderedTree(tileName, sym, false).root.values()].map((e) => e.kind));
+}
+
 /** The kinds a subscription on the tile is wired onto (W0212), a nested tile's fallback included. */
 export function subscribedKinds(tileName: string, sym: SymbolTable): Set<string> {
   return kindsIn(renderedTree(tileName, sym, true));
