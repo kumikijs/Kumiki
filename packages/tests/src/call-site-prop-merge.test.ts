@@ -1,30 +1,30 @@
-import { renderToString } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { click, find, mountApp } from "./helpers/dom.ts";
-import { loadSource } from "./helpers/load.ts";
+import { click, find, mountSource, served, typeInto } from "./helpers/dom.ts";
+import { withApp } from "./helpers/source.ts";
+
+const SLOTS = [
+  'slot log : Text = ""',
+  'slot q : Text = ""',
+  'slot xs : List(Text) = ["p", "q"]',
+  "slot one : Bool = true",
+  "type Mode = Lit | Dark",
+  "slot mode : Mode = Lit",
+];
 
 function program(defs: string[], root: string): string {
-  return [
-    'slot log : Text = ""',
-    'slot xs : List(Text) = ["p", "q"]',
-    "slot one : Bool = true",
-    ...defs,
-    `tile App = column(${root}, text("log=" + log))`,
-    'app A caps=[] routes={"/" -> App, "/404" -> App} init=[]',
-    "",
-  ].join("\n");
+  return withApp([...SLOTS, ...defs, `tile App = column(${root}, text("log=" + log))`].join("\n"));
 }
 
 async function clickAll(src: string, texts: string[]): Promise<unknown> {
-  const app = await loadSource(src);
-  const { root } = mountApp(app);
+  const { app, root } = await mountSource(src);
   for (const t of texts) click(root, t);
   return app.live?.log;
 }
 
 describe("a call-site prop leaves the id the tile wrote", () => {
-  it("fires Ghost#three for a Ghost called with a variant", async () => {
-    const src = program(
+  it.each([
+    [
+      "a button-rooted tile",
       [
         'tile Plain = button(text="Plain", id="three")',
         'tile Ghost = button(text="Ghost", id="three")',
@@ -32,34 +32,51 @@ describe("a call-site prop leaves the id the tile wrote", () => {
         'reducer hitGhost on=ui.click(Ghost#three) do= log := log + "ghost;"',
       ],
       'Plain, Ghost {variant: "ghost"}',
-    );
-    expect(await clickAll(src, ["Plain", "Ghost"])).toBe("plain;ghost;");
-  });
-
-  it("keeps it on every node a for-bodied tile renders", async () => {
-    const src = program(
+      ["Plain", "Ghost"],
+      "plain;ghost;",
+    ],
+    [
+      "every node a for-bodied tile renders",
       [
         "tile Many = for s in xs button(text=s) {id: s}",
         'reducer hitQ on=ui.click(Many#q) do= log := log + "q;"',
       ],
       'Many {variant: "ghost"}',
-    );
-    expect(await clickAll(src, ["p", "q"])).toBe("q;");
-  });
-
-  it("keeps it on the branch an if-rooted tile renders", async () => {
-    const src = program(
+      ["p", "q"],
+      "q;",
+    ],
+    [
+      "the branch an if-rooted tile renders",
       [
         'tile Maybe = if one then button(text="m", id="m") else text("none")',
         'reducer hitM on=ui.click(Maybe#m) do= log := log + "m;"',
       ],
       'Maybe {variant: "ghost"}',
-    );
-    expect(await clickAll(src, ["m"])).toBe("m;");
-  });
-
-  it("keeps it through a tile that calls another with a prop of its own", async () => {
-    const src = program(
+      ["m"],
+      "m;",
+    ],
+    [
+      "the body a when-rooted tile renders",
+      [
+        'tile Gate = when(one, button(text="g", id="g"))',
+        'reducer hitG on=ui.click(Gate#g) do= log := log + "g;"',
+      ],
+      'Gate {variant: "ghost"}',
+      ["g"],
+      "g;",
+    ],
+    [
+      "the arm a match-rooted tile renders",
+      [
+        'tile Arm = match mode with | Lit -> button(text="lit", id="lit") | Dark -> text("dark")',
+        'reducer hitLit on=ui.click(Arm#lit) do= log := log + "lit;"',
+      ],
+      'Arm {variant: "ghost"}',
+      ["lit"],
+      "lit;",
+    ],
+    [
+      "a tile that calls another with a prop of its own",
       [
         'tile Inner = button(text="deep", id="deep")',
         'tile Outer = Inner {variant: "ghost"}',
@@ -67,8 +84,11 @@ describe("a call-site prop leaves the id the tile wrote", () => {
         'reducer hitInner on=ui.click(Inner#deep) do= log := log + "inner;"',
       ],
       'Outer {class: "wide"}',
-    );
-    expect(await clickAll(src, ["deep"])).toBe("outer;inner;");
+      ["deep"],
+      "outer;inner;",
+    ],
+  ])("on %s", async (_shape, defs, root, clicks, log) => {
+    expect(await clickAll(program(defs, root), clicks)).toBe(log);
   });
 });
 
@@ -88,6 +108,40 @@ describe("a call-site id replaces the tile's own", () => {
   });
 });
 
+describe("a call-site id replaces the id a control carries on its node", () => {
+  // `input`, `textarea` and `editable` lift `id=` onto the node itself, beside `props.id`.
+  async function ids(tile: string, call: string): Promise<[string[], string[]]> {
+    const { app, root } = await mountSource(program([`tile Field = ${tile}`], call));
+    const page = await served(app);
+    const idsIn = (r: ParentNode) =>
+      ["#name", "#other"].filter((selector) => r.querySelector(selector) !== null);
+    return [idsIn(root), idsIn(page)];
+  }
+
+  it.each([
+    ["input", 'input(id="name", bind=q)'],
+    ["textarea", 'textarea(id="name", bind=q)'],
+    ["editable", 'editable(id="name", bind=q)'],
+  ])("on a tile rooted at %s, on the client and the served page", async (_kind, tile) => {
+    expect(await ids(tile, 'Field {id: "other"}')).toEqual([["#other"], ["#other"]]);
+    expect(await ids(tile, 'Field(id="other")')).toEqual([["#other"], ["#other"]]);
+    expect(await ids(tile, 'Field {variant: "a"}')).toEqual([["#name"], ["#name"]]);
+  });
+
+  it("dispatches Field#other from the element that carries it", async () => {
+    const src = program(
+      [
+        'tile Field = input(id="name", bind=q)',
+        'reducer typed on=ui.input(Field#other) do= log := log + "typed;"',
+      ],
+      'Field {id: "other"}',
+    );
+    const { app, root } = await mountSource(src);
+    typeInto(find<HTMLInputElement>(root, "#other"), "hi");
+    expect(app.live?.log).toBe("typed;");
+  });
+});
+
 describe("the rest of $el survives a call-site prop", () => {
   const defs = [
     'tile Del = button(text="Del") {todoId: 7}',
@@ -104,15 +158,11 @@ describe("the rest of $el survives a call-site prop", () => {
 
 describe("each aria-* the call site writes is merged on its own", () => {
   async function attrs(call: string): Promise<Array<[string, string | null, string | null]>> {
-    const app = await loadSource(
+    const { app, root } = await mountSource(
       program(['tile Del = button(text="Del", aria-label="Delete")'], call),
     );
-    const { root } = mountApp(app);
-    const { html } = await renderToString(app);
-    const served = document.createElement("div");
-    served.innerHTML = html;
     const client = find(root, "button");
-    const server = find(served, "button");
+    const server = find(await served(app), "button");
     return ["aria-label", "aria-describedby"].map((a) => [
       a,
       client.getAttribute(a),
@@ -132,5 +182,40 @@ describe("each aria-* the call site writes is merged on its own", () => {
       ["aria-label", "Remove", "Remove"],
       ["aria-describedby", null, null],
     ]);
+  });
+});
+
+describe("a call-site class replaces the tile's whole", () => {
+  // `class` is one prop, so a call site's value replaces the tile's rather than adding to it.
+  it("on the client and the served page", async () => {
+    const { app, root } = await mountSource(
+      program(['tile Card = box(text("c")) {class: "own"}'], 'Card {class: "wide"}'),
+    );
+    const classesOf = (r: ParentNode) => {
+      const box = r.querySelector(".wide, .own");
+      return box ? ["own", "wide"].filter((c) => box.classList.contains(c)) : [];
+    };
+    expect([classesOf(root), classesOf(await served(app))]).toEqual([["wide"], ["wide"]]);
+  });
+});
+
+describe("what a builtin renders from its own arguments stays the tile's", () => {
+  it("a button's text, while the call site's reaches $el", async () => {
+    const src = program(
+      [
+        'tile Ghost = button(text="Ghost")',
+        'reducer hit on=ui.click(Ghost) do= log := log + $el.text + ";"',
+      ],
+      'Ghost(text="Other")',
+    );
+    expect(await clickAll(src, ["Ghost"])).toBe("Other;");
+  });
+
+  it("an input's placeholder, on the client and the served page", async () => {
+    const { app, root } = await mountSource(
+      program(['tile Field = input(bind=q, placeholder="own")'], 'Field(placeholder="call")'),
+    );
+    const placeholderIn = (r: ParentNode) => find(r, "input").getAttribute("placeholder");
+    expect([placeholderIn(root), placeholderIn(await served(app))]).toEqual(["own", "own"]);
   });
 });

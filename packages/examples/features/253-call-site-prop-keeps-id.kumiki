@@ -1,27 +1,32 @@
-# Feature (language.md): a data prop written where a user tile
-# is called is merged onto what the tile renders one prop at a time. It
+# Feature (language.md): a data prop written where a user tile is called is
+# merged onto the node the tile renders at its root, one prop at a time. It
 # replaces the prop of the same name, and every prop the call site does not
 # write stays as the tile wrote it, in the rendered element and in the `$el` a
 # reducer reads alike.
 #
-# `Plain` and `Ghost` render the same kind of button, each with an id. Only
-# `Ghost`'s call site writes a prop, `variant`, which is not `id`: the button
-# keeps the id "ghost", so `ui.click(Ghost#ghost)` fires for it as
+# `Plain` and `Ghost` render the same kind of button, each with an id. Of the
+# two, only `Ghost`'s call site writes a prop, `variant`, which is not `id`: the
+# button keeps the id "ghost", so `ui.click(Ghost#ghost)` fires for it as
 # `ui.click(Plain#plain)` does for `Plain`.
 #
 # `Del` gives its button the id "del" and the payload field `todoId`. Its call
 # site writes `id: "x"`, which replaces the id: `ui.click(Del#x)` fires, and the
 # `$el` it reads still carries the `todoId` the call site did not write.
+#
+# `Lab` names its button with `aria-label`. Its call site writes
+# `aria-describedby`, another attribute, so the button carries both.
 
 slot log : Text = ""
 
 tile Plain = button(text="Plain", id="plain")
 tile Ghost = button(text="Ghost", id="ghost")
 tile Del   = button(text="Delete", id="del") {todoId: 7}
+tile Lab   = button(text="X", aria-label="Delete")
 
 reducer hitPlain on=ui.click(Plain#plain) do= log := log + "plain;"
 reducer hitGhost on=ui.click(Ghost#ghost) do= log := log + "ghost;"
 reducer hitDel   on=ui.click(Del#x)       do= log := log + "x" + $el.todoId.show + ";"
+reducer hitLab   on=ui.click(Lab)         do= log := log + "lab;"
 
 tile App
     = column(
@@ -29,6 +34,8 @@ tile App
         Plain,
         Ghost {variant: "ghost"},
         Del {id: "x"},
+        Lab {aria-describedby: "hint"},
+        text("Delete removes the last entry") {id: "hint"},
         text("log: " + log))
       {pad: "lg", gap: "md"}
 

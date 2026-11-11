@@ -17,10 +17,15 @@
     {
       "label": "Del's call site writes id x, which replaces del; the todoId Del wrote is still in $el",
       "do": { "click": "#x" },
+      "expect": { "noErrors": true, "state": { "log": "plain;ghost;x7;" } }
+    },
+    {
+      "label": "Lab's call site writes aria-describedby, so its button keeps the aria-label Lab wrote beside it",
+      "do": { "click": "[aria-label=\"Delete\"][aria-describedby=\"hint\"]" },
       "expect": {
         "noErrors": true,
-        "state": { "log": "plain;ghost;x7;" },
-        "domIncludes": ["log: plain;ghost;x7;"]
+        "state": { "log": "plain;ghost;x7;lab;" },
+        "domIncludes": ["log: plain;ghost;x7;lab;"]
       }
     }
   ]

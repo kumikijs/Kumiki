@@ -9,7 +9,7 @@ const { _attachProps } = new Function(`${RUNTIME_HELPERS}\nreturn { _attachProps
   _attachProps: (node: Tree, props: Props | undefined) => Tree;
 };
 
-// What `tile Ghost = button(text="Ghost", id="three") {todoId: 7}` renders.
+// What `tile Ghost = button(text="Ghost", id="three", aria-label="Delete") {todoId: 7}` compiles to.
 const ghost = (): Node => ({
   kind: "button",
   text: "Ghost",
@@ -55,6 +55,12 @@ describe("_attachProps", () => {
   it("replaces a record-valued data prop whole rather than merging its fields", () => {
     const node: Node = { kind: "button", props: { todo: { id: 1, done: false } } };
     expect(propsOf(_attachProps(node, { todo: { done: true } })).todo).toEqual({ done: true });
+  });
+
+  it("replaces a record-valued payload field named el whole, as it does any other", () => {
+    const node: Node = { kind: "button", props: { el: { el: { a: 1 } } } };
+    const merged = propsOf(_attachProps(node, { el: { el: { b: 2 } } }));
+    expect((merged.el as Props).el).toEqual({ b: 2 });
   });
 
   it("gives a payload to a node that had none", () => {
