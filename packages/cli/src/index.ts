@@ -1,9 +1,11 @@
 export { HEADLESS_ACTION_KEYS } from "@kumikijs/runtime";
 export { type CheckScope, filterByScope } from "./commands/check.ts";
 export { type DevCmdOptions, devCmd, startDevServer } from "./dev.ts";
+export { formatDiagnostic } from "./diagnostic.ts";
 export {
   type AutoPatch,
   applyFixPlan,
+  type CompilePatch,
   type FixApplyResult,
   type FixFromTestOutcome,
   type FixPlan,

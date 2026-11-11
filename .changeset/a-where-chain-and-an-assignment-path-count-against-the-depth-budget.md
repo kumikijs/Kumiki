@@ -27,5 +27,5 @@ Parse error at 2:795: Nesting is deeper than 256 levels — extract part of this
 ```
 
 A program inside the budget is unaffected. At the top of a definition a type
-takes up to 255 `where`s and an assignment target up to 254 steps; whatever a
+takes up to 254 `where`s and an assignment target up to 254 steps; whatever a
 chain sits inside spends the same budget.

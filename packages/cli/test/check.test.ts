@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { app } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
-import { runCli, SPAWN } from "./helpers/cli.ts";
+import { runCli, SPAWN, spawns } from "./helpers/cli.ts";
 import { APP_A, seed, seedCopy } from "./helpers/files.ts";
 
 const COUNTER = app("01-counter");
@@ -27,7 +27,7 @@ ${APP_A}`;
       SELECTOR_ID_MISMATCH,
       ["E0212", "selector-id-mismatch", "NewForm#nw", '"new"'],
     ],
-  ])("%s turns what plain check lets pass into a failure", SPAWN, (flag, source, reported) => {
+  ])("%s turns what plain check lets pass into a failure", spawns(2), (flag, source, reported) => {
     const file = seed(source);
     const lax = runCli(["check", file]);
     expect(lax.code).toBe(0);
@@ -103,7 +103,7 @@ describe("kumiki check: a program needs exactly one app", () => {
   ])("fails on %s", SPAWN, (_, source) => {
     const { stdout, stderr, code } = runCli(["check", seed(source)]);
     expect(code).toBe(1);
-    expect(stderr).toContain("E0003 missing-app at 1:1");
+    expect(stderr).toContain("error E0003 missing-app at 1:1");
     expect(stdout.trim()).toBe("");
   });
 
@@ -111,7 +111,7 @@ describe("kumiki check: a program needs exactly one app", () => {
     const file = seed(NO_APP);
     const { stderr, code } = runCli(["build", file, join(dirname(file), "out")]);
     expect(code).toBe(1);
-    expect(stderr).toContain("E0003 missing-app at 1:1");
+    expect(stderr).toContain("error E0003 missing-app at 1:1");
     expect(stderr).not.toContain("No app definition found");
   });
 
@@ -121,19 +121,19 @@ describe("kumiki check: a program needs exactly one app", () => {
     expect(stdout).toContain("ok");
   });
 
-  it("keeps the structural diagnostics visible under a scope flag", SPAWN, () => {
+  it("keeps the structural diagnostics visible under a scope flag", spawns(2), () => {
     const missingApp = runCli(["check", seed(NO_APP), "--refs"]);
     expect(missingApp.code).toBe(1);
-    expect(missingApp.stderr).toContain("E0003 missing-app");
+    expect(missingApp.stderr).toContain("error E0003 missing-app");
     const no404 = seed(
       'tile App = column(heading("v"))\napp A caps=[] routes={"/" -> App} init=[]\n',
     );
     const missing404 = runCli(["check", no404, "--types"]);
     expect(missing404.code).toBe(1);
-    expect(missing404.stderr).toContain("E0001 missing-404");
+    expect(missing404.stderr).toContain("error E0001 missing-404");
   });
 
-  it("does not block an AI edit that leaves the program incomplete", SPAWN, () => {
+  it("does not block an AI edit that leaves the program incomplete", spawns(2), () => {
     const file = seed("");
     const added = runCli(["add", file, "slot", "count", "Int", "=", "0"]);
     expect(added.code).toBe(0);
@@ -141,7 +141,7 @@ describe("kumiki check: a program needs exactly one app", () => {
     expect(runCli(["check", file]).code).toBe(1);
   });
 
-  it("catches an app that a cascading remove deleted", SPAWN, () => {
+  it("catches an app that a cascading remove deleted", spawns(2), () => {
     const file = seedCopy(COUNTER, "counter.kumiki");
     const removed = runCli(["remove", file, "slot.count", "--cascade"]);
     expect(removed.code).toBe(0);
@@ -149,7 +149,7 @@ describe("kumiki check: a program needs exactly one app", () => {
     expect(removed.stdout).toMatch(/\(op_/);
     const { stderr, code } = runCli(["check", file]);
     expect(code).toBe(1);
-    expect(stderr).toContain("E0003 missing-app");
+    expect(stderr).toContain("error E0003 missing-app");
   });
 
   describe("E0004 duplicate-app", () => {
@@ -163,7 +163,7 @@ app Second caps=[] routes={"/x" -> Other, "/404" -> Other} init=[]
     it("fails check, naming the app past the first", SPAWN, () => {
       const { stdout, stderr, code } = runCli(["check", seed(TWO_APPS)]);
       expect(code).toBe(1);
-      expect(stderr).toContain("E0004 duplicate-app at 5:1");
+      expect(stderr).toContain("error E0004 duplicate-app at 5:1");
       expect(stderr).toContain("Second");
       expect(stdout.trim()).toBe("");
     });
@@ -173,7 +173,7 @@ app Second caps=[] routes={"/x" -> Other, "/404" -> Other} init=[]
       const outDir = join(dirname(file), "out");
       const { stderr, code } = runCli(["build", file, outDir]);
       expect(code).toBe(1);
-      expect(stderr).toContain("E0004 duplicate-app");
+      expect(stderr).toContain("error E0004 duplicate-app");
       expect(existsSync(join(outDir, "app.js"))).toBe(false);
     });
   });
@@ -184,6 +184,8 @@ app Second caps=[] routes={"/x" -> Other, "/404" -> Other} init=[]
     expect(code).toBe(1);
     expect(stdout).toContain('fix: replace "cout" with "count"');
     expect(stdout).toContain("(no auto-patch for 1 of 2)");
-    expect(stderr).toContain("E0003 Program has no app definition [no-repair-branch]");
+    expect(stderr).toContain(
+      "error E0003 missing-app at 1:1: Program has no app definition [no-repair-branch]",
+    );
   });
 });
