@@ -464,6 +464,38 @@ ${APP_A}`);
     expect(readFileSync(file, "utf8")).toContain(`tile App = ${body.replace("Hedaer", "Header")}`);
   });
 
+  it.each([
+    // A builtin's bare name in a container is E0128: `column(link)` renders nothing.
+    [
+      "a reducer in a container, near a builtin's name",
+      "reducer inc on=ui.click(Header) do= n := n + 1",
+      "column(inc, Hedaer)",
+      ["E0105", "no-close-name-suggestion"],
+    ],
+    // A variant is a value, so a tile of a close name renders something else.
+    [
+      "a variant in an arm, near a tile's name",
+      'tile Home = text("o")',
+      "column(when(c, Some(1)), Hedaer)",
+      ["E0105", "e0105-variant-tag-is-a-value"],
+    ],
+  ])("proposes no repair for %s, so the misspelt tile beside it is repaired", (_, def, body, skip) => {
+    const file = seed(`slot c : Bool = true
+slot n : Int = 0
+${def}
+tile Header = button(text="h")
+tile App = ${body}
+${APP_A}`);
+    const store = load(file);
+    const { patches, skipped } = planFixesExplained(store, check(store.program));
+    expect(patches.map((p) => p.description)).toEqual([
+      expect.stringContaining('replace "Hedaer" with "Header"'),
+    ]);
+    expect(skipped.map((s) => [s.code, s.reason])).toEqual([skip]);
+    expect(applyFixPlan(file, undefined).applied).toBe(1);
+    expect(readFileSync(file, "utf8")).toContain(`tile App = ${body.replace("Hedaer", "Header")}`);
+  });
+
   it("suggests a close variant tag for E0209 on a user union, not a tile of a similar name", () => {
     const file = seed(`type Light = Red | Green
 fn label(l: Light) -> Text = match l with
