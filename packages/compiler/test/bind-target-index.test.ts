@@ -59,6 +59,13 @@ tile App = column(B)`);
     expect(write).toMatch(/_s\.setPath\([^\n]*\[\{ at: [^\n]*_live\["i"\]\) \}, "title"\]/);
   });
 
+  it("is lowered and checked from the {…} block as from bind=", () => {
+    expect(lowered("tile App = column(input() {bind: rows[i].title})")).toContain(
+      `bind: "rows", bindPath: [{ at: _live["i"] },"title"]`,
+    );
+    expect(codesOf(program("tile App = column(input() {bind: i[0]})"))).toEqual(["E0602"]);
+  });
+
   it("checks clean on every control, from a slot index, a literal, and a for's key", () => {
     expect(
       summariesOf(

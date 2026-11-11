@@ -97,11 +97,13 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
     expect(errs.some((e) => e.code === "E0403")).toBe(true);
   });
 
-  it("rejects a tile referencing an undefined motion (E0107)", () => {
-    const src = `tile App = box() {motion: "Ghost"}
+  it.each([
+    'box() {motion: "Ghost"}',
+    'box(motion="Ghost")',
+  ])("rejects a tile referencing an undefined motion (E0107): %s", (tile) => {
+    const src = `tile App = ${tile}
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
-    const errs = checkSource(src);
-    expect(errs.some((e) => e.code === "E0107")).toBe(true);
+    expect(checkSource(src).map((e) => e.code)).toEqual(["E0107"]);
   });
 
   it("emits the motion into an `_motions` registry on App (excluded from logic layers)", () => {
