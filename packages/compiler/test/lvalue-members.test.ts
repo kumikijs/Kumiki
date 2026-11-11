@@ -243,7 +243,8 @@ describe("an index read into a Set", () => {
     expect(codesOf(src)).toEqual(["E0232"]);
   });
 
-  // Reads into these have no places either, and no type; that they pass silently is tracked apart.
+  // Reads into these have no places either. A record read through a literal key has its field's
+  // type, the others none; that they pass unreported is tracked apart.
   it.each([
     ["an Int", `slot n : Int = 5`, `n[0]`],
     ["a record", `type R = { a: Int }\nslot r : R = { a: 1 }`, `r["a"]`],
@@ -372,8 +373,6 @@ describe("an index step into a receiver with no places", () => {
     expect(textAt(src, defined(errs[0], "an E0602").pos)).toBe(body.slice(body.indexOf("[")));
   });
 
-  // The name is E0117 where it is written; the initializer may add a mismatch, so only the
-  // absence of E0602 is asserted.
   it.each([
     ["a name that resolves to nothing", `slot u : Mystery = 0`, `u[0] := 1`],
     [
@@ -382,9 +381,7 @@ describe("an index step into a receiver with no places", () => {
       `d["k"] := 1`,
     ],
   ])("stays silent on a receiver whose type is not known: %s", (_what, decls, body) => {
-    const codes = codesOf(withBody(decls, body));
-    expect(codes).toContain("E0117");
-    expect(codes).not.toContain("E0602");
+    expect(codesOf(withBody(decls, body))).toEqual(["E0117"]);
   });
 });
 
@@ -587,6 +584,184 @@ describe("the index of List.get is an Int", () => {
     expect(codesOf(withBody(decls, `picked := xs[k]`))).toEqual(want);
     expect(codesOf(withBody(decls, `xs[k] := 7`))).toEqual(want);
     expect(codesOf(withBody(decls, `got := xs.get(k)`))).toEqual(want);
+  });
+});
+
+describe("the bounds of List.slice and the size of List.chunk are Ints", () => {
+  const list = `slot xs : List(Int) = [1, 2, 3, 4]
+slot part : List(Int) = []
+slot parts : List(List(Int)) = []`;
+
+  it("reports a Text argument in a tile, at the argument", () => {
+    const src = withApp(
+      `slot xs : List(Int) = [1, 2, 3, 4]\ntile App = column(text(xs.slice("1", 2).length.show), text(xs.chunk("2").length.show))`,
+    );
+    expect(pointedErrorsOf(src)).toEqual([
+      {
+        code: "E0201",
+        message: "Expected Int but got Text",
+        text: `"1", 2).length.show), text(xs.chunk("2").length.show))`,
+      },
+      { code: "E0201", message: "Expected Int but got Text", text: `"2").length.show))` },
+    ]);
+  });
+
+  const positions = [
+    ["the start of slice", `part := xs.slice(k, 2)`],
+    ["the end of slice", `part := xs.slice(0, k)`],
+    ["the start of a one-argument slice", `part := xs.slice(k)`],
+    ["the size of chunk", `parts := xs.chunk(k)`],
+  ] as const;
+  const mismatches = [
+    ["Text", `slot k : Text = "1"`],
+    ["Float", `slot k : Float = 1.5`],
+  ] as const;
+
+  it.each(
+    positions.flatMap(([where, body]) =>
+      mismatches.map(([name, decl]) => [where, name, decl, body]),
+    ),
+  )("reports %s given a %s, at the argument", (_where, name, decl, body) => {
+    const src = withBody(`${list}\n${decl}`, body);
+    const errs = checkSource(src);
+    expect(errs.map((x) => `${x.code} ${x.message}`)).toEqual([
+      `E0201 Expected Int but got ${name}`,
+    ]);
+    expect(errs.map((x) => textAt(src, x.pos))).toEqual([expect.stringMatching(/^k[,)]/)]);
+  });
+
+  it.each([
+    ["the start of slice", `part := xs.slice(0.5, 2)`],
+    ["the end of slice", `part := xs.slice(0, 2.5)`],
+    ["the size of chunk", `parts := xs.chunk(2.5)`],
+  ])("reports a fractional literal as %s", (_where, body) => {
+    const errs = checkSource(withBody(list, body));
+    expect(errs.map((x) => `${x.code} ${x.message}`)).toEqual(["E0201 Expected Int but got Float"]);
+  });
+
+  // `/` is a `Float` even between two `Int`s, so a halved length needs its `.floor`.
+  it.each([
+    ["the end of slice", `part := xs.slice(0, xs.length / 2)`, "xs.length / 2)"],
+    ["the size of chunk", `parts := xs.chunk(xs.length / 2)`, "xs.length / 2)"],
+  ])("reports a division as %s", (_where, body, text) => {
+    expect(pointedErrorsOf(withBody(list, body))).toEqual([
+      { code: "E0201", message: "Expected Int but got Float", text },
+    ]);
+  });
+
+  // A fragment's `$1` is typed through its own bindings, apart from the slots and fields above.
+  it.each([
+    [
+      "a fragment's Text element as the start of slice",
+      `part := ts.map(xs.slice($1, 4).length)`,
+      "$1, 4).length)",
+    ],
+    [
+      "a fragment's Text element as the size of chunk",
+      `part := ts.map(xs.chunk($1).length)`,
+      "$1).length)",
+    ],
+    [
+      "a Text start of slice on a fragment's element",
+      `parts := xss.map($1.slice("0", 1))`,
+      `"0", 1))`,
+    ],
+    [
+      "a Text size of chunk on a fragment's element",
+      `part := xss.map($1.chunk("2").length)`,
+      `"2").length)`,
+    ],
+  ])("reports %s, at the argument", (_where, body, text) => {
+    const decls = `${list}\nslot ts : List(Text) = []\nslot xss : List(List(Int)) = []`;
+    expect(pointedErrorsOf(withBody(decls, body))).toEqual([
+      { code: "E0201", message: "Expected Int but got Text", text },
+    ]);
+  });
+
+  it("reports each bound of one slice on its own", () => {
+    const src = withBody(list, `part := xs.slice("1", 0.5)`);
+    const errs = checkSource(src);
+    expect(errs.map((x) => `${x.code} ${x.message} at ${textAt(src, x.pos)}`)).toEqual([
+      `E0201 Expected Int but got Text at "1", 0.5)`,
+      "E0201 Expected Int but got Float at 0.5)",
+    ]);
+  });
+
+  it("reports a Text parameter in a fn body", () => {
+    const src = withApp(`fn pieces(xs: List(Int), n: Text) -> List(List(Int)) = xs.chunk(n)
+tile App = column(text("x"))`);
+    expect(checkSource(src).map((x) => `${x.code} ${x.message}`)).toEqual([
+      "E0201 Expected Int but got Text",
+    ]);
+  });
+
+  it("holds a List(Float) to Int bounds, not to its element type", () => {
+    const floats = `slot fs : List(Float) = [1.5, 2.5]\nslot fpart : List(Float) = []`;
+    expect(codesOf(withBody(floats, `fpart := fs.slice(0, 1)`))).toEqual([]);
+    expect(codesOf(withBody(floats, `fpart := fs.slice(0.5, 1)`))).toEqual(["E0201"]);
+  });
+
+  it.each([
+    ["an alias", `type Nums = List(Int)\nslot ns : Nums = []`, `part := ns.slice("0", 1)`],
+    [
+      "a nominal type",
+      `type Nums = nominal List(Int)\nslot ns : Nums = []`,
+      `parts := ns.chunk("1")`,
+    ],
+    [
+      "a record field",
+      `type Doc = { ns: List(Int) }\nslot doc : Doc = { ns: [] }`,
+      `part := doc.ns.slice(0, "1")`,
+    ],
+  ])("reports an argument on a List reached through %s", (_how, decls, body) => {
+    expect(codesOf(withBody(`${list}\n${decls}`, body))).toEqual(["E0201"]);
+  });
+
+  it.each([
+    ["literals", ``, `part := xs.slice(1, 3)`],
+    ["negative literals", ``, `part := xs.slice(-2, -1)`],
+    ["a one-argument slice", ``, `part := xs.slice(1)`],
+    ["a literal size", ``, `parts := xs.chunk(2)`],
+    ["Int slots", `slot k : Int = 1`, `part := xs.slice(k, k + 1)`],
+    ["an Int expression", ``, `part := xs.slice(0, xs.length - 1)`],
+    ["an Int slot as the size", `slot k : Int = 2`, `parts := xs.chunk(k * 2)`],
+    [
+      "a refinement of Int",
+      `type Idx = Int where between(0, 3)\nslot k : Idx = 1`,
+      `parts := xs.chunk(k)`,
+    ],
+    ["a nominal Int", `type Idx = nominal Int\nslot k : Idx = 1`, `part := xs.slice(k, k)`],
+    ["an Int fragment's element", ``, `part := xs.map(xs.slice($1, 4).length)`],
+    [
+      "Int bounds on a fragment's element",
+      `slot xss : List(List(Int)) = []`,
+      `parts := xss.map($1.slice(0, 1))`,
+    ],
+    [
+      "an Int size on a fragment's element",
+      `slot xss : List(List(Int)) = []`,
+      `part := xss.map($1.chunk(2).length)`,
+    ],
+    ["a floored division", ``, `part := xs.slice(0, (xs.length / 2).floor)`],
+    ["a floored division as the size", ``, `parts := xs.chunk((xs.length / 2).floor)`],
+  ])("accepts %s", (_how, decl, body) => {
+    expect(codesOf(withBody(`${list}\n${decl}`, body))).toEqual([]);
+  });
+
+  it.each([
+    ["Text", `slot k : Text = "0"`, ["E0201"]],
+    ["Float", `slot k : Float = 0.5`, ["E0201"]],
+    ["Option(Int)", `slot k : Option(Int) = None`, ["E0201"]],
+    ["Int", `slot k : Int = 0`, []],
+    ["a nominal Int", `type Idx = nominal Int\nslot k : Idx = 0`, []],
+    ["a refinement of Int", `type Idx = Int where between(0, 2)\nslot k : Idx = 0`, []],
+  ])("reads xs[k], the bounds of slice and the size of chunk alike where k is %s", (_n, decl, want) => {
+    const decls = `${list}\nslot picked : Int = 0\n${decl}`;
+    expect(codesOf(withBody(decls, `picked := xs[k]`))).toEqual(want);
+    expect(codesOf(withBody(decls, `part := xs.slice(k, 2)`))).toEqual(want);
+    expect(codesOf(withBody(decls, `part := xs.slice(0, k)`))).toEqual(want);
+    expect(codesOf(withBody(decls, `part := xs.slice(k)`))).toEqual(want);
+    expect(codesOf(withBody(decls, `parts := xs.chunk(k)`))).toEqual(want);
   });
 });
 

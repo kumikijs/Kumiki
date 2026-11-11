@@ -1,6 +1,8 @@
 import { newId, readEnv } from "./env.ts";
+import type { EmitRefusal } from "./panic.ts";
 import {
   type AppShape,
+  type BuiltinEffects,
   type CapabilityProvider,
   type CapabilityRegistry,
   type EffectResult,
@@ -8,6 +10,7 @@ import {
   type EmitSpec,
   type HttpError,
   NONE,
+  own,
 } from "./types.ts";
 
 export function makeCapabilityRegistry(
@@ -72,7 +75,7 @@ export function makeEffectDispatcher(
     key: unknown,
     token: string,
   ) => void,
-  onCapabilityRefusal: (effect: string, cap: string, token?: string) => void,
+  onRefusal: (effect: string, why: EmitRefusal, token?: string) => void,
   onLaunch?: (effect: string, input: unknown) => string,
   onCancel?: (targetId: string) => void,
   onPolicyCancel?: (token: string, effectName: string) => void,
@@ -127,7 +130,7 @@ export function makeEffectDispatcher(
     if (eff.cap !== "" && !caps.has(eff.cap)) {
       settle(id);
       try {
-        onCapabilityRefusal(eff.name, eff.cap, presetToken);
+        onRefusal(eff.name, { category: "capability", cap: eff.cap }, presetToken);
       } finally {
         if (presetToken) onPolicyCancel?.(presetToken, eff.name);
       }
@@ -136,49 +139,63 @@ export function makeEffectDispatcher(
     const token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
     const ctl = new AbortController();
     state.inflight.set(id, ctl);
+    let res: EffectResult;
     try {
-      const res = await runWithRetry(eff, input, caps, ctl.signal);
-      onResult(eff.name, res.kind, res.value, input, token);
+      res = await runWithRetry(eff, input, caps, ctl.signal);
     } catch (e) {
-      onResult(eff.name, "err", { message: String(e) }, input, token);
-    } finally {
-      if (state.inflight.get(id) === ctl) {
-        state.inflight.delete(id);
-        settle(id);
-      }
+      res = { kind: "err", value: { message: String(e) } };
     }
+    // Released before its result is delivered, so a cancel the `.ok` / `.err` reducers emit finds
+    // a request that is over. Under `latest` a newer request may hold the id by now.
+    if (state.inflight.get(id) === ctl) {
+      state.inflight.delete(id);
+      settle(id);
+    }
+    onResult(eff.name, res.kind, res.value, input, token);
   };
 
   return {
     dispatch(emit: EmitSpec): void {
-      const eff = app.effects[emit.effect];
-      if (!eff) return;
+      const eff = own(app.effects, emit.effect);
+      if (!eff) {
+        // No token: with no effect there is no policy to defer this emit, so it is reported now, on
+        // the episode in focus.
+        onRefusal(emit.effect, { category: "effect" });
+        return;
+      }
       if (eff.cap === "http.cancel") {
         const named = String(emit.args[0] ?? "");
+        // The episode records a cancel only when it released something; the reducer step's
+        // `emits` already names the cancel effect.
+        let released = false;
         if (named.length > 0) {
           const target = state.absorbedBy.get(named) ?? named;
           const ic = state.inflight.get(target);
           if (ic) {
             ic.abort();
             state.inflight.delete(target);
+            released = true;
           }
           for (const [name, q] of state.queues) {
             const i = q.pending.findIndex((e) => e.id === target);
             if (i === -1) continue;
             const [e] = q.pending.splice(i, 1);
             if (e?.token) onPolicyCancel?.(e.token, name);
+            released = true;
             break;
           }
+          // A throttle timer marks an open window, not a pending launch, so it is not released.
           for (const [name, t] of state.timers) {
             if (t.kind !== "debounce" || t.id !== target) continue;
             clearTimeout(t.h);
             state.timers.delete(name);
+            released = true;
             if (t.token) onPolicyCancel?.(t.token, name);
             break;
           }
           settle(target);
-          onCancel?.(named);
         }
+        if (released) onCancel?.(named);
         return;
       }
       const input = emit.args[0];
@@ -281,8 +298,8 @@ export function overridableInvoke(
   };
 }
 
-export function installLogEffect(app: AppShape): void {
-  app.effects.log = {
+export function installLogEffect(effects: BuiltinEffects): void {
+  effects.log = {
     name: "log",
     cap: "log.write",
     invoke: overridableInvoke("log.write", async (input) => {

@@ -4,7 +4,8 @@ import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { refType } from "../stdlib-types.ts";
 import {
-  firesUnheardIn,
+  firesUnheardClauses,
+  kindsPhrase,
   UI_EVENT_TILE_KINDS,
   type WrappedUnreached,
   wrappedUnreached,
@@ -16,7 +17,14 @@ import {
   lvalueType,
   unwrappedType,
 } from "./against.ts";
-import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
+import {
+  bindLocal,
+  type Ctx,
+  innerScope,
+  type KumikiError,
+  type StatementScope,
+  type SymbolTable,
+} from "./context.ts";
 import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
@@ -24,14 +32,22 @@ import { classifyMember, receiverName, undefMemberError } from "./members.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
 import { bindsRoute, namedByHandler, subscribedKinds, subscriptionIds } from "./tile-collect.ts";
 
+/** The scope a reducer's statements are checked in. */
+type ReducerCtx = Ctx & {
+  /** The names a statement nested in the body being checked ended: they end with the body too. */
+  endedInBody: Set<string>;
+};
+
 export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiError[]): void {
-  const ctx: Ctx = {
+  const ctx: ReducerCtx = {
     kind: "reducer",
     localBinds: new Set(),
     localTypes: new Map(),
     localBinders: new Map(),
     capsAvailable: new Set(sym.app?.caps ?? []),
     routeBind: routeBindOf(r, sym),
+    endedScopes: new Map(),
+    endedInBody: new Set(),
   };
   if (r.on.kind === "EffectEvent") {
     const boundAt = new Map<string, number>();
@@ -149,13 +165,9 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
 // the event; "no descendant fires it" would be untrue of them. No row records a kind that fires
 // unheard under key, focus or blur, so the two reasons never both apply.
 function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet<string>): string {
-  const unheard = firesUnheardIn(ev, kinds);
+  const unheard = firesUnheardClauses(ev, kinds);
   if (unheard.length > 0) {
-    const clauses = unheard.map(
-      (g) =>
-        `a ${g.kinds.join(" / ")} fires "${ev}", and its renderer ${g.instead}, never calling ${g.handler}`,
-    );
-    return `"${ev}" never reaches a reducer in tile "${tile}": ${clauses.join("; ")}`;
+    return `"${ev}" never reaches a reducer in tile "${tile}": ${unheard.join("; ")}`;
   }
   const unreached = wrappedUnreached(ev, kinds).map((g) => wrappedClause(ev, g));
   if (unreached.length > 0) {
@@ -165,12 +177,12 @@ function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet
 }
 
 function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
-  const kinds = g.kinds.join(" / ");
+  const kinds = kindsPhrase(g.kinds);
   return g.bubbles
-    ? `a ${kinds} takes no "${ev}" listener on the <${g.wrapper}> around its <${g.focused}>, ` +
+    ? `${kinds} takes no "${ev}" listener on the <${g.wrapper}> around its <${g.focused}>, ` +
         `since a control in its panel takes the subscription instead — ` +
-        `write ${g.handler}= on the ${kinds} to hear a "${ev}" on its <${g.focused}>`
-    : `the runtime listens for "${ev}" on a ${kinds}'s <${g.wrapper}>, ` +
+        `write ${g.handler}= on the ${g.kinds.join(" / ")} to hear a "${ev}" on its <${g.focused}>`
+    : `the runtime listens for "${ev}" on ${kinds}'s <${g.wrapper}>, ` +
         `and the "${ev}" its <${g.focused}> fires does not bubble to the <${g.wrapper}>`;
 }
 
@@ -228,45 +240,33 @@ function checkStmt(
   s: Statement,
   sym: SymbolTable,
   errors: KumikiError[],
-  ctx: Ctx,
+  ctx: ReducerCtx,
   writtenRoots: Set<string>,
 ): void {
   if (s.kind === "ForStmt") {
     checkIterationTarget(s.iter, sym, errors, ctx);
-    const inner = innerScope(ctx);
-    bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx));
-    const bodyWrites = new Set<string>(writtenRoots);
-    for (const st of s.body) checkStmt(st, sym, errors, inner, bodyWrites);
-    for (const r of bodyWrites) writtenRoots.add(r);
+    const bind = (inner: Ctx) => bindLocal(inner, s.bind, elementTypeOf(s.iter, sym, ctx));
+    checkBodies("for", [{ stmts: s.body, bind }], sym, errors, ctx, writtenRoots);
     return;
   }
   if (s.kind === "IfStmt") {
     checkExpr(s.cond, sym, errors, ctx);
     checkCondition(s.cond, inferType(s.cond, sym, ctx), sym, errors, '"if"');
-    const thenWrites = new Set<string>(writtenRoots);
-    const thenScope = innerScope(ctx);
-    for (const st of s.consequent) checkStmt(st, sym, errors, thenScope, thenWrites);
-    const elseWrites = new Set<string>(writtenRoots);
-    const elseScope = innerScope(ctx);
-    for (const st of s.alternate) checkStmt(st, sym, errors, elseScope, elseWrites);
-    for (const r of thenWrites) writtenRoots.add(r);
-    for (const r of elseWrites) writtenRoots.add(r);
+    const branches = [{ stmts: s.consequent }, { stmts: s.alternate }];
+    checkBodies("if", branches, sym, errors, ctx, writtenRoots);
     return;
   }
   if (s.kind === "MatchStmt") {
     checkExpr(s.scrutinee, sym, errors, ctx);
     const scrutType = matchedType(inferType(s.scrutinee, sym, ctx), s.arms, sym);
-    // Arms are mutually exclusive — each starts fresh from the parent set.
-    const armSets: Set<string>[] = [];
-    for (const arm of s.arms) {
-      const inner = innerScope(ctx);
-      checkPatternBindsAreDistinct(arm.pattern, errors);
-      checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
-      const armWrites = new Set<string>(writtenRoots);
-      for (const st of arm.body) checkStmt(st, sym, errors, inner, armWrites);
-      armSets.push(armWrites);
-    }
-    for (const set of armSets) for (const r of set) writtenRoots.add(r);
+    const arms = s.arms.map((arm) => ({
+      stmts: arm.body,
+      bind: (inner: Ctx) => {
+        checkPatternBindsAreDistinct(arm.pattern, errors);
+        checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
+      },
+    }));
+    checkBodies("match", arms, sym, errors, ctx, writtenRoots);
     return;
   }
   if (s.kind === "NoopStmt") return;
@@ -280,7 +280,8 @@ function checkStmt(
     const confirmArg = s.effect === "confirm" && s.args.length === 1 ? s.args[0] : undefined;
     if (confirmArg && confirmArg.kind === "RecordLit") {
       for (const f of confirmArg.fields) {
-        if ((f.name === "onYes" || f.name === "onNo") && f.value.kind === "Ref") {
+        const names = f.name === "onYes" || f.name === "onNo";
+        if (names && f.value.kind === "Ref") {
           if (!sym.reducers.has(f.value.name)) {
             errors.push({
               code: "E0103",
@@ -291,6 +292,9 @@ function checkStmt(
           }
           continue;
         }
+        // A capitalised reducer name parses as a tag; the `ReducerRef` check
+        // already reports it, and resolving it as a tag would report it twice.
+        if (names && f.value.kind === "Variant" && f.value.payload.length === 0) continue;
         checkExpr(f.value, sym, errors, ctx);
       }
       return;
@@ -336,6 +340,51 @@ function checkStmt(
   checkLvalue(s.lvalue, sym, errors, ctx);
   checkExpr(s.rhs, sym, errors, ctx);
   checkAgainst(s.rhs, lvalueType(s.lvalue, sym), sym, errors, ctx);
+}
+
+// A read moved into the body would still be after an expression that ended the name last.
+function endedByStatement(ctx: Ctx, name: string): boolean {
+  const kind = ctx.endedScopes.get(name)?.kind;
+  return kind === "if" || kind === "for" || kind === "match";
+}
+
+/**
+ * The bodies of one `if`, `for` or `match`, checked in order. They are mutually exclusive, so
+ * each starts from the slots written before the statement.
+ *
+ * A name the body declares and `ctx` does not bind ends with the body, as does a name a statement
+ * nested in it ended, unless an expression later in the body ended it again; `ctx.endedScopes`
+ * records it under `kind`. A read of it in a later body of the same statement is in a sibling of
+ * the body that declared it.
+ */
+function checkBodies(
+  kind: StatementScope,
+  bodies: readonly { stmts: Statement[]; bind?: (inner: Ctx) => void }[],
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: ReducerCtx,
+  writtenRoots: Set<string>,
+): void {
+  const ended = new Set<string>();
+  const writes: Set<string>[] = [];
+  for (const { stmts, bind } of bodies) {
+    const inner: ReducerCtx = { ...innerScope(ctx), endedInBody: new Set() };
+    const bodyWrites = new Set(writtenRoots);
+    bind?.(inner);
+    for (const st of stmts) checkStmt(st, sym, errors, inner, bodyWrites);
+    for (const name of [...inner.localBinds, ...inner.endedInBody]) {
+      if (ctx.localBinds.has(name)) continue;
+      if (!inner.localBinds.has(name) && !endedByStatement(ctx, name)) continue;
+      ctx.endedScopes.set(name, { kind, sibling: true });
+      ended.add(name);
+    }
+    writes.push(bodyWrites);
+  }
+  for (const name of ended) {
+    ctx.endedScopes.set(name, { kind, sibling: false });
+    ctx.endedInBody.add(name);
+  }
+  for (const set of writes) for (const r of set) writtenRoots.add(r);
 }
 
 function lvalueShape(lv: Lvalue): string {

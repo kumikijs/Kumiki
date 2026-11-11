@@ -77,13 +77,13 @@ Both are worth running before you ship. `kumiki` with no arguments lists the res
 
 ## When check fails
 
-Every diagnostic carries a code and a position:
+Every diagnostic carries a severity, a code and a position:
 
 ```
-E0103 undef-ref at 3:39: Reference to undefined name "total"
+error E0103 undef-ref at 3:39: Reference to undefined name "total"
 ```
 
-The code names the category. Look it up in the [error catalog](../spec/errors.md) — `E0103` there tells you the name resolves to nothing, which is a typo or a missing definition nine times out of ten. `kumiki fix app.kumiki E0103` proposes a patch for the codes that have one.
+An `error` fails the check. A `warning` line is advisory: `check` prints it and still ends with `ok (1 warning)`. The code names the category. Look it up in the [error catalog](../spec/errors.md) — `E0103` there tells you the name resolves to nothing, which is a typo or a missing definition nine times out of ten. `kumiki fix app.kumiki E0103` proposes a patch for the codes that have one.
 
 ## Next
 

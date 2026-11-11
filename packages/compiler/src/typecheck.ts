@@ -5,10 +5,11 @@ import {
   expansionTargets,
   findCycles,
   type GraphEdge,
+  nodesOnCycles,
 } from "./def-graph.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { isReservedTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
-import { unionsByTag } from "./symbols.ts";
+import { constructorTags, qualifierCandidates, unionsByTag } from "./symbols.ts";
 import { checkApp } from "./typecheck/app.ts";
 import type { KumikiError, SymbolTable } from "./typecheck/context.ts";
 import { checkEffect } from "./typecheck/effect.ts";
@@ -23,7 +24,7 @@ import { collectElementIds, collectPrefetchTargets } from "./typecheck/tile-coll
 import { checkTypeDef, reservedTypeName } from "./typecheck/types.ts";
 import { describeDuplicate, findDuplicateDefinitions, findDuplicateNames } from "./uniqueness.ts";
 
-export type { KumikiError } from "./typecheck/context.ts";
+export { type KumikiError, type Severity, severityOf } from "./typecheck/context.ts";
 export { servesNotFound } from "./typecheck/route-chain.ts";
 export { ROUTE_SLOT_FIELDS } from "./typecheck/slot.ts";
 
@@ -97,6 +98,12 @@ function checkAll(
     themes: new Set(),
     iconDomain,
     elementIds: new Set(),
+    constructorTags: new Set(constructorTags(program)),
+    qualifiers: new Set(qualifierCandidates(program)),
+    judgedVariants: new WeakSet(),
+    undefinedVariants: new Map(),
+    fnResults: new Map(),
+    fnLoops: new Set(),
     unionsByTag: unionsByTag(program.defs),
   };
 
@@ -150,6 +157,7 @@ function checkAll(
   }
 
   const index = buildDefIndex(program);
+  sym.fnLoops = nodesOnCycles(sym.fns.keys(), fnEdges(sym, index));
   const routeChain = routeChainResolver(sym);
   for (const def of program.defs) {
     if (def.kind === "TypeDef") {
@@ -169,7 +177,10 @@ function checkAll(
   checkCycles(program, sym, index, errors);
   checkDuplicateNames(program, errors);
 
-  return errors;
+  return errors.filter((d) => {
+    const variant = sym.undefinedVariants.get(d);
+    return variant === undefined || !sym.judgedVariants.has(variant);
+  });
 }
 
 /** A definition declared twice (`E0007`), and a name written twice (`E0008`). */
@@ -184,6 +195,17 @@ function checkDuplicateNames(program: Program, errors: KumikiError[]): void {
   }
   for (const d of findDuplicateNames(program))
     errors.push({ code: "E0008", ...describeDuplicate(d) });
+}
+
+/** The calls a `fn`'s body makes to other `fn`s: the edges E0006 walks. */
+function fnEdges(sym: SymbolTable, index: DefIndex): (name: string) => readonly GraphEdge[] {
+  return (name) => {
+    const def = sym.fns.get(name);
+    if (!def) return [];
+    return referencesIn(def, index)
+      .filter((r) => r.layer === "fn")
+      .map((r) => ({ to: r.name, pos: r.pos ?? def.pos }));
+  };
 }
 
 function checkCycles(
@@ -215,16 +237,9 @@ function checkCycles(
   }
 
   const fns = program.defs.filter((d): d is FnDef => d.kind === "FnDef");
-  const fnEdges = (name: string): readonly GraphEdge[] => {
-    const def = sym.fns.get(name);
-    if (!def) return [];
-    return referencesIn(def, index)
-      .filter((r) => r.layer === "fn")
-      .map((r) => ({ to: r.name, pos: r.pos ?? def.pos }));
-  };
   for (const cycle of findCycles(
     fns.map((f) => f.name),
-    fnEdges,
+    fnEdges(sym, index),
   )) {
     errors.push({
       code: "E0006",

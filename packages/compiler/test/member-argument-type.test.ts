@@ -2,7 +2,7 @@
 // `Text` into a `List(Int)` slot.
 
 import { describe, expect, it } from "vitest";
-import { RECEIVER_PARAMS } from "../src/stdlib-members.ts";
+import { RECEIVER_PARAMS, readsShortCall } from "../src/stdlib-members.ts";
 import { codesOf, pointedErrorsOf, summariesOf } from "./helpers/diagnostics.ts";
 import { withApp } from "./helpers/programs.ts";
 
@@ -20,7 +20,8 @@ slot post : PostId            = "p"
 slot s    : Set(Text)         = []
 slot b    : Bool              = false
 slot n    : Int               = 0
-fn toText(x: Int) -> Text = x.show`;
+fn toText(x: Int) -> Text = x.show
+fn shown(x: Int) = x.show`;
 
 /** The errors of a reducer that runs `stmt`, each with the source text it is reported at. */
 const write = (stmt: string) =>
@@ -68,6 +69,12 @@ reducer go on=ui.click(Btn) do=
       "Map.update's value, a fn named",
       `m := m.update("k", toText)`,
       "toText)",
+      "Expected Int but got Text",
+    ],
+    [
+      "Map.update's value, a fn with no -> named",
+      `m := m.update("k", shown)`,
+      "shown)",
       "Expected Int but got Text",
     ],
     ["Map.merge", "m := m.merge(mi)", "mi)", "Expected Map(Text, Int) but got Map(Int, Text)"],
@@ -151,7 +158,6 @@ slot ts     : List(Text)             = ["a"]
 slot s      : Set(Text)              = []
 slot byNum  : Map(Int, Text)         = {}
 slot flags  : Map(Int, Bool)         = {}
-slot chunks : List(List(Text))       = []
 slot shown  : List(Text)             = []
 slot pairs  : List(Tuple(Int, Text)) = []
 slot first  : Text                   = ""
@@ -160,8 +166,7 @@ slot folded : Text                   = ""
 slot found  : Int                    = 0
 reducer go on=ui.click(Btn) do=
     first := ts.get(0).get-or("")
-    ts := ts.slice(0, 1).sort-by($1.length)
-    chunks := ts.chunk(2)
+    ts := ts.sort-by($1.length)
     joined := nums.join(",")
     byNum := byNum.filter($2 != "")
     flags := byNum.map($2 == "")
@@ -184,18 +189,29 @@ reducer go on=ui.click(Btn) do= sets := sets.map($1.add("x"))`),
     ).toEqual([{ code: "E0201", message: "Expected Int but got Text", text: '"x"))' }]);
   });
 
-  it("reads no argument against a receiver whose type, or element type, is undecided", () => {
+  it("reads no argument against a receiver whose element type is undecided", () => {
     // From `[]`, `fold`'s accumulator `$1` is a List whose element type is not decided, so `push`
-    // reads its argument against nothing; `mk` has no `->`, though its body is a `List(Int)`.
+    // reads its argument against nothing.
     expect(
       summariesOf(
         app(`slot nums  : List(Int)  = [1]
 slot texts : List(Text) = []
-fn mk() = [1]
 reducer go on=ui.click(Btn) do=
-    texts := nums.fold([], $1.push($2.show)).concat(mk().push("z"))`),
+    texts := nums.fold([], $1.push($2.show))`),
       ),
     ).toEqual([]);
+  });
+
+  it("reads an argument against the result of a fn with no `->`, which is its body's type", () => {
+    // `mk` has no `->`, so it returns its body's type, a `List(Int)`.
+    expect(
+      pointedErrorsOf(
+        app(`slot texts : List(Text) = []
+fn mk() = [1]
+reducer go on=ui.click(Btn) do=
+    texts := mk().push("z").map($1.show)`),
+      ),
+    ).toEqual([{ code: "E0201", message: "Expected Int but got Text", text: '"z").map($1.show)' }]);
   });
 
   it("leaves a call whose count selects no reading on its receiver to the arity report", () => {
@@ -211,22 +227,26 @@ reducer go on=ui.click(Btn) do=
   });
 });
 
-// A call given fewer arguments than a row lists has none read against it, so a row longer than
-// the arity `check` enforces would turn the check off for every call that arity allows.
+// A call given fewer arguments than a row lists has none read against it, unless `readsShortCall`
+// names its member, so a row longer than the arity `check` enforces would turn the check off for
+// every call that arity allows.
 describe("each row of the parameter table is the member's arity", () => {
   /** A call of `member` on the parameter `recv`, one row per member that takes arguments. */
   const rowsOf = (
     receiver: string,
     recv: string,
-    row: Readonly<Record<string, readonly unknown[]>>,
+    row: Readonly<Record<string, readonly (string | null)[]>>,
   ) =>
     Object.entries(row)
       .filter(([, params]) => params.length > 0)
       .map(([member, params]) => ({
         name: `${receiver}.${member}`,
+        receiver,
+        member,
+        params,
         n: params.length,
-        call: (count: number) =>
-          `${recv}.${member}(${Array.from({ length: count }, () => "1").join(", ")})`,
+        call: (count: number, arg = "1") =>
+          `${recv}.${member}(${Array.from({ length: count }, () => arg).join(", ")})`,
       }));
   const rows = [
     ...rowsOf("Map", "m", RECEIVER_PARAMS.Map),
@@ -239,11 +259,25 @@ describe("each row of the parameter table is the member's arity", () => {
 tile App = column(text("x"))`),
     );
 
-  // stdlib.md writes `slice(start, end)`, but `check` sets `slice` no lower bound yet.
-  const bounded = rows.filter(({ name }) => name !== "List.slice");
+  // A member whose short call is read takes one, as `xs.slice(start)` runs to the list's end.
+  const shortCalls = rows.filter(({ receiver, member }) => readsShortCall(receiver, member));
+  const bounded = rows.filter(({ receiver, member }) => !readsShortCall(receiver, member));
 
   it.each(bounded)("$name with one argument fewer than its row is E0213", ({ n, call }) => {
     expect(codes(call(n - 1))).toContain("E0213");
+  });
+
+  // A `Text` is none of the receivers' key, value, element or own type, nor an `Int`.
+  it.each(
+    shortCalls,
+  )("$name with one argument fewer than its row has each argument it was given read", ({
+    n,
+    params,
+    call,
+  }) => {
+    const typed = params.slice(0, n - 1).filter((p) => p !== null);
+    expect(typed).not.toEqual([]);
+    expect(codes(call(n - 1, '"x"'))).toEqual(typed.map(() => "E0201"));
   });
 
   it.each(rows)("$name with as many arguments as its row is no E0213", ({ n, call }) => {

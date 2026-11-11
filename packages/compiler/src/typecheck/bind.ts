@@ -10,7 +10,7 @@ import {
 import { bindTarget } from "../bind-target.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "../input-bind.ts";
 import { checkAgainst, checkIndexIsPlace, indexStep, unwrappedType } from "./against.ts";
-import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
+import { type Ctx, type KumikiError, type SymbolTable, severityOf } from "./context.ts";
 import { pushMismatch } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
 import { classifyMember, receiverName } from "./members.ts";
@@ -348,7 +348,7 @@ export function checkErrorField(
   }
   const reported = (pos: Pos): boolean =>
     errors.some(
-      (e) => e.severity !== "warning" && e.pos.line === pos.line && e.pos.col === pos.col,
+      (e) => severityOf(e) === "error" && e.pos.line === pos.line && e.pos.col === pos.col,
     );
   const field = bindTarget(arg.value);
   const { root } = field;

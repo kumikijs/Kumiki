@@ -129,7 +129,7 @@ type-expr   ::= primitive
               | identifier
               | type-app
 
-primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time' | 'EffectId'
+primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time' | 'File' | 'EffectId'
 nominal-type ::= 'nominal' type-expr
 record-type ::= '{' field (',' field)* '}'
 field       ::= identifier ':' type-expr
@@ -152,6 +152,8 @@ type Handle = nominal Text where len-gt(3) where len-lt(7)
 `Handle` は 3 文字より長く、**かつ** 7 文字より短い。述語は型が指す連鎖をたどって読まれるので（[§1.3.6](#_1-3-6-不変条件) 不変条件 1）、1 つの型式の上だけでなく名前をまたいでも積み上がる：`type Short = Text where len-lt(7)` に対する `type Handle = nominal Short where len-gt(3)` は両方を持つ。引数をそのまま返すジェネリックも同じ連鎖の一環であり（不変条件 2）、`type NonEmpty(T) = T where nonempty` のもとで `NonEmpty(Short)` は `len-lt(7)`、続いて `nonempty` を持つ。
 
 違反した値は、**連鎖を基底型の側から外側へ読む順**で**最初に失敗した述語**に対して報告される。1 つの型式の中ではそれが書かれた順であり、名前をまたぐ場合は宣言がたどる順である——`Handle` が `Short` の上に宣言されている以上、ファイル内でどちらの定義が先にあろうと `Short` の `len-lt(7)` が `Handle` 自身の `len-gt(3)` より先に来る。書き込みが reducer のバッチを破棄したときに拒否が名指すのはその述語であり（[batching](./runtime.md#a-batch-commits-all-or-nothing)）、`error` tile が描画するのもその述語のメッセージである（[エラー表示](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)）。
+
+`type-param` が指すのは型であって型コンストラクタではないので、引数を取らない：`type H(T) = …` の body の `T(Int)` は [E0210](./errors.md#e0210-type-arity-mismatch) である。型パラメータは同じ綴りのトップレベル名を覆い隠す（[§1.3.6](#_1-3-6-不変条件) 不変条件 5）ので、`type H(List) = …` の body の `List(Int)` も同じ誤りである。
 
 ### 1.3.2 ビルトイン汎化型
 
@@ -298,8 +300,8 @@ type Nest(T) = Flat(T) | Deeper(Nest(List(T)))
 
 それ以外で汎化型の適用を展開する比較 —— 異なる汎化型どうし、または汎化型とそうでない型 —— は、両側を展開する。汎化型が**型引数を深く入れ子にする**とは、型引数が渡される先を body が適用する汎化型越しにたどると、より大きな型引数の内側でその型引数のいずれかへ戻ることをいう（`Nest` は `T` を `List(T)` として戻す）。どちらの側もそのような汎化型を適用していなければ、比較が出会う書かれたとおりの組は有限であり、汎化型が型引数をどう入れ替えたり巡回させたりしても、繰り返された組で終わる。どちらかの側が適用しているときは、下りの途中で、展開中の同じ先頭の組（両側で適用されている名前の組）へ、前回入ったときより大きな合計サイズで再入するたびに、その組について 1 回と数える。1 回の比較では、どのフィールドとペイロードも含めて先頭の組ごとに 64 回まで数え、65 回目以降の再入はすべて、繰り返された組と同じく「はい」と答える。大きくならなかった再入は数えない。この上限は不一致を「はい」に変えることしかないが、その答えはフィールドの順序で決まることがある：比較が終わらないフィールドがその組の回数を使い切ると、後のフィールドがその組への再入を経てしか届かない不一致は見逃される。こうした「はい」で分岐を結合した `if`・`match`・リストリテラルは、後の比較が拒否する型を持つことがある。
 
-5. **型引数はその定義にスコープされ**、同名のトップレベル定義を覆い隠す：`type Alias(Cents) = Cents` の body は型引数であり、ほかの場所で `Cents` が何と宣言されていようと関係しない。
-6. **値をランタイムまたは標準ライブラリが供給する型の名前は、プログラムが宣言するものではない。** `PanicInfo`・`RouteErrorInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue`（[stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）は、どのプログラムでも標準ライブラリの定義を意味する：`type PanicInfo = …` は [E0231](./errors.md#e0231-reserved-type-name) であり、その名前の使用はすべて標準ライブラリの型のままで、プログラム自身の型には独自の名前を付ける（`type AppPanic = …`）。標準ライブラリが宣言するほかのドメイン型 — `Url`・`Email`・`Uuid`・`FormData` — が名指すのは、プログラムだけが値を組み立てる型である（同じ表にある `File` は宣言された型ではなくプリミティブである）。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はプログラムの型を意味する。
+5. **型引数はその定義にスコープされ**、同名のトップレベル定義を覆い隠す：`type Alias(Cents) = Cents` の body は型引数であり、ほかの場所で `Cents` が何と宣言されていようと関係しない。プリミティブの名前は例外であり、型を書く位置ではどこでもプリミティブとして読まれるので、`type Box(Int) = {v: Int}` のフィールドは `Int` である。
+6. **どのプログラムでもすでに型を意味している名前は、プログラムが宣言するものではない。** そうした名前は 3 つのグループからなる：プリミティブ（[§1.3.1](#_1-3-1-構文) の `primitive` の名前）、ビルトインの汎化型（[stdlib §2.1.2](./stdlib.md#_2-1-2-汎化型)）、そして値をランタイムまたは標準ライブラリが供給する 7 つのドメイン型 — `PanicInfo`・`RouteErrorInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue`（[stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）。`type Int = …`・`type Option = …`・`type PanicInfo = …` は [E0231](./errors.md#e0231-reserved-type-name) であり、その名前の使用はすべて組み込みの意味のままで、プログラム自身の型には独自の名前を付ける（`type AppPanic = …`・`type Box(T) = …`）。グループは型検査器自身の表なので、言語にプリミティブや型構築子が加われば、それも同時に予約される。標準ライブラリが宣言するほかのドメイン型 — `Url`・`Email`・`Uuid`・`FormData` — が名指すのは、プログラムだけが値を組み立てる型である（同じ表にある `File` はプリミティブであり、プリミティブとともに予約されている）。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はプログラムの型を意味する。
 
 ---
 
@@ -384,9 +386,37 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
   [E0103](./errors.md#e0103-undef-ref-undef-slot) になる
 - 両者とも他の式と同様に検査される — key 中の未定義名は dispatch 時の実行時
   エラーではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)
+- effect の capability が [http.md §6.6.1](./http.md#_6-6-1-request-fields) に行を
+  持つとき、`map-request` のレコードが書くフィールドはその capability のリクエストに
+  照らされる：リクエストに無いフィールドは [E0215](./errors.md#e0215-unknown-record-field)
 - `latest-per-key` の key は `emit` が実行された地点で評価される。key が読む slot は
   reducer 本体のその文までの書き込みを反映し、それ以降の書き込みは反映しない
   （[http.md §6.4](./http.md#_6-4-cancellation)）
+- `latest-per-key` の key は、それが走らせるリクエストの名前である：key が実行中の
+  リクエストの key と `==`（[§1.9.4](#_1-9-4-演算子の型)）である emit はそのリクエスト
+  を中断し、`==` でない emit はそれを走らせたままにする。key は Map の key が格納
+  されるのと同じ書き方で書かれ（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）、
+  その書き方は 2 つの型を除くすべての型で値を `==` のとおりに区別する — ただし宣言
+  された型が何であれ、有限でない数は例外である。そのいずれかの key、またはフィールド・
+  ペイロード・要素・`Map` の値にそのいずれかを持つ型の key は、key の位置で
+  [E0233](./errors.md#e0233-policy-key-type) になる：
+  - `Float`：`NaN` は 1 つの key だが自身と `==` ではなく、レコード・タプル・`List`・
+    `Map` の値・バリアントの中では `NaN`、`Infinity`、`-Infinity` が 1 つの key になる
+  - `File`：名前・サイズ・型が同じ 2 つの File は 1 つの key になるが、`==` は File と
+    それ自身の間でしか成り立たない
+- `Set` の key はその `==` であり、その `==` 自体が Set の作られ方に依存するので、
+  `Set` である key、または `Set` を持つ key も E0233 になる
+- それ以外の型はすべて key になる：`Text`、`Int`、`Bool`、`Time`、`Bytes`、
+  `EffectId`、`Unit`、それらの上の `nominal` や refinement、そしてそれらから作られた
+  レコード、タプル、`List`、`Map`、`Option`、`Result`、ユニオン —
+  `latest-per-key({user: $1.user, page: $1.page})` はユーザーとページごとに 1 つの
+  リクエストを走らせる。`Map` 自身の key も同じ書き方で格納されるので、`Map(Float, V)`
+  はその値が key になるなら key になる。`Float` は `.show` を、`File` は
+  `{name: $1.name, size: $1.size}` を通して key にする
+- effect は[標準 effect](./stdlib.md#_2-6-標準-effect)の名前（`navigate`・`navigate-replace`・
+  `navigate-back`・`scroll-to`・`toast`・`confirm`・`log`）を名乗れない：ランタイムはマウント時に
+  それぞれをそれ自身の名前で登録するため、その名前の宣言は決して実行されない
+  （[E0234](./errors.md#e0234-reserved-effect-name)）
 
 ### 1.5.3 例
 
@@ -531,7 +561,7 @@ editor := editor.map($1.copy(body="Body"))
 - **`Map(K, V)`** — そのキーのエントリで、インデックスは読み取りでも書き込みでも `K` である（それ以外は [E0201](./errors.md#e0201-type-mismatch)）。キーは `K` の値と同じように受け入れられる（[§1.3.5](#_1-3-5-型の一意化)）：`TodoId` と `PostId` がどちらも `nominal Text` と宣言されていれば、`PostId` は `Map(TodoId, V)` のキーではなく、`TodoId`、`Text`、リテラル `"t1"` はキーである。`m[k] := v` はエントリを挿入または置換し、`m[k].f := v` はエントリのフィールドへ書き込む。`k` が存在しなければ、展開先の `update` と同じく何も書き込まない。存在しない `k` での読み取り `m[k]` は、List の末尾より先のインデックスと同じく **panic** になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：それが返せる `V` がないからである。そこで `None` を返す読み取りは `m.get(k)` である。タイルではこの読み取りはレンダー中に走るので、存在しないキーは初回を含めそのレンダーを panic させる：最も近い `error-boundary` が fallback を表示し、無ければ組み込みの panic 表示がページを置き換える（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。存在しないかもしれないキーをタイルで読むには `m.get(k)` か `m.get-or(k, d)` を使う。
 - **`List(T)`** — その位置の要素で、インデックスは `Int` である（それ以外は [E0201](./errors.md#e0201-type-mismatch)）。`xs[i] := v` は同じ長さの新しい `List` の中で `i` の要素を置き換え、`xs[i].f := v` はその要素を通して書き込む。どの階層も形を保つ。要素を指さないインデックス — 末尾より先、または負の `i` — は **panic** である（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：その reducer の書き込みはロールバックされ、`app.error` が走る。読み取り `xs[i]` も同じインデックスで panic するので、`:=` の両側は一致する。そこで panic せずに `None` を返す読み取りは `xs.get(i)` である。リストを伸ばすには `xs := xs.push(v)` と書く。
 - **`Set(T)`** — 何も指さない。Set にあるのは所属だけで場所は無いので、`s[x] := v` は [E0602](./errors.md#e0602-unassignable-member)、読み取りの `s[x]` は [E0232](./errors.md#e0232-index-into-set) である。所属は `.has` で読み、`.add` / `.remove` / `.toggle` で変える（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。
-- **それ以外の型** — 何も指さない。レコード、スカラー（`Int`、`Text` など）、`Option`、`Result`、`Tuple`、ユニオンにはインデックスが指す場所が無いので、そこへのインデックスのステップも [E0602](./errors.md#e0602-unassignable-member) であり、そのステップの位置で報告される：レコードへの `r["a"] := v`、`Int` への `n[0] := v`、そして要素が `Int` である `List(Int)` への `xs[0][0] := v`。レコードのフィールドはフィールドのステップ（`r.a := v`）で、`Option` / `Result` のペイロードは `.get` を通して書き、それ以外は値全体を置き換える（`n := v`）。
+- **それ以外の型** — 何も指さない。レコード、スカラー（`Int`、`Text` など）、`Option`、`Result`、`Tuple`、ユニオンにはインデックスが指す場所が無いので、そこへのインデックスのステップも [E0602](./errors.md#e0602-unassignable-member) であり、そのステップの位置で報告される：レコードへの `r["a"] := v`、`Int` への `n[0] := v`、そして要素が `Int` である `List(Int)` への `xs[0][0] := v`。レコードのフィールドはフィールドのステップ（`r.a := v`）で、`Option` / `Result` のペイロードは `.get` を通して書き、それ以外は値全体を置き換える（`n := v`）。リテラルのキーで読むと、レコードはキーが名指すフィールドになり — `cfg["label"]` は `cfg.label` と同じ型を持つ — 実行時に計算されるキーは 1 つのフィールドを名指さないので、型検査器はその読み出しに型を与えない。
 
 この名前は予約語ではなくディスパッチされる: `get` という名前のフィールドを持つレコードに対しては、`rec.get.title := v` はそのフィールドへの書き込みになる。左辺と右辺は `.get` を同じ規則（レコード自身のフィールドが優先、それ以外は unwrap）で解決する。
 
@@ -615,6 +645,8 @@ reducer editTitle
 
 スコープは reducer の body と、その中の入れ子になった各文の body である：`for` の body、`if` の各分岐、そして catch-all の `_` を含む match の各アーム。そこで宣言された束縛はそのスコープとともに終わる。
 
+名前を束縛する式も、どこに書かれていてもそれ自体がひとつのスコープである：`let … in` の body、`match` 式の各アーム — 値のものも tile のものも — 、そして tile の `for` の body。束縛は式とともに終わるので、その後での読み — 後の文やオペランド、tile の兄弟の引数の中 — は [E0103](./errors.md#e0103-undef-ref-undef-slot) である。読みを式の中へ移す。`let … in` が束縛する値は、代わりに両方の読みから見える場所で束縛してもよい：reducer では `let` 文で、`fn` や slot の初期化式では両方の読みを囲む 1 つの `let … in` で、tile では両方の読みを `in=` を宣言した tile の中へ移してその値を渡すことで。`app.init` の各要素は式を共有しないので、そこでは読みを `let … in` の中へ移すしかない。
+
 宣言の右辺は、それが宣言する名前がスコープに入る**前**に評価される。したがって `let n = n + 1` は、宣言しようとしている束縛ではなく、シャドーイングする側の束縛を読む。
 
 **横に並んだ**束縛どうしは、シャドーイングの関係ではなく対等である。入れ子にするものが何もないからである：ひとつのパターンの2つの束縛（`Both(a, a)`）は [E0122](./errors.md#e0122-duplicate-pattern-bind) であり、`effect-event` の束縛リストも同じ形である（[E0123](./errors.md#e0123-duplicate-effect-bind)）。そこで繰り返された名前はシャドーイングではなく、パターンやトリガが読めなくしてしまった値である。
@@ -678,7 +710,7 @@ pattern      ::= identifier
 
 **`if` と `match` の値文脈 vs tile 文脈**:
 - tile 引数が tile になるのは、**値 builtin 以外の builtin の位置引数**（`column`, `row`, `card`, `box` 等）だけである —— tile が描画される唯一の位置。そこでは `if` と `match` は tile 式（`TileIf` / `TileMatch`）で各 arm は tile を返し、`(` か `{` が続く builtin 名はその builtin の呼び出し、大文字始まりの名前は user tile になる。
-- それ以外の tile 引数はすべて値である：値 builtin の内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：値 builtin 以外の builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になる。
+- それ以外の tile 引数はすべて値である：値 builtin の内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：値 builtin 以外の builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になる。
 - `when` と `for` には値の形が無いので、どこに書いても tile である。
 - 例: `text(match m with | A -> "a" | B -> "b")` ← 値 match
 - 例: `button(text="Save", disabled=if busy then true else false)`、`Row(if wide then 2 else 1)` ← 値 if
@@ -749,6 +781,8 @@ fn-def      ::= 'fn' identifier
 
 fn-param    ::= identifier ':' type-expr
 ```
+
+**`->` を省いた `fn` は本体の型を返す**。本体は、各引数をその宣言型として読む。その `fn` の呼び出しは、置かれたどの位置でも、同じ型を宣言した `fn` の呼び出しと同じく検査される：`fn greeting() = "hello"` に対して `slot n : Int = greeting()` は [E0201](./errors.md#e0201-type-mismatch) であり、呼び出しから読むメンバもその型から答えが決まる。`->` を持たない `fn` のうち 2 種類は結果の型を持たず、その呼び出しの結果は何とも照合されない（呼び出しの引数は引き続きパラメータと照合される）：型検査器が本体自身の型を決定できないもの — `.map` や `.fold` の結果、空の `{}` — と、直接または他の `fn` を経由して自分に戻る、呼び出しのループ上のもの（[E0006](./errors.md#e0006-fn-cycle)）である。そのループ上の `fn` は、呼び出しがどれに先に届いても、`->` を宣言していない限りすべて型を持たない。ループの外からループを呼ぶ `fn` は、ループ上の `fn` を型の無いものとして、他の `fn` と同じく本体から読まれる。
 
 ### 1.8.3 不変条件
 
@@ -840,7 +874,7 @@ items.filter(isActiveOnly)
 
 `filter`・`map`・`find`・`sort-by` では、`Tuple(A, B)` である `T`——`.entries` が返すもの——は分解され、`$1` が `A`、`$2` が `B` になる（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）。positional はその型の値として検査され、fn 名は自身が表す呼び出しとして検査される：`fn loud(t: Text)` に対して、`List(Int)` 上の `xs.map(loud($1))` は [E0201](./errors.md#e0201-type-mismatch) であり、`xs.map(loud)` も同じである。`xs.fold(0, f)` は `f` の第 1 パラメータを init の型 `Int` と、第 2 パラメータを要素と照合する。式断片の結果はアキュムレータの型と照合されないので、`$1` が init の型をもつのは最初の 1 回だけである：`xs.fold(0, $1.show)` は通り、2 回目には `Text` を渡す。
 
-型検査器が型を決められない positional には型がなく、何とも照合されない：型の決まらないレシーバの上（型パラメータ、`->` のない `fn` の結果）、[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t) が束縛を与えていない `Set` の `filter`、型として読み戻されない `Map` のキー（`Bytes` のキーや、型が型パラメータであるキーは、格納されている文字列のまま渡される）、そして init 自体に型のない `fold` のアキュムレータ——空の Map でも空の Set でもある `{}`——がそれにあたる。
+型検査器が型を決められない positional には型がなく、何とも照合されない：型の決まらないレシーバの上（型パラメータ、`->` を持たず本体の型も決まらない `fn` の結果）、[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t) が束縛を与えていない `Set` の `filter`、型として読み戻されない `Map` のキー（`Bytes` のキーや、型が型パラメータであるキーは、格納されている文字列のまま渡される）、そして init 自体に型のない `fold` のアキュムレータ——空の Map でも空の Set でもある `{}`——がそれにあたる。
 
 ---
 

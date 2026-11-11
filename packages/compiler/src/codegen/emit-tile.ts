@@ -16,7 +16,7 @@ import {
   type GenCtx,
   makeEvalCtx,
 } from "./context.ts";
-import { jsOfExpr, readingJs, tupleArm } from "./expr.ts";
+import { jsOfExpr, readingJs, showJs, tupleArm } from "./expr.ts";
 import { type PathStep, segmentJs } from "./path-segment.ts";
 import { explicitHandlers, type HandlerWiring, keyFor, propsFor } from "./selector.ts";
 
@@ -271,13 +271,14 @@ function boundInputValueJs(
   reading: ParseReading | null,
   t: TileExpr & { kind: "TileCall" },
   readJs: string,
+  gen: GenCtx,
 ): string {
   if (reading === "Time") {
     const typeArg = t.args.find((a) => a.name === "type")?.value as Expr | undefined;
     const pattern = typeArg?.kind === "Str" ? TIME_INPUT_PATTERNS.get(typeArg.value) : undefined;
     if (pattern) return `_s.formatTime(${readJs}, ${JSON.stringify(pattern)})`;
   }
-  return `_s.show(${readJs})`;
+  return showJs(readJs, undefined, gen);
 }
 
 function tileCallJs(
@@ -362,18 +363,18 @@ function tileCallJs(
       }
       case "heading": {
         const text = contentJs(t, ctx);
-        return `({ kind: "heading", text: _s.show(${text}), props: ${propsObj} })`;
+        return `({ kind: "heading", text: ${text}, props: ${propsObj} })`;
       }
       case "text": {
         const text = contentJs(t, ctx);
-        return `({ kind: "text", text: _s.show(${text}), props: ${propsObj} })`;
+        return `({ kind: "text", text: ${text}, props: ${propsObj} })`;
       }
       case "button": {
         const textArg = t.args.find((a) => a.name === "text");
-        const textJs = textArg ? jsOfExpr(asExpr(textArg.value), ctx) : '""';
+        const textJs = textArg ? argShownJs(textArg, ctx) : showJs('""', undefined, gen);
         const typeArg = t.args.find((a) => a.name === "type");
         const typeField = typeArg ? `type: ${jsOfExpr(asExpr(typeArg.value), ctx)}, ` : "";
-        return `({ kind: "button", text: _s.show(${textJs}), ${typeField}props: ${propsObj} })`;
+        return `({ kind: "button", text: ${textJs}, ${typeField}props: ${propsObj} })`;
       }
       case "input": {
         const fields: string[] = [`kind: "input"`];
@@ -381,7 +382,7 @@ function tileCallJs(
         for (const arg of t.args) {
           if (!arg.name || arg.name === "bind") continue;
           const valJs = jsOfExpr(asExpr(arg.value), ctx);
-          if (arg.name === "value") fields.push(`value: _s.show(${valJs})`);
+          if (arg.name === "value") fields.push(`value: ${showJs(valJs, asExpr(arg.value), gen)}`);
           else if (arg.name === "placeholder") fields.push(`placeholder: ${valJs}`);
           else if (arg.name === "type") fields.push(`type: ${valJs}`);
           else if (arg.name === "id") fields.push(`id: ${valJs}`);
@@ -397,7 +398,7 @@ function tileCallJs(
             gen.usedReaders.add(reading);
             fields.push(`parse: ${readerName(reading)}`);
           }
-          fields.push(`value: ${boundInputValueJs(reading, t, bindInfo.read)}`);
+          fields.push(`value: ${boundInputValueJs(reading, t, bindInfo.read, gen)}`);
         }
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
@@ -408,12 +409,13 @@ function tileCallJs(
         for (const arg of t.args) {
           if (!arg.name || arg.name === "bind") continue;
           const valJs = jsOfExpr(asExpr(arg.value), ctx);
-          if (arg.name === "value") fields.push(`value: _s.show(${valJs})`);
+          if (arg.name === "value") fields.push(`value: ${showJs(valJs, asExpr(arg.value), gen)}`);
           else if (arg.name === "placeholder") fields.push(`placeholder: ${valJs}`);
           else if (arg.name === "id") fields.push(`id: ${valJs}`);
           else if (arg.name === "rows") fields.push(`rows: ${valJs}`);
         }
-        if (bindInfo) fields.push(...bindFields(bindInfo), `value: _s.show(${bindInfo.read})`);
+        if (bindInfo)
+          fields.push(...bindFields(bindInfo), `value: ${showJs(bindInfo.read, undefined, gen)}`);
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
       }
@@ -473,7 +475,7 @@ function tileCallJs(
       }
       case "label": {
         const text = contentJs(t, ctx);
-        return `({ kind: "label", text: _s.show(${text}), props: ${propsObj} })`;
+        return `({ kind: "label", text: ${text}, props: ${propsObj} })`;
       }
       case "link": {
         const toArg = t.args.find((a) => a.name === "to");
@@ -482,7 +484,11 @@ function tileCallJs(
         const textProp = t.props.find((p) => p.name === "text");
         const textExpr = textArg ? asExpr(textArg.value) : textProp ? textProp.value : undefined;
         const text = textExpr ? jsOfExpr(textExpr, ctx) : '""';
-        const fields = [`kind: "link"`, `text: _s.show(${text})`, `to: _s.show(${to})`];
+        const fields = [
+          `kind: "link"`,
+          `text: ${showJs(text, textExpr, gen)}`,
+          `to: ${showJs(to, toArg ? asExpr(toArg.value) : undefined, gen)}`,
+        ];
         const prefetchProp = t.props.find((p) => p.name === "prefetch");
         if (prefetchProp) {
           const v = prefetchProp.value as Expr;
@@ -503,14 +509,14 @@ function tileCallJs(
       }
       case "markdown": {
         const text = contentJs(t, ctx);
-        return `({ kind: "markdown", text: _s.show(${text}), props: ${propsObj} })`;
+        return `({ kind: "markdown", text: ${text}, props: ${propsObj} })`;
       }
       case "skeleton":
         return `({ kind: "skeleton", props: ${propsObj} })`;
       case "image": {
         const src = contentArg(t);
         const srcJs = src ? jsOfExpr(asExpr(src.value), ctx) : '""';
-        return `({ kind: "image", src: _s.show(${srcJs}), props: ${propsObj} })`;
+        return `({ kind: "image", src: ${showJs(srcJs, src ? asExpr(src.value) : undefined, gen)}, props: ${propsObj} })`;
       }
       case "icon": {
         const name = contentArg(t);
@@ -520,18 +526,18 @@ function tileCallJs(
           if (literal) ctx.gen.usedIcons.add(literal);
         }
         const nameJs = nameExpr ? jsOfExpr(nameExpr, ctx) : '""';
-        return `({ kind: "icon", name: _s.show(${nameJs}), props: ${propsObj} })`;
+        return `({ kind: "icon", name: ${showJs(nameJs, nameExpr ?? undefined, gen)}, props: ${propsObj} })`;
       }
       case "code": {
         const text = contentJs(t, ctx);
         const langArg = t.args.find((a) => a.name === "lang");
-        const lang = langArg ? `_s.show(${jsOfExpr(asExpr(langArg.value), ctx)})` : "undefined";
-        return `({ kind: "code", text: _s.show(${text}), lang: ${lang}, props: ${propsObj} })`;
+        const lang = langArg ? argShownJs(langArg, ctx) : "undefined";
+        return `({ kind: "code", text: ${text}, lang: ${lang}, props: ${propsObj} })`;
       }
       case "video": {
         const fields: string[] = [`kind: "video"`];
         const src = t.args.find((a) => a.name === "src");
-        if (src) fields.push(`src: _s.show(${jsOfExpr(asExpr(src.value), ctx)})`);
+        if (src) fields.push(`src: ${argShownJs(src, ctx)}`);
         const controls = t.args.find((a) => a.name === "controls");
         if (controls) fields.push(`controls: !!(${jsOfExpr(asExpr(controls.value), ctx)})`);
         const autoplay = t.args.find((a) => a.name === "autoplay");
@@ -564,7 +570,7 @@ function tileCallJs(
         fields.push(`open: ${open ? `!!(${jsOfExpr(asExpr(open.value), ctx)})` : "true"}`);
         for (const key of ["title", "side", "placement"]) {
           const a = t.args.find((x) => x.name === key);
-          if (a) fields.push(`${key}: _s.show(${jsOfExpr(asExpr(a.value), ctx)})`);
+          if (a) fields.push(`${key}: ${argShownJs(a, ctx)}`);
         }
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
@@ -573,18 +579,18 @@ function tileCallJs(
         const children = collectChildren(t.args, gen, ctx, enclosingTiles);
         const fields: string[] = [`kind: "tooltip"`, `children: [${children}]`];
         const text = t.args.find((a) => a.name === "text");
-        if (text) fields.push(`text: _s.show(${jsOfExpr(asExpr(text.value), ctx)})`);
+        if (text) fields.push(`text: ${argShownJs(text, ctx)}`);
         const placement = t.args.find((a) => a.name === "placement");
-        if (placement) fields.push(`placement: _s.show(${jsOfExpr(asExpr(placement.value), ctx)})`);
+        if (placement) fields.push(`placement: ${argShownJs(placement, ctx)}`);
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
       }
       case "toast": {
         const fields: string[] = [`kind: "toast"`];
         const level = t.args.find((a) => a.name === "kind");
-        if (level) fields.push(`level: _s.show(${jsOfExpr(asExpr(level.value), ctx)})`);
+        if (level) fields.push(`level: ${argShownJs(level, ctx)}`);
         const text = t.args.find((a) => a.name === "text");
-        if (text) fields.push(`text: _s.show(${jsOfExpr(asExpr(text.value), ctx)})`);
+        if (text) fields.push(`text: ${argShownJs(text, ctx)}`);
         fields.push(`props: ${propsObj}`);
         return `({ ${fields.join(", ")} })`;
       }
@@ -632,10 +638,10 @@ function tileCallJs(
       case "details": {
         const children = collectChildren(t.args, gen, ctx, enclosingTiles);
         const summaryArg = t.args.find((a) => a.name === "summary");
-        const summary = summaryArg ? jsOfExpr(asExpr(summaryArg.value), ctx) : '""';
+        const summary = summaryArg ? argShownJs(summaryArg, ctx) : showJs('""', undefined, gen);
         const fields: string[] = [
           `kind: "details"`,
-          `summary: _s.show(${summary})`,
+          `summary: ${summary}`,
           `children: [${children}]`,
         ];
         const openArg = t.args.find((a) => a.name === "open");
@@ -648,9 +654,9 @@ function tileCallJs(
         const bindInfo = extractBindPath(t.args, ctx);
         const textJs = contentJs(t, ctx);
         if (bindInfo) {
-          fields.push(...bindFields(bindInfo), `text: _s.show(${bindInfo.read})`);
+          fields.push(...bindFields(bindInfo), `text: ${showJs(bindInfo.read, undefined, gen)}`);
         } else {
-          fields.push(`text: _s.show(${textJs})`);
+          fields.push(`text: ${textJs}`);
         }
         const idArg = t.args.find((a) => a.name === "id");
         if (idArg) fields.push(`id: ${jsOfExpr(asExpr(idArg.value), ctx)}`);
@@ -669,7 +675,13 @@ function firstPositional(t: TileExpr & { kind: "TileCall" }): TileArg | undefine
 
 function contentJs(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string {
   const arg = contentArg(t);
-  return arg ? jsOfExpr(asExpr(arg.value), ctx) : '""';
+  return arg ? argShownJs(arg, ctx) : showJs('""', undefined, ctx.gen);
+}
+
+/** A tile argument as the text it renders (`showJs`). */
+function argShownJs(arg: TileArg, ctx: EvalCtx): string {
+  const e = asExpr(arg.value);
+  return showJs(jsOfExpr(e, ctx), e, ctx.gen);
 }
 
 function asExpr(v: Expr | TileExpr): Expr {
