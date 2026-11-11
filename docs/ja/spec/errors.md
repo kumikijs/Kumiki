@@ -165,7 +165,7 @@ tile が、直接またはほかの tile を経由して自分自身へ展開し
 
 どちらの宣言が生き残るかは一様ではないため、メッセージはそれを述べない。シンボル収集は**最後**を保持するので型検査が見たのはそれだが、同名の `reducer` は両方とも成果物に到達し、ランタイムは**最初**を dispatch する。つまりツールチェーンの両半分が「どの定義が存在するか」について食い違っていた。
 
-ネームスペースは層ごとであり、層内でのみ効く：`slot` と `tile` が名前を共有するのは合法である（コード生成は裸の識別子の子を何よりも先に tile として解決する）。標準ライブラリのドメイン型と同じ名前の `type` も、その 2 つ目の宣言としては扱わない：プログラム自身の `type Email = …` はそのプログラムにおいて標準ライブラリのものを置き換え、予約された名前の宣言（`type Route = …`）は [E0231](#e0231-reserved-type-name) である。2 つ目の `app` はこれに先行する `E0004` が担当し、独自のコードを保つ。
+ネームスペースは層ごとであり、層内でのみ効く：`slot` と `tile` が名前を共有するのは合法である（コード生成は裸の識別子の子を何よりも先に tile として解決する）。標準ライブラリのドメイン型と同じ名前の `type` も、その 2 つ目の宣言としては扱わない：プログラム自身の `type Email = …` はそのプログラムにおいて標準ライブラリのものを置き換え、予約された名前の宣言（`type Route = …`・`type Option = …`）は [E0231](#e0231-reserved-type-name) である。2 つ目の `app` はこれに先行する `E0004` が担当し、独自のコードを保つ。
 
 **修正**：片方を削除するか改名する。`kumiki rename` は重複の生成を拒否し、`kumiki add` は重複が生じるとロールバックする。
 
@@ -207,7 +207,7 @@ type Shape   = Leaf | Branch(Shape, Shape)
 
 いずれも自分自身へ戻るより先に構造的な型へ到達する。2 つを比較したときに停止するのは、この関係が**書かれたとおりの型**に対して余帰納的に読まれるからであって、値が有限だからではない — 上の `Node` は `next` が optional でもコンテナでもないため値を 1 つも持たないが、仕様自身が挙げる合法な再帰型の代表例である。`type A = Option(A)` や `type A = Alias(Option(A))` が合法なのも同じ理由で、コンテナがその型だからである。
 
-`type` 定義を指さない名前は、循環を閉じるのではなく連鎖を終わらせる：汎化型構築子（`List`・`Option`・`Map`）には戻ってくる body が無く、未宣言の名前は [E0117](#e0117-undef-type) が報告すべきものであって、1 つの誤りに 2 つの名前を与えるべきではない。標準ライブラリの**ドメイン型**はほかと同じ定義であり、同じように辿られる。宣言してよいものを再宣言したプログラム（`type Email = Email`）はそれを置き換えており、自分自身の定義で循環を閉じる。予約されたものは宣言できない（[E0231](#e0231-reserved-type-name)）ので、`type Route = Route` の body が名指すのは標準ライブラリのレコードであり、循環は閉じない。型引数は型引数として読まれ、同じ綴りのグローバル定義として読まれることはない（[§1.3.6](./language.md#_1-3-6-不変条件) 不変条件 5）。
+`type` 定義を指さない名前は、循環を閉じるのではなく連鎖を終わらせる：汎化型構築子（`List`・`Option`・`Map`）には戻ってくる body が無く（プログラムが body を与えることもできない。[E0231](#e0231-reserved-type-name) なので、`type List(T) = List(T)` の body が名指すのはビルトインの構築子である）、未宣言の名前は [E0117](#e0117-undef-type) が報告すべきものであって、1 つの誤りに 2 つの名前を与えるべきではない。標準ライブラリの**ドメイン型**はほかと同じ定義であり、同じように辿られる。宣言してよいものを再宣言したプログラム（`type Email = Email`）はそれを置き換えており、自分自身の定義で循環を閉じる。予約されたものは宣言できない（[E0231](#e0231-reserved-type-name)）ので、`type Route = Route` の body が名指すのは標準ライブラリのレコードであり、循環は閉じない。型引数は型引数として読まれ、同じ綴りのグローバル定義として読まれることはない（[§1.3.6](./language.md#_1-3-6-不変条件) 不変条件 5）。
 
 **修正**：連鎖上のどれか 1 つの名前に body を与える。再帰を意図していた型は、自分自身を名指す位置にレコードかユニオンを求めている（`type A = {next: A}`）。別名を意図していた型は、別名の対象となる定義を求めている。
 
@@ -781,7 +781,7 @@ reducer pickFile on=ui.change(AvatarPicker) do= avatar := $event.files.head
 
 ### E0210 `type-arity-mismatch`
 
-ユーザ宣言のジェネリック型の型レベル適用 `T(...)` が、宣言側パラメータと異なる数の型引数を受けている。この検査が無いと、後段の型パラメータ置換が短い写像しか作らずペイロードに未解決 `TypeRef` を残し、パターン検査は no-op に劣化する — まさにこの帯（と静的検査全般）が捕まえたい「静かな失敗」形。
+ユーザ宣言のジェネリック型の型レベル適用 `T(...)` が、宣言側パラメータと異なる数の型引数を受けている。あるいはビルトインの型構築子（`List`・`Option`・`Map` など）に、それが取る数と異なる数の型引数を与えている（[標準ライブラリ §2.1.2](./stdlib.md#_2-1-2-汎化型)。`Tuple` は任意の数を取る）。この検査が無いと、後段の型パラメータ置換が短い写像しか作らずペイロードに未解決 `TypeRef` を残し、パターン検査は no-op に劣化する — まさにこの帯（と静的検査全般）が捕まえたい「静かな失敗」形。
 
 > `Type "<name>" expects <m> type argument(s) but got <n>`
 > `Type parameter "<param>" of "<type>" takes no type arguments, but is written "<application>"`
@@ -875,9 +875,9 @@ kind の要素が `<ev>` を発火するのに、そのレンダラがハンド�
 
 **`editable` と `change` について**: `editable` は `input` / `key` / `focus` / `blur` に載り、`change` にだけ**載らない**。この 1 つの欠落は漏れではなく規則である。`<div contenteditable="true">` は編集ホストなので `tabindex` 無しで focusable であり、`focus` / `blur` / `keydown` / `input` はいずれもブラウザが発火する。違うのは listen する層だけで、前 3 つは `applyUiEventHandlers`、`input` は `editable` レンダラ自身のリスナである。一方 `change` イベントは一切発火せず、これは表の行では埋められない。したがって `ui.change(<editable の tile>)` の W0212 は理由が正しい警告である — `ui.input` を購読して新しいテキストを直前の値を持つ slot と比較するか、編集の終了を捉えたいなら `ui.blur` を使う。
 
-**`key` / `focus` / `blur` について**: runtime はこの 3 つをレンダラが返した要素そのものに付けるので、載っている kind はいずれもその要素にイベントが届くものである。要素自体が focusable な kind — `input` / `textarea` / `button` / `select` / `slider`（素の `<input type="range">`）/ `editable` / `link` / `video`（`controls` 付きで描画された `<video>`）— は 3 行すべてに載る。`check` / `radio` / `switch` は `key` に載り、`focus` / `blur` には**載らない**。3 つは 1 つのケースに見えるが答えは 2 つに分かれる：いずれも `<input>` を `<label>` で包んで描画し、リスナは label 側にある。`keydown` は focus された input から label へバブルするので `ui.key` は届くが、`focus` / `blur` はバブルしないので label 上のリスナは決して実行されず、それらに W0212 を出すのは正しい。control 自身に `onFocus=` / `onBlur=` を書いても、リスナは同じ `<label>` に付くので、やはり実行されない — [#821](https://github.com/kumikijs/Kumiki/issues/821)。
+**`key` / `focus` / `blur` について**: runtime はこの 3 つをレンダラが返した要素そのものに付けるので、載っている kind はいずれもその要素にイベントが届くものである。要素自体が focusable な kind — `input` / `textarea` / `button` / `select` / `slider`（素の `<input type="range">`）/ `editable` / `link` / `video`（`controls` 付きで描画された `<video>`）— は 3 行すべてに載る。`check` / `radio` / `switch` は `key` に載り、`focus` / `blur` には**載らない**。3 つは 1 つのケースに見えるが答えは 2 つに分かれる：いずれも `<input>` を `<label>` で包んで描画し、リスナは label 側にある。`keydown` は focus された input から label へバブルするので `ui.key` は届くが、`focus` / `blur` はバブルしないので label 上のリスナは決して実行されず、それらに W0212 を出すのは正しい。control 自身に `onFocus=` / `onBlur=` を書いても、リスナは同じ `<label>` に付くので、やはり実行されず、[W0213](#w0213-handler-on-inert-tile-warning) が同じ記録から読んだ同じ理由でそれを報告する。そこに書いた `onKeyDown=` は `ui.key` と同じく実行される。
 
-`details` は 3 行のどれにも載らず、どの空白も規則である。`details` は focus を受ける `<summary>` を `<details>` で包んで描画し、リスナが付くとすれば `<details>` である。summary の `focus` / `blur` は、check の label の場合と同じく、そこへバブルしない。`keydown` はバブルするが、パネルにあるすべての tile の keydown も同じくバブルしてくる。パネルにある control のうち `key` 行に載るものには同じ subscription がすでに持ち上げられているので、`<details>` にもリスナを付けると、その control で押したキーごとに reducer が 2 回実行される。したがって 3 つとも W0212 を出すのは正しく、メッセージはそれぞれの理由を述べる。summary 上のキーは、details 自身に書いたハンドラ（`details(…, onKeyDown=r)`）には届き、そのハンドラはパネルからのキーもすべて受け取る。そこに書いた `onFocus=` / `onBlur=` も、上で check について述べたのと同じ理由で実行されない。
+`details` は 3 行のどれにも載らず、どの空白も規則である。`details` は focus を受ける `<summary>` を `<details>` で包んで描画し、リスナが付くとすれば `<details>` である。summary の `focus` / `blur` は、check の label の場合と同じく、そこへバブルしない。`keydown` はバブルするが、パネルにあるすべての tile の keydown も同じくバブルしてくる。パネルにある control のうち `key` 行に載るものには同じ subscription がすでに持ち上げられているので、`<details>` にもリスナを付けると、その control で押したキーごとに reducer が 2 回実行される。したがって 3 つとも W0212 を出すのは正しく、メッセージはそれぞれの理由を述べる。summary 上のキーは、details 自身に書いたハンドラ（`details(…, onKeyDown=r)`）には届き、そのハンドラはパネルからのキーもすべて受け取るので、W0213 はこれを報告しない。そこに書いた `onFocus=` / `onBlur=` も、上で check について述べたのと同じ理由で実行されず、W0213 が報告する。
 
 Chromium では、`controls` があれば Tab は `<video>` に止まり、`focus` / `blur` は focus がそこに入るとき・出るときに発火する。`<video>` が focus を持つ間に押したキーは `ui.key` の reducer に届く。`controls` が無ければ focusable ではない：Tab は素通りし、`.focus()` やクリックでも focus は移らないので、3 つのどれも発火しない。`video` が `controls` を持つかはインスタンスの性質で、コンパイル時の表には見えないため、行はどちらの場合も `video` を載せる。`disabled` な control も同様で、その kind は載っているが focusable ではない。
 
@@ -1179,7 +1179,7 @@ dispatcher は各リクエストをその key で実行し、同じ key で別�
 
 ### W0213 `handler-on-inert-tile` (warning)
 
-ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。
+ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など — か、そのイベントが要素に決して届かないタイルに書かれている（`check(onFocus=r)`、後述）。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。
 
 > `"<handler>" on <tile>() is dropped — <tile> does not fire it. Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
 
@@ -1189,6 +1189,12 @@ dispatcher は各リクエストをその key で実行し、同じ key で別�
 >
 > `"onClick" on row() is dropped — a row fires "click", and its renderer never calls onClick. Put it on button / check / radio / switch, or subscribe with a reducer's on=ui.<event>(<Tile>)`
 
+`onFocus` / `onBlur` はタイルが描画した要素にそのまま付くが、`check` / `radio` / `switch` / `details` ではその要素は focus を受ける要素を包むものである：control の `<input>` を包む `<label>`、`<summary>` を包む `<details>`。どちらのイベントも包む要素へはバブルしないので、ハンドラは決して実行されない。理由は W0212 が同じ kind への `ui.focus` / `ui.blur` について述べる節であり、同じ記録から読む（そちらの `key` / `focus` / `blur` についての注記を参照）。移す先として名指すタイルは、その `focus` / `blur` 行に載るものである。同じタイルへの購読は W0212 になるので、勧める購読は自身が focus を受けるタイルへのものである:
+
+> `"onFocus" on check() is dropped — the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label>. Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`
+>
+> `"onBlur" on details() is dropped — the runtime listens for "blur" on a details's <details>, and the "blur" its <summary> fires does not bubble to the <details>. Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.blur(<Tile>) on a tile that takes focus itself`
+
 **user tile** にも同じ問いを立て、2 つ目の形で答える。user tile に書かれたハンドラは、その tile が描画するノードにマージされる（[§1.7.3](./language.md#_1-7-3-event-handler-props)）ので、発火するかどうかは何を描画するかで決まる — `tile Inner = box(text("clickme"))` に対する `Inner(onClick=open)` は、描画はされるが何も配線されない。まさにこの警告が存在する理由の失敗である。ほかに気づける層が無い：この警告は非致命なので `check` は 0 で終了し（`ok (1 warning)`）、`build` も emit を出し、`smoke` から見えるのは「正しく描画され、クリックする対象が無い」タイルでしかない。
 
 > `"<handler>" on <tile>() is dropped — <tile> renders nothing that fires it (observed in body: <kinds>). Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>)`
@@ -1197,15 +1203,23 @@ body の kind がイベントを発火するのに、そのレンダラがハン
 
 > `"onClick" on Inner() is dropped — Inner renders nothing that calls it: a box / text fires "click", and its renderer never calls onClick (observed in body: box, text). Put it on button / check / radio / switch, or subscribe with a reducer's on=ui.<event>(<Tile>)`
 
-`<kinds>` は tile の描画ツリーを辿って集めたもので、これは [W0212](#w0212-ui-event-tile-mismatch-warning) が使うのと同じ走査である。ただし本体内で呼ばれた tile の `error-boundary` フォールバックには入らない: そのフォールバックは、呼び出し側に書いたハンドラなしで描画される。報告するのは、そのツリーのどこにもハンドラを呼ぶ種類が無い場合だけ。これは意図的に控えめである：prop が着地するのはその tile の **root** ノードなので、`tile Card = box(button(...))` もハンドラを捨てるが、この走査は root と子孫を区別しないため報告しない。逆に、報告するものはすべて確実に捨てられる。
+`onFocus` / `onBlur` で、root のすべての kind が上の包まれた control である場合は、それらについての W0212 の節を 3 つ目の形で述べる:
+
+> `"<handler>" on <tile>() is dropped — <tile> renders nothing at its root where "<event>" reaches it: <clauses> (observed at its root: <kinds>). Put it on <tiles>, or subscribe with a reducer's on=ui.<event>(<Tile>) on a tile that takes focus itself`
+
+`tile Inner = check(value=done)` に対する `Inner(onFocus=r)` なら:
+
+> `"onFocus" on Inner() is dropped — Inner renders nothing at its root where "focus" reaches it: the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label> (observed at its root: check). Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`
+
+`<kinds>` は tile の描画ツリーを辿って集めたもので、これは [W0212](#w0212-ui-event-tile-mismatch-warning) が使うのと同じ走査である。ただし本体内で呼ばれた tile の `error-boundary` フォールバックには入らない: そのフォールバックは、呼び出し側に書いたハンドラなしで描画される。報告するのは、そのツリーのどこにもハンドラを呼ぶ種類が無い場合だけ。これは意図的に控えめである：prop が着地するのはその tile の **root** ノードなので、`tile Card = box(button(...))` もハンドラを捨てるが、この検査は root かその下かを問わずツリーのどこかの種類がハンドラを呼ぶかを問うため報告しない。`onFocus` / `onBlur` は root だけに問う。ランタイムはそれらを root の要素に付け、`focus` と `blur` は内側のどこからもそこへバブルしないので、root より下の種類はそれらを実行できない。root のすべての種類が、包む要素にイベントが届かない包まれた control であるとき報告する：`tile Faq = details(summary="Q", text("a"))` は `Faq(onFocus=r)` で報告し、`tile Row = row(check(value=done))` は報告しない。`row` が focus を受けるかは問わないからである（後述）。逆に、報告するものはすべて確実に捨てられる。
 
 走査が種類を 1 つも見つけられなかった場合は報告しない — その tile の root 自体が、builtin でも宣言済み tile でもない名前である場合（`tile Inner = Nope()`、あるいは循環 `tile Inner = Inner()`）で、走査は何も学べていない。W0212 も同じ空の答えを前にして黙る。これらの形にはそれぞれの符号がある（[E0005](#e0005-tile-cycle)、[E0105](#e0105-undef-tile)）。解決できない名前が解決可能な body の**内側**にある場合（`tile Inner = box(Nope())`）は別の話で、その周囲の種類は root についての正しい答えなので、W0213 は解決できない部分を名指す符号と並んで報告される。
 
-`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` は報告しない。ランタイムはタイルが生成した要素にリスナをそのまま付ける。ただしそれは「リスナが付く」ことであって「イベントが届く」ことではない — `focus` と `blur` はバブリングしないので、フォーカス可能でないコンテナでは発火せず、`keydown` がコンテナに届くのはフォーカス可能な子孫がある場合だけである。そこまで報告するにはフォーカス可能性の解析が必要で、この検査は行わない。
+`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` は、それ以外では報告しない。ランタイムはタイルが生成した要素にリスナをそのまま付けるので、決め手はイベントがその要素に届くかどうかであり、答えが記録されている kind は上の包まれた control である。`keydown` は `<label>` にも `<details>` にもバブルするので、`onKeyDown` は 4 つすべてで実行され、`details` ではパネルで押したキーもすべて受け取る。フォーカス可能でない kind、つまりコンテナ（`row`）や葉（`text`）では `focus` と `blur` は発火せず、`keydown` がコンテナに届くのはフォーカス可能な子孫がある場合だけである。そこまで報告するにはフォーカス可能性の解析が必要で、この検査は行わない。
 
 [W0212](#w0212-ui-event-tile-mismatch-warning) は同じ黙殺を反対側から見たもの — 対象のタイルが `<ev>` をどの reducer にも渡さない `ui.<ev>(Tile)` 購読である。こちらは捕まえられない：コンテナはクリック可能な子孫が 1 つでもあれば通過し、ボタンを含むカードのレイアウトはすべてそれに当たる。
 
-**修正**：イベントを発火するタイルにハンドラを移すか、内容を `button` で包む — user tile なら、呼び出し側でも、その tile の中で root が発火するタイルになるようにしてもよい。領域内のどこかのクリックに反応させたい場合は、`on=ui.click(<クリック可能な子>)` で reducer を購読する。
+**修正**：イベントを発火するタイルにハンドラを移すか、内容を `button` で包む — user tile なら、呼び出し側でも、その tile の中で root が発火するタイルになるようにしてもよい。領域内のどこかのクリックに反応させたい場合は、`on=ui.click(<クリック可能な子>)` で reducer を購読する。`check` / `radio` / `switch` / `details` はどちらの形でも `focus` / `blur` を届けない — それらへの `ui.focus(<Tile>)` も W0212 である — ので、focus で実行すべき reducer は、自身が focus を受けるタイルに置く。
 
 ### W0214 `fmt-placeholder-argument-mismatch` (warning)
 
@@ -1247,11 +1261,23 @@ bind していないコントロールが選択状態を読む引数 — `check`
 
 ### E0231 `reserved-type-name`
 
-値をランタイムまたは標準ライブラリが供給する標準ライブラリのドメイン型（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）の名前で `type` を宣言している。宣言の位置で、宣言ごとに 1 件報告する。
+どのプログラムでもすでに型を意味している名前で `type` を宣言している。宣言の位置で、宣言ごとに 1 件報告する。予約された名前は型検査器自身の表であり、3 つのグループに分かれる。メッセージはグループを名指す：
 
+| グループ | 名前 | その名前に意味を与えるもの |
+|---|---|---|
+| プリミティブ | [言語 §1.3.1](./language.md#_1-3-1-構文) の `primitive` の名前（`Int`・`Text`・`File` など） | パーサ。型を書く位置ではどこでもプリミティブとして読む |
+| ビルトインの型構築子 | [標準ライブラリ §2.1.2](./stdlib.md#_2-1-2-汎化型) の汎化型（`Option`・`List`・`Map` など） | 型検査器。定義なしにその値・メンバー・引数の数を知っている |
+| ランタイム供給 | 下の 7 つのドメイン型（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)） | ランタイムまたは標準ライブラリ。その値を組み立てる、あるいは読む |
+
+> `Type "<name>" collides with the primitive type <name>; uses of it never see this type`
+>
+> `Type "<name>" collides with the built-in type constructor <name>; uses of it never see this type`
+>
 > `Type "<name>" collides with the standard library's <name>; uses of it never see this type`
 
-| 名前 | その値を供給する、あるいは読むもの |
+言語にプリミティブや型構築子が加われば、それも同時に予約される：これらの名前を別に並べた一覧を同期させる必要はない。
+
+| ランタイム供給の名前 | その値を供給する、あるいは読むもの |
 |---|---|
 | `PanicInfo` | ランタイム：`error-boundary` フォールバックの `$1` と `app.error` reducer の `$event` に束縛されるレコード |
 | `RouteErrorInfo` | ランタイム：`route.error(<pattern>)` reducer の `$event` に束縛されるレコード |
@@ -1261,15 +1287,15 @@ bind していないコントロールが選択状態を読む引数 — `check`
 | `Duration` | 標準ライブラリ：`Duration.ms(…)` などが組み立てる値、および toast effect の `duration` |
 | `FormValue` | ランタイム：`Multipart` の body は `FileV` のエントリをファイルとして送る |
 
-これらの名前でプログラムが独自に定義しても、型検査が推論する対象が変わるだけで、ランタイムが供給するものは何も変わらない。仮に `type PanicInfo = Text` がその名前を取ったとすれば、`in=PanicInfo` を宣言したフォールバックの `$1` は、ランタイムが panic レコードを束縛するのに `Text` として検査されることになる：[E0220](#e0220-boundary-fallback-input) の修正が勧めるとおり `$1.message` を読むと `Text` にないメンバーとして拒否され、E0220 が捕らえるための `in=Text` のフォールバックが `PanicInfo` という名前で通ってしまうことになる。
+これらの名前でのプログラム独自の定義は、半分しか適用されえない。プリミティブは型を書く位置ではどこでもそれ自身として読まれるので、`type Int = Text` はどの使用にも届かず、`slot t : Int = "x"` はプログラムが何を宣言していてもプリミティブに対する `Text` である。型構築子の値・メンバー・引数の数は組み込みなので、その名前での定義はある問いには答え、別の問いには答えない：`type List(T) = {v: T}` のもとでは `List(Int)` が `{v: 1}` と `[1, 2]` の両方を受け入れつつ `.length` はレコードで引かれることになり、`type Option = Int` のもとでは `Option(Int)` が引数の数の誤りになってしまう。ランタイム供給の名前では、型検査が推論する対象が変わるだけで、ランタイムが供給するものは何も変わらない：仮に `type PanicInfo = Text` がその名前を取ったとすれば、`in=PanicInfo` を宣言したフォールバックの `$1` は、ランタイムが panic レコードを束縛するのに `Text` として検査されることになる — [E0220](#e0220-boundary-fallback-input) の修正が勧めるとおり `$1.message` を読むと `Text` にないメンバーとして拒否され、E0220 が捕らえるための `in=Text` のフォールバックが `PanicInfo` という名前で通ってしまうことになる。
 
-宣言は拒否され、名前は標準ライブラリの定義を保つ。したがってその名前の使用はすべて、ランタイムが供給する値に対して検査される。プログラムが自分の型を意図していたことから生じる報告 — その型のつもりで書いた値への `E0201` など — は本エラーと並んで報告される。これは [E0115](#e0115-reserved-slot-name) が `route` slot に課す規則を型名に適用したものである（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 6）。
+宣言は拒否され、名前は組み込みの意味を保つ。したがってその名前の使用はすべて、プリミティブ、ビルトインの型構築子、あるいはランタイムが供給する値に対して検査される。プログラムが自分の型を意図していたことから生じる報告は本エラーと並んで報告される：その型のつもりで書いた値への `E0201`（`slot a : List(Int) = {v: 1}`）や、引数を取らないつもりで書いた裸の `Option` への [E0210](#e0210-type-arity-mismatch) など。これは [E0115](#e0115-reserved-slot-name) が `route` slot に課す規則を型名に適用したものである（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 6）。
 
-標準ライブラリが宣言するほかのドメイン型 — `Url`・`Email`・`Uuid`・`FormData` — が名指すのはプログラムだけが値を組み立てる型であり、予約されていない：プログラムは独自の型を宣言でき（`type Email = {address: Text}`）、その場合、名前の使用はその型を意味する。同じ表にある `File` は宣言された型ではなくプリミティブであり、どちらの一覧にも含まれない。
+標準ライブラリが宣言するほかのドメイン型 — `Url`・`Email`・`Uuid`・`FormData` — が名指すのはプログラムだけが値を組み立てる型であり、予約されていない：プログラムは独自の型を宣言でき（`type Email = {address: Text}`）、その場合、名前の使用はその型を意味する。同じ表にある `File` はプリミティブであり、上の最初のグループで予約されている。
 
-拒否されるのは宣言だけである。予約された名前を書くことは、プログラムが標準ライブラリの型を使う方法そのものである — 注釈、tile の `in=`、レコードのフィールド、別名（`type Crash = PanicInfo`）、それに対する refinement（`type Short = Duration where between(0, 1000)`）。同じ綴りの型引数はその定義にスコープされる（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 5）。同じ綴りのバリアントタグ・slot・`fn`・tile は別のネームスペースにあり、名前がこれらで始まる、あるいは終わるだけの型（`PanicInfoView`・`AppRoute`）はそれ自身の名前である。
+拒否されるのは宣言だけである。予約された名前を書くことは、プログラムがその名前の型を使う方法そのものである — 注釈、tile の `in=`、レコードのフィールド、別名（`type Crash = PanicInfo`）、それに対する refinement（`type Short = Duration where between(0, 1000)`）。同じ綴りの slot・`fn`・tile は別のネームスペースにあり、これらの名前と同じ綴りのバリアントタグも同様である（`type SortBy = Name | Time | Size`）。型構築子やランタイム供給の名前と同じ綴りの型引数はその定義にスコープされる（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 5）：`type Box(List) = {v: List}` のフィールドは型引数の型を持つ。プリミティブの綴りはそうではない：型を書く位置ではどこでもプリミティブとして読まれるので、`type Box(Int) = {v: Int}` のフィールドは、`Box` に何を適用しても `Int` である。名前がこれらで始まる、あるいは終わるだけの型（`PanicInfoView`・`AppRoute`・`IntRange`・`TodoList`）はそれ自身の名前である。
 
-**修正**：プログラムの型を改名する — `type AppPanic = {…}` — とともに、その型を意図していた使用箇所もすべて改める。
+**修正**：プログラムの型を改名する — `type AppPanic = {…}`・`type Box(T) = {v: T}` — とともに、その型を意図していた使用箇所もすべて改める。組み込みの型そのものを意図した宣言は不要なので、取り除く。
 
 ### E0234 `reserved-effect-name`
 
