@@ -145,7 +145,7 @@ tile が、直接またはほかの tile を経由して自分自身へ展開し
 
 > `Tile "<name>" expands into itself (<A> → <B> → <A>)`
 
-辺はコード生成がたどるものと同じである：入れ子の tile 呼び出し、tile を表す識別子引数、`for` / `when` / `if` / `match` の各分岐、そしてその tile 自身の `error-boundary`——boundary の本体は、それを宣言した tile が描画されるあらゆる位置、すなわち呼び出し箇所、ルートのターゲット、ほかの tile のフォールバックで `catch` の中へインライン展開される（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。したがって戻ってくる boundary はほかの子と同様に循環を閉じ、自分自身へ戻ってくるフォールバックの連鎖も同じである：`tile Oops in=PanicInfo error-boundary=Oops` は `Oops → Oops` として、その `error-boundary` 節で報告される。`sub-routes` は辺ではない：サブルートは `route-outlet` を通じてルーターが選択し、インライン展開されることはない。
+辺はコード生成がたどるものと同じである：本体が描画する tile 呼び出し——本体の先頭にあるもの、または位置引数を子として描画する builtin の位置引数にあるもの（`column(B)`）——とそうした位置に書かれた tile の名前（`column(leaf)`）、`for` / `when` / `if` / `match` の各分岐、そしてその tile 自身の `error-boundary`——boundary の本体は、それを宣言した tile が描画されるあらゆる位置、すなわち呼び出し箇所、ルートのターゲット、ほかの tile のフォールバックで `catch` の中へインライン展開される（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。したがって戻ってくる boundary はほかの子と同様に循環を閉じ、自分自身へ戻ってくるフォールバックの連鎖も同じである：`tile Oops in=PanicInfo error-boundary=Oops` は `Oops → Oops` として、その `error-boundary` 節で報告される。`sub-routes` は辺ではない：サブルートは `route-outlet` を通じてルーターが選択し、インライン展開されることはない。値の位置も辺ではない：値 builtin の内容（`text(leaf)`）とユーザー tile の入力（`Card(leaf)`）は値なので、そこに書かれた名前はその名前が指す値として読まれ——slot は tile と名前を共有してよい（[E0007](#e0007-duplicate-definition)）——何もインライン展開されない。`tile leaf = column(text(leaf))` は slot `leaf` を表示し、自分自身へは展開しない。位置引数を描画しない builtin（`button`、`spinner` など）も、そこに書かれたものを何もインライン展開しないので、`tile A = column(spinner(A))` は循環ではない。
 
 **修正**：循環を断つ。繰り返しはコレクションに対する `for` に、描き分けは `when` / `match` に属し、いずれも tile が自分自身を含む必要はない。
 
@@ -832,7 +832,7 @@ reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、その subscrip
 
 ### W0212 `ui-event-tile-mismatch`（warning）
 
-reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に、`<ev>` がその reducer に届く要素が一つも無い — 例: `tile Card = box(...)` に対する `ui.focus(Card)`。codegen は静かに handler を捨てるため reducer は死にコードになる。これを check 時の警告として浮上させ、ビルドは止めずにサイレント失敗を可視化する。検査は tile 配下（子 tile を含む）を walk するため、`TodoRow = row(check(...), …)` + `ui.click(TodoRow)` のような cascade パターンでは警告は出ない — codegen は focusable な子孫に handler を配線する。「子 tile を含む」は両側で効いている: 子孫を名前で参照する本体（`tile Row = box(Leaf)`）も、インラインの `box(input(...))` とまったく同じように walk され、codegen も同じ辺を辿って handler を持ち上げる（[§1.6.2](./language.md#_1-6-2-セレクタ)）。かつては検査だけが参照を辿り codegen は辿らなかったため、この警告が報告するはずのサイレントな取りこぼしが、警告なしで起きていた。同じハンドラ prop を書いた呼び出し側（`RemoveBtn {onClick: remove}`）を経由して子孫に届く場合も codegen は同じ辺を辿り、その prop は持ち上げられた subscription と結合され、コンテナ側の reducer もその横で定義順に発火する（[§1.7.3](./language.md#_1-7-3-event-handler-props)）。
+reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に、`<ev>` がその reducer に届く要素が一つも無い — 例: `tile Card = box(...)` に対する `ui.focus(Card)`。codegen は静かに handler を捨てるため reducer は死にコードになる。これを check 時の警告として浮上させ、ビルドは止めずにサイレント失敗を可視化する。検査は tile 配下（子 tile を含む）を walk するため、`TodoRow = row(check(...), …)` + `ui.click(TodoRow)` のような cascade パターンでは警告は出ない — codegen は focusable な子孫に handler を配線する。「子 tile を含む」は両側で効いている: 子孫を名前で参照する本体（`tile Row = box(Leaf)`）も、インラインの `box(input(...))` とまったく同じように walk され、codegen も同じ辺を辿って handler を持ち上げる（[§1.6.2](./language.md#_1-6-2-セレクタ)）。かつては検査だけが参照を辿り codegen は辿らなかったため、この警告が報告するはずのサイレントな取りこぼしが、警告なしで起きていた。辺は [E0005](#e0005-tile-cycle) が挙げるものと同じなので、位置引数を描画しない builtin の下に書かれた tile（`tile Row = row(spinner(Btn))`）は walk されない: codegen はそれを捨てるので、`Btn` は `Row` の木に無い。同じハンドラ prop を書いた呼び出し側（`RemoveBtn {onClick: remove}`）を経由して子孫に届く場合も codegen は同じ辺を辿り、その prop は持ち上げられた subscription と結合され、コンテナ側の reducer もその横で定義順に発火する（[§1.7.3](./language.md#_1-7-3-event-handler-props)）。
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
@@ -1118,14 +1118,14 @@ reducer editTodo on=ui.input(TodoText) do= todos[$el.todoId].text := $event.valu
 
 > `error(field=…) cannot show the failure of <what>: <why>. field= names a slot, or a path into one[ — write the slot's name without quotes: error(field=<slot>)] (see docs/spec/forms.md)`
 > `error() names no field, so it has no failure to show: field= names a slot, or a path into one (see docs/spec/forms.md)`
-> `error() {field: …} is not read: field is a named argument — write error(field=…) (see docs/spec/forms.md)`
+> `error() {field: …} is not read in a tile-test's expect, which compares named arguments only — write error(field=…) (see docs/spec/forms.md)`
 > `error(field=…) cannot step through ".<member>": it is a member of "<T>", not a field. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)`
 > `error(field=…) cannot step through ".<name>": "<T>" has no fields. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)`
 > `error(field=…) cannot step through ".<method>()": a call is not a step of a path. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)` — 呼び出しに引数があるときは `".<method>(…)"`
 > `error(field=…) cannot step through an index that is not a literal: a path names one element or entry by a literal key, such as [0] or ["k"] (see docs/spec/forms.md)`
 > `error(field=…) cannot step through an index into "<T>": a path's index names a List element or a Map entry (see docs/spec/forms.md)`
 
-この tile が描画するのは、ある場所の失敗である：field の根が指す slot の、field のステップが辿るパスかそれより下の失敗。1 つ目の形は、根が slot でないもの — リテラル、ローカルな名前（`for` の変数、tile の `$1`）、型が失敗しうる refinement を持たない `route` slot、値を計算する式、あるいは名前付き引数が tile として持つ `for` や `when`。2 つ目は `field=` をまったく持たない `error()`、3 つ目は tile が読まない `{…}` ブロックに書かれた `field` である。残りは、パスのステップでないステップである：値を導出するメンバー（`.length`、あるいは `Map` の `.get`）、フィールドを持たない値（`Tuple`・union）へのステップ、呼び出し、キーがリテラルでないインデックス、`List`・`Map`・`Set` のいずれでもない値へのインデックス。いずれも失敗がありうる場所を指さないので、slot が何を保持していても tile はメッセージを決して描画できない。slot の名前を綴ったテキストリテラルには修正案が付く。意図したのはおそらくその slot だからである。ただし、その場所で同じ名前のローカルが slot を隠しているときは付かない。報告するのは、場所を指さない最初のステップだけである。
+この tile が描画するのは、ある場所の失敗である：field の根が指す slot の、field のステップが辿るパスかそれより下の失敗。1 つ目の形は、根が slot でないもの — リテラル、ローカルな名前（`for` の変数、tile の `$1`）、型が失敗しうる refinement を持たない `route` slot、値を計算する式、あるいは名前付き引数が tile として持つ `for` や `when`。2 つ目は `field=` をまったく持たない `error()` である。`{…}` ブロックに書かれた `field` は同じ prop であり、`field=` と同じように読まれ、判定される。ただし tile-test の `expect` では違う：expected ツリーは名前付き引数だけを比較するので（[テスト §8.4](./testing.md#_8-4-tile-snapshot-tests)）、そのブロックの `field` は読まれず、3 つ目の形になる。残りは、パスのステップでないステップである：値を導出するメンバー（`.length`、あるいは `Map` の `.get`）、フィールドを持たない値（`Tuple`・union）へのステップ、呼び出し、キーがリテラルでないインデックス、`List`・`Map`・`Set` のいずれでもない値へのインデックス。いずれも失敗がありうる場所を指さないので、slot が何を保持していても tile はメッセージを決して描画できない。slot の名前を綴ったテキストリテラルには修正案が付く。意図したのはおそらくその slot だからである。ただし、その場所で同じ名前のローカルが slot を隠しているときは付かない。報告するのは、場所を指さない最初のステップだけである。
 
 計算されたインデックス — `error(field=rows[i].email)` — は、キーがリテラルでないインデックスとして拒否される：パスは要素をリテラルのキーで指す。これは規則ではなく既知の制限である（[#828](https://github.com/kumikijs/Kumiki/issues/828)）。field が持ちうるほかのコードは E0230 として重ねて報告しない：何にも解決しない名前は [E0103](#e0103-undef-ref-undef-slot)、呼び出さずに名指した `fn` は [E0127](#e0127-fn-as-value)、レコードにないフィールドは [E0108](#e0108-undef-member)、取る引数なしで名指したメンバーは [E0213](#e0213-call-arity-mismatch)、`Int` でない `List` のインデックスや型の違う `Map` のキーは [E0201](#e0201-type-mismatch)、`Set` へのインデックスは [E0232](#e0232-index-into-set)、どの `fn` も定義しない名前の呼び出し（値として書かれた tile、`error(field=text("form"))` など）は [E0116](#e0116-undef-call)、型が何も指さない slot へのステップは [E0117](#e0117-undef-type) である。
 
@@ -1227,7 +1227,7 @@ body の kind がイベントを発火するのに、そのレンダラがハン
 
 ### W0216 `selection-beside-bind` (warning)
 
-bind していないコントロールが選択状態を読む引数 — `check` / `switch` / `slider` の `value=`、`radio` の `selected=` — が `bind=` の隣に書かれている。`slider` では props ブロックの `value` も数える。
+bind していないコントロールが選択状態を読む prop — `check` / `switch` / `slider` の `value`、`radio` の `selected` — が `bind` の隣に書かれている。これらのどのコントロールでも、`bind` についてもその prop についても、名前付き引数と props ブロックの項目のどちらの書き方も数える。1 つの呼び出しがその prop を両方の書き方で書くと、それぞれに警告する。
 
 > `"<arg>" on <tile>() is not read beside bind= — the bound value decides whether it is <ticked|chosen>. Remove it (see docs/spec/forms.md)`
 >
