@@ -2,7 +2,7 @@ import { _stdlib } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
 const run = (expected: unknown, actual: unknown) =>
-  _stdlib.runTileTest({ name: "t", expected, actual });
+  _stdlib.runTileTest({ name: "t", expected, actual, panic: null });
 
 describe("a tile-test compares the named arguments in props", () => {
   it("fails a disabled expectation against an enabled button", () => {

@@ -128,7 +128,9 @@ function parseLocation(routes: AppShape["routes"], loc: LocationLike): ParsedRou
             };
         }
         const bare = parentBare(r.pattern);
-        if (bare !== null) {
+        // `matchPattern` matches nothing against `/404`, and neither does this default: under a
+        // `/404/*` parent it would be the one way a sub-route at `/404` renders.
+        if (bare !== null && bare !== "/404") {
           for (const sr of r.subRoutes) {
             if ("redirectTo" in sr) continue;
             if (sr.pattern === bare) {
