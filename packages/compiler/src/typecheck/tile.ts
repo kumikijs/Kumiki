@@ -10,7 +10,6 @@ import {
 } from "../ast.ts";
 import {
   BUILTIN_TILES,
-  CHILD_RENDERING_BUILTINS,
   contentArg,
   contentReading,
   positionalIsTile,
@@ -319,14 +318,12 @@ function notATile(
     place.kind === "child"
       ? `${place.of} renders a positional argument only when it is a tile, so this one renders nothing`
       : `${placeName(place)} has to be a tile`;
-  // A `let` is a value only as a child: where a whole tile-expr stands, the parser refuses one.
-  // A call renders under a builtin that renders its positional arguments, and nothing elsewhere.
+  // A `let` is a value only as a child: where a whole tile-expr stands, the parser refuses one. A
+  // builtin's name is a child only of a builtin that renders one, so its call renders there.
   const message =
     found.kind === "uncalled"
-      ? `\`${found.name}\` is a builtin tile named without its call: ${rule}.` +
-        (place.kind === "child" && CHILD_RENDERING_BUILTINS.has(place.of)
-          ? ` Call it — \`${found.name}()\``
-          : "")
+      ? `\`${found.name}\` is a builtin tile named without its call: ${rule}. ` +
+        `Call it — \`${found.name}()\``
       : `A value is not a tile: ${rule}. Show the value with a tile — \`text(…)\`` +
         (place.kind === "child"
           ? " — or, for a `let`, write the value where it is used or compute it in a `fn`"

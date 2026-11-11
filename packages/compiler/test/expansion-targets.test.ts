@@ -78,23 +78,23 @@ tile Row = row(text(button))`;
     expect(codes(`${PRELUDE}\ntile App = column(Row {onClick: tap})`)).toEqual(["W0213"]);
   });
 
-  it("W0212 does not count a tile under a builtin that drops it as rendered", () => {
-    // `spinner` renders no positional argument, so `Btn` is never in `Row`'s DOM.
+  it("W0212 does not count a tile under a builtin that drops it as rendered, beside its E0129", () => {
+    // `spinner` renders no positional argument (E0129), so `Btn` is never in `Row`'s DOM.
     const src = `slot n : Int = 0
 tile Btn = button(text="go")
 tile Row = row(spinner(Btn))
 reducer R on=ui.click(Row) do= n := n + 1
 tile App = column(Row, Btn)`;
-    expect(codes(src)).toEqual(["W0212"]);
+    expect(codes(src)).toEqual(["E0129", "W0212"]);
   });
 
-  it("W0213 does not count a tile under a builtin that drops it as rendered", () => {
+  it("W0213 does not count a tile under a builtin that drops it as rendered, beside its E0129", () => {
     const src = `slot n : Int = 0
 reducer tap on=ui.click(_) do= n := n + 1
 tile Btn = button(text="go")
 tile Row = row(spinner(Btn))
 tile App = column(Row {onClick: tap}, Btn)`;
-    expect(codes(src)).toEqual(["W0213"]);
+    expect(codes(src)).toEqual(["E0129", "W0213"]);
   });
 
   it("both still see a builtin the tile does render", () => {
