@@ -66,7 +66,7 @@ const DECLARABLE: [string, string][] = [
 ];
 
 describe("the reserved names", () => {
-  it("are the primitives, the built-in constructors and seven standard library entries", () => {
+  it("are the primitives, the built-in constructors and the runtime-supplied standard library entries", () => {
     const named = (rows: [string, string][]) => rows.map(([n, m]) => `${n}: ${m}`).sort();
     expect(named(RESERVED)).toEqual(named(SPELLED_OUT));
     const stdlib = STDLIB_TYPES.map((t) => t.name);
