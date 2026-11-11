@@ -145,7 +145,7 @@ tile が、直接またはほかの tile を経由して自分自身へ展開し
 
 > `Tile "<name>" expands into itself (<A> → <B> → <A>)`
 
-辺はコード生成がたどるものと同じである：入れ子の tile 呼び出し、tile を表す識別子引数、`for` / `when` / `if` / `match` の各分岐、そしてその tile 自身の `error-boundary`——boundary の本体は、それを宣言した tile のあらゆる呼び出し箇所で `catch` の中へインライン展開されるため、戻ってくる boundary はほかの子と同様に循環を閉じる。`sub-routes` は辺ではない：サブルートは `route-outlet` を通じてルーターが選択し、インライン展開されることはない。
+辺はコード生成がたどるものと同じである：本体が描画する tile 呼び出し——本体の先頭にあるもの、または位置引数を子として描画する builtin の位置引数にあるもの（`column(B)`）——とそうした位置に書かれた tile の名前（`column(leaf)`）、`for` / `when` / `if` / `match` の各分岐、そしてその tile 自身の `error-boundary`——boundary の本体は、それを宣言した tile のあらゆる呼び出し箇所で `catch` の中へインライン展開されるため、戻ってくる boundary はほかの子と同様に循環を閉じる。`sub-routes` は辺ではない：サブルートは `route-outlet` を通じてルーターが選択し、インライン展開されることはない。値の位置も辺ではない：値 builtin の内容（`text(leaf)`）とユーザー tile の入力（`Card(leaf)`）は値なので、そこに書かれた名前はその名前が指す値として読まれ——slot は tile と名前を共有してよい（[E0007](#e0007-duplicate-definition)）——何もインライン展開されない。`tile leaf = column(text(leaf))` は slot `leaf` を表示し、自分自身へは展開しない。位置引数を描画しない builtin（`button`、`spinner` など）も、そこに書かれたものを何もインライン展開しないので、`tile A = column(spinner(A))` は循環ではない。
 
 **修正**：循環を断つ。繰り返しはコレクションに対する `for` に、描き分けは `when` / `match` に属し、いずれも tile が自分自身を含む必要はない。
 
@@ -843,7 +843,7 @@ reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、その subscrip
 
 ### W0212 `ui-event-tile-mismatch`（warning）
 
-reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に、`<ev>` がその reducer に届く要素が一つも無い — 例: `tile Card = box(...)` に対する `ui.focus(Card)`。codegen は静かに handler を捨てるため reducer は死にコードになる。これを check 時の警告として浮上させ、ビルドは止めずにサイレント失敗を可視化する。検査は tile 配下（子 tile を含む）を walk するため、`TodoRow = row(check(...), …)` + `ui.click(TodoRow)` のような cascade パターンでは警告は出ない — codegen は focusable な子孫に handler を配線する。「子 tile を含む」は両側で効いている: 子孫を名前で参照する本体（`tile Row = box(Leaf)`）も、インラインの `box(input(...))` とまったく同じように walk され、codegen も同じ辺を辿って handler を持ち上げる（[§1.6.2](./language.md#_1-6-2-セレクタ)）。かつては検査だけが参照を辿り codegen は辿らなかったため、この警告が報告するはずのサイレントな取りこぼしが、警告なしで起きていた。同じハンドラ prop を書いた呼び出し側（`RemoveBtn {onClick: remove}`）を経由して子孫に届く場合も codegen は同じ辺を辿り、その prop は持ち上げられた subscription と結合され、コンテナ側の reducer もその横で定義順に発火する（[§1.7.3](./language.md#_1-7-3-event-handler-props)）。
+reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に、`<ev>` がその reducer に届く要素が一つも無い — 例: `tile Card = box(...)` に対する `ui.focus(Card)`。codegen は静かに handler を捨てるため reducer は死にコードになる。これを check 時の警告として浮上させ、ビルドは止めずにサイレント失敗を可視化する。検査は tile 配下（子 tile を含む）を walk するため、`TodoRow = row(check(...), …)` + `ui.click(TodoRow)` のような cascade パターンでは警告は出ない — codegen は focusable な子孫に handler を配線する。「子 tile を含む」は両側で効いている: 子孫を名前で参照する本体（`tile Row = box(Leaf)`）も、インラインの `box(input(...))` とまったく同じように walk され、codegen も同じ辺を辿って handler を持ち上げる（[§1.6.2](./language.md#_1-6-2-セレクタ)）。かつては検査だけが参照を辿り codegen は辿らなかったため、この警告が報告するはずのサイレントな取りこぼしが、警告なしで起きていた。辺は [E0005](#e0005-tile-cycle) が挙げるものと同じなので、位置引数を描画しない builtin の下に書かれた tile（`tile Row = row(spinner(Btn))`）は walk されない: codegen はそれを捨てるので、`Btn` は `Row` の木に無い。同じハンドラ prop を書いた呼び出し側（`RemoveBtn {onClick: remove}`）を経由して子孫に届く場合も codegen は同じ辺を辿り、その prop は持ち上げられた subscription と結合され、コンテナ側の reducer もその横で定義順に発火する（[§1.7.3](./language.md#_1-7-3-event-handler-props)）。
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
