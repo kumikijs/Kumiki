@@ -873,7 +873,6 @@ The id set is the ids of the elements the subscription is wired onto, since `#id
 
 - An element the subscription is wired onto has no id.
 - Its id is a non-literal expression (a `Ref`, method call, etc.) — its runtime value is not known at check time.
-- The outermost call site up such a chain that writes a prop writes no `id`, but a prop other than an event handler or `key` — what that leaves the element dispatching is not followed.
 - A handler names the reducer (`onClick=r`, wherever it is written): the reducer it dispatches is filtered by the same `#id`, on whatever element carries the handler.
 - No element of the tile hands `<ev>` to a reducer — that is [W0212](#w0212-ui-event-tile-mismatch-warning)'s case, which it reports unless the walk finds no element at all.
 - The selector has no `#id` portion.

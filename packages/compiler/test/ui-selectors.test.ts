@@ -1157,7 +1157,6 @@ tile App = column(Computed, Missing, Known)`);
     });
 
     it("takes the id a call site writes on a user tile as its root's", () => {
-      // `Three`'s call site writes another prop, which leaves the id to the runtime.
       const src = withApp(`
 slot log : Text = ""
 tile Four  = button(text="four") {id: "four"}
@@ -1171,7 +1170,7 @@ reducer otherProp   on=ui.click(Three#zz)  do= log := log + "x"
 reducer wrapCallSite on=ui.click(Wrap#w5)  do= log := log + "x"
 reducer wrapOwnId   on=ui.click(Wrap#b5)   do= log := log + "x"
 tile App = column(Four(id="five"), Four, Three {variant: "ghost"}, Wrap)`);
-      expect(flagged(src)).toEqual(["neither", "wrapOwnId"]);
+      expect(flagged(src)).toEqual(["neither", "otherProp", "wrapOwnId"]);
       const neither = checkStrict(src).find((d) => d.message.includes("Four#six"));
       expect(neither?.message).toContain('"five" | "four"');
     });
@@ -1217,7 +1216,7 @@ tile App = column(T)`);
 
     it.each([
       ["a computed id, which leaves it unknown", "Btn(id=name)", []],
-      ["another prop, which leaves it unknown", 'Btn {variant: "ghost"}', []],
+      ["another prop, which leaves it the tile's", 'Btn {variant: "ghost"}', ["r"]],
       ["`key` alone, which leaves it the tile's", "for s in xs Btn {key: s}", ["r"]],
       ["a handler alone, which leaves it the tile's", "Btn(onClick=other)", ["r"]],
     ])("reads a call site that writes %s", (_label, call, expected) => {
