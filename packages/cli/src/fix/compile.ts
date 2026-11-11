@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import type { KumikiError, Pos } from "@kumikijs/compiler";
 import {
   BUILTIN_EFFECT_CAPS,
+  BUILTIN_TILES,
   calleeCandidates,
   check,
   collectTimerNames,
@@ -153,6 +154,17 @@ const UNDEFINED_NAME: ReadonlyMap<string, Planner> = new Map([
   ],
 ]);
 
+// A name E0105 reports names no value either, so a slot, `fn` or reducer written in its place is
+// E0128; only a tile's name repairs it, and the program's own outrank the builtins at a tie.
+const undefinedTile = nameRepair({
+  prefix: "",
+  quoted: 1,
+  pool: (store) => [...namesIn(store, "tile"), ...BUILTIN_TILES],
+  declared: (store) => namesIn(store, "tile"),
+  noSuggestion: "no-close-name-suggestion",
+  anchored: true,
+});
+
 const undefinedCallee = nameRepair({
   prefix: "e0116-",
   quoted: 1,
@@ -173,7 +185,7 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
         ? { reason: "e0103-read-after-scope-ended" }
         : anyDefinition(err, store),
   ],
-  ["E0105", anyDefinition], // undef-tile
+  ["E0105", undefinedTile], // undef-tile
   ["E0107", anyDefinition], // undef-motion
   [
     "E0211", // undef-tile-in-selector
