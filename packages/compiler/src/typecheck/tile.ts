@@ -267,23 +267,28 @@ type TilePlace =
 
 type Occupant =
   | { readonly kind: "tile" }
-  | { readonly kind: "value" }
+  | ValueName
   | { readonly kind: "uncalled"; readonly name: string }
   | { readonly kind: "unknown"; readonly name: string };
 
+// `ended` is a value whose scope is over, read after it: its E0103 says which scope it was.
+type ValueName =
+  | { readonly kind: "value" }
+  | { readonly kind: "ended"; readonly error: KumikiError };
+
 // The parser reads every name in an arm or a body as a tile call, so a call of a name no tile has
-// is resolved as a value. In a container it reads a lower-cased name as an expression, so a `Ref`
-// is the one expression that may still name a tile; a value of the same name wins over a builtin.
+// is resolved as a value. In a container it reads a bare lower-cased name as an expression, so a
+// `Ref` is the one expression that may still name a tile; there a value of the same name wins over
+// a builtin.
 function occupantOf(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): Occupant {
   if (isTileExpr(v)) {
     if (v.kind !== "TileCall" || namesTile(v.name, sym)) return { kind: "tile" };
-    return namesValue(v.name, v.pos, sym, ctx)
-      ? { kind: "value" }
-      : { kind: "unknown", name: v.name };
+    return valueNamed(v.name, v.pos, sym, ctx) ?? { kind: "unknown", name: v.name };
   }
   if (v.kind !== "Ref") return { kind: "value" };
   if (sym.tiles.has(v.name)) return { kind: "tile" };
-  if (namesValue(v.name, v.pos, sym, ctx)) return { kind: "value" };
+  const value = valueNamed(v.name, v.pos, sym, ctx);
+  if (value) return value;
   if (BUILTIN_TILES.has(v.name)) return { kind: "uncalled", name: v.name };
   return { kind: "unknown", name: v.name };
 }
@@ -293,17 +298,19 @@ function namesTile(name: string, sym: SymbolTable): boolean {
 }
 
 // Resolved as an expression resolves it, with the diagnostics discarded: E0103 and E0116 are how
-// those say a name names nothing. The probe drops the collectors a probe further out may have set,
-// so none of them hears of it.
-function namesValue(name: string, pos: Pos, sym: SymbolTable, ctx: Ctx): boolean {
-  if (name.startsWith("$")) return true;
+// those say a name names nothing, and null is that answer. The probe drops the collectors a probe
+// further out may have set, so none of them hears of it.
+function valueNamed(name: string, pos: Pos, sym: SymbolTable, ctx: Ctx): ValueName | null {
+  if (name.startsWith("$")) return { kind: "value" };
   const { routeReadsSeen, fragmentFnCallsSeen, undeclaredInputReads, ...scope } = ctx;
   const asName: KumikiError[] = [];
   checkExpr({ kind: "Ref", name, pos }, sym, asName, scope);
-  if (!asName.some((e) => e.code === "E0103")) return true;
+  const undefinedName = asName.find((e) => e.code === "E0103");
+  if (undefinedName === undefined) return { kind: "value" };
+  if (undefinedName.endedScope !== undefined) return { kind: "ended", error: undefinedName };
   const asCall: KumikiError[] = [];
   checkCallee(name, [], pos, sym, asCall, scope);
-  return !asCall.some((e) => e.code === "E0116");
+  return asCall.some((e) => e.code === "E0116") ? null : { kind: "value" };
 }
 
 function notATile(
@@ -312,11 +319,13 @@ function notATile(
   pos: Pos,
 ): KumikiError {
   if (found.kind === "unknown") return undefinedTile(found.name, pos);
+  if (found.kind === "ended") return found.error;
   const rule =
     place.kind === "child"
       ? `${place.of} renders a positional argument only when it is a tile, so this one renders nothing`
       : `${placeName(place)} has to be a tile`;
-  // A `let` is a value only as a child: where a whole tile-expr stands, the parser refuses one.
+  // A `let` is a value only as a child: where a whole tile-expr stands, the parser refuses one. A
+  // builtin's name is a child only of a builtin that renders one, so its call renders there.
   const message =
     found.kind === "uncalled"
       ? `\`${found.name}\` is a builtin tile named without its call: ${rule}. ` +
@@ -616,7 +625,7 @@ function checkTileCall(
     const found = occupantOf(t, sym, ctx);
     if (found.kind !== "tile") errors.push(notATile(found, place, t.pos));
     // A value is reported whole, and an argument or a prop on it is moved with it.
-    if (found.kind === "value") return;
+    if (found.kind === "value" || found.kind === "ended") return;
   }
   const userTile = sym.tiles.get(t.name);
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
