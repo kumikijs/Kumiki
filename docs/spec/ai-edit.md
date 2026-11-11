@@ -114,7 +114,7 @@ Per verb, `1` means:
 | `test` | a test fails, **or** a filter was given and matched no test. No filter and no tests is `0`; `--watch` runs until interrupted and so reports nothing |
 | `fix` | the file is not in the state that was asked for when the process ends: errors remain, or — with `--auto-patch <test>` — the named test does not pass. A dry run repairs nothing, so it is `1` for any file that is not already in that state |
 | `view` / `refs` | the qualified name is not defined in the file. `view --history` requires only the file: a definition that was removed still has a history, and that is when it is asked for. It also exits `1` when the op log holds a line that is not an op, other than a torn last line (§9.2.2) |
-| `list` | the filter names no kind of definition. A real one with nothing under it prints nothing and exits `0` |
+| `list` | nothing beyond the file. A filter that names no kind of definition is a positional outside its allowed set, so it is `2`; a real one with nothing under it prints nothing and exits `0` |
 | `add` / `replace` / `remove` / `rename` / `edit` / `patch` | the write was rejected and rolled back |
 | `lock` / `unlock` | another agent holds a pattern overlapping one `lock` asks for, or the agent `unlock` names holds no lock to release ([§9.8.3](#_9-8-3-task-boundaries)) |
 | `replay` | the log is unreadable, the named episode is not in it, a replayed episode panicked or surfaced an unhandled effect error, or an episode was not replayed because its entry reducer is not in the program, or the log does not name or record it ([§10.5.3](./runtime.md#_10-5-3-replay)) |

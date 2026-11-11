@@ -630,6 +630,7 @@ describe("an argument of the wrong shape beside a .kumiki file that does not exi
     (f) => ["add", f, "slot", "x"],
     (f) => ["replace", f, "slot.count"],
     (f) => ["edit", f, "slot.count", "{"],
+    (f) => ["list", f, "bogus"],
   ];
 
   it.each(CASES.map((argv) => [argv("app.kumiki", ".").join(" "), argv] as const))(
