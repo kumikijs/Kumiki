@@ -1,19 +1,7 @@
 import type { Pos, Refinement, Token, TypeExpr } from "../ast.ts";
 import { REFINEMENT_PREDS } from "../refinements.ts";
+import { isPrimTypeName } from "../stdlib-types.ts";
 import { ParseError, TokenStream } from "./token-stream.ts";
-
-/** The primitive type names, which a type position reads as `TypePrim`. */
-export const PRIM_TYPES: ReadonlySet<string> = new Set([
-  "Int",
-  "Text",
-  "Bool",
-  "Unit",
-  "Float",
-  "Time",
-  "Bytes",
-  "File",
-  "EffectId",
-]);
 
 /** A token as the source writes it; a text literal is quoted. */
 function tokenText(t: Token): string {
@@ -135,9 +123,7 @@ export class TypeParser extends TokenStream {
       this.eat("op", ")");
       return { kind: "TypeApp", name, args, pos: t.pos };
     }
-    if (PRIM_TYPES.has(name)) {
-      return { kind: "TypePrim", name: name as "Int", pos: t.pos };
-    }
+    if (isPrimTypeName(name)) return { kind: "TypePrim", name, pos: t.pos };
     return { kind: "TypeRef", name, pos: t.pos };
   }
 
