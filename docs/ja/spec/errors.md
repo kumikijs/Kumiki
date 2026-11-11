@@ -422,7 +422,7 @@ builtin tile の名前も候補に含まれない。tile は関数ではなく�
 
 > `Reference to undefined variant "<name>"`
 
-タグとは、プログラムが書くすべての union のタグ——`type` の本体か、slot の型・レコードのフィールド・`fn` の引数や戻り値・`effect` の `in=` / `out=`・property test の `for-all` にインラインで書かれた union のもので、ファイル内のどこに書かれていてもよい——と、標準ライブラリのタグである：`Some` / `None`、`Ok` / `Err`、`FormValue` の `TextV` / `NumberV` / `BoolV` / `FileV`、リクエストボディの `Json` / `Form` / `Multipart` / `Text` / `Bytes` / `Empty`（[HTTP / Storage §6.1.3](./http.md#_6-1-3-httpbody-型)）。コード生成はどんな綴りからも variant を作るため、どの union も宣言していないタグは `{_tag: "<name>"}` へ落ちる：どの `match` arm にも一致せず、他のどの値とも等しくならず、どのフィールドも `undefined` である値である。
+タグとは、プログラムが書くすべての union のタグ——`type` の本体か、slot の型・レコードのフィールド・`fn` の引数や戻り値・`effect` の `in=` / `out=`・property test の `for-all` にインラインで書かれた union のもので、ファイル内のどこに書かれていてもよい——と、標準ライブラリのタグである：`Some` / `None`、`Ok` / `Err`、`FormValue` の `TextV` / `NumberV` / `BoolV` / `FileV`、`HttpBody` の `Json` / `Form` / `Multipart` / `Text` / `Bytes` / `Empty`（[HTTP / Storage §6.1.3](./http.md#_6-1-3-httpbody-型)）。コード生成はどんな綴りからも variant を作るため、どの union も宣言していないタグは `{_tag: "<name>"}` へ落ちる：どの `match` arm にも一致せず、他のどの値とも等しくならず、どのフィールドも `undefined` である値である。
 
 宣言された型が variant を判定する位置では、その型を名指してその位置で報告される：`slot s : Status = Zork` は [E0216](#e0216-unknown-variant)、union でない型に与えたタグは [E0201](#e0201-type-mismatch)——`emit` の引数なら [E0202](#e0202-emit-arg-type-mismatch)——である。`undef-variant` は宣言された型が判定しない位置——`let`、`effect` の `map-request`（`Decoder` に照らす `decode` を除く）、`==` のオペランド——のためのものであり、1 つの誤りは 1 つの診断になる。
 
@@ -1255,7 +1255,7 @@ bind していないコントロールが選択状態を読む prop — `check` 
 |---|---|---|
 | プリミティブ | [言語 §1.3.1](./language.md#_1-3-1-構文) の `primitive` の名前（`Int`・`Text`・`File` など） | パーサ。型を書く位置ではどこでもプリミティブとして読む |
 | ビルトインの型構築子 | [標準ライブラリ §2.1.2](./stdlib.md#_2-1-2-汎化型) の汎化型（`Option`・`List`・`Map` など） | 型検査器。定義なしにその値・メンバー・引数の数を知っている |
-| ランタイム供給 | 下の 8 つのドメイン型（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)） | ランタイムまたは標準ライブラリ。その値を組み立てる、あるいは読む |
+| ランタイム供給 | 下の 10 のドメイン型（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)） | ランタイムまたは標準ライブラリ。その値を組み立てる、あるいは読む |
 
 > `Type "<name>" collides with the primitive type <name>; uses of it never see this type`
 >
@@ -1275,6 +1275,8 @@ bind していないコントロールが選択状態を読む prop — `check` 
 | `Duration` | 標準ライブラリ：`Duration.ms(…)` などが組み立てる値、および toast effect の `duration` |
 | `FormValue` | ランタイム：`Multipart` の body は `FileV` のエントリをファイルとして送る |
 | `Decoder` | 標準ライブラリ：`Decoder.Json(T)`・`Decoder.Text`・`Decoder.Bytes`・`Decoder.None` が組み立てるもの。ランタイムはリクエストの応答をこれによって decode する |
+| `HttpBody` | ランタイム：`http.*` effect は `body` をそのタグで送る |
+| `IndexRange` | ランタイム：`indexed-query` はその `range` を IndexedDB のキー範囲として読む |
 
 これらの名前でのプログラム独自の定義は、半分しか適用されえない。プリミティブは型を書く位置ではどこでもそれ自身として読まれるので、`type Int = Text` はどの使用にも届かず、`slot t : Int = "x"` はプログラムが何を宣言していてもプリミティブに対する `Text` である。型構築子の値・メンバー・引数の数は組み込みなので、その名前での定義はある問いには答え、別の問いには答えない：`type List(T) = {v: T}` のもとでは `List(Int)` が `{v: 1}` と `[1, 2]` の両方を受け入れつつ `.length` はレコードで引かれることになり、`type Option = Int` のもとでは `Option(Int)` が引数の数の誤りになってしまう。ランタイム供給の名前では、型検査が推論する対象が変わるだけで、ランタイムが供給するものは何も変わらない：仮に `type PanicInfo = Text` がその名前を取ったとすれば、`in=PanicInfo` を宣言したフォールバックの `$1` は、ランタイムが panic レコードを束縛するのに `Text` として検査されることになる — [E0220](#e0220-boundary-fallback-input) の修正が勧めるとおり `$1.message` を読むと `Text` にないメンバーとして拒否され、E0220 が捕らえるための `in=Text` のフォールバックが `PanicInfo` という名前で通ってしまうことになる。
 

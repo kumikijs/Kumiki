@@ -459,7 +459,7 @@ Code generation lowers an unrecognised callee to a call on a binding of the same
 
 > `Reference to undefined variant "<name>"`
 
-The tags are those of every union the program writes — a `type` body, or a union written inline in a slot's type, a record field, a `fn` parameter or result, an `effect`'s `in=` / `out=`, or a property test's `for-all` — wherever in the file it is written, and the standard library's: `Some` / `None`, `Ok` / `Err`, `FormValue`'s `TextV` / `NumberV` / `BoolV` / `FileV`, and the request bodies `Json` / `Form` / `Multipart` / `Text` / `Bytes` / `Empty` ([HTTP / Storage §6.1.3](./http.md#_6-1-3-the-httpbody-type)). Code generation builds a variant from any spelling, so a tag no union declares lowers to `{_tag: "<name>"}`: a value no `match` arm matches, unequal to every other value, with `undefined` in every field.
+The tags are those of every union the program writes — a `type` body, or a union written inline in a slot's type, a record field, a `fn` parameter or result, an `effect`'s `in=` / `out=`, or a property test's `for-all` — wherever in the file it is written, and the standard library's: `Some` / `None`, `Ok` / `Err`, `FormValue`'s `TextV` / `NumberV` / `BoolV` / `FileV`, and `HttpBody`'s `Json` / `Form` / `Multipart` / `Text` / `Bytes` / `Empty` ([HTTP / Storage §6.1.3](./http.md#_6-1-3-the-httpbody-type)). Code generation builds a variant from any spelling, so a tag no union declares lowers to `{_tag: "<name>"}`: a value no `match` arm matches, unequal to every other value, with `undefined` in every field.
 
 A position whose declared type judges the variant reports it there, naming that type: `slot s : Status = Zork` is [E0216](#e0216-unknown-variant), and a tag given to a type that is not a union is [E0201](#e0201-type-mismatch) — [E0202](#e0202-emit-arg-type-mismatch) as an `emit` argument. `undef-variant` is for the positions no declared type judges — a `let`, an `effect`'s `map-request` outside its `decode` (which is held to `Decoder`), an operand of `==` — so one mistake is one diagnostic.
 
@@ -1292,7 +1292,7 @@ A `type` is declared under a name that already means a type in every program. Re
 |---|---|---|
 | primitive | the `primitive` names of [Language §1.3.1](./language.md#_1-3-1-syntax) (`Int`, `Text`, `File`, …) | the parser, which reads one as the primitive wherever a type is written |
 | built-in type constructor | the generic types of [Standard Library §2.1.2](./stdlib.md#_2-1-2-generic-types) (`Option`, `List`, `Map`, …) | the checker, which knows their values, members and arity without a definition |
-| runtime-supplied | the eight domain types below ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)) | the runtime or the standard library, which builds or reads their values |
+| runtime-supplied | the ten domain types below ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)) | the runtime or the standard library, which builds or reads their values |
 
 > `Type "<name>" collides with the primitive type <name>; uses of it never see this type`
 >
@@ -1312,6 +1312,8 @@ A primitive or a constructor added to the language is reserved with it: there is
 | `Duration` | the standard library: what `Duration.ms(…)` and its siblings build, and the toast effect's `duration` |
 | `FormValue` | the runtime: a `Multipart` body sends a `FileV` entry as a file |
 | `Decoder` | the standard library: what `Decoder.Json(T)`, `Decoder.Text`, `Decoder.Bytes` and `Decoder.None` build; the runtime decodes a request's answer by it |
+| `HttpBody` | the runtime: an `http.*` effect sends a `body` by its tag |
+| `IndexRange` | the runtime: an `indexed-query` reads its `range` as IndexedDB's key range |
 
 A program's own definition under one of these names could only be half-applied. A primitive is read as itself wherever a type is written, so `type Int = Text` would reach no use at all, and `slot t : Int = "x"` is a `Text` against the primitive whatever the program declared. A constructor's values, members and arity are built in, so a definition under its name would answer some questions and not others: `type List(T) = {v: T}` would let `List(Int)` take both `{v: 1}` and `[1, 2]` while `.length` would be looked up on the record, and `type Option = Int` would make `Option(Int)` an arity error. A runtime-supplied name would change what the checker reasons about and nothing the runtime supplies: were `type PanicInfo = Text` to take the name, a fallback declaring `in=PanicInfo` would have its `$1` checked as a `Text` while the runtime binds the panic record — reading `$1.message`, as the fix for [E0220](#e0220-boundary-fallback-input) says to, would be refused as a member `Text` does not have, and the `in=Text` fallback E0220 exists to catch would pass under the name `PanicInfo`.
 

@@ -59,11 +59,13 @@ let id = emit fetchQuote()
 | `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — [ルーティング §3.2](./routing.md#_3-2-current-route-state) 参照 |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
+| `HttpBody(T)` | `Json(T) \| Form(Map(Text, Text)) \| Multipart(Map(Text, FormValue)) \| Text(Text) \| Bytes(Bytes) \| Empty` — リクエスト本文。`Json` はプログラムの `T` を運ぶ。ランタイムは各 variant をその名前が示すものとして送る（[HTTP §6.1.3](./http.md#_6-1-3-httpbody-型)） |
+| `IndexRange(K)` | `{lower: Option(K), upper: Option(K), lowerOpen: Bool, upperOpen: Bool}` — `indexed-query` が読むキーの範囲。キーはプログラムの `K` の値である。ランタイムはこれを IndexedDB の `IDBKeyRange` として読む（[HTTP §6.7.4](./http.md#_6-7-4-sessionstorage-indexeddb)） |
 | `File` | `{name: Text, size: Int, type: Text}` — ファイル入力が、選ばれたファイル 1 つについて報告する値。名前、バイト単位のサイズ、MIME タイプ（ブラウザが判別できなければ `""`）を持つ。ファイルのバイト列はフィールドではない: ブラウザはそれを非同期にしか読み出せないため、`change` イベントが届けるレコードには入らない。サーバーへは `Multipart` ボディの `FileV` パートとして送る（[HTTP §6.1.3](./http.md#_6-1-3-httpbody-型)、[フォーム §5.10](./forms.md#_5-10-file-upload)）。このレコードは、選ばれたファイルへのランタイムのハンドル `_file` も持つ。これには表示するフィールドがないため、`File` の `show`（[§2.2.7](#_2-2-7-int-float)）は `{name: "a.txt", size: 3, type: "text/plain", _file: {}}` である |
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — `app.error` と `error-boundary` tile の `in=` に渡る値（[ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)） |
 | `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — `route.error(<pattern>)` に渡る値：`PanicInfo` のフィールドと、その reducer が指す `pattern` |
 
-プログラムはこれらの名前を宣言せずに使う。`PanicInfo`・`RouteErrorInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue`・`Decoder` は**予約**されている：その値をランタイムまたは標準ライブラリが組み立てる、あるいは読むので、これらの名前で宣言した `type` は [E0231](./errors.md#e0231-reserved-type-name) であり、名前は上の定義を保つ。`Url`・`Email`・`Uuid`・`FormData` が名指すのは、プログラムだけが値を組み立てる型である。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はその型を意味する（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 6）。`File` はプリミティブの名前であり — 型の位置ではそれ自身として読まれる — プリミティブとともに予約されている。
+プログラムはこれらの名前を宣言せずに使う。`PanicInfo`・`RouteErrorInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue`・`Decoder`・`HttpBody`・`IndexRange` は**予約**されている：その値をランタイムまたは標準ライブラリが組み立てる、あるいは読むので、これらの名前で宣言した `type` は [E0231](./errors.md#e0231-reserved-type-name) であり、名前は上の定義を保つ。`Url`・`Email`・`Uuid`・`FormData` が名指すのは、プログラムだけが値を組み立てる型である。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はその型を意味する（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 6）。`File` はプリミティブの名前であり — 型の位置ではそれ自身として読まれる — プリミティブとともに予約されている。
 
 ---
 

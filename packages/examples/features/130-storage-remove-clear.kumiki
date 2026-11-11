@@ -1,7 +1,7 @@
 # Feature: `storage.write` answers all three of its declarations. A write and a
 # remove are told apart by the request; a clear by the declaration.
 #
-#   request {key: Text, value: JsonValue}     write the value under the key
+#   request {key: Text, value: T}             write the value under the key
 #   request {key: Text}                       remove the key
 #   in=Unit, no map-request                   clear the origin's localStorage
 #

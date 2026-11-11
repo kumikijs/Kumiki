@@ -2,6 +2,7 @@ import { generateDts, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { BUILTIN_TYPE_CONSTRUCTORS, STDLIB_TYPES } from "../src/stdlib-types.ts";
 import { codesOf } from "./helpers/diagnostics.ts";
+import { appliedName } from "./helpers/programs.ts";
 
 const TAIL = `tile App = column(text("x"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
@@ -10,7 +11,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 describe("every stdlib type resolves in the checker", () => {
   for (const t of STDLIB_TYPES) {
     it(`resolves "${t.name}"`, () => {
-      expect(codesOf(`slot v : ${t.name} = 1\n${TAIL}`)).not.toContain("E0117");
+      expect(codesOf(`slot v : ${appliedName(t)} = 1\n${TAIL}`)).not.toContain("E0117");
     });
   }
 
@@ -27,7 +28,8 @@ describe("every stdlib type generates a real TypeScript type", () => {
 
   for (const t of STDLIB_TYPES) {
     it(`maps "${t.name}" with no unknown anywhere in it`, () => {
-      const line = providerLine(`effect e cap=custom.thing in=${t.name} out=Result(Unit, Text)
+      const line =
+        providerLine(`effect e cap=custom.thing in=${appliedName(t)} out=Result(Unit, Text)
 ${TAIL}`);
       expect(line, `no provider line for ${t.name}`).toBeDefined();
       expect(line, `${t.name} generated an unknown`).not.toContain("unknown");

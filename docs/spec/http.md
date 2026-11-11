@@ -33,13 +33,15 @@ effect http-post cap=http.post
                    url: Url,
                    headers: Map(Text, Text),
                    query: Map(Text, Text),
-                   body: HttpBody,
+                   body: HttpBody(T),
                    decode: Decoder
                  }
                  out=Result(Decoded, HttpError)
 
 # put / patch / delete have the same shape
 ```
+
+`Decoded` and `T` stand for types the program chooses, here and in the storage declarations of [6.7](#_6-7-storage-effects): `Decoded` is the type the answer is decoded into (`User`, for `decode: Decoder.Json(User)`), and `T` the type of what the request carries — what a body's `Json` holds ([6.1.3](#_6-1-3-the-httpbody-type)), or the value a write stores. A program's own declaration writes its types in their place: `body: HttpBody(Note)`, `out=Result(User, HttpError)`.
 
 `query` is sent as the URL's query string, by every `http.*` method alike (get, post, put, patch and delete): each entry is URL-encoded (`URLSearchParams`, so a space becomes `+` and an `&` inside a value is escaped) and appended to `url`, after any query string `url` already carries and before a fragment. An empty `query` leaves `url` as written. The order of the entries in the query string is not guaranteed; do not rely on it.
 
@@ -48,13 +50,15 @@ effect http-post cap=http.post
 ### 6.1.3 The HttpBody Type
 
 ```kumiki fragment
-type HttpBody = Json(JsonValue)
-              | Form(Map(Text, Text))
-              | Multipart(Map(Text, FormValue))
-              | Text(Text)
-              | Bytes(Bytes)
-              | Empty
+type HttpBody(T) = Json(T)
+                 | Form(Map(Text, Text))
+                 | Multipart(Map(Text, FormValue))
+                 | Text(Text)
+                 | Bytes(Bytes)
+                 | Empty
 ```
+
+`HttpBody(T)` is a standard-library type ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)), generic in what `Json` carries. The runtime reads a body by its tag, so the name is reserved ([E0231](./errors.md#e0231-reserved-type-name)). A field declared `HttpBody(T)` takes these six variants and nothing else, and `Json`'s payload is held to `T`: under `body: HttpBody(Note)`, `Json(note)` is a body, and the bare `note` is [E0202](./errors.md#e0202-emit-arg-type-mismatch) in an `emit`'s argument ([E0201](./errors.md#e0201-type-mismatch) elsewhere), `Expected HttpBody(Note) but got Note`. `HttpBody` written without its argument is [E0210](./errors.md#e0210-type-arity-mismatch).
 
 Each variant is sent as what it names:
 
@@ -67,7 +71,7 @@ Each variant is sent as what it names:
 | `Bytes(b)` | the bytes of `b` |
 | `Empty` | no body |
 
-A `body` that is not an `HttpBody` variant (a record, a list, a bare `Text`) is sent as JSON, as `Json` would send it: `body: $1` with a `Text` input sends `"x"`, not `x`. To send raw text, write `Text($1)`.
+A `body` that is not an `HttpBody` variant (a record, a list, a bare `Text`) is sent as JSON, as `Json` would send it: `body: $1` with a `Text` input sends `"x"`, not `x`. To send raw text, write `Text($1)`. Only a body no `HttpBody(T)` declares can be one: a `map-request`'s `body`, whose type is not checked ([6.6.1](#_6-6-1-request-fields)), or a `body` field the effect declares with another type, such as `body: Note`.
 
 `GET` and `HEAD` send no body, whatever `body` holds. `http.get`'s request has no `body` field, so a `map-request` that writes one is refused ([6.6.1](#_6-6-1-request-fields)).
 
@@ -471,9 +475,17 @@ effect indexed-write cap=indexed.write
                      out=Result(Unit, Text)
 
 effect indexed-query cap=indexed.read
-                     in={store: Text, index: Option(Text), range: Option(IndexRange)}
-                     out=Result(List(JsonValue), Text)
+                     in={store: Text, index: Option(Text), range: Option(IndexRange(K))}
+                     out=Result(List(T), Text)
 ```
+
+`indexed-query` answers the records it reads as a `List(T)`, `T` being the record type the program stores, as for `indexed-write`'s `value: T`. A query has no `decode`, so the records arrive as they were stored and nothing checks them against `T`. `K` is the type of the key the query ranges over: the field `index` names when it is `Some`, and the store's `key` when it is `None`. The `range` is an `IndexRange(K)`, a standard-library record ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)) that the runtime reads as IndexedDB's `IDBKeyRange`, whose field names it keeps; the name is reserved ([E0231](./errors.md#e0231-reserved-type-name)):
+
+```kumiki fragment
+type IndexRange(K) = {lower: Option(K), upper: Option(K), lowerOpen: Bool, upperOpen: Bool}
+```
+
+The query reads the records whose key lies between `lower` and `upper`. A bound that is `None` leaves that side unbounded, and an open flag leaves its own bound out: `{lower: Some(10), upper: Some(20), lowerOpen: false, upperOpen: true}` reads the keys from 10 up to, but not including, 20. A `range` that is `None`, or that has no bound, reads every record.
 
 The IndexedDB `store` is declared via `app.indexed-db`:
 
