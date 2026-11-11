@@ -1,25 +1,32 @@
 # Feature: an `error-boundary` fallback's own `error-boundary` holds where the
 # fallback renders (spec/lifecycle.md).
 #
-# `Chart` reads `data.get`, which panics while `data` is `None`, so its
-# boundary shows `ChartFallback` in its place. `ChartFallback` shows the cached
-# value, `cached.get`, which panics too while nothing is cached — so the
-# fallback's own boundary shows `LastResort` in the fallback's place, with
-# `location` naming the fallback. "cache" fills `cached`: the fallback renders
-# and `LastResort` leaves. "load" fills `data`: `Chart` renders its own body.
+# `Chart` reads `data["points"]`, which panics while `data` has no such key, so
+# its boundary shows `ChartFallback` in its place, with that panic as `$1`.
+# `ChartFallback` shows the cached value, `cached.get`, which panics too while
+# nothing is cached — so the fallback's own boundary shows `LastResort` in the
+# fallback's place, with the fallback's panic as `$1` and `location` naming the
+# fallback. "cache" fills `cached`: the fallback renders and `LastResort`
+# leaves. "forget" empties it again: the fallback leaves and `LastResort`
+# comes back. "load" fills `data`: `Chart` renders its own body.
 #
 # A chain that comes back to a tile already on it (`ChartFallback` naming
 # itself as its own boundary) has no end, and is E0005 at check time.
 
-slot data            : Option(Int) = None
-slot cached          : Option(Int) = None
-slot lastResortShown : Int         = 0
-slot lastResortGone  : Int         = 0
+slot data            : Map(Text, Int) = {}
+slot cached          : Option(Int)    = None
+slot lastResortShown : Int            = 0
+slot lastResortGone  : Int            = 0
+slot fallbackShown   : Int            = 0
+slot fallbackGone    : Int            = 0
 
 reducer sawLastResort on=tile.mount(LastResort) do= lastResortShown := lastResortShown + 1
 reducer sawLastResortGone on=tile.unmount(LastResort) do= lastResortGone := lastResortGone + 1
+reducer sawFallback on=tile.mount(ChartFallback) do= fallbackShown := fallbackShown + 1
+reducer sawFallbackGone on=tile.unmount(ChartFallback) do= fallbackGone := fallbackGone + 1
 reducer doCache on=ui.click(CacheBtn) do= cached := Some(7)
-reducer doLoad on=ui.click(LoadBtn) do= data := Some(42)
+reducer doForget on=ui.click(ForgetBtn) do= cached := None
+reducer doLoad on=ui.click(LoadBtn) do= data := {"points": 42}
 
 tile LastResort
     in=PanicInfo
@@ -32,15 +39,16 @@ tile ChartFallback
 
 tile Chart
     error-boundary = ChartFallback
-    = column(text("chart: " + data.get.show))
+    = column(text("chart: " + data["points"].show))
 
-tile CacheBtn = button(text="cache", onClick=doCache)
-tile LoadBtn  = button(text="load", onClick=doLoad)
+tile CacheBtn  = button(text="cache", onClick=doCache)
+tile ForgetBtn = button(text="forget", onClick=doForget)
+tile LoadBtn   = button(text="load", onClick=doLoad)
 
 tile App = column(
     heading("Fallback with its own boundary"),
     Chart,
-    row(CacheBtn, LoadBtn) {gap: "sm"},
+    row(CacheBtn, ForgetBtn, LoadBtn) {gap: "sm"},
     text("last resort shown " + lastResortShown.show + ", gone " + lastResortGone.show))
   {pad: "lg", gap: "md"}
 
