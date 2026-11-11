@@ -1,0 +1,32 @@
+# Feature (stdlib.md): the standard effects keep their names.
+#
+# `log` and `toast` are the runtime's: the program emits them without declaring
+# them, and their `.ok` reducers count each one that ran. The request it makes
+# itself is its own effect under a name of its own, `fetchLog`. Declared as
+# `effect log …` it would be E0234 — the runtime registers its `log` under that
+# name at mount, so `emit log(…)` would never make the request.
+
+slot body    : Text = "none"
+slot logged  : Int  = 0
+slot toasted : Int  = 0
+
+effect fetchLog cap=http.get
+                in=Text
+                out=Result(Text, HttpError)
+                map-request={url: "/api/logs/" + $1, decode: Decoder.Text}
+
+reducer load       on=ui.click(LoadBtn)  do= emit fetchLog("today")
+                                             emit log({level: "info", message: "loading", data: {"day": "today"}})
+reducer loaded     on=fetchLog.ok($b, _) do= body := $b
+                                             emit toast({kind: "success", text: "Loaded"})
+reducer failed     on=fetchLog.err($e, _) do= body := "failed: " + $e.message
+reducer wasLogged  on=log.ok(_, _)       do= logged := logged + 1
+reducer wasToasted on=toast.ok(_, _)     do= toasted := toasted + 1
+
+tile LoadBtn = button(text="Load", onClick=load) {id: "load"}
+tile App = column(LoadBtn, text(body), text("logged " + logged.show), text("toasted " + toasted.show)) {pad: "lg", gap: "md"}
+
+app BuiltinEffectNames
+    caps   = [http.get, log.write, notification.show]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

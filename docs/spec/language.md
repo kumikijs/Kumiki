@@ -108,7 +108,7 @@ fresh  self  now  null
 - **Macros prohibited**
 
 ::: details What the 256-level limit is measured against
-A construct that contains itself — a parenthesised expression, a list, a record, an `if`, a statement body, a tile call, a tuple pattern, a type application, a theme record — may not nest further, and neither may a left-associative chain build more than that many nodes (`1 + 1 + 1 + …`, `x.trim().trim()…`, a run of `not` or `-`, the `where`s written on one type expression, the `.field` / `[index]` steps of an assignment target). The limit is on the resulting tree, not on how the parser reached it: every stage after the parse walks that tree by recursion, so a chain parsed by a loop still exhausts the stack downstream.
+A construct that contains itself — a parenthesised expression, a list, a record, an `if`, a statement body, a tile call, a tuple pattern, a type application, a theme record — may not nest further, and neither may a left-associative chain build more than that many nodes (`1 + 1 + 1 + …`, `x.trim().trim()…`, a run of `not` or `-`, the `where`s written on one type expression, the `.field` / `[index]` steps of an assignment target). The two count together. Each step of a chain is a node over everything the chain has read before it, so whatever an earlier operand holds — a parenthesised chain, an index that is an index chain of its own, a type application whose argument carries `where`s — sits one level further down for every later step: the steps of the two chains in `1 + (1 + … + 1) + 1 + …` add up rather than each counting alone. A binary operator's right operand sits a level under its operator, and a run's first `where` is a node over the type it follows, as each later one is. Parentheses build no node, so a parenthesised operand counts only for what it holds. The limit is on the resulting tree, not on how the parser reached it: every stage after the parse walks that tree by recursion, so a chain parsed by a loop still exhausts the stack downstream.
 :::
 
 ---
@@ -129,7 +129,7 @@ type-expr   ::= primitive
               | identifier
               | type-app
 
-primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time'
+primitive   ::= 'Text' | 'Int' | 'Float' | 'Bool' | 'Unit' | 'Bytes' | 'Time' | 'File' | 'EffectId'
 nominal-type ::= 'nominal' type-expr
 record-type ::= '{' field (',' field)* '}'
 field       ::= identifier ':' type-expr
@@ -141,6 +141,8 @@ refinement-type ::= type-expr 'where' pred-expr
 pred-expr   ::= identifier ('(' literal (',' literal)* ')')?
 ```
 
+A `variant` is an identifier, and a primitive's name is one: in `type SortBy = Name | Time | Size`, `Time` is a variant of `SortBy` with no payload, written as a value, a pattern and an operand of `==` the way `Name` is. Read as a type on its own, a primitive's name means the primitive, in that program too: `type Stamp = Time` is an alias of the primitive, and `Time` as a slot's type, a payload (`At(Time)`), a record field's type or a type argument (`Option(Time)`) is the primitive itself. `Time.parse(t)` is the conversion of [stdlib §2.4.3](./stdlib.md#_2-4-3-type-conversion) beside a variant named `Time`. An alternative is a variant wherever the union is written, so `Int | Text` is two variants without a payload, not "an Int or a Text"; to carry a value, give each one a payload: `I(Int) | T(Text)`.
+
 `refinement-type` is recursive, so a type may carry **more than one** `where`, and the predicates **conjoin**: a value is accepted only when every one of them holds.
 
 ```kumiki fragment
@@ -150,6 +152,8 @@ type Handle = nominal Text where len-gt(3) where len-lt(7)
 A `Handle` is longer than 3 characters **and** shorter than 7. The predicates are read through the chain a type denotes ([§1.3.6](#_1-3-6-invariants), inv. 1), so they accumulate over a name as well as over one expression: on `type Short = Text where len-lt(7)`, `type Handle = nominal Short where len-gt(3)` carries both. A generic that hands its parameter back is a link of the same chain (inv. 2): on `type NonEmpty(T) = T where nonempty`, `NonEmpty(Short)` carries `len-lt(7)` and then `nonempty`.
 
 A value that fails is reported against the **first predicate it fails**, taking them **in the order the chain is read, from the base outward**. Inside one type expression that is the order they are written; across names it is the order the declarations lead through — `Short`'s `len-lt(7)` comes before `Handle`'s own `len-gt(3)` because `Short` is what `Handle` is declared over, wherever in the file either definition sits. That is the predicate the rejection names when a write discards a reducer's batch ([batching](./runtime.md#a-batch-commits-all-or-nothing)) and the one whose message the `error` tile renders ([Error Display](./forms.md#_5-7-1-refinement-violation-of-an-individual-field)).
+
+A `type-param` names a type, not a type constructor, so it takes no type arguments: `T(Int)` in the body of `type H(T) = …` is [E0210](./errors.md#e0210-type-arity-mismatch). A parameter shadows a top-level name of the same spelling ([§1.3.6](#_1-3-6-invariants), inv. 5), so `List(Int)` in the body of `type H(List) = …` is the same mistake.
 
 ### 1.3.2 Built-in Generic Types
 
@@ -230,8 +234,8 @@ type Email     = nominal Text where email
 type Url       = nominal Text where url
 type Percent   = nominal Float where between(0.0, 100.0)
 type User      = {id: UserId, name: Text where nonempty, email: Email}
-type HttpError = {status: Int where between(400, 599), message: Text}
-type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(HttpError)
+type ApiError  = {status: Int where between(400, 599), message: Text}
+type LoadResult(T) = Idle | Loading | Loaded(T) | Failed(ApiError)
 ```
 
 ### 1.3.5 Type Canonicalization
@@ -296,7 +300,8 @@ It reaches a union before it reaches itself, so it is as legal as the three abov
 
 Every other comparison that unfolds an application of a generic — two different generics, or a generic against a type that is not one — unfolds both sides. A generic **nests a parameter deeper** when following where its parameters are handed, through the generics its body applies, leads back to one of them inside a larger argument, as `Nest` hands `T` back as `List(T)`. Unless a side applies such a generic, the comparison reaches finitely many pairs as written and ends at a repeated pair, however its generics swap or rotate their parameters. Where a side does, re-entering that pair of heads (the names applied on the two sides) on the way down, with a larger combined size than when it was last entered, counts once against the pair. One comparison, every field and payload included, counts at most 64 such re-entries for each pair of heads, and every re-entry past the 64th answers yes, as a repeated pair does; a re-entry that did not grow never counts. The bound only ever turns a mismatch into a yes, and the order of the fields can decide it: a field whose comparison never ends spends its pair's count, and a mismatch that a later field reaches only by re-entering that pair is let past. An `if`, a `match` or a list literal whose branches are joined by such a yes takes a type that a later comparison can refuse.
 
-5. **A type parameter is scoped to its definition** and shadows a top-level definition of the same name: in `type Alias(Cents) = Cents` the body is the parameter, whatever `Cents` is declared elsewhere.
+5. **A type parameter is scoped to its definition** and shadows a top-level definition of the same name: in `type Alias(Cents) = Cents` the body is the parameter, whatever `Cents` is declared elsewhere. A primitive's name is the exception: it is read as the primitive wherever a type is written, so in `type Box(Int) = {v: Int}` the field is an `Int`.
+6. **A type name that already means a type in every program is not the program's to declare.** Three groups of names do: the primitives (the `primitive` names of [§1.3.1](#_1-3-1-syntax)), the built-in generic types ([stdlib §2.1.2](./stdlib.md#_2-1-2-generic-types)), and the seven domain types whose values the runtime or the standard library supplies — `PanicInfo`, `RouteErrorInfo`, `Route`, `HttpError`, `HttpStatus`, `Duration` and `FormValue` ([stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)). `type Int = …`, `type Option = …` and `type PanicInfo = …` are [E0231](./errors.md#e0231-reserved-type-name), every use of the name keeps its built-in meaning, and a program's own type takes a name of its own (`type AppPanic = …`, `type Box(T) = …`). The groups are the checker's own tables, so a primitive or a constructor added to the language is reserved with it. The other domain types the standard library declares — `Url`, `Email`, `Uuid`, `FormData` — name types only a program builds values of (`File`, also in that table, is a primitive, and is reserved with the primitives). A program may declare its own under one of those names, and its uses then mean the program's type.
 
 ---
 
@@ -381,9 +386,40 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
   [E0103](./errors.md#e0103-undef-ref-undef-slot)
 - Both are checked like any other expression — an undefined name in the key is
   [E0103](./errors.md#e0103-undef-ref-undef-slot), not a runtime failure at dispatch
+- A field a `map-request` record writes is held to the request of the effect's
+  capability when that capability has a row in
+  [http.md §6.6.1](./http.md#_6-6-1-request-fields): one the request does not have
+  is [E0215](./errors.md#e0215-unknown-record-field)
 - A `latest-per-key` key is evaluated where the `emit` runs, so a slot it reads
   sees the reducer body's writes up to that statement and none after it
   ([http.md §6.4](./http.md#_6-4-cancellation))
+- A `latest-per-key` key names the request it runs: an emit whose key is `==`
+  ([§1.9.4](#_1-9-4-operator-types)) to an in-flight request's aborts that
+  request, and one whose key is not leaves it running. The key is written the
+  way a Map key is stored ([stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)), which
+  tells values apart by `==` for every type but two — and, whatever its
+  declared type, not for a non-finite number. A key of one of them, or of a
+  type holding one in a field, a payload, an element or a `Map`'s value, is
+  [E0233](./errors.md#e0233-policy-key-type) at the key:
+  - a `Float`: `NaN` is one key and is not `==` to itself, and inside a
+    record, tuple, `List`, `Map` value or variant `NaN`, `Infinity` and
+    `-Infinity` are one key
+  - a `File`: two Files with the same name, size and type are one key, while
+    `==` holds only of a File and itself
+- A `Set`'s key is its `==`, which itself depends on how the Set was built, so
+  a key that is or holds a `Set` is E0233 too
+- Every other type is a key: a `Text`, `Int`, `Bool`, `Time`, `Bytes`,
+  `EffectId` or `Unit`, a `nominal` or refinement over one, and a record,
+  tuple, `List`, `Map`, `Option`, `Result` or union built from them —
+  `latest-per-key({user: $1.user, page: $1.page})` runs one request per user
+  and page. A `Map`'s own keys are stored the same way, so a `Map(Float, V)`
+  is a key when its values are. A `Float` is keyed through `.show`, and a
+  `File` through `{name: $1.name, size: $1.size}`
+- An effect may not take the name of a [standard effect](./stdlib.md#_2-6-standard-effects)
+  (`navigate`, `navigate-replace`, `navigate-back`, `scroll-to`, `toast`,
+  `confirm`, `log`): the runtime registers each of those under its own name at
+  mount, so a declaration under one would never run
+  ([E0234](./errors.md#e0234-reserved-effect-name))
 
 ### 1.5.3 Examples
 
@@ -531,12 +567,12 @@ editor := editor.map($1.copy(body="Body"))
 
 - **`Map(K, V)`** — the entry at the key, and the index is a `K`, in a read as in a write (anything else is [E0201](./errors.md#e0201-type-mismatch)). A key is accepted the way a value of `K` is ([§1.3.5](#_1-3-5-type-canonicalization)): with `TodoId` and `PostId` both declared `nominal Text`, a `PostId` is no key of a `Map(TodoId, V)`, while a `TodoId`, a `Text` and the literal `"t1"` are. `m[k] := v` inserts or replaces the entry; `m[k].f := v` writes a field of the entry, and on an absent `k` writes nothing, as the `update` it expands to does. A read `m[k]` at an absent `k` is a **panic** ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)), as a List index past the end is: there is no `V` for it to answer. `m.get(k)` is the read that answers `None` there instead. In a tile the read runs during render, so an absent key panics that render, the first one included: the nearest `error-boundary` shows its fallback, and with none the built-in panic display replaces the page ([Lifecycle §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)). A tile reads a key that may be absent through `m.get(k)` or `m.get-or(k, d)`.
 - **`List(T)`** — the element at the position, and the index is an `Int` (anything else is [E0201](./errors.md#e0201-type-mismatch)). `xs[i] := v` replaces the element at `i` in a new `List` of the same length, and `xs[i].f := v` writes through it; every level keeps its shape. An index that names no element — `i` past the end, or negative — is a **panic** ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)): the reducer's writes roll back and `app.error` runs. A read `xs[i]` panics at the same indices, so the two sides of `:=` agree; `xs.get(i)` is the read that answers `None` there instead. To grow a list, write `xs := xs.push(v)`.
-- **`Set(T)`** — nothing. A Set has membership and no places, so `s[x] := v` is [E0602](./errors.md#e0602-unassignable-member); membership changes through `.add` / `.remove` / `.toggle` ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)).
-- **Any other type** — nothing. A record, a scalar (`Int`, `Text`, …), an `Option`, a `Result`, a `Tuple` and a union have no place an index names, so an index step into one is [E0602](./errors.md#e0602-unassignable-member) as well, reported at the step: `r["a"] := v` on a record, `n[0] := v` on an `Int`, and `xs[0][0] := v` on a `List(Int)`, whose element is an `Int`. A record's field is written with a field step (`r.a := v`), the payload of an `Option` / `Result` through `.get`, and anything else is replaced whole (`n := v`).
+- **`Set(T)`** — nothing. A Set has membership and no places, so `s[x] := v` is [E0602](./errors.md#e0602-unassignable-member) and the read `s[x]` is [E0232](./errors.md#e0232-index-into-set); membership is read with `.has` and changes through `.add` / `.remove` / `.toggle` ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)).
+- **Any other type** — nothing. A record, a scalar (`Int`, `Text`, …), an `Option`, a `Result`, a `Tuple` and a union have no place an index names, so an index step into one is [E0602](./errors.md#e0602-unassignable-member) as well, reported at the step: `r["a"] := v` on a record, `n[0] := v` on an `Int`, and `xs[0][0] := v` on a `List(Int)`, whose element is an `Int`. A record's field is written with a field step (`r.a := v`), the payload of an `Option` / `Result` through `.get`, and anything else is replaced whole (`n := v`). Read through a literal key, a record is the field the key names — `cfg["label"]` has the type `cfg.label` has — while a key computed at runtime names no one field, so the checker gives that read no type.
 
 The name is dispatched, not reserved: on a record that declares a field named `get`, `rec.get.title := v` writes that field. Both sides resolve `.get` by the same rule — a record's own field wins, otherwise it is the unwrap.
 
-A `bind=` target reaching through `.get` is a **read** as well as a write, so it panics while the value is empty: `input(bind=draft.get.title)` with `draft = None` fails during the first render and the app does not mount. Reach such a control through a `match` on the Option, the way any other `.get` read is reached, and keep binding the slot's path inside the arm: `| Some(_) -> input(bind=draft.get.title)`. The name an arm binds is a value, not a place, so `| Some(d) -> input(bind=d.title)` is [E0229](./errors.md#e0229-bind-target-not-slot).
+A `bind=` target reaching through `.get` is a **read** as well as a write, so it panics while the value is empty: `input(bind=draft.get.title)` with `draft = None` fails during the first render and the app does not mount. Reach such a control through a `match` on the Option, the way any other `.get` read is reached, and keep binding the slot's path inside the arm: `| Some(_) -> input(bind=draft.get.title)`. The name an arm binds is a value, not a place, so `| Some(d) -> input(bind=d.title)` is [E0229](./errors.md#e0229-bind-target-not-slot). A step through an index is a read in the same way: `input(bind=rows[i].title)` panics the render while `i` names no element of `rows`, as the read `rows[i].title` does ([Forms §5.1](./forms.md#_5-1-two-way-binding-of-individual-inputs)).
 
 **`.copy(field=value, ...)`**: a shortcut for an immutable update of a record. It looks like a method call, but internally the named args are collected and expanded into `recordCopy(rec, {field: value, ...})`. You can update multiple fields at once:
 
@@ -582,7 +618,7 @@ issue.copy(status=Done, priority=High)
 
 > **The first bind has the type the effect's `out=` declares.** On `out=Result(T, E)`, `load.ok($v, _)` binds `$v : T`; any other `out=` is the whole value on `.ok`. So `session := $v` into a slot of another type is **E0201**, and a member call on `$v` answers from `T` as it would on a slot of that type. On `.err`, an effect on a storage / session / indexed capability binds `$e : Text`: those effects deliver the failure's message, also when the `map-request` or a host provider throws ([Storage Effects](./http.md#_6-7-storage-effects)), so `problem := $e` stores it and `$e.message` is **E0108**. Their `out=` must say so — `Result(T, Text)`; any other `E` is **E0306**. `.err` on any other capability is not typed from `out=`: an HTTP handler delivers its `{status, message, body}` record and a custom capability's value is its provider's ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)), so reads of `$e` there are not checked. The second bind (the request key) and a built-in effect's result have no declared type either.
 
-> **`$route` is a `Route`, and a panic's `$event` is typed.** In a `route.enter` / `route.leave` / `route.error` reducer, `$route` has the standard `Route` type, as the `route` slot does everywhere ([Routing §3.2](./routing.md#_3-2-current-route-state)). A [prefetch](./routing.md#_3-8-prefetch) target on any other trigger reads it with no declared type, because on its own trigger it is empty. An `app.error` reducer's `$event` is the standard `PanicInfo`, and a `route.error(<pattern>)` reducer's is a `RouteErrorInfo`, the same fields with the matched `pattern` on top ([Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)). So `n := $route.path` into an `Int` slot is **E0201**, and `$event.mesage` is **E0108**. Every other trigger's `$event` has no declared type.
+> **`$route` is a `Route`, and a panic's `$event` is typed.** In a `route.enter` / `route.leave` / `route.error` reducer, `$route` has the standard `Route` type, as the `route` slot does everywhere ([Routing §3.2](./routing.md#_3-2-current-route-state)). A [prefetch](./routing.md#_3-8-prefetch) target on any other trigger reads it with no declared type, because on its own trigger it is empty. An `app.error` reducer's `$event` is the standard `PanicInfo`, and a `route.error(<pattern>)` reducer's is a `RouteErrorInfo`, the same fields with the `pattern` the reducer names on top ([Lifecycle §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)). So `n := $route.path` into an `Int` slot is **E0201**, and `$event.mesage` is **E0108**. Every other trigger's `$event` has no declared type.
 
 > **In a `fn`, a positional is a parameter.** `$1` is the first parameter and `$2` the second — the same value, with the type the parameter declares — so `fn plus(a: Int, b: Int) -> Int = $1 + $2` is `a + b`. There is one positional per parameter: `$1` in a `fn` with none, or `$2` in a one-parameter `fn`, is an undefined reference (**E0103**). A fragment inside the body binds its own `$1` / `$2`, which shadow the `fn`'s: in `fn dbl(xs: List(Int)) -> List(Int) = $1.map($1 * 2)` the receiver is `xs` and the fragment's `$1` is each element.
 
@@ -614,9 +650,11 @@ reducer editTitle
 
 ### 1.6.7 Scoping and Shadowing
 
-A name declared over one already in scope **shadows** it: every read below the declaration is the inner binding, and the outer one is back once the scope that declared the inner one ends. Every declaring form binds this way — a `let` statement, a `for` bind, a match-arm pattern, and the `let … in` expression ([§1.9](#_1-9-expression-language)).
+A name declared over one already in scope **shadows** it: every read below the declaration is the inner binding, and the outer one is back once the scope that declared the inner one ends. Every declaring form binds this way — a `let` statement, a `for` bind, a match-arm pattern, and the `let … in` expression ([§1.9](#_1-9-expression-language)). A shadowing bind takes its type from its own value only: when that type cannot be decided, a read of it is undecidable, never the type of the slot or binding it shadows.
 
 The scopes are the reducer body and every nested statement body inside it: a `for` body, each branch of an `if`, and each match arm including a catch-all `_`. A binding declared in one of those ends with it.
+
+An expression that binds a name is a scope of its own, wherever it is written: the body of a `let … in`, each arm of a `match` expression — a value's or a tile's — and the body of a tile's `for`. The binding ends with the expression, so a read after it — in a later statement or operand, or in a sibling argument of a tile — is [E0103](./errors.md#e0103-undef-ref-undef-slot). Move the read into the expression. The value a `let … in` binds can instead be bound where both reads see it: with a `let` statement in a reducer; with one `let … in` around both reads in a `fn` or a slot initializer; in a tile, by moving both reads into a tile that declares `in=` and passing it the value. The entries of `app.init` share no expression, so there the read can only move into the `let … in`.
 
 A declaration's own right-hand side is evaluated **before** the name it declares is in scope, so `let n = n + 1` reads the binding it shadows rather than the one being declared.
 
@@ -682,7 +720,7 @@ pattern      ::= identifier
 
 **Value context vs tile context for `if` and `match`**:
 - A tile argument is a tile only as a **positional argument of a builtin other than the value builtins** (`column`, `row`, `card`, `box`, …) — the one place a tile renders. There, `if` and `match` are tile expressions (`TileIf` / `TileMatch`) whose arms return tiles, a builtin's name followed by `(` or `{` is a call to that builtin, and a capitalised name is a user tile.
-- Every other tile argument is a value: a value builtin's content, a user tile's input, and **every named argument**, whatever it is called. There, `if` and `match` are value expressions (`IfExpr` / `MatchExpr`) whose arms return values (Text, Int, a variant, …), a call is a call (`Say(label("x"))` passes what the `fn` `label` returns, and a builtin tile's name called where no `fn` has that name is [E0116](./errors.md#e0116-undef-call)), and an expression that starts with a capitalised name is an expression (`selected=All == filter`). The one other shape is [§1.7.3](#_1-7-3-event-handler-props)'s: a capitalised name written as an event handler of a builtin other than the value builtins is a tile call.
+- Every other tile argument is a value: a value builtin's content, a user tile's input, and **every named argument**, whatever it is called. There, `if` and `match` are value expressions (`IfExpr` / `MatchExpr`) whose arms return values (Text, Int, a variant, …), a call is a call (`Say(label("x"))` passes what the `fn` `label` returns, and a builtin tile's name called where no `fn` has that name is [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier)), and an expression that starts with a capitalised name is an expression (`selected=All == filter`). The one other shape is [§1.7.3](#_1-7-3-event-handler-props)'s: a capitalised name written as an event handler of a builtin other than the value builtins is a tile call.
 - `when` and `for` have no value form, so they are tiles wherever they are written.
 - Example: `text(match m with | A -> "a" | B -> "b")` ← value match
 - Example: `button(text="Save", disabled=if busy then true else false)`, `Row(if wide then 2 else 1)` ← value if
@@ -759,6 +797,8 @@ fn-def      ::= 'fn' identifier
 fn-param    ::= identifier ':' type-expr
 ```
 
+**A `fn` that leaves out `->` returns the type of its body**, read with each parameter at its declared type. A call to it is checked wherever it lands, as a call to a `fn` declaring that type is: with `fn greeting() = "hello"`, `slot n : Int = greeting()` is [E0201](./errors.md#e0201-type-mismatch), and a member read off the call answers from that type. Two kinds of `fn` without `->` have no result type, and nothing is checked against what a call to them returns, though the call's arguments are still checked against the parameters: one whose body's own type the checker cannot decide — a `.map` or `.fold` result, an empty `{}` — and one on a loop of calls, which reaches itself again directly or through other `fn`s ([E0006](./errors.md#e0006-fn-cycle)). Every `fn` on such a loop is without a type unless it declares `->`, whichever of them a call reaches first. A `fn` that calls into a loop from outside it is read from its body like any other, with the loop's `fn`s answering no type.
+
 ### 1.8.3 Invariants
 
 1. **Pure function**: input = arguments only, output = value only
@@ -834,6 +874,23 @@ items.filter(isActiveOnly)
 
 A fn name in a fragment position is the call the method makes with the fragment's positionals: `items.map(double)` is `items.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. It is the **only** position a bare fn name is right — a fn is not a value, so `label` written where a value goes is [E0127](./errors.md#e0127-fn-as-value), and the call is `label()`. The positions, and how many positionals each binds, are listed under E0127.
 
+**The type of each positional** is what the method hands the fragment, read off the receiver's type, or, for `fold`'s accumulator, off the init's:
+
+| Method | Receiver | `$1` | `$2` |
+|---|---|---|---|
+| `filter`, `map`, `find`, `sort-by` | `List(T)` | the element, `T` | — |
+| `filter`, `map` | `Option(T)` | the value, `T` | — |
+| `map` | `Result(T, E)` | the `Ok` value, `T` | — |
+| `filter`, `map` | `Map(K, V)` | the key, `K` | the value, `V` |
+| `fold(init, f)` | `List(T)` | the accumulator, of the init's type | the element, `T` |
+| `flat-map` | `Option(T)`, `Result(T, E)` | the value, `T` | — |
+| `update(k, f)` | `Map(K, V)` | the current value, `V` | — |
+| `map-err` | `Result(T, E)` | the error, `E` | — |
+
+Under `filter`, `map`, `find` and `sort-by`, a `T` that is a `Tuple(A, B)` — what `.entries` produces — is taken apart: `$1` is `A` and `$2` is `B` ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)). A positional is checked like any value of its type, and a fn name is checked as the call it stands for: with `fn loud(t: Text)`, `xs.map(loud($1))` over a `List(Int)` is [E0201](./errors.md#e0201-type-mismatch), and so is `xs.map(loud)`. `xs.fold(0, f)` checks `f`'s first parameter against `Int`, the init's type, and its second against the element. The fragment's result is not checked against the accumulator's type, so `$1` has the init's type on the first step only: `xs.fold(0, $1.show)` passes, and hands the second step a `Text`.
+
+A positional whose type the checker cannot decide has none, and nothing is checked against it: over a receiver whose type is not decided (a type parameter, the result of a `fn` with no `->` whose body's type is not decided), under a `Set`'s `filter`, which [Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t) gives no binding, for a `Map` key that does not read back as its type — a `Bytes` key, or one whose type is a type parameter, is handed over as the string it is stored under — and for the accumulator of a `fold` whose init has no type of its own — `{}`, which is both the empty Map and the empty Set.
+
 ---
 
 ## 1.9 Expression Language
@@ -878,6 +935,8 @@ unop        ::= '-' | '!'
 **A `{ … }` literal is a record when its first key is a field name, and a Map otherwise.** A field name is an identifier or any reserved word except the three that are a value on their own — `true`, `false`, `now` — so `{type: ui.click, target: Go}` and `{for: "name"}` are records. Those three are keys. `{true: "on", false: "off"}` is a `Map(Bool, Text)`, the same Map `{(true): "on", false: "off"}` writes, and `{now: "start"}` is a `Map(Time, Text)`. Any other first key — a string, a number, `Some(1)`, a name in parentheses `(k)` — makes the literal a Map as well. The first key decides for the whole literal: `{a: 1, true: 2}` is a parse error at `true`, which is a value, not a record field name. `{true}` and `{true = 1}` are the same parse error: a Map key is followed by `:`, so a `true` followed by `,`, `=` or `}` stands where a field name goes.
 
 An `if` and a `match` evaluate to one of their branches, so **every branch has to fit where the expression lands**. `p := match ou with | Some(id) -> id | None -> p` is [E0201](./errors.md#e0201-type-mismatch) at the `Some` arm when `ou` is an `Option(UserId)` and `p` a `PostId` — each arm is read with the types its pattern binds, exactly as `p := ou.get-or(p)` is. Where nothing declares a type (a `let`, an operand), the expression has its branches' common type. When the branches disagree, that is the base they share, with the nominal dropped: a `UserId` branch beside a `PostId` branch gives `Text`. The expression has no type, and nothing is reported against it, only when the branches share no base or one branch's type cannot be decided.
+
+A `let x = v in body` evaluates to its body, read with `x` bound to `v`'s type, so the body is what lands where the expression is written: `fn label(n: Int) -> Text = let m = n + 1 in m` is [E0201](./errors.md#e0201-type-mismatch) at `m`, and `… in m.show` checks. Where nothing declares a type, the expression has its body's type, and a member read off it is that type's member: `(let b = box in b).size` on a record with a `size` field reads the field.
 
 Since a `match` evaluates to one of its arms, it needs **an arm for every value of the scrutinee's type**: each variant of a union (`None` and `Some` of an `Option`, `Ok` and `Err` of a `Result`) and each combination of a tuple's items. A variant pattern's binds take any payload, so `Some(v)` covers every `Some`; `_` and a name cover everything. `Bool`, `Int`, `Text`, records and lists have no variants to name and there are no literal patterns ([§1.9.1](#_1-9-1-prohibitions)), so `_` or a name is what covers them. A `match` whose arms leave a value out is [E0227](./errors.md#e0227-non-exhaustive-match), which names each value as the pattern that would match it (`Blue`, `None`, `(Some(_), Green)`). Where the scrutinee's type cannot be decided, for example `$el`, whose props the checker does not type, or the result of a `fold`, a value no arm matches is a **panic** ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)). In a reducer, its writes roll back and `app.error` runs. During a render, the nearest `error-boundary` takes it; with none, the app shows the panic in place of the page, and `app.error` does not run. A value `match` never evaluates to anything but one of its arms.
 

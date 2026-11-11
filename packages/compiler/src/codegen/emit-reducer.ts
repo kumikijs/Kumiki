@@ -11,8 +11,8 @@ import {
   makeEvalCtx,
 } from "./context.ts";
 import { slotGate } from "./emit-slot.ts";
-import { jsOfExpr, reducerEmitJs, slotReadJs, tupleArm } from "./expr.ts";
-import { indexSegmentJs, isUnwrapStep, UNWRAP_SEGMENT } from "./path-segment.ts";
+import { jsOfExpr, matchStmtJs, reducerEmitJs, slotReadJs } from "./expr.ts";
+import { isUnwrapStep, type PathStep, segmentJs, UNWRAP_SEGMENT } from "./path-segment.ts";
 
 function slotWriteJs(slot: string, valueJs: string, gen: GenCtx): string {
   const def = gen.slots.find((s) => s.name === slot);
@@ -177,53 +177,32 @@ export function genReducer(r: ReducerDef, gen: GenCtx): string {
   },`;
 }
 
-export function genStatement(s: Statement, ctx: EvalCtx): string {
+export function genStatement(s: Statement, ctx: EvalCtx, matchDepth = 0): string {
   if (s.kind === "ForStmt") {
     const iter = jsOfExpr(s.iter, ctx);
     const inner = childCtx(ctx);
     const bind = declareBind(inner, s.bind);
-    const body = s.body.map((b) => genStatement(b, inner)).join("\n  ");
+    const body = s.body.map((b) => genStatement(b, inner, matchDepth)).join("\n  ");
     return `for (const ${bind} of ((${iter}) || [])) {\n  ${body}\n}`;
   }
   if (s.kind === "IfStmt") {
     const cond = jsOfExpr(s.cond, ctx);
     const thenCtx = childCtx(ctx);
     const elseCtx = childCtx(ctx);
-    const thenBody = s.consequent.map((b) => genStatement(b, thenCtx)).join("\n  ");
-    const elseBody = s.alternate.map((b) => genStatement(b, elseCtx)).join("\n  ");
+    const thenBody = s.consequent.map((b) => genStatement(b, thenCtx, matchDepth)).join("\n  ");
+    const elseBody = s.alternate.map((b) => genStatement(b, elseCtx, matchDepth)).join("\n  ");
     return `if (${cond}) {\n  ${thenBody}\n} else {\n  ${elseBody}\n}`;
   }
   if (s.kind === "MatchStmt") {
-    const sc = jsOfExpr(s.scrutinee, ctx);
-    const arms = s.arms
-      .map((arm) => {
-        if (arm.pattern.kind === "PVariant") {
-          const inner = childCtx(ctx);
-          const binds = arm.pattern.binds
-            .map((b, i) =>
-              b !== "_" ? `const ${declareBind(inner, b)} = _v[${JSON.stringify(`_${i}`)}];` : "",
-            )
-            .join(" ");
-          const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
-          return `if (_s.variantIs(_v, ${JSON.stringify(arm.pattern.name)})) { ${binds}\n  ${body}\n}`;
-        }
-        if (arm.pattern.kind === "PBind") {
-          const inner = childCtx(ctx);
-          const bind = declareBind(inner, arm.pattern.name);
-          const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
-          return `if (true) { const ${bind} = _v;\n  ${body}\n}`;
-        }
-        if (arm.pattern.kind === "PTuple") {
-          const { guard, binds, inner } = tupleArm(arm.pattern, ctx, "_v");
-          const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
-          return `if (${guard}) { ${binds}\n  ${body}\n}`;
-        }
-        const inner = childCtx(ctx);
-        const body = arm.body.map((b) => genStatement(b, inner)).join("\n  ");
-        return `if (true) {\n  ${body}\n}`;
-      })
-      .join(" else ");
-    return `{ const _v = ${sc};\n  ${arms}\n}`;
+    // JS rejects a label reused inside its own statement, so a match anywhere within an arm takes
+    // the next depth's label; matches side by side share one.
+    return matchStmtJs(
+      jsOfExpr(s.scrutinee, ctx),
+      s.arms,
+      ctx,
+      (arm, inner) => arm.body.map((b) => genStatement(b, inner, matchDepth + 1)).join("\n  "),
+      `_m${matchDepth}`,
+    );
   }
   if (s.kind === "NoopStmt") {
     return `/* no-op */`;
@@ -255,31 +234,18 @@ export function genSlotAssign(lv: Lvalue, rhs: Expr, ctx: EvalCtx): string {
     return `_next[${JSON.stringify(lv.name)}] = ${slotWriteJs(lv.name, rhsJs, ctx.gen)};`;
   }
   const root = lvalueRootName(lv);
-  const path: (
-    | { kind: "field"; name: string }
-    | { kind: "unwrap" }
-    | { kind: "index"; expr: Expr }
-  )[] = [];
+  const path: PathStep[] = [];
   let cur: Lvalue = lv;
   while (cur.kind !== "LSlot") {
     if (cur.kind === "LField") {
-      path.unshift(
-        isUnwrapStep(cur.field, cur.accessKind)
-          ? { kind: "unwrap" }
-          : { kind: "field", name: cur.field },
-      );
-    } else path.unshift({ kind: "index", expr: cur.index });
+      path.unshift(isUnwrapStep(cur.field, cur.accessKind) ? UNWRAP_SEGMENT : cur.field);
+    } else path.unshift({ at: cur.index });
     cur = cur.base;
   }
   const baseJs = `(${slotReadJs(root, ctx.reducerScope)} ?? {})`;
-  let pathExpr = "";
-  for (const seg of path) {
-    if (seg.kind === "field") pathExpr += `, ${JSON.stringify(seg.name)}`;
-    else if (seg.kind === "unwrap") pathExpr += `, ${JSON.stringify(UNWRAP_SEGMENT)}`;
-    else pathExpr += `, ${indexSegmentJs(jsOfExpr(seg.expr, ctx))}`;
-  }
+  const pathExpr = path.map((step) => segmentJs(step, (key) => jsOfExpr(key, ctx))).join(", ");
   // The runtime's setter, which `bind=` write-back also calls.
-  const updated = `_s.setPath(${baseJs}, [${pathExpr.replace(/^, /, "")}], ${rhsJs})`;
+  const updated = `_s.setPath(${baseJs}, [${pathExpr}], ${rhsJs})`;
   return `_next[${JSON.stringify(root)}] = ${slotWriteJs(root, updated, ctx.gen)};`;
 }
 
