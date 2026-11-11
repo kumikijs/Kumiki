@@ -426,6 +426,44 @@ ${APP_A}`);
     expect(descriptionsOf(file)).toEqual([]);
   });
 
+  it.each([
+    ["a for", 'tile Item = text("i")', `column(for item in xs text("a"), item)`],
+    [
+      "a sibling match arm",
+      'tile V = text("v")',
+      "match pick with | Some(v) -> Header | None -> v",
+    ],
+  ])("proposes no tile for a name read after %s ended (E0103)", (_, tile, body) => {
+    // The name is a value whose scope is over: a tile of a close name renders something else.
+    const file = seed(`slot xs : List(Int) = [1, 2]
+slot pick : Option(Int) = None
+tile Header = text("h")
+${tile}
+tile App = ${body}
+${APP_A}`);
+    expect(check(load(file).program).map((e) => [e.code, e.endedScope !== undefined])).toEqual([
+      ["E0103", true],
+    ]);
+    expect(descriptionsOf(file)).toEqual([]);
+  });
+
+  it.each([
+    ["a container", `column(text("a"), totl, Hedaer)`],
+    ["an arm", "column(when(c, totl), Hedaer)"],
+  ])("proposes only tiles for E0105, so the misspelt tile beside a name near a slot in %s is repaired", (_, body) => {
+    const file = seed(`slot c : Bool = true
+slot total : Int = 1
+tile Header = text("h")
+tile App = ${body}
+${APP_A}`);
+    expect(check(load(file).program).map((e) => e.code)).toEqual(["E0105", "E0105"]);
+    const plan = descriptionsOf(file);
+    expect(plan.filter((d) => d.includes('"totl"'))).toEqual([]);
+    expect(plan).toEqual([expect.stringContaining('replace "Hedaer" with "Header"')]);
+    expect(applyFixPlan(file, undefined).applied).toBe(1);
+    expect(readFileSync(file, "utf8")).toContain(`tile App = ${body.replace("Hedaer", "Header")}`);
+  });
+
   it("suggests a close variant tag for E0209 on a user union, not a tile of a similar name", () => {
     const file = seed(`type Light = Red | Green
 fn label(l: Light) -> Text = match l with

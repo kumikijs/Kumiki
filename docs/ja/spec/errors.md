@@ -589,13 +589,13 @@ tile が期待される位置に値が書かれている。tile を期待する�
 - 値 builtin でない builtin —— `text`・`heading`・`markdown`・`code`・`editable`・`label`・`link`・`image`・`icon` 以外 —— の位置引数。そうした builtin は位置引数を tile のときにだけ描画する：`tile-expr` か、プログラムが定義する tile の名前。コンテナ（`column`・`row`・`card` など）はそれを子として描画し、それ以外（`button`・`progress` など）は位置引数をまったく読まない。
 - `tile-expr` 全体：`when` / `if` / `for` / `match` の腕、tile 本体、tile-test の `expect`。パーサはそこに書かれた名前を tile 呼び出しとして読むので、そこで名指した値 —— slot、`fn` 呼び出し、ループ変数、`match` の束縛 —— は存在しない tile の呼び出しになる。
 
-どちらの位置でも、tile でも値でもない名前は代わりに [E0105](#e0105-undef-tile) になる。
+どちらの位置でも、tile でも値でもない名前は代わりに [E0105](#e0105-undef-tile) になる。変種タグはそこでは値として引かれないので、`when(c, Circle)` も E0105 になる。宣言したスコープが終わった後に読んだ名前 —— ループの後の `for` ループ変数、兄弟の腕での `match` の腕の束縛 —— は、ほかの場所と同じく、そのスコープを持つ [E0103](#e0103-undef-ref-undef-slot) になる。
 
 > ``A value is not a tile: <builtin> renders a positional argument only when it is a tile, so this one renders nothing. Show the value with a tile — `text(…)` — or, for a `let`, write the value where it is used or compute it in a `fn` ``
 > ``A value is not a tile: <place> has to be a tile. Show the value with a tile — `text(…)` ``
 > `` `<name>` is a builtin tile named without its call: <builtin> renders a positional argument only when it is a tile, so this one renders nothing. Call it — `<name>()` ``
 
-1 つ目は位置引数にある値。2 つ目は `tile-expr` 全体の位置にある値で、`<place>` がその位置を名指す：``a `when` arm``、``an `if` arm``、``a `for` arm``、``a `match` arm``、`a tile's body`、`` a tile-test's `expect` ``。3 つ目は、組み込み tile の名前を呼び出さずに位置引数に書いたもの：`column(divider)` は `divider` を名指すだけで何も描画せず、`column(divider())` なら描画する。腕や本体ではパーサが同じ名前を呼び出しとして読むので、`when(c, divider)` は divider を描画し、報告されない。スコープ内の値と同じ名前 —— `spinner` という名のループ変数など —— はその値であり、1 つ目の形になる。コンテナの中の小文字の呼び出しは式なので、何を呼んでいても値である：`column(greting())` は 1 つ目の形になり、`when(c, greting())` は E0105 になる。
+1 つ目は位置引数にある値。2 つ目は `tile-expr` 全体の位置にある値で、`<place>` がその位置を名指す：``a `when` arm``、``an `if` arm``、``a `for` arm``、``a `match` arm``、`a tile's body`、`` a tile-test's `expect` ``。3 つ目は、組み込み tile の名前を呼び出さずに位置引数に書いたもの：`column(divider)` は `divider` を名指すだけで何も描画せず、`column(divider())` なら描画する。`Call it` は位置引数を子として描画する builtin の下でだけ添える：位置引数を描画しない builtin の下では呼び出しも何も描画しない（`button(text="x", divider())`）ので、メッセージは `renders nothing.` で終わる。腕や本体ではパーサが同じ名前を呼び出しとして読むので、`when(c, divider)` は divider を描画し、報告されない。コンテナの中では、スコープ内の値と同じ名前 —— `spinner` という名のループ変数など —— はその値であり、1 つ目の形になる。腕の中では builtin の呼び出しが勝つので、`for spinner in xs when(c, spinner)` は builtin を描画する。コンテナの中の、組み込み tile でない小文字の呼び出しは式なので、何を呼んでいても値である：`column(greting())` は 1 つ目の形になり、`when(c, greting())` は E0105 になる。
 
 codegen は位置引数の値を捨てる。そのため `column(text("a"), 42)` は `text` だけを描画し、`n` が slot の `column(text("a"), n)` は子のリストに `null` を入れ、`column(let x = 42 in Card(x))` は空のルートをマウントしていた。`let` は tile を検査からも隠していた：`Card` の引数は `in=` と照合されず、その下に書いた builtin は `fn` として探された（E0116）。診断は値の位置に出し、値の中身は検査しない —— その中の診断は、誤ったものも正しいもの（未定義の名前）も、値を本来の位置に移したときに出る。
 
