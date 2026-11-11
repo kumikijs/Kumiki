@@ -186,8 +186,8 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
     case "Unit":
       return;
     case "Null":
-      // The one report for it: `inferType` leaves its type undecided, so no
-      // position it lands in adds a mismatch of its own.
+      // The one report about it: `inferType` leaves its type undecided, which fits wherever it
+      // lands. An expression around it that mismatches on its own still prints that type, as `?`.
       errors.push({
         code: "E0235",
         kind: "null-value",

@@ -1,7 +1,7 @@
 import type { Expr } from "@kumikijs/compiler";
 import { lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource } from "./helpers/diagnostics.ts";
+import { checkSource, nullValueMessage } from "./helpers/diagnostics.ts";
 import { withApp } from "./helpers/programs.ts";
 
 function parsed(literal: string): Expr {
@@ -104,7 +104,7 @@ describe("`null` as a key", () => {
 
   it("is E0235 at the key, and the Map is checked as any other", () => {
     expect(diagnostics("slot m : Map(Int, Int) = {null: 1}")).toEqual([
-      "E0235 1:27 `null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one",
+      `E0235 1:27 ${nullValueMessage}`,
     ]);
   });
 

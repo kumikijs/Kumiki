@@ -82,7 +82,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
     case "Unit":
       return "null";
     case "Null":
-      // Only reached without `check()`; a JavaScript `null` would be a value of no Kumiki type.
+      // Only reached without `check()`; lowered to JavaScript `null` it would pass for `()`.
       throw new Error(
         `\`null\` at ${e.pos.line}:${e.pos.col} has no lowering — run \`check\` for the diagnostic`,
       );

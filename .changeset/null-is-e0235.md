@@ -1,5 +1,5 @@
 ---
-"@kumikijs/compiler": patch
+"@kumikijs/compiler": minor
 ---
 
 `null` where an expression goes is E0235, and `{null: 1}` is a Map
