@@ -107,15 +107,12 @@ function renderedTree(
  */
 type Imposed = string | null | undefined;
 
-// A call site's props are merged onto its tile's root elements, so a literal id written there
-// replaces theirs. What a call site that writes no id but another prop leaves the dispatch
-// payload holding is not followed, so the id is unknown then. Handlers and `key` are not props.
+// A call site's props are merged onto its tile's root elements one prop at a time, so a literal
+// id written there replaces theirs, and a call site that writes no id leaves theirs.
 function callSiteId(call: TileExpr & { kind: "TileCall" }): Imposed {
   const id = writtenProp(call, "id")?.value;
-  if (id !== undefined) return id.kind === "Str" ? id.value : null;
-  const names = [...call.props.map((p) => p.name), ...call.args.map((a) => a.name)];
-  const writesProp = names.some((n) => n !== undefined && n !== "key" && !HANDLER_NAMES.has(n));
-  return writesProp ? null : undefined;
+  if (id === undefined) return undefined;
+  return id.kind === "Str" ? id.value : null;
 }
 
 /** A place the tile renders from: the tile whose body renders it, at its root or not, and what that call site imposes. */
