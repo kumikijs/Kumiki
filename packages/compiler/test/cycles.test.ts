@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { CHILD_RENDERING_BUILTINS } from "../src/builtins.ts";
 import { checkSource, codesOf, locatedOf } from "./helpers/diagnostics.ts";
 
 const TAIL = `app Main caps=[] routes={"/" -> App, "/404" -> App} init=[]
@@ -115,6 +116,83 @@ ${TAIL}`;
     expect(rest).toEqual([]);
     expect(err?.code).toBe("E0005");
     expect(err?.message).toContain("leaf → other → leaf");
+  });
+
+  it("follows a loop between lowercase tiles with no slot of their names", () => {
+    // Each lowercase child is E0103 as well, with no slot of its name to read.
+    const loop = checkSource(`tile a = column(b)
+tile b = column(a)
+tile App = column(a)
+${TAIL}`).filter((e) => e.code === "E0005");
+    expect(loop.map((e) => [e.message, `${e.pos.line}:${e.pos.col}`])).toEqual([
+      [`Tile "a" expands into itself (a → b → a)`, "1:17"],
+    ]);
+  });
+
+  const valuePositions: [string, string][] = [
+    ["text's content", `column(text(leaf))`],
+    ["heading's content", `column(heading(leaf))`],
+    ["markdown's content", `column(markdown(leaf))`],
+    ["code's content", `column(code(leaf))`],
+    ["label's content", `column(label(leaf))`],
+    ["link's content", `column(link(leaf, to="/"))`],
+    ["editable's content", `column(editable(leaf))`],
+    ["a value builtin at the root", `text(leaf)`],
+    ["content under when", `column(when(true, text(leaf)))`],
+    ["content under if", `if true then text(leaf) else column(text("x"))`],
+    ["content under for", `for i in [1] text(leaf)`],
+    ["a user tile's input", `column(Card(leaf))`],
+    ["a button's positional argument", `column(button(leaf))`],
+    ["a spinner's positional argument", `column(spinner(leaf))`],
+    ["a call under a button", `column(button(row(leaf)))`],
+  ];
+  for (const [what, body] of valuePositions) {
+    it(`does not follow a tile's name in ${what}`, () => {
+      expect(
+        codesOf(`slot leaf : Text = "hello"
+tile Card in=Text = text($1)
+tile leaf = ${body}
+tile App = column(leaf)
+${TAIL}`),
+      ).toEqual([]);
+    });
+  }
+
+  it("reports the loop through the callee's body, not one through its input", () => {
+    const src = `slot leaf : Text = "hello"
+tile Card in=Text = column(text($1), leaf)
+tile leaf = column(Card(leaf))
+tile App = column(leaf)
+${TAIL}`;
+    const [err, ...rest] = checkSource(src);
+    expect(rest).toEqual([]);
+    expect(err?.code).toBe("E0005");
+    expect(err?.message).toBe(`Tile "Card" expands into itself (Card → leaf → Card)`);
+  });
+
+  // A builtin that drops its positional argument renders no call written there either.
+  const dropped: [string, string][] = [
+    ["a spinner", `tile A = column(spinner(A))`],
+    ["a button", `tile A = column(button(A))`],
+    ["a container under a button", `tile A = column(button(row(A)))`],
+  ];
+  for (const [what, tileA] of dropped) {
+    it(`does not follow a call under ${what}`, () => {
+      expect(codesOf(`${tileA}\ntile App = column(A)\n${TAIL}`)).toEqual([]);
+    });
+  }
+
+  // Every builtin that renders its positional arguments as children inlines a tile named there.
+  it.each([
+    ...CHILD_RENDERING_BUILTINS,
+  ])("follows a tile's name written as a child of %s", (kind) => {
+    const loop = checkSource(`slot a : Text = "a"
+slot b : Text = "b"
+tile a = ${kind}(b)
+tile b = column(a)
+tile App = column(a)
+${TAIL}`).filter((e) => e.code === "E0005");
+    expect(loop.map((e) => e.message)).toEqual([`Tile "a" expands into itself (a → b → a)`]);
   });
 
   // Each of these is a construct codegen inlines, so each is an expansion edge.

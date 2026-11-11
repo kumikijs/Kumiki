@@ -124,6 +124,16 @@ describe("the prefetch exemption is by name, so it covers the reducer's other tr
     ).toEqual([]);
   });
 
+  it("finds the argument spelling of the same props", () => {
+    expect(
+      codesOf(
+        prefetching(
+          'tile Ahead = link("7", to="/posts/7", prefetch=subject, prefetch-args={"id": "7"})',
+        ),
+      ),
+    ).toEqual([]);
+  });
+
   const wrapped: [string, string][] = [
     [
       "a for loop, which is where a per-row prefetch actually lives",
