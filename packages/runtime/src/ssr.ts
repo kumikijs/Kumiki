@@ -1,5 +1,6 @@
 import {
   type AppShape,
+  type BuiltinEffectName,
   type CapabilityProvider,
   type CapabilityRegistry,
   computeSlotDiffs,
@@ -12,7 +13,8 @@ import {
   type RedirectEntry,
   type RoutingImpl,
   readStatus,
-  reportCapabilityRefusal,
+  recordRenderPanic,
+  reportRefusedEmit,
   reportRejectedBatch,
   reportUnhandledEffectError,
   type SsrSnapshot,
@@ -101,6 +103,13 @@ export async function renderToString(
   try {
     logger.beginTrigger({ kind: "ssr.hydrate", target: servedPath });
     await Promise.all(app.init.map((emit) => dispatchEmit(app, live, emit, caps, logger)));
+    // Before `endTrigger`: the render is the bootstrap chain's last step, so a
+    // panic an `error-boundary` catches in it lands on that episode.
+    const html = withRenderingApp(
+      app,
+      (e, site) => recordRenderPanic(logger, e, site, true).episodeId,
+      () => renderTileToString(pickRootTile(app, live)),
+    );
     logger.endTrigger();
 
     const list = logger.list();
@@ -108,8 +117,6 @@ export async function renderToString(
     if (!bootstrap) {
       throw new Error("renderToString: bootstrap episode was not committed (in-flight effects?)");
     }
-
-    const html = withRenderingApp(app, () => renderTileToString(pickRootTile(app, live)));
 
     const slots: SsrSnapshot = {};
     for (const [k, meta] of Object.entries(app.slots)) {
@@ -130,6 +137,20 @@ export async function renderToString(
   }
 }
 
+// A mount installs the standard effects and this pass does not, so an emit of one that finds no
+// entry here is skipped unreported: it names an effect this pass does not run, not a missing one.
+// Keyed by `BuiltinEffectName`, so a standard effect added there is a type error here until listed.
+const STANDARD_EFFECT_TABLE: { readonly [N in BuiltinEffectName]: true } = {
+  log: true,
+  navigate: true,
+  "navigate-replace": true,
+  "navigate-back": true,
+  "scroll-to": true,
+  toast: true,
+  confirm: true,
+};
+const STANDARD_EFFECTS: ReadonlySet<string> = new Set(Object.keys(STANDARD_EFFECT_TABLE));
+
 async function dispatchEmit(
   app: AppShape,
   live: Record<string, unknown>,
@@ -137,12 +158,21 @@ async function dispatchEmit(
   caps: CapabilityRegistry,
   logger: EpisodeLogger,
 ): Promise<void> {
-  const effect = app.effects[emit.effect];
-  if (!effect) return;
+  const effect = Object.hasOwn(app.effects, emit.effect) ? app.effects[emit.effect] : undefined;
+  if (!effect) {
+    if (STANDARD_EFFECTS.has(emit.effect)) return;
+    // No effect-start / effect-cancel pair, unlike a refused capability: with no effect there is
+    // nothing to start, and the live dispatcher records the panic step alone too.
+    logger.recordPanic(reportRefusedEmit(emit.effect, { category: "effect" }));
+    return;
+  }
   const input = emit.args[0];
   if (effect.cap !== "" && !caps.has(effect.cap)) {
     const token = logger.recordEffectStart(emit.effect, input);
-    logger.recordPanic(reportCapabilityRefusal(emit.effect, effect.cap), token);
+    logger.recordPanic(
+      reportRefusedEmit(emit.effect, { category: "capability", cap: effect.cap }),
+      token,
+    );
     logger.cancelPendingEffect(token, emit.effect);
     return;
   }

@@ -39,9 +39,8 @@ standard `Route` (routing.md §3.2), or a type error at that position
 > `Expected Option(Text) but got Text` — at the `"top"`
 
 The same field types hold for `route` in an `expect.slots` and a
-`slots-equal` record. Each field's type is the standard `Route`'s, whatever a
-program's own `type Route` declares, because the slot holds the runtime's
-route. A seed may still name only the fields it needs, and a wildcard in a
+`slots-equal` record. Each field's type is the standard `Route`'s, because the
+slot holds the runtime's route. A seed may still name only the fields it needs, and a wildcard in a
 `reducer-test` `expect` field is still not held to a type. A `route` in an
 `expect.slots` or a `slots-equal` that leaves fields out still checks `ok`,
 although it is compared against the whole route and so can never match.

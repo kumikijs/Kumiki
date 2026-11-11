@@ -38,9 +38,20 @@ app TodoApp
 
 具体度は左からセグメントごとに比べる。2 つのパターンで種類が最初に違うセグメントで、静的がパラメータに、パラメータがワイルドカードに勝つ。したがって `"/todos/:id"` が上に書かれていても `/todos/new` は `"/todos/new"` が取り、`/todos/42` は先に書かれた `"/todos/*"` より `"/todos/:id"` が取る。リダイレクト（[§3.10](#_3-10-redirects-static)）も描画するルートと同じ表の中で順位付けされる。この順序でパスに最初にマッチしたエントリがそのパスを持つので、`"/todos/*" ->> "/"` が上に書かれていても `"/todos/new" -> NewTodo` が描画される。`sub-routes` マップ内のエントリ（[§3.6.3](#_3-6-3-matching-rules)）もリダイレクトを含めて同じ順序で選ぶ。サーバーレンダリング（`renderToString`）は、ルーティングモジュールを渡されたときだけこの順序で描画するルートを選ぶ。渡されなければ、パスを、宣言された各パターンを URL パーサがパスに書く形にしたものと比べる（§3.1.1）。ルートを選ぶ前にリダイレクトを解決する（[ランタイム §10.6.1](./runtime.md#_10-6-1-ssr)）。ルーティングモジュールがあれば [§3.10](#_3-10-redirects-static) が述べるすべてのリダイレクトを、なければパターンが書かれたとおりのパスであるリダイレクトだけを解決するので、後者ではパラメータ・ワイルドカード・`sub-routes` のリダイレクトは適用されない。
 
-### 3.1.3 `/404` は予約
+### 3.1.3 `/404` は予約 {#_3-1-3-404-is-reserved}
 
 `/404` は **どのルートにもマッチしなかった場合**のフォールバック。`app.routes` に `/404 -> X` を含めるのは必須（未指定はコンパイルエラー）。
+
+フォールバックは tile を描画するので、`X` は tile であり、**`/404` をリダイレクトにはできない**。`"/404" ->> "/"` は [E0001](./errors.md#e0001-missing-404-404-is-redirect-404-in-sub-routes)（`404-is-redirect`）で、リダイレクトの位置で報告される：
+
+```kumiki invalid
+tile Home = column(text("h"))
+app M caps=[] routes={"/" -> Home, "/404" ->> "/"} init=[]
+```
+
+どのルートにもマッチしないパスを別のページへ送るには、代わりにワイルドカードをリダイレクトする：`"/*" ->> "/"` は、より具体的なエントリが持たないすべてのパスを持つ（[§3.1.2](#_3-1-2-マッチ順序)、[§3.10](#_3-10-redirects-static)）。`/404` の tile は引き続き必須である。
+
+`/404` は `app.routes` だけのものである。`sub-routes` マップ（[§3.6.2](#_3-6-2-child-route-map)）は自前の `/404` を持たず、`/404` に対してマッチされるサブルートもないので、そこに書いたエントリは tile を指名していてもリダイレクトでも決して使われない。これは E0001（`404-in-sub-routes`）で、エントリの位置で報告される。どのサブルートにもマッチしない子のパスは、親自身のパスにサブルートの tile があればそれを、なければ app の `/404` を描画する（[§3.6.3](#_3-6-3-matching-rules)）。`"/404/*"` の親ではその親自身のパスが `/404` なので、親がマッチしてどのサブルートもマッチしないパスは、やはり app の `/404` に落ちる。
 
 ### 3.1.4 ルートターゲットは引数を取らない {#_3-1-4-a-route-target-takes-no-argument}
 
@@ -65,7 +76,7 @@ app M caps=[] routes={"/" -> Panel, "/404" -> Panel} init=[]
 slot route : Route = Route.empty       # ランタイムが管理
 ```
 
-`Route` 型は[標準ライブラリ](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)：
+`Route` 型は[標準ライブラリ](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)が提供し、プログラムは名指すだけで宣言はしない（[E0231](./errors.md#e0231-reserved-type-name)）：
 
 ```kumiki fragment
 type Route = {
@@ -118,7 +129,7 @@ reducer save  on=ui.click(SaveBtn)
                   emit navigate({path: "/todos", params: {}})
 ```
 
-ビルトイン effect:
+ビルトイン effect — そのシグネチャ。プログラムはこれらを宣言せずに emit する（[E0234](./errors.md#e0234-reserved-effect-name)）:
 
 ```kumiki fragment
 effect navigate         cap=nav.push     in={path: Text, params: Map(Text, Text)}    out=Unit
@@ -158,7 +169,11 @@ memory ルータは現在のパスをメモリに保持する：初期ルート�
 | `route.enter(pattern)` | 新ルートに入った直後 |
 | `route.error(pattern)` | そのルートの tile が描画中に throw したとき（[ライフサイクル](./lifecycle.md#_7-1-list-of-lifecycle-events)） |
 
-別のパスへのナビゲーションは切替であり、両方のイベントを次の順で発火する：離れるルートの `route.leave`、続いて入るルートの `route.enter`。2 つが同じパターンでも同じである。`/todos/1/edit` から `/todos/2/edit` への移動は todo 1 を離れて todo 2 に入り、`sub-routes` の親の下で子を切り替えると、親のパターンを離れてから入り直す。表示中のパスに留まるナビゲーションは切替ではない：ルートに留まるので `route.leave` は走らず、leave ガード（§3.5.2）が確認を求めることもない。宛先がハッシュを持ち、クエリも保つなら（`/docs` 上の `#faq`）、それはページ内ジャンプ（[§3.9](#_3-9-スクロール復元)）であり、`route.hash` を更新して `route.enter` を走らせない。ハッシュだけが違う 2 つのエントリの間の戻る・進むも `route.enter` を走らせない。それ以外（クエリが変わる、link や effect がハッシュを落とす、表示中の URL をハッシュなしでたどる）では、`route` slot は更新され、`route.enter` が新しい `$route` で再び走るので、`$route.query` から読み込む reducer は新しいクエリを受け取る。離れるルートの無い初期ルートも `route.enter` だけを発火する。
+**`pattern` は宣言済みのルートを指す。** `app.routes`（[§3.1](#_3-1-ルートの宣言)）か `sub-routes` マップ（[§3.6.2](#_3-6-2-child-route-map)）の中で tile を描画するエントリ（`->>` ではなく `->`）のキーであり、書かれたとおりにそれらのキーと比較される — パスと照合されるのではない。`route.enter("/todos/:id")` は id によらず `"/todos/:id"` として宣言されたルートで発火し、`route.enter("/*")` が発火するのは `"/*"` として宣言されたルートだけで、すべてのルートではない。そうしたキーを指さないパターン — タイポ、glob、あるいはルートが表示される前にルーターが辿る `->>` リダイレクトのキー — は決して発火しないので、`kumiki check` がパターンの位置で報告する（[E0228](./errors.md#e0228-undef-route-pattern)）。
+
+**ルートはパターンの連鎖の下でマッチする**：トップレベルのパターンと、そのルートの tile が `sub-routes` を宣言していれば、その下でマッチしたサブルートのパターン（親のデフォルトの子を含む、[§3.6.3](#_3-6-3-matching-rules)）である。`"/settings/*" -> SettingsLayout` とそのレイアウトの `"/settings/account" -> AccountSettings` があるとき、`/settings/account` での連鎖は `"/settings/*"`、`"/settings/account"` である。親と同じキーのサブルート（`"/docs/*"` のマップの中の `"/docs/*"`）は親自身のパターンであり、連鎖はそれを 1 度だけ持つ。各イベントは連鎖のすべてのパターンについて発火する：`route.enter` は親、続いてそのサブルートの順、`route.leave` はサブルート、続いてその親の順で、1 つのパターンの reducer は定義順に走る。どれも同じ `$route` を受け取り、その `pattern` はトップレベルのものである（[§3.2](#_3-2-current-route-state)）。そのうちの 1 つが emit した `navigate` か `navigate-replace` でアプリが別のルートへ移ると、そのイベントの残りの reducer は走らない：それらが発火したルートからアプリはもう離れており、そのナビゲーションが自分の遷移のイベントを発火する。
+
+別のパスへのナビゲーションは切替であり、両方のイベントを次の順で発火する：離れるルートの連鎖のすべてのパターンの `route.leave`、続いて入るルートの連鎖のすべてのパターンの `route.enter`。2 つが同じパターンでも同じである。`/todos/1/edit` から `/todos/2/edit` への移動は todo 1 を離れて todo 2 に入り、`sub-routes` の親の下で子を切り替えると、古い子と親を離れてから、親と新しい子に入る。表示中のパスに留まるナビゲーションは切替ではない：ルートに留まるので `route.leave` は走らず、leave ガード（§3.5.2）が確認を求めることもない。宛先がハッシュを持ち、クエリも保つなら（`/docs` 上の `#faq`）、それはページ内ジャンプ（[§3.9](#_3-9-スクロール復元)）であり、`route.hash` を更新して `route.enter` を走らせない。ハッシュだけが違う 2 つのエントリの間の戻る・進むも `route.enter` を走らせない。それ以外（クエリが変わる、link や effect がハッシュを落とす、表示中の URL をハッシュなしでたどる）では、`route` slot は更新され、連鎖の `route.enter` が新しい `$route` で再び走るので、`$route.query` から読み込む reducer は新しいクエリを受け取る。離れるルートの無い初期ルートも、連鎖のすべてのパターンについて `route.enter` だけを発火する。それを捕える `error-boundary` の無い描画が panic すると、表示中のルートのすべてのパターンについて親から順に `route.error` を発火し、各 reducer の `$event.pattern` はその reducer が指すパターンである（[ライフサイクル §7.5](./lifecycle.md#_7-5-404-と-error-ページ)）。
 
 ```kumiki fragment
 reducer loadTodoOnEnter
@@ -195,6 +210,8 @@ reducer requireAuth
         else ()
 ```
 
+ガードがリダイレクトしたあとは、連鎖の残りの `route.enter` の reducer は走らない（[§3.4](#_3-4-ルートライフサイクル)）。したがって `route.enter("/admin/users")` のローダーは `/login` へ向かう途中で走らない。
+
 ### 3.5.2 leave ガード
 
 未保存変更があるなら遷移を止めたい場合：
@@ -210,6 +227,8 @@ reducer guardEdit
 ```
 
 `confirm` は標準 effect（→ [標準ライブラリ](./stdlib.md)）で、回答を別 reducer に届ける。詳細は [ライフサイクル](./lifecycle.md)。
+
+ガードが保留するのは遷移であり、連鎖の残りではない：離れるルートの `route.leave` の reducer は、ガードもそれ以外も、親のものも含めてすべて同じ 1 回の処理で走る。したがって No のあともルートは表示されたままで、それ以外の reducer が書いた値は残る。
 
 ダイアログが開いている間、遷移は**保留**される：離れようとしているルートが画面に残り、`route` slot と `route.enter` は答えを待つ。答えの reducer が先に走り、そのあと Yes なら遷移を完了し、No なら URL を表示中のルートへ戻す。遷移を確定するのはそのルートの leave ガードが開いたダイアログだけで、その間に別の reducer が開いた `confirm` ではない。2 つのガードがそれぞれダイアログを開いたときは、先に出た答えが遷移を確定し、もう一方のダイアログは答えのないまま閉じる。ホストが `notification.show` の provider を登録していても、ダイアログはランタイム自身のものである（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）。
 
@@ -261,7 +280,7 @@ tile SettingsLayout
 - 親の `sub-routes` マップが使われるのは、[§3.1.2](#_3-1-2-マッチ順序) がそのパスに親を選んだときだけ。より具体的な兄弟（`"/settings/*"` と並ぶ `"/settings/:section"`）があればそちらがパスを取り、親を介さず自分のターゲットを描画する
 - 子ルートは親パターン `/settings/*` の中で再マッチング
 - 子ルートにマッチしなければ親の `/settings` (デフォルト) を使う
-- それも無ければグローバル `/404` へ
+- それも無ければグローバル `/404`、つまり `app.routes` のものへ（[§3.1.3](#_3-1-3-404-is-reserved)）
 - 1 つの親 tile が描画する木の中に複数の `route-outlet()` がある場合の挙動は **未定義**。ランタイムは最初に見つかった outlet にのみ子を描画し、残りは空のまま放置する。tile 設計では outlet を 1 つに保つこと。
 - 子は親の**配下**で描画される。親の `error-boundary` は子を覆い、子が自身で宣言した境界があればそちらが勝つ（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。
 
@@ -319,10 +338,10 @@ tile Chat
     = scroll(...)
 ```
 
-特定ルート進入時にトップへ：
+特定ルート進入時にトップへ。引数はアプリが宣言するルートを指し — ここでは [§3.1](#_3-1-ルートの宣言) の `"/todos/:id"` — 書かれたとおりに比較される（[§3.4](#_3-4-ルートライフサイクル)）ので、`route.enter("/*")` は「すべてのルート」を意味しない：
 
 ```kumiki fragment
-reducer scrollTop on=route.enter("/*") do= emit scroll-to({x: 0, y: 0})
+reducer scrollTop on=route.enter("/todos/:id") do= emit scroll-to({x: 0, y: 0})
 ```
 
 `scroll-to` は標準 effect。

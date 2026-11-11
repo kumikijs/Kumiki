@@ -34,11 +34,17 @@ fallback's boundary, and so on along the chain — at a call site, on a route
 target, and in `renderToString`'s HTML alike. `PanicInfo.location` names the
 fallback that panicked.
 
+`check` follows the same chain. A `ui.*` subscription on a tile reaches the
+elements a fallback's fallback renders in that tile, so W0212 no longer says
+the event never reaches it, and `strictSelectorId` counts their ids for E0212
+instead of refusing a selector that matches one.
+
 Unchanged: a fallback that declares no boundary of its own leaves its panic to
 the boundaries around the tile that declared it, as before. A chain that comes
 back to itself (`tile Oops in=PanicInfo error-boundary=Oops`, or two fallbacks
 naming each other) was already `E0005` at check time and still is; it is the
 check that keeps the lowering from recursing forever. §7.3 and E0005 say so in
-both language tracks, and
+both language tracks, and §7.3 now says `location` names a route target only
+for a panic that escaped it.
 `packages/examples/features/254-fallback-own-boundary.kumiki` shows a fallback
-whose own fallback stands in for it until the fallback can render.
+whose own fallback stands in for it while the fallback cannot render.

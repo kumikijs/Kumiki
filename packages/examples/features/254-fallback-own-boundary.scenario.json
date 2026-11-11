@@ -4,7 +4,7 @@
       "label": "the fallback panics too, so its own boundary shows the last resort",
       "expect": {
         "noErrors": true,
-        "state": { "lastResortShown": 1, "lastResortGone": 0 },
+        "state": { "lastResortShown": 1, "lastResortGone": 0, "fallbackShown": 0 },
         "domIncludes": ["chart unavailable: get called on None in ChartFallback"],
         "domExcludes": ["cached chart"]
       }
@@ -14,16 +14,51 @@
       "do": { "clickText": "cache" },
       "expect": {
         "noErrors": true,
-        "state": { "lastResortShown": 1, "lastResortGone": 1 },
-        "domIncludes": ["cached chart: 7 (get called on None)"],
+        "state": { "lastResortShown": 1, "lastResortGone": 1, "fallbackShown": 1 },
+        "domIncludes": ["cached chart: 7 (Key \"points\" is not in the Map)"],
         "domExcludes": ["chart unavailable"]
       }
     },
     {
-      "label": "the tile renders without panicking, so neither fallback is shown",
+      "label": "with the cache forgotten the fallback leaves, and the last resort comes back",
+      "do": { "clickText": "forget" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "lastResortShown": 2,
+          "lastResortGone": 1,
+          "fallbackShown": 1,
+          "fallbackGone": 1
+        },
+        "domIncludes": ["chart unavailable: get called on None in ChartFallback"],
+        "domExcludes": ["cached chart"]
+      }
+    },
+    {
+      "label": "cached again, the fallback stands in for the chart once more",
+      "do": { "clickText": "cache" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "lastResortShown": 2,
+          "lastResortGone": 2,
+          "fallbackShown": 2,
+          "fallbackGone": 1
+        },
+        "domIncludes": ["cached chart: 7 (Key \"points\" is not in the Map)"]
+      }
+    },
+    {
+      "label": "the tile renders without panicking, so neither fallback is shown or mounted again",
       "do": { "clickText": "load" },
       "expect": {
         "noErrors": true,
+        "state": {
+          "lastResortShown": 2,
+          "lastResortGone": 2,
+          "fallbackShown": 2,
+          "fallbackGone": 2
+        },
         "domIncludes": ["chart: 42"],
         "domExcludes": ["cached chart", "chart unavailable"]
       }

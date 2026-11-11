@@ -16,20 +16,23 @@ import {
   type TypeDef,
   type TypeExpr,
 } from "../ast.ts";
+import { aliasTarget } from "../def-graph.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "../refinement-positions.ts";
 import {
   type RefinementProblem,
   refinementBaseProblem,
   refinementProblem,
 } from "../refinements.ts";
+import { type ReservedTypeReason, reservedTypeReason } from "../stdlib-types.ts";
 import type { KumikiError, SymbolTable } from "./context.ts";
 
 export function resolveType(
   t: TypeExpr,
   sym: SymbolTable,
   errors: KumikiError[],
-  typeParams: ReadonlySet<string> = EMPTY_SCOPE,
+  scope: TypeScope = EMPTY_SCOPE,
 ): void {
+  const typeParams = scope.params;
   switch (t.kind) {
     case "TypePrim":
       return;
@@ -48,33 +51,38 @@ export function resolveType(
       return;
     }
     case "TypeApp": {
-      if (!typeParams.has(t.name)) {
-        if (!isKnownTypeName(t.name, sym)) {
-          errors.push({
-            code: "E0117",
-            kind: "undef-type",
-            message: `Reference to undefined type "${t.name}"`,
-            pos: t.pos,
-          });
-        } else {
-          checkTypeArity(t.name, t.args.length, t.pos, sym, errors);
-          checkApplication(t, sym, typeParams, errors);
-        }
+      if (typeParams.has(t.name)) {
+        // Substitution leaves such an application opaque, so this is its one report.
+        errors.push({
+          code: "E0210",
+          kind: "type-arity-mismatch",
+          message: `Type parameter "${t.name}" of "${scope.owner}" takes no type arguments, but is written "${t.name}(${t.args.map(typeToString).join(", ")})"`,
+          pos: t.pos,
+        });
+      } else if (!isKnownTypeName(t.name, sym)) {
+        errors.push({
+          code: "E0117",
+          kind: "undef-type",
+          message: `Reference to undefined type "${t.name}"`,
+          pos: t.pos,
+        });
+      } else {
+        checkTypeArity(t.name, t.args.length, t.pos, sym, errors);
+        checkApplication(t, sym, typeParams, errors);
       }
-      for (const a of t.args) resolveType(a, sym, errors, typeParams);
+      for (const a of t.args) resolveType(a, sym, errors, scope);
       return;
     }
     case "TypeRecord":
-      for (const f of t.fields) resolveType(f.type, sym, errors, typeParams);
+      for (const f of t.fields) resolveType(f.type, sym, errors, scope);
       return;
     case "TypeUnion":
-      for (const v of t.variants)
-        for (const p of v.payloads) resolveType(p, sym, errors, typeParams);
+      for (const v of t.variants) for (const p of v.payloads) resolveType(p, sym, errors, scope);
       return;
     case "TypeNominal":
     case "TypeRefinement":
       checkRefinement(t.refinement, t.inner, sym, typeParams, errors);
-      resolveType(t.inner, sym, errors, typeParams);
+      resolveType(t.inner, sym, errors, scope);
       return;
   }
 }
@@ -124,7 +132,7 @@ function baseProblem(
   sym: SymbolTable,
   typeParams: ReadonlySet<string>,
 ): RefinementProblem | undefined {
-  const base = judgedBase(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
+  const base = unaliasType(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
   const message = base ? refinementBaseProblem(r, base) : undefined;
   return message ? { kind: "refinement-args-invalid", message } : undefined;
 }
@@ -132,13 +140,6 @@ function baseProblem(
 /** Each of `params` mapped to the opaque type, so that nothing is concluded from it. */
 function opaqueParams(params: Iterable<string>, pos: Pos): Map<string, TypeExpr> {
   return new Map([...params].map((p) => [p, unknownType(pos)]));
-}
-
-function judgedBase(t: TypeExpr, sym: SymbolTable): TypeExpr | undefined {
-  const base = unaliasType(t, sym);
-  if (base === null) return undefined;
-  if (base.kind === "TypeApp" && !isKnownTypeName(base.name, sym)) return undefined;
-  return base;
 }
 
 function checkApplication(
@@ -245,9 +246,13 @@ function appliedBaseProblems(
       case "TypeRef":
         return;
       case "TypeApp": {
-        const nested = t.args.map((a) => substituteType(a, applied));
-        const nestedBefore = t.args.map((a) => substituteType(a, before));
-        appliedBaseProblems(t.name, nested, nestedBefore, run, inside);
+        // Substituted whole, so that a parameter at the head leaves no application to
+        // enter rather than naming a top-level generic.
+        const nested = substituteType(t, applied);
+        if (nested.kind === "TypeApp") {
+          const nestedBefore = t.args.map((a) => substituteType(a, before));
+          appliedBaseProblems(t.name, nested.args, nestedBefore, run, inside);
+        }
         for (const a of t.args) walk(a);
         return;
       }
@@ -262,8 +267,8 @@ function appliedBaseProblems(
         const r = t.refinement;
         // A problem with the arguments is the definition's, reported there.
         if (r && !refinementProblem(r)) {
-          const was = judgedBase(substituteType(t.inner, before), sym);
-          const now = judgedBase(substituteType(t.inner, applied), sym);
+          const was = unaliasType(substituteType(t.inner, before), sym);
+          const now = unaliasType(substituteType(t.inner, applied), sym);
           if (now && !(was && refinementBaseProblem(r, was))) {
             const over = `${run.shown} applies it over ${typeToString(now)}`;
             const message = refinementBaseProblem(r, now, over);
@@ -288,17 +293,106 @@ function checkTypeArity(
   errors: KumikiError[],
 ): void {
   const arity = constructorArity(name, sym);
-  if (arity === null || arity === given) return;
+  // `Tuple` takes any number of arguments, and none is still not a type.
+  if (arity === null ? given > 0 : arity === given) return;
   errors.push({
     code: "E0210",
     kind: "type-arity-mismatch",
-    message: `Type "${name}" expects ${arity} type argument(s) but got ${given}`,
+    message:
+      arity === null
+        ? `Type "${name}" expects type arguments but got none`
+        : `Type "${name}" expects ${arity} type argument(s) but got ${given}`,
     pos,
   });
 }
 
-const EMPTY_SCOPE: ReadonlySet<string> = new Set();
+type TypeScope = { readonly owner: string; readonly params: ReadonlySet<string> };
+
+const EMPTY_SCOPE: TypeScope = { owner: "", params: new Set() };
+
+const RESERVED_TYPE_MEANING: Readonly<Record<ReservedTypeReason, string>> = {
+  primitive: "the primitive type",
+  constructor: "the built-in type constructor",
+  "runtime-supplied": "the standard library's",
+};
 
 export function checkTypeDef(def: TypeDef, sym: SymbolTable, errors: KumikiError[]): void {
-  resolveType(def.body, sym, errors, new Set(def.params));
+  resolveType(def.body, sym, errors, { owner: def.name, params: new Set(def.params) });
+}
+
+/**
+ * A program's own definition under a name that already means a primitive, a built-in constructor or
+ * a runtime-supplied standard library type (E0231). It is reported from the program's definitions, not from
+ * {@link checkTypeDef}, which also judges the standard library's own entries when a type reaches
+ * them.
+ */
+export function reservedTypeName(def: TypeDef): KumikiError | null {
+  const reason = reservedTypeReason(def.name);
+  if (reason === undefined) return null;
+  return {
+    code: "E0231",
+    kind: "reserved-type-name",
+    message: `Type "${def.name}" collides with ${RESERVED_TYPE_MEANING[reason]} ${def.name}; uses of it never see this type`,
+    pos: def.pos,
+  };
+}
+
+/**
+ * Whether a definition `t` names, directly or through the ones it names, has an error of its own:
+ * one {@link checkTypeDef} reports, or an alias that resolves to itself (E0009).
+ */
+export function reachesBrokenDefinition(t: TypeExpr, sym: SymbolTable): boolean {
+  const reached = new Map<string, TypeDef>();
+  const todo: { t: TypeExpr; params: ReadonlySet<string> }[] = [{ t, params: EMPTY_SCOPE.params }];
+  for (let at = todo.pop(); at !== undefined; at = todo.pop()) {
+    const { t: cur, params } = at;
+    const inside = (parts: readonly TypeExpr[]) => {
+      for (const p of parts) todo.push({ t: p, params });
+    };
+    switch (cur.kind) {
+      case "TypePrim":
+        break;
+      case "TypeRef":
+      case "TypeApp": {
+        if (cur.kind === "TypeApp") inside(cur.args);
+        const def = params.has(cur.name) ? undefined : sym.types.get(cur.name);
+        if (!def || reached.has(def.name)) break;
+        reached.set(def.name, def);
+        todo.push({ t: def.body, params: new Set(def.params) });
+        break;
+      }
+      case "TypeRecord":
+        inside(cur.fields.map((f) => f.type));
+        break;
+      case "TypeUnion":
+        inside(cur.variants.flatMap((v) => v.payloads));
+        break;
+      case "TypeNominal":
+      case "TypeRefinement":
+        inside([cur.inner]);
+        break;
+      default:
+        assertNever(cur);
+    }
+  }
+  const scratch: KumikiError[] = [];
+  for (const def of reached.values()) checkTypeDef(def, sym, scratch);
+  return scratch.length > 0 || [...reached.values()].some(aliasCycleFinder(sym));
+}
+
+/** Whether following alias targets from a definition comes back round, each one walked once. */
+function aliasCycleFinder(sym: SymbolTable): (def: TypeDef) => boolean {
+  const typeOf = (name: string): TypeDef | undefined => sym.types.get(name);
+  const settled = new Set<string>();
+  return (start) => {
+    const path = new Set<string>();
+    for (let d = typeOf(start.name); d !== undefined && !settled.has(d.name); ) {
+      if (path.has(d.name)) return true;
+      path.add(d.name);
+      const edge = aliasTarget(d, typeOf);
+      d = edge ? typeOf(edge.to) : undefined;
+    }
+    for (const name of path) settled.add(name);
+    return false;
+  };
 }
