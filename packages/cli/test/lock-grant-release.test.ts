@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { lockDef, readOpLog, replaceDef, unlockDef } from "@kumikijs/cli";
 import { app } from "@kumikijs/examples";
@@ -214,11 +214,25 @@ describe("a lock file not in the shape `lock` writes", () => {
   const unreadable = (problem: string): string =>
     `Lock file "${locks}" is unreadable: ${problem}. Fix it to the shape \`lock\` writes, {"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}]}, or delete it to release every lock.`;
 
+  /** "it is not JSON", with what `JSON.parse` says of `content`, which says where it stopped. */
+  const notJson = (content: string): string => {
+    try {
+      JSON.parse(content);
+    } catch (e) {
+      return `it is not JSON (${(e as Error).message})`;
+    }
+    throw new Error(`${JSON.stringify(content)} is JSON`);
+  };
+
   const MISSHAPEN: ReadonlyArray<readonly [content: string, problem: string]> = [
-    ["{ not json", "it is not JSON"],
-    ["", "it is not JSON"],
+    ["{ not json", notJson("{ not json")],
+    ["", notJson("")],
+    [
+      '{"entries": [{"agent": "agent:a", "patterns": ["slot.*",]}]}',
+      notJson('{"entries": [{"agent": "agent:a", "patterns": ["slot.*",]}]}'),
+    ],
     ["null", "the top level is not an object"],
-    // `[].entries` is a method, not a list of entries.
+    // An array's `entries` is its method, whose `length` is 0: read as is, `[]` locks nothing.
     ["[]", "the top level is not an object"],
     ["{}", "entries is missing"],
     ['{"entries": {}}', "entries is not a list"],
@@ -251,9 +265,51 @@ describe("a lock file not in the shape `lock` writes", () => {
     expect(readFileSync(file, "utf8")).toBe(source);
     expect(existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
   });
+
+  it("is refused, named, when a directory stands at its path", () => {
+    mkdirSync(locks);
+    const source = readFileSync(file, "utf8");
+    asAgent("agent:b");
+    // Node's own message names no path, so the refusal has to.
+    const refusal = `Lock file "${locks}" is unreadable: EISDIR: illegal operation on a directory`;
+    expect(() => replaceDef(file, "tile.App", "column(DecBtn)")).toThrowError(refusal);
+    expect(() => lockDef(file, "agent:b", "tile.*")).toThrowError(refusal);
+    expect(() => unlockDef(file, "agent:a")).toThrowError(refusal);
+    expect(readFileSync(file, "utf8")).toBe(source);
+    expect(statSync(locks).isDirectory()).toBe(true);
+    expect(existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
+  });
 });
 
 describe("a lock file in the shape `lock` writes", () => {
+  it("is read when it starts with a byte order mark", () => {
+    writeFileSync(
+      locks,
+      `\uFEFF${JSON.stringify({ entries: [{ agent: "agent:a", patterns: ["slot.*"] }] })}`,
+    );
+    asAgent("agent:b");
+    expect(() => replaceDef(file, "slot.count", "N = 1")).toThrowError(
+      `lock violation: slot.count is locked by agent:a (pattern "slot.*")`,
+    );
+    unlockDef(file, "agent:a");
+    expect(held()).toEqual({ entries: [] });
+  });
+
+  it("reads both entries of an agent that has two, and unlock releases both", () => {
+    const entries = [
+      { agent: "agent:a", patterns: ["slot.*"] },
+      { agent: "agent:a", patterns: ["tile.*"] },
+    ];
+    writeFileSync(locks, JSON.stringify({ entries }));
+    asAgent("agent:b");
+    expect(() => replaceDef(file, "tile.App", "column(DecBtn)")).toThrowError(
+      `lock violation: tile.App is locked by agent:a (pattern "tile.*")`,
+    );
+    unlockDef(file, "agent:a");
+    expect(held()).toEqual({ entries: [] });
+    replaceDef(file, "tile.App", "column(DecBtn)");
+  });
+
   it("locks nothing when it has no entries", () => {
     writeFileSync(locks, '{"entries": []}\n');
     asAgent("agent:b");
@@ -289,6 +345,11 @@ describe("a lock file in the shape `lock` writes", () => {
         { agent: "agent:a", patterns: ["slot.*", "tile.*"], since: 1 },
         { agent: "agent:b", patterns: ["reducer.*"] },
       ],
+    });
+    unlockDef(file, "agent:b");
+    expect(held()).toEqual({
+      version: 2,
+      entries: [{ agent: "agent:a", patterns: ["slot.*", "tile.*"], since: 1 }],
     });
   });
 });

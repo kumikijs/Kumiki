@@ -219,7 +219,9 @@ describe("ownership locks", () => {
       for (const [tool, args] of calls) {
         const res = await call(client, tool, args);
         expect(res.isError, tool).toBe(true);
-        expect(res.body, tool).toBe(JSON.stringify({ error: { kind: "error", message } }, null, 2));
+        expect(errorMessage(res.body), tool).toBe(message);
+        // Its own kind, so a client tells it from a lock violation or a rejected write.
+        expect(JSON.parse(res.body).error.kind, tool).toBe("lock-file");
       }
     });
     expect(readFileSync(file, "utf8")).toBe(source);

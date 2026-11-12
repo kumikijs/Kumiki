@@ -1,12 +1,15 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { requireSourceFile } from "../store.ts";
-import { escapeRegExp } from "../text.ts";
+import { escapeRegExp, messageOf } from "../text.ts";
 import { atomicWriteFileSync, withWriteLock } from "../write-lock.ts";
 import { authorOf } from "./op-log.ts";
 
-// Fields `lock` does not write are ignored, and kept when the file is rewritten.
+// Narrower than the file: rewrite the parsed object in place, so fields `lock` does not write survive.
 type LockFile = { entries: Array<{ agent: string; patterns: string[] }> };
+
+/** A lock file that cannot be read as the shape `lock` writes. */
+export class UnreadableLockFileError extends Error {}
 
 function lockPath(path: string): string {
   return `${path}.kumiki-locks.json`;
@@ -14,32 +17,45 @@ function lockPath(path: string): string {
 
 function readLocks(path: string): LockFile {
   const p = lockPath(path);
-  if (!existsSync(p)) return { entries: [] };
-  const text = readFileSync(p, "utf8");
+  // One read, not a check and then a read: the file may go between the two, since `enforceLock`
+  // reads it without the write lock.
+  let text: string;
+  try {
+    text = readFileSync(p, "utf8");
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return { entries: [] };
+    throw unreadableLockFile(p, messageOf(e), e);
+  }
   let locks: unknown;
   try {
-    locks = JSON.parse(text);
-  } catch {
-    throw unreadableLockFile(p, "it is not JSON");
+    // A byte order mark is no JSON, but an editor writing UTF-8 may put one first.
+    locks = JSON.parse(text.startsWith("\uFEFF") ? text.slice(1) : text);
+  } catch (e) {
+    throw unreadableLockFile(p, `it is not JSON (${messageOf(e)})`, e);
   }
   const problem = lockFileProblem(locks);
   if (problem !== undefined) throw unreadableLockFile(p, problem);
   return locks as LockFile;
 }
 
-function unreadableLockFile(lockFile: string, problem: string): Error {
-  return new Error(
+function unreadableLockFile(lockFile: string, problem: string, cause?: unknown): Error {
+  return new UnreadableLockFileError(
     `Lock file "${resolve(lockFile)}" is unreadable: ${problem}. Fix it to the shape \`lock\` writes, {"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}]}, or delete it to release every lock.`,
+    { cause },
   );
 }
 
+// Not an array: an array's `entries` is its method, whose `length` is 0, so `[]` would lock nothing.
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
 const misshapen = (field: string, value: unknown, shape: string): string =>
   value === undefined ? `${field} is missing` : `${field} is not ${shape}`;
 
-/** The first field of a parsed lock file that is not the shape `LockFile` describes, by its path. */
+/**
+ * What is wrong with a parsed lock file, naming by its path the first field not in the shape
+ * `LockFile` describes; `undefined` when nothing is.
+ */
 function lockFileProblem(locks: unknown): string | undefined {
   if (!isObject(locks)) return "the top level is not an object";
   const { entries } = locks;
