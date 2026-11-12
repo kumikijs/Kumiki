@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { viewHash, viewHistory } from "../mutate.ts";
 import { load, viewDef, viewWithDeps } from "../store.ts";
+import { WARN_SKIPPED } from "./_shared/op-log.ts";
 import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage } from "./_shared/usage.ts";
 
@@ -11,7 +12,7 @@ type ViewMode = "text" | "with-deps" | "hash" | "history";
 export function viewCmd(inputArg: string, qname: string, mode: ViewMode): void {
   const path = sourceFileArg(inputArg);
   if (mode === "history") {
-    const log = viewHistory(path, qname);
+    const log = viewHistory(path, qname, WARN_SKIPPED);
     if (log.length === 0) {
       console.log(`(no history for ${qname})`);
       return;

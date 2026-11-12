@@ -1,5 +1,5 @@
 ---
-"@kumikijs/cli": patch
+"@kumikijs/cli": minor
 "@kumikijs/mcp": patch
 ---
 
@@ -28,9 +28,20 @@ still fails the verb, but the error now names the log and the line
 (`c.kumiki.kumiki-ops.jsonl:1: not valid JSON (…)`, or `not an op object` for
 JSON such as `null`), and a write op is rejected with the file put back, as
 before. A last entry with no newline after it no longer has the next entry
-appended onto the same line. The MCP tools go through the same reader, so
-`kumiki_history` and the edit tools behave the same way; the warning goes to
-the server's stderr.
+appended onto the same line. An op log that cannot be read, such as a
+directory at its path, fails the verb with an error naming the log.
+
+- The MCP tools that read the log (`kumiki_history`, `kumiki_add`,
+  `kumiki_replace`, `kumiki_edit`, `kumiki_rename`, `kumiki_remove`) follow
+  their answer, or their error, with a second text item, `warnings:` and a
+  JSON list holding `{ "kind": "malformed-jsonl", "message" }`, whose message
+  is the CLI's warning without its `warning: ` prefix.
+- In the library, `readOpLog(path, { onSkipped })` and each verb that reads
+  the log (`addDef`, `replaceDef`, `editDef`, `renameDef`, `removeDef`,
+  `patchApplyFile`, `patchRevert`, `viewHistory`) hand the skipped line, as
+  `{ log, line }`, to `onSkipped`, once and before the call returns or throws.
+  `describeSkipped` gives the warning's text.
+- The library prints nothing of it.
 
 A write op cuts the torn line off before it appends its own line. If that
 append fails, the file is put back and the rejection says the line was cut off:

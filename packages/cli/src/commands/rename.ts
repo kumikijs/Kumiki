@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { describeEdit, renameDef } from "../mutate.ts";
+import { WARN_SKIPPED } from "./_shared/op-log.ts";
 import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
@@ -17,7 +18,7 @@ export function registerRename(program: Command): string {
       if (!file || !qname || !newName) exitWithUsage(USAGE);
       const path = sourceFileArg(file);
       printOrExit(() => {
-        const opId = renameDef(path, qname, newName);
+        const opId = renameDef(path, qname, newName, WARN_SKIPPED);
         return describeEdit({ op: "rename", qname, newName, opId });
       });
     });

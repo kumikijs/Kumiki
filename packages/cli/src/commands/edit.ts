@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { describeEdit, editDef } from "../mutate.ts";
 import { readInputFile } from "./_shared/body-input.ts";
+import { WARN_SKIPPED } from "./_shared/op-log.ts";
 import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage, parseJsonOrExit, printOrExit, requireValue } from "./_shared/usage.ts";
 
@@ -45,7 +46,7 @@ export function registerEdit(program: Command): string {
           describeEdit({
             op: "edit",
             qname,
-            opId: editDef(path, qname, patch),
+            opId: editDef(path, qname, patch, WARN_SKIPPED),
           }),
         );
       },

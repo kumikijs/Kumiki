@@ -2,6 +2,7 @@ import { Argument, type Command } from "commander";
 import { addDef, describeEdit } from "../mutate.ts";
 import { LAYERS } from "../store.ts";
 import { bodyFileOption, resolveBody } from "./_shared/body-input.ts";
+import { WARN_SKIPPED } from "./_shared/op-log.ts";
 import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
@@ -32,7 +33,7 @@ export function registerAdd(program: Command): string {
         const body = resolveBody({ positional: rest, bodyFile: options.bodyFile, usage: USAGE });
         const path = sourceFileArg(file);
         printOrExit(() => {
-          const opId = addDef(path, layer, name, body);
+          const opId = addDef(path, layer, name, body, WARN_SKIPPED);
           return describeEdit({ op: "add", qname: `${layer}.${name}`, opId });
         });
       },
