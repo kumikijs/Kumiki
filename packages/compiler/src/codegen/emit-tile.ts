@@ -33,9 +33,9 @@ function under(chain: EnclosingTiles | undefined, name: string): EnclosingTiles 
 // Every position a user tile renders in (a call site, a bare child, a route target, another tile's
 // fallback) goes through here, so each gets the `tile.mount` marker and, around it, the tile's own
 // boundary.
-// `around` is what the position puts between the two, inside the boundary. An outer `_named` puts
-// its name in front of the ones a node already carries, so each of nested whole-body tiles fires
-// `tile.mount` / `tile.unmount`.
+// `around` is what the position puts between the two, inside the boundary. An outer `_named`
+// prepends its name to any the node already carries, so every tile of a whole-body chain fires
+// `tile.mount` / `tile.unmount`, outermost first.
 function placedTileJs(
   def: TileDef,
   tree: string,
