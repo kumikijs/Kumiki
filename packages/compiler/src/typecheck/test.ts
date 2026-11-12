@@ -207,6 +207,7 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
     localBinders: new Map(),
     routeBind: "no-payload",
     endedScopes: new Map(),
+    expectedTree: true,
   });
 }
 
