@@ -280,6 +280,58 @@ describe("W0212 ui-event-tile-mismatch", () => {
       .map((e) => /Reducer "([^"]+)"/.exec(e.message)?.[1]);
     expect(warned).toEqual(["risky"]);
   });
+
+  it.each([
+    {
+      depth: "the fallback of a nested tile's fallback",
+      chain: `tile FbA in=PanicInfo error-boundary=Last = text("fb " + n.get.show)`,
+    },
+    {
+      depth: "a fallback three tiers down",
+      chain: `tile FbB in=PanicInfo error-boundary=Last = text("fb " + n.get.show)
+tile FbA in=PanicInfo error-boundary=FbB = text("fb " + n.get.show)`,
+    },
+  ])("walks $depth, which renders in the place of the one that panicked", ({ chain }) => {
+    // Only `Last` fires click. It renders in `Card`, where `Widget` is, but outside `FbA`.
+    const src = withApp(`
+slot n : Option(Int) = None
+slot hits : Int = 0
+reducer onCard on=ui.click(Card) do= hits := hits + 1
+reducer onFallback on=ui.click(FbA) do= hits := hits + 1
+tile Last in=PanicInfo = button(text="retry")
+${chain}
+tile Widget error-boundary=FbA = text("w " + n.get.show)
+tile Card = column(text("card"), Widget)
+tile App = column(Card)`);
+    const warned = checkSource(src)
+      .filter((e) => e.code === "W0212")
+      .map((e) => /Reducer "([^"]+)"/.exec(e.message)?.[1]);
+    expect(warned).toEqual(["onFallback"]);
+  });
+
+  it.each([
+    [
+      "a fallback that names itself",
+      "tile Oops in=PanicInfo error-boundary=Oops = text(n.get.show)",
+    ],
+    [
+      "two fallbacks that name each other",
+      `tile Oops in=PanicInfo error-boundary=Mid = text(n.get.show)
+tile Mid in=PanicInfo error-boundary=Oops = text(n.get.show)`,
+    ],
+  ])("ends a chain of fallbacks at %s, which E0005 then reports", (_label, chain) => {
+    // The selector checks run before the cycle check, so they meet the loop first.
+    const src = `
+slot n : Option(Int) = None
+slot hits : Int = 0
+reducer onCard on=ui.click(Card#x) do= hits := hits + 1
+${chain}
+tile Widget error-boundary=Oops = text(n.get.show)
+tile Card = column(Widget)
+tile App = column(Card)
+app A caps=[] routes={"/" -> App, "/w" -> Widget, "/404" -> App} init=[]`;
+    expect(codesOf(src, { strictSelectorId: true })).toContain("E0005");
+  });
 });
 
 describe("W0212 gives the reason that holds when the element fires the event", () => {
@@ -1200,6 +1252,53 @@ reducer outerBad      on=ui.click(Outer#zz) do= log := log + "x"
 tile App = column(Outer)`);
       expect(flagged(src)).toEqual(["outerBad"]);
       expect(checkStrict(src).find((d) => d.code === "E0212")?.message).toContain('"fb" | "r"');
+    });
+
+    it("takes the fallback of a nested tile's fallback, which renders in its place", () => {
+      const src = withApp(`
+slot n : Option(Int) = None
+slot log : Text = ""
+tile Last in=PanicInfo = button(text="retry", id="again")
+tile FbA in=PanicInfo error-boundary=Last = text("fb " + n.get.show)
+tile Widget error-boundary=FbA = text("w " + n.get.show)
+tile Card = column(button(text="save", id="save"), Widget)
+reducer cardAgain on=ui.click(Card#again) do= log := log + "x"
+reducer cardBad   on=ui.click(Card#zz)    do= log := log + "x"
+tile App = column(Card)`);
+      expect(flagged(src)).toEqual(["cardBad"]);
+      expect(checkStrict(src).find((d) => d.code === "E0212")?.message).toContain(
+        '"again" | "save"',
+      );
+    });
+
+    // `Last` is also called with another id, so only its place along a chain keeps its own.
+    const LAST = `slot n : Option(Int) = None
+slot log : Text = ""
+tile Last = button(text="retry", id="again")
+tile FbA in=PanicInfo error-boundary=Last = text("fb " + n.get.show)
+tile Risky error-boundary=FbA = text("r " + n.get.show)
+reducer lastOwn    on=ui.click(Last#again) do= log := log + "x"
+reducer lastCalled on=ui.click(Last#x)     do= log := log + "x"
+reducer lastBad    on=ui.click(Last#zz)    do= log := log + "x"`;
+    it.each([
+      {
+        where: "a call site",
+        rest: `tile App = column(Risky, Last(id="x"))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`,
+      },
+      {
+        where: "a route target",
+        rest: `tile App = column(Last(id="x"))
+app A caps=[] routes={"/" -> App, "/r" -> Risky, "/404" -> App} init=[]`,
+      },
+      {
+        where: "a sub-routes target",
+        rest: `tile Shell sub-routes={"/s/r" -> Risky} = column(route-outlet())
+tile App = column(Last(id="x"))
+app A caps=[] routes={"/" -> App, "/s/*" -> Shell, "/404" -> App} init=[]`,
+      },
+    ])("keeps the own id of the fallback of a fallback at $where", ({ rest }) => {
+      expect(flagged(`${LAST}\n${rest}`)).toEqual(["lastBad"]);
     });
 
     it("leaves a tile with no element that fires the event to W0212", () => {
