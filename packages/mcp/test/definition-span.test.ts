@@ -33,9 +33,10 @@ describe("the definition tools take a definition from its first token to its las
       ]),
     );
 
-    expect(list).toEqual({ isError: false, body: `fn.double  (lines ${line}-${line})` });
-    expect(double).toEqual({ isError: false, body: DOUBLE });
-    expect(notes).toEqual({ isError: false, body: NOTES });
+    const listed = `fn.double  (lines ${line}-${line})`;
+    expect(list).toEqual({ isError: false, body: listed, items: [listed] });
+    expect(double).toEqual({ isError: false, body: DOUBLE, items: [DOUBLE] });
+    expect(notes).toEqual({ isError: false, body: NOTES, items: [NOTES] });
   });
 
   it.each([
