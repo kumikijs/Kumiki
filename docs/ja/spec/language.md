@@ -703,7 +703,7 @@ pattern      ::= identifier
 **builtin の内容 — 位置引数**:
 - テキスト系 builtin（`text("Home")`, `heading("Hi")`, `code("…")`）の内容は `( … )` に書く最初の**位置**引数である。名前付き引数はどこに書いても prop である — `heading(level=2, title)` が表示するのは `title` で、`level` は prop のまま。
 - `button` のラベルは名前付き引数 `text=` である。`link` と `label` はどちらでも取る：最初の位置引数（`link("Home", to="/x")`、`label("Name")`）、それが無ければ `text=`（`link(to="/x", text="Home")`）。したがって `editable` と同じく、位置引数と並べた `text=` は読まれない。（`link` は旧来の `{text: "…"}` prop 形式も受け付け、いずれも同じノードにコンパイルされる。）builtin が読まない引数を内容として書くと —— 2 つ目の位置引数、位置引数の無いテキスト系 builtin の `text=`、または `link` / `label` / `editable` で位置引数と並べた `text=` —— [E0129](./errors.md#e0129-unrendered-arg) になる：`text=` は `button` / `link` / `label` / `editable` のラベル引数であり、テキスト系 builtin では prop である。
-- 値 builtin（`text`・`heading`・`markdown`・`code`・`editable`・`label`・`link`・`image`・`icon`）以外の builtin の位置引数は、tile —— `tile-expr` か定義済み tile の名前 —— のときにだけ描画される。そこに書いた値 —— `column(text("a"), 42)`、slot、`column(let x = 42 in Card(x))` —— は何も描画せず [E0128](./errors.md#e0128-value-as-child) になる：tile で表示する（`text(n.show)`）か、値を使う位置に直接書くか、`fn` で計算する。値の位置（値 builtin の内容、ユーザー tile の入力、名前付き引数）では `let` は値であり、値として検査される。tile 本体と `when` / `if` / `for` / `match` の腕はそれ自体が `tile-expr` なので、そこでの `let` はパースエラーになる。
+- 値 builtin（`text`・`heading`・`markdown`・`code`・`editable`・`label`・`link`・`image`・`icon`）以外の builtin の位置引数は、tile —— `tile-expr` か定義済み tile の名前 —— のときにだけ描画される。そこに書いた値 —— `column(text("a"), 42)`、slot、`column(let x = 42 in Card(x))` —— は何も描画せず [E0128](./errors.md#e0128-value-as-child) になる：tile で表示する（`text(n.show)`）か、値を使う位置に直接書くか、`fn` で計算する。値の位置（値 builtin の内容、ユーザー tile の入力、名前付き引数）では `let` は値であり、値として検査される。tile 本体と `when` / `if` / `for` / `match` の腕はそれ自体が `tile-expr` なので、そこでの `let` はパースエラーになり、そこに書いた名前は tile 呼び出しとして読まれる：そこで名指した値 —— `when(c, total)`、`if c then greeting() else Header`、`for x in xs x` —— も E0128 になる。組み込み tile の名前はコンテナの中では値なので、`column(divider)` は何も描画せず E0128 になる（`divider()` と書く）。腕や本体の中では呼び出しとして読まれる（`when(c, divider)`）。
 
 **`when(cond, tile)` のセマンティクス**:
 - `cond` が真 → `tile` をレンダリング
@@ -738,6 +738,8 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 ```
 
 `onClick=saveTodo` で reducer `saveTodo` がクリック時に呼ばれる。`{todoId: $1}` は `$el.todoId` として reducer に届く。
+
+user tile の呼び出し側に書いたデータ prop は、その tile がルートに描画するノードへ 1 つずつマージされる：そのノードの同名の prop を置き換え、呼び出し側が書かなかった prop — `aria-*` 属性は 1 つずつ別の prop として数える — は、描画される要素でも `$el` でも tile が書いたまま残る。したがって `tile Ghost = button(text="Ghost", id="three")` に対して `Ghost {variant: "ghost"}` は id `three` を保ち、`ui.click(Ghost#three)`（[§1.6.2](#_1-6-2-セレクタ)）はそのボタンで発火する。一方 `Ghost {id: "x"}` と `Ghost(id="x")` はその id を `x` に置き換える。要素は `id` を props から受け取るので、`id=` をノードにも持つコントロールも呼び出し側に従う：`tile Field = input(id="name", bind=q)` に対して `Field {id: "other"}` は input を `#other` として描画する。builtin が自身の引数から描画するものは prop ではなく、マージされない：`Ghost(text="Other")` は `Ghost` と表示したままで、呼び出し側の `text` は `$el` にだけ届く。input の `value` や `placeholder` も同じである。
 
 名前が解決される名前空間は reducer だけであり、これは大文字始まりでも変わらない：`onClick=Bump` は reducer `Bump` を束縛し、どの reducer も指さない名前は [E0102](./errors.md#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。大文字か小文字かが決めるのはパーサが与える形だけであって、どの層を指しているかを言い分ける手段ではない。イベントハンドラ（`onClick=` / `onChange=` 等）として書いた大文字始まりの名前は、値 builtin 以外の builtin（`box` / `button` / `check` / `radio` / `column` 等）では *tile call* に、それ以外——props ブロック、`link` のような値 builtin、user tile——では variant タグになる。
 

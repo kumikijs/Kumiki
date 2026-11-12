@@ -4,6 +4,7 @@ import type { Command } from "commander";
 import { parseMockArg, replayCmd } from "../replay.ts";
 import { messageOf } from "../text.ts";
 import { capsFor } from "./_shared/caps.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage, requireValue } from "./_shared/usage.ts";
 
 const USAGE =
@@ -44,7 +45,6 @@ export function registerReplay(program: Command): string {
         options: { fromLog?: string; mock: string[]; untilStep?: number },
       ) => {
         if (!input || !options.fromLog) exitWithUsage(USAGE);
-        const inputPath = resolve(process.cwd(), input);
         const mocks: Record<string, EpisodeMockPolicy> = {};
         for (const spec of options.mock) {
           try {
@@ -55,6 +55,7 @@ export function registerReplay(program: Command): string {
             process.exit(2);
           }
         }
+        const inputPath = sourceFileArg(input);
         await replayCmd(inputPath, capsFor(inputPath).capabilities, {
           fromLog: resolve(process.cwd(), options.fromLog),
           ...(episodeId !== undefined ? { episodeId } : {}),

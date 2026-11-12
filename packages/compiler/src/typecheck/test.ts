@@ -201,16 +201,22 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
     });
   }
   checkTileTestInput(t, sym, errors);
-  checkTileExpr(t.expect as TileExpr, sym, errors, {
-    kind: "tile",
-    localBinds: new Set(),
-    localTypes: new Map(),
-    localBinders: new Map(),
-    routeBind: "no-payload",
-    endedScopes: new Map(),
-    nestedScopes: nestedScopes(t.expect),
-    expectedTree: true,
-  });
+  checkTileExpr(
+    t.expect as TileExpr,
+    sym,
+    errors,
+    {
+      kind: "tile",
+      localBinds: new Set(),
+      localTypes: new Map(),
+      localBinders: new Map(),
+      routeBind: "no-payload",
+      endedScopes: new Map(),
+      nestedScopes: nestedScopes(t.expect),
+      expectedTree: true,
+    },
+    { kind: "expect" },
+  );
 }
 
 function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
