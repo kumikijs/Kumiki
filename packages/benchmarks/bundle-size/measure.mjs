@@ -79,8 +79,7 @@ export function measureApp(root, app) {
         gzip: total("gzip"),
         brotli: total("brotli"),
       },
-      // The runtime modules alone, uncompressed — the figure the CLI's counter
-      // size test budgets (packages/cli/test/build.test.ts).
+      // The runtime modules alone, uncompressed: what an app ships beside its own code.
       runtime: total("raw") - appJs.raw,
     };
   } finally {
