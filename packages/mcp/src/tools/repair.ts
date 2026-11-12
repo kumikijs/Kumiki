@@ -3,11 +3,12 @@ import {
   formatDiagnostic,
   planFix,
   plural,
+  requireSourceFile,
   runFixFromTest,
   runTests,
 } from "@kumikijs/cli";
 import { z } from "zod";
-import { absPath, capsForInput, pathCapabilities } from "../input.ts";
+import { capsForInput, pathCapabilities } from "../input.ts";
 import {
   DIAGNOSTIC_SHAPE,
   failed,
@@ -40,7 +41,7 @@ export function registerRepairTools(tool: RegisterTool): void {
       },
     },
     async (input) => {
-      const abs = absPath(input.path);
+      const abs = requireSourceFile(input.path);
       const caps = capsForInput(input);
       if (input.apply) {
         const r = applyFixPlan(abs, input.only, caps);
@@ -97,7 +98,7 @@ export function registerRepairTools(tool: RegisterTool): void {
     async (input) => {
       const apply = input.apply === true;
       const outcome = await runFixFromTest(
-        absPath(input.path),
+        requireSourceFile(input.path),
         input.testName,
         apply,
         capsForInput(input),
@@ -123,7 +124,11 @@ export function registerRepairTools(tool: RegisterTool): void {
       },
     },
     async (input) => {
-      const report = await runTests(absPath(input.path), input.filter, capsForInput(input));
+      const report = await runTests(
+        requireSourceFile(input.path),
+        input.filter,
+        capsForInput(input),
+      );
       const body = json({
         total: report.total,
         passed: report.passed,
