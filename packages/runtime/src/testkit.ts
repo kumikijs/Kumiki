@@ -33,8 +33,10 @@ import { type ReplayApp, replayEpisodes, type SlotMetaLike, seedRoute } from "./
 import { serializeTileNode, tileStructEqual } from "./testkit/tile-match.ts";
 import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard.ts";
 
-// JSON has no `-0` and prints NaN and Infinity as `null`; a non-number keeps JSON's quotes.
+// String, not JSON, for a number: JSON writes -0 as 0 and NaN/Infinity as null. A string keeps its
+// quotes so "5" reads apart from 5, and a bigint keeps its `n` for the same reason.
 function _countStr(v: unknown): string {
+  if (typeof v === "bigint") return `${v}n`;
   if (typeof v !== "number") return _jsonStr(v);
   return Object.is(v, -0) ? "-0" : String(v);
 }
@@ -125,7 +127,8 @@ export const _stdlibTest = {
   }): TestResult {
     const { name, vars, trial } = input;
     const count = input.count === undefined ? 100 : input.count;
-    // The parser refuses such a count in source, but a definition built without it lands here.
+    // The parser refuses such a count in source, but a definition built without the parser
+    // lands here.
     if (!isPositiveInt(count)) {
       return {
         name,
