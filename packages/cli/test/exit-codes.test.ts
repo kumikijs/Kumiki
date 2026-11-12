@@ -1,8 +1,9 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { runCli, SPAWN, spawns } from "./helpers/cli.ts";
-import { seed, tempDir } from "./helpers/files.ts";
+import { warningLinesOf } from "./helpers/diagnostics.ts";
+import { NOT_A_FILE, seed, tempDir } from "./helpers/files.ts";
 import { tiedCounts } from "./helpers/tie.ts";
 
 const write = (name: string, source: string): string => seed(source, name);
@@ -402,13 +403,6 @@ describe("kumiki refs / view", () => {
     expect(code).toBe(0);
   });
 
-  it("fails when --history names a file that does not exist", SPAWN, () => {
-    const missing = join(tempDir(), "not-here.kumiki");
-    const { stderr, code } = runCli(["view", missing, "slot.count", "--history"]);
-    expect(stderr).toContain(missing);
-    expect(code).toBe(1);
-  });
-
   it("succeeds when the file exists but has no history", SPAWN, () => {
     const { stdout, code } = runCli([
       "view",
@@ -538,6 +532,117 @@ describe("kumiki lock / unlock", () => {
     lockedByA(file);
     expect(runCli(["unlock", file, "agent:a"]).code).toBe(0);
   });
+
+  it(
+    "lock and unlock exit 1 for a file that does not exist, and write no lock file",
+    spawns(4),
+    () => {
+      const file = join(tempDir(), "lock-missing.kumiki");
+      const locks = `${file}.kumiki-locks.json`;
+      const refused = { stdout: "", stderr: `File "${file}" not found\n`, code: 1 };
+      expect(runCli(["lock", file, "agent:a", "slot.*"])).toMatchObject(refused);
+      expect(existsSync(locks)).toBe(false);
+      expect(runCli(["unlock", file, "agent:a"])).toMatchObject(refused);
+      expect(existsSync(locks)).toBe(false);
+
+      writeFileSync(file, CLEAN);
+      const granted = runCli(["lock", file, "agent:a", "slot.*"]);
+      expect(granted).toMatchObject({ stdout: "locked slot.* for agent:a\n", stderr: "", code: 0 });
+      const held = { entries: [{ agent: "agent:a", patterns: ["slot.*"] }] };
+      expect(JSON.parse(readFileSync(locks, "utf8"))).toEqual(held);
+      const released = runCli(["unlock", file, "agent:a"]);
+      expect(released).toMatchObject({ stdout: "unlocked agent:a\n", stderr: "", code: 0 });
+      expect(JSON.parse(readFileSync(locks, "utf8"))).toEqual({ entries: [] });
+    },
+  );
+});
+
+// Each case runs in a directory of its own holding only the auxiliary files some verb is given, so
+// a sidecar (a lock file, a write lock, an op log, a build directory, Vite's cache) left beside the
+// path shows up as a name that was not there before.
+describe.each(NOT_A_FILE)("a .kumiki path that %s", (_what, make) => {
+  const SCENARIO = "scenario.json";
+  const OPS = "ops.jsonl";
+  const LOG = "episodes.jsonl";
+  const AUX: Record<string, string> = {
+    [SCENARIO]: JSON.stringify({ steps: [] }),
+    [OPS]: `${JSON.stringify({ op: "add", layer: "slot", name: "x", body: "Int = 1" })}\n`,
+    [LOG]: "",
+  };
+
+  /** A command line for each verb, given the path and the directory it is in. */
+  const CASES: Array<(file: string, at: string) => string[]> = [
+    (f) => ["add", f, "slot", "x", "Int", "=", "1"],
+    (f) => ["replace", f, "slot.count", "Int", "=", "1"],
+    (f) => ["remove", f, "slot.count"],
+    (f) => ["rename", f, "slot.count", "total"],
+    (f) => ["edit", f, "slot.count", JSON.stringify({ find: "0", replace: "1" })],
+    (f, at) => ["patch", "apply", f, join(at, OPS)],
+    (f) => ["patch", "revert", f, "op_0000000000AAAAAAAAAAAAAAAA"],
+    (f) => ["lock", f, "agent:a", "slot.*"],
+    (f) => ["unlock", f, "agent:a"],
+    (f) => ["fix", f],
+    (f) => ["fix", f, "--apply"],
+    (f) => ["fix", f, "--auto-patch", "inc-works"],
+    (f) => ["check", f],
+    (f) => ["list", f],
+    (f) => ["view", f, "slot.count"],
+    (f) => ["view", f, "slot.count", "--hash"],
+    (f) => ["view", f, "slot.count", "--with-deps"],
+    (f) => ["view", f, "slot.count", "--history"],
+    (f) => ["refs", f, "slot.count"],
+    (f, at) => ["build", f, join(at, "out")],
+    (f) => ["smoke", f],
+    (f) => ["test", f],
+    (f, at) => ["run", f, join(at, SCENARIO)],
+    (f, at) => ["replay", f, "--from-log", join(at, LOG)],
+    (f) => ["dev", f, "--port", "0"],
+  ];
+
+  it.each(CASES.map((argv) => [argv("app.kumiki", ".").join(" "), argv] as const))(
+    "kumiki %s exits 1 naming the path, and leaves nothing beside it",
+    SPAWN,
+    (_label, argv) => {
+      const at = tempDir();
+      for (const [name, content] of Object.entries(AUX)) writeFileSync(join(at, name), content);
+      const file = join(at, "app.kumiki");
+      make(file);
+      const before = readdirSync(at).sort();
+      const refused = { stdout: "", stderr: `File "${file}" not found\n`, code: 1 };
+      expect(runCli(argv(file, at))).toMatchObject(refused);
+      expect(readdirSync(at).sort()).toEqual(before);
+    },
+  );
+});
+
+describe("a relative .kumiki path", () => {
+  it("is named resolved against the working directory", SPAWN, () => {
+    const at = realpathSync(tempDir());
+    const refused = { stdout: "", stderr: `File "${join(at, "missing.kumiki")}" not found\n` };
+    expect(runCli(["check", "missing.kumiki"], { cwd: at })).toMatchObject({ ...refused, code: 1 });
+  });
+});
+
+describe("an argument of the wrong shape beside a .kumiki file that does not exist", () => {
+  const CASES: Array<(file: string, at: string) => string[]> = [
+    (f) => ["lock", f, "agent:a", ","],
+    (f, at) => ["replay", f, "--from-log", join(at, "episodes.jsonl"), "--mock", "bogus"],
+    (f) => ["add", f, "slot", "x"],
+    (f) => ["replace", f, "slot.count"],
+    (f) => ["edit", f, "slot.count", "{"],
+  ];
+
+  it.each(CASES.map((argv) => [argv("app.kumiki", ".").join(" "), argv] as const))(
+    "kumiki %s exits 2 without looking for the file",
+    SPAWN,
+    (_label, argv) => {
+      const at = tempDir();
+      const { stderr, code } = runCli(argv(join(at, "app.kumiki"), at));
+      expect(code).toBe(2);
+      expect(stderr).not.toContain("not found");
+      expect(readdirSync(at)).toEqual([]);
+    },
+  );
 });
 
 describe("the verbs that fail on what the program does when it runs", () => {
@@ -628,4 +733,126 @@ test inc-adds-two =
     expect(readFileSync(file, "utf8")).toBe(src);
     expect(code).toBe(1);
   });
+});
+
+describe("the warnings of the compile that smoke, run and test start with", () => {
+  const WARN_WITH_TEST = (count: number): string => `${WARN_ONLY}test bump-works =
+    reducer-test bump
+        given  = {slots: {count: 0}, event: {type: ui.focus, target: Card}}
+        expect = {slots: {count: ${count}}, effects: []}
+`;
+
+  /** WARN_ONLY's warning at the same line, and a click that panics. */
+  const WARN_AND_PANIC = `slot count : Int = 0
+reducer bump on=ui.focus(Card) do= count := count + 1
+reducer boom on=ui.click(BoomBtn) do= panic("boom")
+tile Card = box(heading("Count: " + count.show))
+tile BoomBtn = button(text="go", onClick=boom)
+tile App = column(Card, BoomBtn)
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  /** A `fmt` with a placeholder it has no argument for, inside the test's `given`: W0214 there. */
+  const WARN_IN_TEST = WITH_TESTS.replace(
+    "given  = {slots: {count: 0}",
+    'given  = {slots: {count: fmt("{0} {1}", 1).length}',
+  ).replace("expect = {slots: {count: 1}", "expect = {slots: {count: 6}");
+
+  // As `kumiki check` prints them, computed in-process: no line names its file.
+  const warning = warningLinesOf(WARN_ONLY);
+  const inTest = warningLinesOf(WARN_IN_TEST);
+
+  it("each source warns once, where these cases assume", () => {
+    expect(warning).toMatch(/^[^\n]*\bW0212 ui-event-tile-mismatch at 2:\d+: [^\n]+\n$/);
+    expect(warningLinesOf(WARN_AND_PANIC)).toBe(warning);
+    expect(warningLinesOf(WARN_WITH_TEST(1))).toBe(warning);
+    expect(inTest).toMatch(/^[^\n]*\bW0214 [^\n]+ at 11:\d+: [^\n]+\n$/);
+  });
+
+  it.each([
+    {
+      verb: "smoke",
+      args: (): string[] => [],
+      stdout: "ok — mounted, rendered, 0 interaction(s), no runtime errors\n",
+    },
+    {
+      verb: "run",
+      args: (): string[] => [
+        write("warned-run.json", JSON.stringify({ steps: [{ expect: { noErrors: true } }] })),
+      ],
+      stdout: "[ok] step 0\n\nscenario passed\n",
+    },
+  ])(
+    "$verb prints them on stderr and its output as for a clean file",
+    spawns(2),
+    ({ verb, args, stdout }) => {
+      const file = write(`warned-${verb}.kumiki`, WARN_ONLY);
+      expect(runCli([verb, file, ...args()])).toMatchObject({ stdout, stderr: warning, code: 0 });
+      const clean = write(`clean-${verb}.kumiki`, CLEAN);
+      expect(runCli([verb, clean, ...args()])).toMatchObject({ stdout, stderr: "", code: 0 });
+    },
+  );
+
+  it("test prints them on stderr and its report as for a clean file", spawns(2), () => {
+    const warned = runCli(["test", write("warned-test.kumiki", WARN_WITH_TEST(1))]);
+    expect(warned).toMatchObject({
+      stdout: expect.stringMatching(/^PASS {2}bump-works \(\d+ms\)\n\n1\/1 passed\n$/),
+      stderr: warning,
+      code: 0,
+    });
+    const clean = runCli(["test", write("clean-test.kumiki", WITH_TESTS)]);
+    expect(clean).toMatchObject({
+      stdout: expect.stringMatching(/^PASS {2}inc-works \(\d+ms\)\n\n1\/1 passed\n$/),
+      stderr: "",
+      code: 0,
+    });
+  });
+
+  it("smoke that fails prints them on stderr ahead of the failure", SPAWN, () => {
+    const res = runCli(["smoke", write("warned-panics.kumiki", WARN_AND_PANIC)]);
+    expect(res).toMatchObject({ stdout: "", code: 1 });
+    expect(res.stderr.split("runtime smoke failed (")[0]).toBe(warning);
+  });
+
+  it.each([
+    {
+      verb: "run",
+      source: WARN_ONLY,
+      args: (): string[] => [
+        write(
+          "failing-run.json",
+          JSON.stringify({ steps: [{ expect: { state: { count: 99 } } }] }),
+        ),
+      ],
+      stdout: /\nscenario FAILED\n$/,
+    },
+    {
+      verb: "test",
+      source: WARN_WITH_TEST(7),
+      args: (): string[] => [],
+      stdout: /^FAIL {2}bump-works /,
+    },
+  ])("$verb that fails still prints them on stderr", SPAWN, ({ verb, source, args, stdout }) => {
+    const res = runCli([verb, write(`failing-${verb}.kumiki`, source), ...args()]);
+    expect(res).toMatchObject({ stdout: expect.stringMatching(stdout), stderr: warning, code: 1 });
+  });
+
+  it.each([
+    { verb: "test", stdout: /^PASS {2}inc-works / },
+    { verb: "smoke", stdout: /^ok — mounted, rendered, / },
+  ])(
+    "$verb names the test a warning sits in, as a failed compile does",
+    SPAWN,
+    ({ verb, stdout }) => {
+      const res = runCli([verb, write(`in-test-${verb}.kumiki`, WARN_IN_TEST)]);
+      expect(res).toMatchObject({
+        stdout: expect.stringMatching(stdout),
+        stderr: `${inTest.trimEnd()} (in test "inc-works")\n`,
+        code: 0,
+      });
+    },
+  );
 });

@@ -160,6 +160,14 @@ tile Home = link(to="/x") {text: "go", prefetch: load}
       expect(refsOf(src, "tile.Home")).toEqual(["reducer.load@3:50"]);
     });
 
+    it("resolves a link's prefetch argument to a reducer", () => {
+      const src = `slot n : Int = 0
+reducer load on=route.enter("/x") do= n := 1
+tile Home = link("go", to="/x", prefetch=load)
+`;
+      expect(refsOf(src, "tile.Home")).toEqual(["reducer.load@3:42"]);
+    });
+
     it("resolves confirm's onYes / onNo to reducers", () => {
       const src = `slot n : Int = 0
 reducer yes on=ui.click(B) do= n := 1
@@ -174,6 +182,13 @@ tile B = button(text="b")
 tile S = box() {motion: "Spin"}
 `;
       expect(refsOf(src, "tile.S")).toEqual(["motion.Spin@2:26"]);
+    });
+
+    it("resolves a motion argument at the name inside the quotes, as the prop", () => {
+      const src = `motion Spin = {from: {rotate: "0deg"}, to: {rotate: "360deg"}, duration: "1s"}
+tile S = box(motion="Spin")
+`;
+      expect(refsOf(src, "tile.S")).toEqual(["motion.Spin@2:22"]);
     });
 
     it("resolves a link's prefetch written as a string literal at the name inside the quotes", () => {

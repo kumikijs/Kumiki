@@ -405,6 +405,97 @@ ${APP_A}`,
     ).toBe(true);
   });
 
+  it("suggests a close tile name for a misspelt tile in a when arm (E0105)", () => {
+    const file = seed(`slot open : Bool = true
+tile Header = text("h")
+tile App = column(when(open, Hedaer))
+${APP_A}`);
+    expect(check(load(file).program).map((e) => e.code)).toEqual(["E0105"]);
+    expect(descriptionsOf(file)).toEqual([`replace "Hedaer" with "Header" at 3:30`]);
+    expect(applyFirst(file).errors).toEqual([]);
+  });
+
+  it("proposes no tile for a slot in a when arm whose name is close to one", () => {
+    // The arm is E0128, which has no repair: renaming `item` to the tile `Item` renders something else.
+    const file = seed(`slot open : Bool = true
+slot item : Text = "x"
+tile Item = text("i")
+tile App = column(when(open, item))
+${APP_A}`);
+    expect(check(load(file).program).map((e) => e.code)).toEqual(["E0128"]);
+    expect(descriptionsOf(file)).toEqual([]);
+  });
+
+  it.each([
+    ["a for", 'tile Item = text("i")', `column(for item in xs text("a"), item)`],
+    [
+      "a sibling match arm",
+      'tile V = text("v")',
+      "match pick with | Some(v) -> Header | None -> v",
+    ],
+  ])("proposes no tile for a name read after %s ended (E0103)", (_, tile, body) => {
+    // The name is a value whose scope is over: a tile of a close name renders something else.
+    const file = seed(`slot xs : List(Int) = [1, 2]
+slot pick : Option(Int) = None
+tile Header = text("h")
+${tile}
+tile App = ${body}
+${APP_A}`);
+    expect(check(load(file).program).map((e) => [e.code, e.endedScope !== undefined])).toEqual([
+      ["E0103", true],
+    ]);
+    expect(descriptionsOf(file)).toEqual([]);
+  });
+
+  it.each([
+    ["a container", `column(text("a"), totl, Hedaer)`],
+    ["an arm", "column(when(c, totl), Hedaer)"],
+  ])("proposes only tiles for E0105, so the misspelt tile beside a name near a slot in %s is repaired", (_, body) => {
+    const file = seed(`slot c : Bool = true
+slot total : Int = 1
+tile Header = text("h")
+tile App = ${body}
+${APP_A}`);
+    expect(check(load(file).program).map((e) => e.code)).toEqual(["E0105", "E0105"]);
+    const plan = descriptionsOf(file);
+    expect(plan.filter((d) => d.includes('"totl"'))).toEqual([]);
+    expect(plan).toEqual([expect.stringContaining('replace "Hedaer" with "Header"')]);
+    expect(applyFixPlan(file, undefined).applied).toBe(1);
+    expect(readFileSync(file, "utf8")).toContain(`tile App = ${body.replace("Hedaer", "Header")}`);
+  });
+
+  it.each([
+    // A builtin's bare name in a container is E0128: `column(link)` renders nothing.
+    [
+      "a reducer in a container, near a builtin's name",
+      "reducer inc on=ui.click(Header) do= n := n + 1",
+      "column(inc, Hedaer)",
+      ["E0105", "no-close-name-suggestion"],
+    ],
+    // A variant is a value, so a tile of a close name renders something else.
+    [
+      "a variant in an arm, near a tile's name",
+      'tile Home = text("o")',
+      "column(when(c, Some(1)), Hedaer)",
+      ["E0105", "e0105-variant-tag-is-a-value"],
+    ],
+  ])("proposes no repair for %s, so the misspelt tile beside it is repaired", (_, def, body, skip) => {
+    const file = seed(`slot c : Bool = true
+slot n : Int = 0
+${def}
+tile Header = button(text="h")
+tile App = ${body}
+${APP_A}`);
+    const store = load(file);
+    const { patches, skipped } = planFixesExplained(store, check(store.program));
+    expect(patches.map((p) => p.description)).toEqual([
+      expect.stringContaining('replace "Hedaer" with "Header"'),
+    ]);
+    expect(skipped.map((s) => [s.code, s.reason])).toEqual([skip]);
+    expect(applyFixPlan(file, undefined).applied).toBe(1);
+    expect(readFileSync(file, "utf8")).toContain(`tile App = ${body.replace("Hedaer", "Header")}`);
+  });
+
   it("suggests a close variant tag for E0209 on a user union, not a tile of a similar name", () => {
     const file = seed(`type Light = Red | Green
 fn label(l: Light) -> Text = match l with
@@ -748,7 +839,7 @@ describe("planFixesExplained: skip-reason classification", () => {
   });
 });
 
-describe("planFixesExplained: a read after the body that declared it (E0103)", () => {
+describe("planFixesExplained: a read after the scope that declared it ended (E0103)", () => {
   // `idx` is one edit from the slot `id`, so a rename would type-check and read `id`.
   const scoped = (body: string): string => `slot id    : Int = 0
 slot total : Int = 0
@@ -771,15 +862,28 @@ ${APP_A}`;
     };
   };
 
+  // `v` is one edit from the app's name `A`.
+  const inApp = (tile: string) => scoped("()").replace("column(Btn, text(total.show))", tile);
+
   it.each([
-    ["a `for` body", FOR_BODY],
-    ["an `if` branch", "if flag then { let idx = 1 } else { () }\n        total := idx"],
+    ["a `for` body", scoped(FOR_BODY)],
+    ["an `if` branch", scoped("if flag then { let idx = 1 } else { () }\n        total := idx")],
     [
       "a match arm",
-      "match Some(1) with\n          | Some(idx) -> { () }\n          | None      -> { () }\n        total := idx",
+      scoped(
+        "match Some(1) with\n          | Some(idx) -> { () }\n          | None      -> { () }\n        total := idx",
+      ),
     ],
-  ])("proposes no rename for a name %s declared", (_form, body) => {
-    const { patches, skipped } = plan(scoped(body));
+    ["a `let … in`", scoped("id := let idx = 1 in idx\n        total := idx")],
+    ["a tile's `for`", inApp("column(Btn, for idx in [1] text(idx.show), text(idx.show))")],
+    [
+      "a tile's `match` arm",
+      inApp(
+        'column(Btn, match Some(1) with | Some(v) -> text(v.show) | None -> text("none"), text(v.show))',
+      ),
+    ],
+  ])("proposes no rename for a name %s declared, read after it", (_form, source) => {
+    const { patches, skipped } = plan(source);
     expect(patches).toEqual([]);
     expect(skipped).toEqual([["E0103", "e0103-read-after-scope-ended"]]);
   });
@@ -801,6 +905,16 @@ ${APP_A}`;
       'Reference to undefined name "cont"',
     ]);
     expect(reworded).toMatchObject(ONE_OF_EACH);
+  });
+
+  it("still renames a misspelling beside a sibling's read", () => {
+    const source = inApp(
+      "column(Btn, for idx in [1] text(idx.show), text(idx.show), text(cont.show))",
+    );
+    expect(plan(source)).toMatchObject({
+      patches: ['replace "cont" with "count" at 8:76'],
+      skipped: [["E0103", "e0103-read-after-scope-ended"]],
+    });
   });
 });
 

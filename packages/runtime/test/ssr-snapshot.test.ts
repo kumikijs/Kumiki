@@ -290,7 +290,7 @@ describe("a boundary fallback served by renderToString", () => {
     return { app: app as MountedApp, target, served, boot: rendered.bootstrapEpisode, logger };
   }
 
-  it("names the bootstrap episode, which records the panic after the init chain", async () => {
+  it("names the bootstrap episode, which records the panic as handled after the init chain", async () => {
     let n = 0;
     const result = await renderToString(withBoundary(), {
       providers: { "http.get": userProvider() },
@@ -311,6 +311,7 @@ describe("a boundary fallback served by renderToString", () => {
       message: "no avatar for Yui",
       location: "Profile",
       category: "tile-render",
+      handled: true,
     });
     expect(boot.status).toBe("panic");
     expect(result.snapshot.bootstrap).toBe(boot);
@@ -330,7 +331,7 @@ describe("a boundary fallback served by renderToString", () => {
     const click = logger.list().at(-1);
     expect(click?.trigger.kind).toBe("ui.click");
     expect(click?.steps.filter((s) => s.kind === "panic")).toMatchObject([
-      { location: "Profile", category: "tile-render" },
+      { location: "Profile", category: "tile-render", handled: true },
     ]);
     expect(target.textContent).toBe(`fallback episode: ${click?.id}`);
   });

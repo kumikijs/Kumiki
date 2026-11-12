@@ -1,12 +1,12 @@
-import { resolve } from "node:path";
 import type { Command } from "commander";
 import { findReferences, load } from "../store.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki refs <input.kumiki> <qname>";
 
 export function refsCmd(inputArg: string, qname: string): void {
-  const store = load(resolve(process.cwd(), inputArg));
+  const store = load(sourceFileArg(inputArg));
   if (!store.byQName.has(qname)) {
     console.error(`Definition "${qname}" not found`);
     process.exit(1);
