@@ -50,6 +50,7 @@ export {
   removeDef,
   renameDef,
   replaceDef,
+  UnreadableLockFileError,
   unlockDef,
   viewHash,
   viewHistory,

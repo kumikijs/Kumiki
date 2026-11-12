@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { lockDef, readOpLog, replaceDef, unlockDef } from "@kumikijs/cli";
 import { app } from "@kumikijs/examples";
@@ -206,6 +206,151 @@ describe("lock and unlock", () => {
     expect(() => lockDef(path, "agent:a", "slot.*")).toThrowError(refusal);
     expect(() => unlockDef(path, "agent:a")).toThrowError(refusal);
     expect(existsSync(`${path}.kumiki-locks.json`)).toBe(false);
+  });
+});
+
+describe("a lock file not in the shape `lock` writes", () => {
+  /** The refusal every reader of the lock file gives when `problem` is what is wrong with it. */
+  const unreadable = (problem: string): string =>
+    `Lock file "${locks}" is unreadable: ${problem}. Fix it to the shape \`lock\` writes, {"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}]}, or delete it to release every lock.`;
+
+  /** "it is not JSON", with what `JSON.parse` says of `content`, which says where it stopped. */
+  const notJson = (content: string): string => {
+    try {
+      JSON.parse(content);
+    } catch (e) {
+      return `it is not JSON (${(e as Error).message})`;
+    }
+    throw new Error(`${JSON.stringify(content)} is JSON`);
+  };
+
+  const MISSHAPEN: ReadonlyArray<readonly [content: string, problem: string]> = [
+    ["{ not json", notJson("{ not json")],
+    ["", notJson("")],
+    [
+      '{"entries": [{"agent": "agent:a", "patterns": ["slot.*",]}]}',
+      notJson('{"entries": [{"agent": "agent:a", "patterns": ["slot.*",]}]}'),
+    ],
+    ["null", "the top level is not an object"],
+    // An array's `entries` is its method, whose `length` is 0: read as is, `[]` locks nothing.
+    ["[]", "the top level is not an object"],
+    ["{}", "entries is missing"],
+    ['{"entries": {}}', "entries is not a list"],
+    ['{"entries": ["agent:a"]}', "entries[0] is not an object"],
+    ['{"entries": [{"patterns": ["slot.*"]}]}', "entries[0].agent is missing"],
+    ['{"entries": [{"agent": 1, "patterns": ["slot.*"]}]}', "entries[0].agent is not text"],
+    ['{"entries": [{"agent": "agent:a"}]}', "entries[0].patterns is missing"],
+    // One string, not a list of one: read a character at a time, its `*`
+    // would lock every definition.
+    [
+      '{"entries": [{"agent": "agent:a", "patterns": "slot.*"}]}',
+      "entries[0].patterns is not a list",
+    ],
+    [
+      '{"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}, {"agent": "agent:b", "patterns": ["tile.*", 7]}]}',
+      "entries[1].patterns[1] is not text",
+    ],
+  ];
+
+  it.each(
+    MISSHAPEN,
+  )("%j is refused at an op, at lock and at unlock, and nothing is written", (content, problem) => {
+    writeFileSync(locks, content);
+    const source = readFileSync(file, "utf8");
+    asAgent("agent:b");
+    // None of these files is meant to lock agent:b out of `tile.App`.
+    refusedUnchanged(() => replaceDef(file, "tile.App", "column(DecBtn)"), unreadable(problem));
+    refusedUnchanged(() => lockDef(file, "agent:b", "tile.*"), unreadable(problem));
+    refusedUnchanged(() => unlockDef(file, "agent:a"), unreadable(problem));
+    expect(readFileSync(file, "utf8")).toBe(source);
+    expect(existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
+  });
+
+  it("is refused, named, when a directory stands at its path", () => {
+    mkdirSync(locks);
+    const source = readFileSync(file, "utf8");
+    asAgent("agent:b");
+    // Node's own message names no path, so the refusal has to.
+    const refusal = `Lock file "${locks}" is unreadable: EISDIR: illegal operation on a directory`;
+    expect(() => replaceDef(file, "tile.App", "column(DecBtn)")).toThrowError(refusal);
+    expect(() => lockDef(file, "agent:b", "tile.*")).toThrowError(refusal);
+    expect(() => unlockDef(file, "agent:a")).toThrowError(refusal);
+    expect(readFileSync(file, "utf8")).toBe(source);
+    expect(statSync(locks).isDirectory()).toBe(true);
+    expect(existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
+  });
+});
+
+describe("a lock file in the shape `lock` writes", () => {
+  it("is read when it starts with a byte order mark", () => {
+    writeFileSync(
+      locks,
+      `\uFEFF${JSON.stringify({ entries: [{ agent: "agent:a", patterns: ["slot.*"] }] })}`,
+    );
+    asAgent("agent:b");
+    expect(() => replaceDef(file, "slot.count", "N = 1")).toThrowError(
+      `lock violation: slot.count is locked by agent:a (pattern "slot.*")`,
+    );
+    unlockDef(file, "agent:a");
+    expect(held()).toEqual({ entries: [] });
+  });
+
+  it("reads both entries of an agent that has two, and unlock releases both", () => {
+    const entries = [
+      { agent: "agent:a", patterns: ["slot.*"] },
+      { agent: "agent:a", patterns: ["tile.*"] },
+    ];
+    writeFileSync(locks, JSON.stringify({ entries }));
+    asAgent("agent:b");
+    expect(() => replaceDef(file, "tile.App", "column(DecBtn)")).toThrowError(
+      `lock violation: tile.App is locked by agent:a (pattern "tile.*")`,
+    );
+    unlockDef(file, "agent:a");
+    expect(held()).toEqual({ entries: [] });
+    replaceDef(file, "tile.App", "column(DecBtn)");
+  });
+
+  it("locks nothing when it has no entries", () => {
+    writeFileSync(locks, '{"entries": []}\n');
+    asAgent("agent:b");
+    replaceDef(file, "slot.count", "N = 1");
+    expect(() => unlockDef(file, "agent:a")).toThrowError(
+      `nothing to unlock: agent:a holds no lock on ${file}. No agent holds one.`,
+    );
+    lockDef(file, "agent:b", "slot.*");
+    expect(held()).toEqual({ entries: [{ agent: "agent:b", patterns: ["slot.*"] }] });
+  });
+
+  it("locks nothing for an entry that holds no pattern, which unlock releases", () => {
+    writeFileSync(locks, JSON.stringify({ entries: [{ agent: "agent:a", patterns: [] }] }));
+    asAgent("agent:b");
+    replaceDef(file, "slot.count", "N = 1");
+    lockDef(file, "agent:b", "slot.*");
+    unlockDef(file, "agent:a");
+    expect(held()).toEqual({ entries: [{ agent: "agent:b", patterns: ["slot.*"] }] });
+  });
+
+  it("ignores the fields `lock` does not write, and keeps them when it rewrites the file", () => {
+    const entry = { agent: "agent:a", patterns: ["slot.*"], since: 1 };
+    writeFileSync(locks, JSON.stringify({ version: 2, entries: [entry] }));
+    asAgent("agent:b");
+    expect(() => replaceDef(file, "slot.count", "N = 1")).toThrowError(
+      `lock violation: slot.count is locked by agent:a (pattern "slot.*")`,
+    );
+    lockDef(file, "agent:a", "tile.*");
+    lockDef(file, "agent:b", "reducer.*");
+    expect(held()).toEqual({
+      version: 2,
+      entries: [
+        { agent: "agent:a", patterns: ["slot.*", "tile.*"], since: 1 },
+        { agent: "agent:b", patterns: ["reducer.*"] },
+      ],
+    });
+    unlockDef(file, "agent:b");
+    expect(held()).toEqual({
+      version: 2,
+      entries: [{ agent: "agent:a", patterns: ["slot.*", "tile.*"], since: 1 }],
+    });
   });
 });
 
