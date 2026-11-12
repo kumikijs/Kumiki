@@ -1,19 +1,7 @@
 import type { Pos, Refinement, TypeExpr } from "../ast.ts";
 import { REFINEMENT_PREDS } from "../refinements.ts";
+import { isPrimTypeName } from "../stdlib-types.ts";
 import { ParseError, TokenStream } from "./token-stream.ts";
-
-/** The primitive type names, which a type position reads as `TypePrim`. */
-export const PRIM_TYPES: ReadonlySet<string> = new Set([
-  "Int",
-  "Text",
-  "Bool",
-  "Unit",
-  "Float",
-  "Time",
-  "Bytes",
-  "File",
-  "EffectId",
-]);
 
 export class TypeParser extends TokenStream {
   protected parseTypeExpr(): TypeExpr {
@@ -21,6 +9,7 @@ export class TypeParser extends TokenStream {
   }
 
   protected parseTypeExprNested(): TypeExpr {
+    const chain = this.startChain();
     const first = this.parseTypeUnionAtom();
     if (this.matchOp("|")) {
       const variants: { name: string; payloads: TypeExpr[]; pos: Pos }[] = [
@@ -30,24 +19,44 @@ export class TypeParser extends TokenStream {
         this.next();
         variants.push(this.typeAsVariant(this.parseTypeUnionAtom()));
       }
+      this.endChain(chain);
       return { kind: "TypeUnion", variants, pos: first.pos };
     }
     let refined = first;
-    let built = 0;
     while (this.matchKw("where")) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       this.next();
       const ref = this.parseRefinement();
       refined = { kind: "TypeRefinement", inner: refined, refinement: ref, pos: refined.pos };
     }
+    this.endChain(chain);
     return refined;
   }
 
+  /** In a union a primitive's name is a nullary variant, as any other bare name is. */
   protected typeAsVariant(t: TypeExpr): { name: string; payloads: TypeExpr[]; pos: Pos } {
-    if (t.kind === "TypeRef") return { name: t.name, payloads: [], pos: t.pos };
-    if (t.kind === "TypeApp") return { name: t.name, payloads: t.args, pos: t.pos };
-    throw new ParseError(`Unsupported variant form`, t.pos);
+    switch (t.kind) {
+      case "TypeRef":
+      case "TypePrim":
+        return { name: t.name, payloads: [], pos: t.pos };
+      case "TypeApp":
+        return { name: t.name, payloads: t.args, pos: t.pos };
+      case "TypeRecord":
+        throw this.notAVariant("a record", t.pos);
+      case "TypeNominal":
+        throw this.notAVariant("a `nominal` type", t.pos);
+      case "TypeRefinement":
+        throw this.notAVariant("a refinement (`… where …`)", t.pos);
+      case "TypeUnion":
+        throw this.notAVariant("a union", t.pos);
+    }
+  }
+
+  private notAVariant(form: string, pos: Pos): ParseError {
+    return new ParseError(
+      `Unsupported variant form: a variant is a name, optionally with a payload (\`Name\` or \`Name(T, …)\`), not ${form}`,
+      pos,
+    );
   }
 
   protected parseTypeUnionAtom(): TypeExpr {
@@ -63,8 +72,12 @@ export class TypeParser extends TokenStream {
       if (refinement) (node as { refinement?: Refinement }).refinement = refinement;
       return node;
     }
+    const enclosing = this.measure();
     const atom = this.parseTypeAtom();
+    const below = this.measured(enclosing);
     if (this.matchKw("where")) {
+      // A run's first `where` is a node over the atom, as each later one is over the one before.
+      this.charge(below + 1, this.peek().pos);
       this.next();
       const ref = this.parseRefinement();
       return { kind: "TypeRefinement", inner: atom, refinement: ref, pos: atom.pos };
@@ -101,9 +114,7 @@ export class TypeParser extends TokenStream {
       this.eat("op", ")");
       return { kind: "TypeApp", name, args, pos: t.pos };
     }
-    if (PRIM_TYPES.has(name)) {
-      return { kind: "TypePrim", name: name as "Int", pos: t.pos };
-    }
+    if (isPrimTypeName(name)) return { kind: "TypePrim", name, pos: t.pos };
     return { kind: "TypeRef", name, pos: t.pos };
   }
 

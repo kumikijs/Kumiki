@@ -1,5 +1,6 @@
 import {
   type AppShape,
+  type BuiltinEffectName,
   type CapabilityProvider,
   type CapabilityRegistry,
   computeSlotDiffs,
@@ -12,7 +13,8 @@ import {
   type RedirectEntry,
   type RoutingImpl,
   readStatus,
-  reportCapabilityRefusal,
+  recordRenderPanic,
+  reportRefusedEmit,
   reportRejectedBatch,
   reportUnhandledEffectError,
   type SsrSnapshot,
@@ -20,7 +22,7 @@ import {
   withRenderingApp,
 } from "./core.ts";
 import { createEpisodeLogger, type Episode, type EpisodeLogger } from "./episode.ts";
-import { splitPath } from "./router.ts";
+import { followRedirects, normalizeLocation, resolveTarget, splitPath } from "./router.ts";
 import { renderTileToString } from "./ssr-render.ts";
 
 export type RenderToStringOptions = {
@@ -56,24 +58,36 @@ export async function renderToString(
   app: AppShape,
   options: RenderToStringOptions = {},
 ): Promise<RenderToStringResult> {
-  const routePath = options.route ?? "/";
+  // Held as the client's router holds the URL it is at, so the server lands where the client would.
+  const routePath = normalizeLocation(options.route ?? "/");
 
   if (!app.live) app.live = {};
   const live = app.live;
   for (const [k, meta] of Object.entries(app.slots)) live[k] = meta.value;
 
+  // Without the routing module, a path names the pattern it is, as the URL parser writes it.
+  const declared = (path: string) =>
+    app.routes?.filter((r) => normalizeLocation(r.pattern) === path) ?? [];
   const requested = splitPath(routePath);
   const redirectTo = options.routing
     ? options.routing.findRedirect(app.routes, requested)
-    : (app.routes?.find(
-        (r): r is RedirectEntry => "redirectTo" in r && r.pattern === requested.pathname,
-      )?.redirectTo ?? null);
+    : followRedirects(requested.pathname, (path) => {
+        const to = declared(path).find((r): r is RedirectEntry => "redirectTo" in r)?.redirectTo;
+        return to === undefined ? null : resolveTarget(to, splitPath(path));
+      });
+  // Each step of the chain is resolved against the path it redirects from.
   const servedPath = redirectTo ?? routePath;
 
   const parsedRoute: ParsedRoute =
     options.routing && app.routes && app.routes.length > 0
       ? options.routing.parseLocation(app.routes, splitPath(servedPath))
-      : { path: servedPath, pattern: servedPath, params: {}, query: {}, hash: NONE };
+      : {
+          path: servedPath,
+          pattern: declared(servedPath)[0]?.pattern ?? servedPath,
+          params: {},
+          query: {},
+          hash: NONE,
+        };
   live.route = parsedRoute;
 
   const now = options.now ?? (() => Date.now());
@@ -89,6 +103,13 @@ export async function renderToString(
   try {
     logger.beginTrigger({ kind: "ssr.hydrate", target: servedPath });
     await Promise.all(app.init.map((emit) => dispatchEmit(app, live, emit, caps, logger)));
+    // Before `endTrigger`: the render is the bootstrap chain's last step, so a
+    // panic an `error-boundary` catches in it lands on that episode.
+    const html = withRenderingApp(
+      app,
+      (e, site) => recordRenderPanic(logger, e, site, true).episodeId,
+      () => renderTileToString(pickRootTile(app, live)),
+    );
     logger.endTrigger();
 
     const list = logger.list();
@@ -96,8 +117,6 @@ export async function renderToString(
     if (!bootstrap) {
       throw new Error("renderToString: bootstrap episode was not committed (in-flight effects?)");
     }
-
-    const html = withRenderingApp(app, () => renderTileToString(pickRootTile(app, live)));
 
     const slots: SsrSnapshot = {};
     for (const [k, meta] of Object.entries(app.slots)) {
@@ -118,6 +137,20 @@ export async function renderToString(
   }
 }
 
+// A mount installs the standard effects and this pass does not, so an emit of one that finds no
+// entry here is skipped unreported: it names an effect this pass does not run, not a missing one.
+// Keyed by `BuiltinEffectName`, so a standard effect added there is a type error here until listed.
+const STANDARD_EFFECT_TABLE: { readonly [N in BuiltinEffectName]: true } = {
+  log: true,
+  navigate: true,
+  "navigate-replace": true,
+  "navigate-back": true,
+  "scroll-to": true,
+  toast: true,
+  confirm: true,
+};
+const STANDARD_EFFECTS: ReadonlySet<string> = new Set(Object.keys(STANDARD_EFFECT_TABLE));
+
 async function dispatchEmit(
   app: AppShape,
   live: Record<string, unknown>,
@@ -125,12 +158,21 @@ async function dispatchEmit(
   caps: CapabilityRegistry,
   logger: EpisodeLogger,
 ): Promise<void> {
-  const effect = app.effects[emit.effect];
-  if (!effect) return;
+  const effect = Object.hasOwn(app.effects, emit.effect) ? app.effects[emit.effect] : undefined;
+  if (!effect) {
+    if (STANDARD_EFFECTS.has(emit.effect)) return;
+    // No effect-start / effect-cancel pair, unlike a refused capability: with no effect there is
+    // nothing to start, and the live dispatcher records the panic step alone too.
+    logger.recordPanic(reportRefusedEmit(emit.effect, { category: "effect" }));
+    return;
+  }
   const input = emit.args[0];
   if (effect.cap !== "" && !caps.has(effect.cap)) {
     const token = logger.recordEffectStart(emit.effect, input);
-    logger.recordPanic(reportCapabilityRefusal(emit.effect, effect.cap), token);
+    logger.recordPanic(
+      reportRefusedEmit(emit.effect, { category: "capability", cap: effect.cap }),
+      token,
+    );
     logger.cancelPendingEffect(token, emit.effect);
     return;
   }

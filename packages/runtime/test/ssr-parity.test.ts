@@ -71,7 +71,11 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
   scroll: { cases: [["scroll", { kind: "scroll", children: [CHILD], props: CONTAINER_PROPS }]] },
   panel: { cases: [["panel", { kind: "panel", children: [CHILD], props: CONTAINER_PROPS }]] },
   fieldset: {
-    cases: [["fieldset", { kind: "fieldset", children: [CHILD], props: CONTAINER_PROPS }]],
+    cases: [
+      ["fieldset", { kind: "fieldset", children: [CHILD], props: CONTAINER_PROPS }],
+      ["fieldset (legend)", { kind: "fieldset", children: [CHILD], props: { legend: "Billing" } }],
+      ["fieldset (empty legend)", { kind: "fieldset", children: [CHILD], props: { legend: "" } }],
+    ],
   },
   region: { cases: [["region", { kind: "region", children: [CHILD], props: CONTAINER_PROPS }]] },
   grid: {
@@ -206,6 +210,11 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
       ["check", { kind: "check", checked: true }],
       ["check (id, control state)", { kind: "check", checked: false, props: { id: "c" } }],
       ["check (bind)", { kind: "check", checked: true, bind: "agreed" }],
+      ["check (label)", { kind: "check", checked: true, props: { label: "I agree" } }],
+      ["check (empty label)", { kind: "check", checked: false, props: { label: "" } }],
+      // A label that is not Text follows the legend's rule: a number renders as its digits, a Bool renders nothing.
+      ["check (number label)", { kind: "check", checked: false, props: { label: 5 } }],
+      ["check (Bool label)", { kind: "check", checked: false, props: { label: true } }],
     ],
   },
   switch: {
@@ -222,6 +231,14 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
         { kind: "radio", group: "plan", value: "pro", selected: true, props: { label: "Pro" } },
       ],
       ["radio (no label)", { kind: "radio", group: "plan", value: "free" }],
+      [
+        "radio (number label)",
+        { kind: "radio", group: "plan", value: "free", props: { label: 5 } },
+      ],
+      [
+        "radio (Bool label)",
+        { kind: "radio", group: "plan", value: "free", props: { label: true } },
+      ],
       [
         "radio (bind)",
         { kind: "radio", group: "plan", value: "pro", selected: true, bind: "plan" },
