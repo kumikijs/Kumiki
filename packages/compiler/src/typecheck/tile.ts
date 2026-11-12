@@ -271,13 +271,17 @@ type ValueName =
   | { readonly kind: "ended"; readonly error: KumikiError };
 
 // The parser reads every name in an arm or a body as a tile call, so a call of a name no tile has
-// is resolved as a value. In a container it reads a bare lower-cased name as an expression, so a
-// `Ref` is the one expression that may still name a tile; there a value of the same name wins over
-// a builtin.
+// is resolved as a value, and so is a builtin's name written alone. In a container it reads a bare
+// lower-cased name as an expression, so a `Ref` is the one expression that may still name a tile;
+// in both places a value of the same name wins over a builtin.
 function occupantOf(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): Occupant {
   if (isTileExpr(v)) {
-    if (v.kind !== "TileCall" || namesTile(v.name, sym)) return { kind: "tile" };
-    return valueNamed(v.name, v.pos, sym, ctx) ?? { kind: "unknown", name: v.name };
+    if (v.kind !== "TileCall" || sym.tiles.has(v.name)) return { kind: "tile" };
+    const builtin = BUILTIN_TILES.has(v.name);
+    if (builtin && v.bare === undefined) return { kind: "tile" };
+    const value = valueNamed(v.name, v.pos, sym, ctx);
+    if (value) return value;
+    return builtin ? { kind: "tile" } : { kind: "unknown", name: v.name };
   }
   if (v.kind !== "Ref") return { kind: "value" };
   if (sym.tiles.has(v.name)) return { kind: "tile" };
