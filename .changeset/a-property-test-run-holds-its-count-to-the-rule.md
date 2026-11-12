@@ -1,5 +1,5 @@
 ---
-"@kumikijs/runtime": patch
+"@kumikijs/runtime": minor
 "@kumikijs/compiler": patch
 ---
 
