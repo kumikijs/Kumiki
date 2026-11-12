@@ -64,7 +64,9 @@ describe("a named argument reaches props", () => {
   });
 
   it("does not lower a tile-valued argument as if it were prop data", () => {
-    const js = emit('card(header=text("inner"), text("body"))');
+    // Outside an event handler, a named argument parses as a value, so only a `when` or a
+    // `for` puts a tile there.
+    const js = emit('box(header=when(n > 0, text("inner")), text("body"))', "slot n : Int = 1");
     const route = js.slice(js.indexOf('pattern: "/"'), js.indexOf('pattern: "/404"'));
     expect(route.split('kind: "text"').length - 1).toBe(1);
     expect(propsOf(js)).not.toContain("header:");
@@ -73,6 +75,8 @@ describe("a named argument reaches props", () => {
   it("leaves an lvalue bind out of the props", () => {
     const js = propsOf(emit("input(bind=draft)", 'slot draft : Text = ""'));
     expect(js).not.toContain("bind:");
+    const block = propsOf(emit("input() {bind: draft}", 'slot draft : Text = ""'));
+    expect(block).not.toContain("bind:");
   });
 
   it("lets the props block win over an argument of the same name", () => {
@@ -85,6 +89,135 @@ describe("a named argument reaches props", () => {
     const js = propsOf(emit('region(text("x")) {aria: {hidden: "true"}, aria-label: "Main"}'));
     expect(js).toContain('aria: { ...({ "hidden": "true" }), "aria-label": "Main" }');
     expect(js).not.toContain("aria_label");
+  });
+});
+
+describe("a prop a kind lifts into its node reads either spelling", () => {
+  // Up to the node's own props: its children's nodes, props included, are nested a level deeper.
+  const fieldsOf = (js: string, kind: string): string => {
+    const start = js.indexOf(`kind: ${JSON.stringify(kind)}`);
+    let depth = 0;
+    for (let i = start; start !== -1 && i < js.length; i++) {
+      const c = js[i] ?? "";
+      if ("([{".includes(c)) depth++;
+      else if (")]}".includes(c)) depth--;
+      else if (depth === 0 && js.startsWith("props:", i)) return js.slice(start, i);
+    }
+    throw new Error(`no ${kind} node with props`);
+  };
+  const SLOTS = 'slot pick : Text = "a"';
+
+  it.each([
+    ["modal", 'modal(text("m")) {open: false}', "open: !!(false)"],
+    ["drawer", 'drawer(text("m")) {open: false}', "open: !!(false)"],
+    ["popover", 'popover(text("m")) {open: false}', "open: !!(false)"],
+    ["details", 'details(text("m")) {open: true}', "open: !!(true)"],
+    ["list", 'list(text("a")) {ordered: true}', "ordered: !!(true)"],
+    ["select", 'select(bind=pick) {options: [{label: "A", value: "a"}]}', '"label": "A"'],
+    ["select", "select() {bind: pick}", 'bind: "pick"'],
+  ])("lowers %s's %s from the block", (kind, tile, field) => {
+    expect(fieldsOf(emit(tile, SLOTS), kind)).toContain(field);
+  });
+
+  it.each([
+    [
+      "a link's prefetch and prefetch-args",
+      'link("go", to="/x") {prefetch: load, prefetch-args: {"id": "1"}}',
+      'link("go", to="/x", prefetch=load, prefetch-args={"id": "1"})',
+    ],
+    [
+      "a for row's key",
+      "column(for p in xs text(p) {key: p})",
+      "column(for p in xs text(p, key=p))",
+    ],
+    [
+      "a user tile row's Tuple key",
+      "column(for t in ts Row {key: t})",
+      "column(for t in ts Row(key=t))",
+    ],
+  ])("lowers %s the same from either spelling", (_, block, arg) => {
+    const defs = `slot xs : List(Text) = []
+slot ts : List(Tuple(Int, Text)) = []
+tile Row = text("r")
+slot n : Int = 0
+reducer load on=route.enter("/") do= n := 1`;
+    expect(emit(arg, defs)).toBe(emit(block, defs));
+  });
+
+  it("lowers the value the block writes when both spellings are written", () => {
+    const js = emit('list(text("a"), ordered=false) {ordered: true}');
+    expect(fieldsOf(js, "list")).toContain("ordered: !!(true)");
+    expect(fieldsOf(js, "list")).not.toContain("false");
+  });
+
+  it("reads no block in a tile-test's expected tree, which compares arguments only", () => {
+    const source = `
+tile Probe = list(text("a")) {ordered: true}
+
+app P
+    caps   = []
+    routes = {"/" -> Probe, "/404" -> Probe}
+    init   = []
+
+test probe-list =
+    tile-test Probe
+        given  = {slots: {}}
+        expect = list(text("a")) {ordered: true}
+`;
+    const js = codegen(parse(lex(source)), {
+      runtimeSpecifier: "@kumikijs/runtime",
+      includeTests: true,
+    }).js;
+    const expected = js.slice(js.indexOf("const _expected = "));
+    expect(fieldsOf(expected, "list")).toContain("ordered: false");
+    expect(fieldsOf(js, "list")).toContain("ordered: !!(true)");
+  });
+});
+
+describe("the checker reads a tile-test's expected tree as its lowering does, with no block", () => {
+  const tileTest = (defs: string, tile: string, expected: string) => `${defs}
+tile Probe = ${tile}
+
+app P
+    caps   = []
+    routes = {"/" -> Probe, "/404" -> Probe}
+    init   = []
+
+test probe =
+    tile-test Probe
+        given  = {slots: {}}
+        expect = ${expected}
+`;
+
+  it.each([
+    [
+      "an error's field, as E0230",
+      'slot mail : Text = "a"',
+      "error(field=mail)",
+      "error() {field: mail}",
+      "E0230",
+    ],
+    [
+      "a bound radio's value, as E0225",
+      "slot n : Int = 0",
+      "radio(bind=n, value=2)",
+      "radio(bind=n) {value: 2}",
+      "E0225",
+    ],
+  ])("reports %s when the block alone writes it", (_, defs, tile, expected, code) => {
+    expect(codesOf(tileTest(defs, tile, expected))).toEqual([code]);
+  });
+
+  it.each([
+    ["an error's field", 'slot mail : Text = "a"', "error(field=mail)", "error(field=mail)"],
+    [
+      "a bound radio's value",
+      "slot n : Int = 0",
+      "radio(bind=n, value=2)",
+      "radio(bind=n, value=2)",
+    ],
+  ])("accepts %s written as an argument", (_, defs, tile, expected) => {
+    expect(codesOf(tileTest(defs, tile, expected))).toEqual([]);
   });
 });
 
@@ -127,8 +260,13 @@ describe("which argument a user tile takes as its input", () => {
     expect(inputArg(emit('column(Row(bind=draft, "hi"), text(n.show))', HOST), "Row")).toBe('"hi"');
   });
 
-  it("reports a tile written as a named argument, which nothing renders", () => {
-    expect(codesFor('column(Btn(header=text("inner")), text(n.show))', HOST)).toEqual(["E0201"]);
+  // Outside an event handler, a named argument parses as a value, so only a `when` or a
+  // `for` puts a tile there.
+  it.each([
+    'column(Btn(header=when(n > 0, text("inner"))), text(n.show))',
+    'column(Btn(header=for x in [1] text("inner")), text(n.show))',
+  ])("reports a tile written as a named argument, which nothing renders: %s", (tile) => {
+    expect(codesFor(tile, HOST)).toEqual(["E0201"]);
   });
 
   it("reads the outer call's input when the tile renders another user tile", () => {
@@ -187,6 +325,15 @@ describe("button(type=…) reaches the tile node", () => {
     for (const ok of ["submit", "button", "reset"]) {
       expect(codesOf(withRoot("Ok", `tile Ok = button(text="x", type="${ok}")`)), ok).toEqual([]);
     }
+  });
+
+  it("reads and checks a type written in the {…} block as one written as an argument", () => {
+    const js = loweredOf(withRoot("Send", 'tile Send = button(text="send") {type: "button"}'));
+    const node = js.slice(js.indexOf('kind: "button"'));
+    expect(node.slice(0, node.indexOf("props:"))).toContain('type: "button"');
+    expect(codesOf(withRoot("Bad", 'tile Bad = button(text="x") {type: "submmit"}'))).toEqual([
+      "E0201",
+    ]);
   });
 
   it("takes an expression, not only a literal", () => {

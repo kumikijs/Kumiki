@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { buildDefIndex, lex, parse, type Reference, referencesIn } from "@kumikijs/compiler";
+import { allFiles } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 import { codesOf } from "./helpers/diagnostics.ts";
 
@@ -41,6 +44,68 @@ type Item = {id: ItemId, label: Text}
 slot label : Text = ""
 `;
     expect(refsOf(src, "type.Item")).toEqual(["type.ItemId@2:18"]);
+  });
+
+  describe("a qualified call", () => {
+    it("names the type a type-member call is qualified by, at the qualifier", () => {
+      const src = `type ItemId = nominal Text where uuid
+slot last : Option(ItemId) = None
+slot shown : Text = ""
+reducer add on=ui.click(B) do=
+    let id = ItemId.fresh()
+    shown := ItemId.show(id) + Int.show(1)
+    last := ItemId.parse(shown)
+tile B = button(text="b")
+`;
+      expect(refsOf(src, "reducer.add").filter((r) => r.startsWith("type."))).toEqual([
+        "type.ItemId@5:14",
+        "type.ItemId@6:14",
+        "type.ItemId@7:13",
+      ]);
+    });
+
+    describe("with a program's own `type Decoder`, a call on the namespace", () => {
+      it.each([
+        { call: "Decoder.Text", why: "a built-in call names no type", edges: [] },
+        // E0116, so this fixture does not check, but it is the case that fails if the namespace
+        // exclusion is dropped: `fresh` is a type member on any other qualifier.
+        { call: "Decoder.fresh()", why: "an argless fresh is E0116 and names no type", edges: [] },
+        {
+          call: "Decoder.show(raw)",
+          why: "show given its argument",
+          edges: ["type.Decoder@4:12"],
+        },
+        {
+          call: "Decoder.parse(raw)",
+          why: "parse given its argument",
+          edges: ["type.Decoder@4:12"],
+        },
+      ])("$call: $why", ({ call, edges }) => {
+        const src = `type Decoder = nominal Text
+slot raw : Text = ""
+reducer r on=ui.click(B) do=
+    raw := ${call}
+tile B = button(text="b")
+`;
+        expect(refsOf(src, "reducer.r").filter((r) => r.startsWith("type."))).toEqual(edges);
+      });
+    });
+  });
+
+  it("names the types a Decoder.Json argument spells, at each name", () => {
+    // The argument parses as a value, but codegen decodes by it as a type.
+    const src = `type ItemId = nominal Text where uuid
+type Item = {id: ItemId, label: Text}
+effect load cap=storage.read
+    in=Unit
+    out=Result(Option(Map(ItemId, Item)), Text)
+    policy=once
+    map-request={key: "items", decode: Decoder.Json(Map(ItemId, Item))}
+`;
+    expect(refsOf(src, "effect.load").filter((r) => r.includes("@7:"))).toEqual([
+      "type.ItemId@7:57",
+      "type.Item@7:65",
+    ]);
   });
 
   describe("a local binding shadows a definition of the same name", () => {
@@ -95,6 +160,14 @@ tile Home = link(to="/x") {text: "go", prefetch: load}
       expect(refsOf(src, "tile.Home")).toEqual(["reducer.load@3:50"]);
     });
 
+    it("resolves a link's prefetch argument to a reducer", () => {
+      const src = `slot n : Int = 0
+reducer load on=route.enter("/x") do= n := 1
+tile Home = link("go", to="/x", prefetch=load)
+`;
+      expect(refsOf(src, "tile.Home")).toEqual(["reducer.load@3:42"]);
+    });
+
     it("resolves confirm's onYes / onNo to reducers", () => {
       const src = `slot n : Int = 0
 reducer yes on=ui.click(B) do= n := 1
@@ -104,11 +177,26 @@ tile B = button(text="b")
       expect(refsOf(src, "reducer.ask")).toEqual(["tile.B@3:25", "reducer.yes@3:79"]);
     });
 
-    it("resolves a motion prop, which is a string literal", () => {
+    it("resolves a motion prop, which is a string literal, at the name inside the quotes", () => {
       const src = `motion Spin = {from: {rotate: "0deg"}, to: {rotate: "360deg"}, duration: "1s"}
 tile S = box() {motion: "Spin"}
 `;
-      expect(refsOf(src, "tile.S")).toEqual(["motion.Spin@2:25"]);
+      expect(refsOf(src, "tile.S")).toEqual(["motion.Spin@2:26"]);
+    });
+
+    it("resolves a motion argument at the name inside the quotes, as the prop", () => {
+      const src = `motion Spin = {from: {rotate: "0deg"}, to: {rotate: "360deg"}, duration: "1s"}
+tile S = box(motion="Spin")
+`;
+      expect(refsOf(src, "tile.S")).toEqual(["motion.Spin@2:22"]);
+    });
+
+    it("resolves a link's prefetch written as a string literal at the name inside the quotes", () => {
+      const src = `slot n : Int = 0
+reducer load on=route.enter("/x") do= n := 1
+tile Home = link(to="/x") {text: "go", prefetch: "load"}
+`;
+      expect(refsOf(src, "tile.Home")).toEqual(["reducer.load@3:51"]);
     });
 
     it("resolves a tile.mount lifecycle event at the tile name, not the pattern", () => {
@@ -144,6 +232,40 @@ test round-trips =
         invariant = run-reducer(inc).slots.count == count
 `;
       expect(refsOf(src, "test.round-trips")).toContain("reducer.inc@8:33");
+    });
+
+    it("reads a call to a declared fn run-reducer as a call to the fn", () => {
+      // A declared fn wins over the builtin of its name, so the argument is a value, not a reducer.
+      const src = `slot count : Int = 0
+fn run-reducer(x: Int) -> Int = x + 1
+reducer inc on=ui.click(B) do= count := run-reducer(count)
+tile B = button(text="b")
+`;
+      expect(refsOf(src, "reducer.inc")).toEqual([
+        "tile.B@3:25",
+        "slot.count@3:32",
+        "fn.run-reducer@3:41",
+        "slot.count@3:53",
+      ]);
+    });
+
+    it("reads the chained `.run-reducer(r)` as no reducer once a fn has the name", () => {
+      const src = `slot count : Int = 0
+fn run-reducer(x: Int) -> Int = x + 1
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="b")
+test chain =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {count: n}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(n).run-reducer(inc).slots.count >= 0
+`;
+      // The receiver is the fn's call, and `inc` is a value the walker finds no definition for.
+      expect(refsOf(src, "test.chain")).toEqual([
+        "slot.count@8:30",
+        "tile.B@8:73",
+        "fn.run-reducer@9:21",
+      ]);
     });
   });
 
@@ -207,8 +329,11 @@ test inc-increments =
       ]);
     });
 
-    it("names the slots its given/expect blocks key on, without a position", () => {
-      expect(refsOf(src, "test.inc-increments")).toContain("slot.count@-");
+    it("names the slots its given/expect blocks key on, at each key", () => {
+      expect(refsOf(src, "test.inc-increments").filter((r) => r.startsWith("slot."))).toEqual([
+        "slot.count@6:27",
+        "slot.count@7:27",
+      ]);
     });
   });
 
@@ -277,7 +402,7 @@ ${decls}test t =
         mocks  = {}
         expect = {slots-equal: {items: []}, effects: [persist(items)]}
 `;
-      expect(refsOf(episode, "test.t")).toEqual(["slot.items@-"]);
+      expect(refsOf(episode, "test.t")).toEqual(["slot.items@13:33"]);
       expect(codesOf(episode)).toContain("E0714");
     });
 
@@ -306,7 +431,7 @@ tile B = button(text="b", onClick=inc)
         given  = {mocks: {persist: delay(twice(5), ok(twice(1)))}, event: {type: ui.click, target: B}}
         expect = {effects: []}
 `;
-        expect(mockRefs(src)).toEqual(["effect.persist@-", "fn.twice@13:42", "fn.twice@13:55"]);
+        expect(mockRefs(src)).toEqual(["effect.persist@13:27", "fn.twice@13:42", "fn.twice@13:55"]);
       });
 
       it("in an episode-test names its effect by key, and fns only in its values", () => {
@@ -316,7 +441,11 @@ tile B = button(text="b", onClick=inc)
         mocks  = {persist: err(twice(1)), load: ignore}
         expect = {no-errors: true}
 `;
-        expect(mockRefs(src)).toEqual(["effect.persist@-", "fn.twice@14:32", "effect.load@-"]);
+        expect(mockRefs(src)).toEqual([
+          "effect.persist@14:19",
+          "fn.twice@14:32",
+          "effect.load@14:43",
+        ]);
       });
     });
 
@@ -337,10 +466,10 @@ test t =
 `;
         expect(refsOf(src, "test.t")).toEqual([
           "reducer.r@7:18",
-          "slot.mocks@-",
+          "slot.mocks@8:27",
           "fn.ok@8:41",
           "tile.B@8:82",
-          "slot.mocks@-",
+          "slot.mocks@9:27",
         ]);
       });
 
@@ -359,18 +488,22 @@ tile B = button(text="b", onClick=r)
         given  = {event: {type: ui.click, target: B}}
         expect = {slots: {n: 1}, mocks: {save: ok(twice(1))}}
 `;
-        expect(refsOf(inExpect, "test.t")).toEqual(["reducer.r@7:18", "tile.B@8:51", "slot.n@-"]);
+        expect(refsOf(inExpect, "test.t")).toEqual([
+          "reducer.r@7:18",
+          "tile.B@8:51",
+          "slot.n@9:27",
+        ]);
         const inPropertyGiven = `${decls}test t =
     property-test
         for-all   = {k: Int}
         given     = {slots: {n: k}, mocks: {save: ok(twice(1))}}
         invariant = run-reducer(r).slots.n == k + 1
 `;
-        expect(refsOf(inPropertyGiven, "test.t")).toEqual(["slot.n@-", "reducer.r@10:33"]);
+        expect(refsOf(inPropertyGiven, "test.t")).toEqual(["slot.n@9:30", "reducer.r@10:33"]);
         for (const src of [inExpect, inPropertyGiven]) expect(codesOf(src)).toContain("E0714");
       });
 
-      it("reads an episode-test's `slots-equal` keys as slots", () => {
+      it("reads an episode-test's `slots-equal` keys as slots, each at its key", () => {
         const src = `slot seen : Text = ""
 fn root() -> Text = "/"
 test replay =
@@ -379,7 +512,7 @@ test replay =
         mocks  = {}
         expect = {slots-equal: {seen: root()}, no-panics: true}
 `;
-        expect(refsOf(src, "test.replay")).toEqual(["slot.seen@-", "fn.root@7:39"]);
+        expect(refsOf(src, "test.replay")).toEqual(["slot.seen@7:33", "fn.root@7:39"]);
       });
 
       it("binds the `for-all` names in the given, as it does in the invariant", () => {
@@ -395,7 +528,7 @@ test p =
         given     = {slots: {total: size + total}, event: {type: ui.click, target: B}}
         invariant = run-reducer(r).slots.total == size + total + 1
 `;
-        expect(refsOf(src, "test.p")).toEqual(["slot.total@-", "tile.B@8:84", "reducer.r@9:33"]);
+        expect(refsOf(src, "test.p")).toEqual(["slot.total@8:30", "tile.B@8:84", "reducer.r@9:33"]);
       });
 
       it("reads an event's `type` as no name, and its `target` as a tile only for a ui event", () => {
@@ -414,8 +547,8 @@ test timed =
         given  = {event: {type: timer, target: B}}
         expect = {slots: {ui: 1}}
 `;
-        expect(refsOf(src, "test.t")).toEqual(["reducer.r@6:18", "tile.B@7:51", "slot.ui@-"]);
-        expect(refsOf(src, "test.timed")).toEqual(["reducer.tick@10:18", "slot.ui@-"]);
+        expect(refsOf(src, "test.t")).toEqual(["reducer.r@6:18", "tile.B@7:51", "slot.ui@8:27"]);
+        expect(refsOf(src, "test.timed")).toEqual(["reducer.tick@10:18", "slot.ui@12:27"]);
       });
 
       it("reads a `target` field inside a slot's value as the value it is", () => {
@@ -430,8 +563,95 @@ test t =
         given  = {event: {type: ui.click, target: B}}
         expect = {slots: {nav: {target: Home}}}
 `;
-        expect(refsOf(src, "test.t")).toEqual(["reducer.go@7:18", "tile.B@8:51", "slot.nav@-"]);
+        expect(refsOf(src, "test.t")).toEqual(["reducer.go@7:18", "tile.B@8:51", "slot.nav@9:27"]);
       });
     });
+
+    // `{count}` is `{count: count}` written as one token: the key and its value
+    // at once. Rewriting the token rewrites both.
+    describe("a key written as its own value", () => {
+      const decls = `slot count : Int = 0
+effect ignore cap=storage.write in=Int out=Result(Int, Text)
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="b", onClick=inc)
+`;
+
+      it("is one reference, at the token, when the value is the same slot", () => {
+        const src = `${decls}test t =
+    reducer-test inc
+        given  = {slots: {count}, event: {type: ui.click, target: B}}
+        expect = {slots: {count: 1}}
+`;
+        expect(refsOf(src, "test.t")).toEqual([
+          "reducer.inc@6:18",
+          "slot.count@7:27",
+          "tile.B@7:67",
+          "slot.count@8:27",
+        ]);
+        expect(codesOf(src)).toEqual(["E0003"]);
+      });
+
+      it("has no position when the value is a `for-all` name", () => {
+        // The token is the slot as the key and the generated value as the
+        // value: rewritten for the slot, it would stop reading the generator.
+        const src = `${decls}test p =
+    property-test
+        for-all   = {count: Int}
+        given     = {slots: {count}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(inc).slots.count == count + 1
+`;
+        expect(refsOf(src, "test.p")).toEqual(["slot.count@-", "tile.B@8:70", "reducer.inc@9:33"]);
+        expect(codesOf(src)).toEqual(["E0003"]);
+      });
+
+      it("is at the key when the value is written out, though it spells the same name", () => {
+        // `{count: count}` is two tokens: the key is the slot, the value the
+        // generated one, and a rewrite of the key leaves the value as it is.
+        const src = `${decls}test p =
+    property-test
+        for-all   = {count: Int}
+        given     = {slots: {count: count}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(inc).slots.count == count + 1
+`;
+        expect(refsOf(src, "test.p")).toEqual([
+          "slot.count@8:30",
+          "tile.B@8:77",
+          "reducer.inc@9:33",
+        ]);
+      });
+
+      it("has no position as a mock key, whose value is the mock's script", () => {
+        // `{ignore}` mocks the effect `ignore` with the script `ignore`.
+        const src = `${decls}test replay =
+    episode-test
+        load   = "log.jsonl"
+        mocks  = {ignore}
+        expect = {no-errors: true}
+`;
+        expect(refsOf(src, "test.replay")).toEqual(["effect.ignore@-"]);
+        expect(codesOf(src)).toEqual(["E0003"]);
+      });
+    });
+  });
+});
+
+describe("a reference's position", () => {
+  // `rename` rewrites the text at each position and the content hash labels the token there, so
+  // both rely on the source spelling the name exactly where its reference says.
+  it("is where the source spells the name, in every example", () => {
+    const misplaced: string[] = [];
+    for (const file of allFiles()) {
+      const source = readFileSync(file, "utf8");
+      const lines = source.split("\n");
+      const program = parse(lex(source));
+      const index = buildDefIndex(program);
+      for (const r of program.defs.flatMap((d) => referencesIn(d, index))) {
+        if (!r.pos) continue;
+        const at = lines[r.pos.line - 1]?.slice(r.pos.col - 1, r.pos.col - 1 + r.name.length);
+        if (at !== r.name)
+          misplaced.push(`${basename(file)} ${fmt(r)} reads ${JSON.stringify(at)}`);
+      }
+    }
+    expect(misplaced).toEqual([]);
   });
 });

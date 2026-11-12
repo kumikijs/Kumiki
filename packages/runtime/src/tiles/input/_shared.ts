@@ -90,7 +90,8 @@ export function valueKey(v: unknown): string {
     for (let i = 0; `_${i}` in t; i++) parts.push(valueKey(t[`_${i}`]));
     return parts.join("|");
   }
-  return JSON.stringify(v);
+  // `JSON.stringify` has no text for `undefined`, an option written with no `value`.
+  return JSON.stringify(v) ?? String(v);
 }
 
 export type InputHandlers = {
@@ -180,7 +181,7 @@ export function applyControlState(el: HTMLElement, props?: TileProps): void {
 
 type ToggleKind = "check" | "switch";
 
-/** A checkbox wrapped in a label: the `check` and `switch` tiles differ only in kind and role. */
+/** A checkbox wrapped in a label, shared by `check` and `switch`; `check` adds its label `<span>` on top. */
 export function toggleTile<K extends ToggleKind>(kind: K, role?: string): TileRenderer<K> {
   return (node) => {
     const wrap = document.createElement("label");

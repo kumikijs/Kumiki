@@ -1,5 +1,12 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
-import { findReferences, joinLines, load, type Store, spliceLines } from "../store.ts";
+import {
+  findReferences,
+  joinLines,
+  load,
+  requireSourceFile,
+  type Store,
+  spliceLines,
+} from "../store.ts";
 import { messageOf } from "../text.ts";
 import { atomicWriteFileSync, withWriteLock } from "../write-lock.ts";
 import { commit, compareQNames } from "./commit.ts";
@@ -36,6 +43,7 @@ export function addDef(
   body: string,
   options: OpLogOptions = {},
 ): string {
+  requireSourceFile(path);
   return addDefs(path, [{ layer, name, body }], options);
 }
 
@@ -79,6 +87,7 @@ export function replaceDef(
   body: string,
   options: OpLogOptions = {},
 ): ReplaceResult {
+  requireSourceFile(path);
   enforceLock(path, qname);
   return withWriteLock(path, () => replaceDefLocked(path, qname, body, options));
 }
@@ -118,6 +127,7 @@ export function removeDef(
   cascade: boolean,
   options: OpLogOptions = {},
 ): RemoveResult {
+  requireSourceFile(path);
   enforceLock(path, qname);
   return withWriteLock(path, () => removeDefLocked(path, qname, cascade, options));
 }
@@ -235,6 +245,7 @@ export function renameDef(
   newName: string,
   options: OpLogOptions = {},
 ): string {
+  requireSourceFile(path);
   enforceLock(path, qname);
   return withWriteLock(path, () => renameDefLocked(path, qname, newName, options));
 }
@@ -283,6 +294,7 @@ export function editDef(
   patch: unknown,
   options: OpLogOptions = {},
 ): string {
+  requireSourceFile(path);
   enforceLock(path, qname);
   return withWriteLock(path, () => editDefLocked(path, qname, patch, options));
 }
@@ -370,6 +382,7 @@ export function patchApplyFile(
   opsFile: string,
   options: OpLogOptions = {},
 ): string[] {
+  requireSourceFile(path);
   return withWriteLock(path, () => patchApplyFileLocked(path, opsFile, options));
 }
 

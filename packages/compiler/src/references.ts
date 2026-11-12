@@ -17,7 +17,8 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { assertNever, isTileExpr } from "./ast.ts";
-import { eventParts, recordFieldsOf, testSections } from "./test-sections.ts";
+import { callsBuiltin, decodedType, RUN_REDUCER, typeMemberQualifier } from "./builtin-calls.ts";
+import { eventParts, type RecordField, recordFieldsOf, testSections } from "./test-sections.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
 /** The layers a name can denote. `app` and `test` are never referenced by name. */
@@ -26,6 +27,11 @@ export type RefLayer = "type" | "slot" | "effect" | "reducer" | "tile" | "fn" | 
 export type Reference = {
   layer: RefLayer;
   name: string;
+  /**
+   * Where the name's text starts, so the source at `pos` spells `name`: one column past the
+   * opening quote of a string literal. Absent when the name has no spelling of its own to rewrite.
+   * A string literal that spells the name with an escape is the exception, and `rename` refuses it.
+   */
   pos?: Pos;
 };
 
@@ -135,6 +141,10 @@ class Walker {
     this.out.push({ layer, name, pos });
   }
 
+  private addQuoted(layer: RefLayer, str: { value: string; pos: Pos }): void {
+    this.add(layer, str.value, { line: str.pos.line, col: str.pos.col + 1 });
+  }
+
   typeExpr(t: TypeExpr | undefined): void {
     if (!t) return;
     switch (t.kind) {
@@ -188,18 +198,28 @@ class Walker {
         this.expr(e.base, locals);
         this.expr(e.index, locals);
         return;
-      case "Call":
-        // `run-reducer(name)` takes a reducer NAME, not a value.
-        if (e.callee === "run-reducer") {
+      case "Call": {
+        // `run-reducer(name)` takes a reducer NAME, not a value, unless a declared fn has the name.
+        if (e.callee === RUN_REDUCER && callsBuiltin(e.callee, (n) => this.index.fn.has(n))) {
           this.runReducerArg(e.args[0]);
           return;
         }
-        if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
+        // Codegen decodes by this argument, so its names are types, though it parses as a value.
+        if (e.callee === "Decoder.Json") {
+          const t = decodedType(e.args[0]);
+          if (t) this.typeExpr(t);
+          else for (const a of e.args) this.expr(a, locals);
+          return;
+        }
+        const qualifier = typeMemberQualifier(e.callee, e.args.length);
+        if (qualifier !== undefined) this.add("type", qualifier, e.pos);
+        else if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
         for (const a of e.args) this.expr(a, locals);
         return;
+      }
       case "MethodCall":
         this.expr(e.receiver, locals);
-        if (e.method === "run-reducer") {
+        if (e.method === RUN_REDUCER && callsBuiltin(e.method, (n) => this.index.fn.has(n))) {
           this.runReducerArg(e.args[0]);
           return;
         }
@@ -349,25 +369,12 @@ class Walker {
     switch (t.kind) {
       case "TileCall":
         this.add("tile", t.name, t.pos);
-        for (const a of t.args) this.tileArg(a, locals);
+        for (const a of t.args) {
+          if (a.name !== undefined && this.namingProp(t.name, a.name, a.value)) continue;
+          this.tileArg(a, locals);
+        }
         for (const p of t.props) {
-          if (HANDLER_NAMES.has(p.name)) {
-            const reducer = handlerReducerName(p.value);
-            if (reducer !== null) {
-              this.add("reducer", reducer, p.value.pos);
-              continue;
-            }
-          }
-          if (t.name === "link" && p.name === "prefetch") {
-            // A bare ident or a string literal, both naming a reducer.
-            if (p.value.kind === "Ref") this.add("reducer", p.value.name, p.value.pos);
-            else if (p.value.kind === "Str") this.add("reducer", p.value.value, p.value.pos);
-            continue;
-          }
-          if (p.name === "motion" && p.value.kind === "Str") {
-            this.add("motion", p.value.value, p.value.pos);
-            continue;
-          }
+          if (this.namingProp(t.name, p.name, p.value)) continue;
           this.expr(p.value, locals);
         }
         return;
@@ -397,15 +404,31 @@ class Walker {
     }
   }
 
+  /**
+   * A prop, in either spelling, whose value names a reducer or a motion rather than reading one:
+   * a handler, a link's prefetch target, a motion. False for any other prop.
+   */
+  private namingProp(tile: string, name: string, value: Expr | TileExpr): boolean {
+    if (HANDLER_NAMES.has(name)) {
+      const reducer = handlerReducerName(value);
+      if (reducer === null) return false;
+      this.add("reducer", reducer, value.pos);
+      return true;
+    }
+    if (isTileExpr(value)) return false;
+    if (tile === "link" && name === "prefetch") {
+      // A bare ident or a string literal, both naming a reducer.
+      if (value.kind === "Ref") this.add("reducer", value.name, value.pos);
+      else if (value.kind === "Str") this.addQuoted("reducer", value);
+      return true;
+    }
+    if (name !== "motion" || value.kind !== "Str") return false;
+    this.addQuoted("motion", value);
+    return true;
+  }
+
   private tileArg(a: TileArg, locals: ReadonlySet<string>): void {
     const v = a.value;
-    if (a.name !== undefined && HANDLER_NAMES.has(a.name)) {
-      const reducer = handlerReducerName(v);
-      if (reducer !== null) {
-        this.add("reducer", reducer, v.pos);
-        return;
-      }
-    }
     if (isTileExpr(v)) {
       this.tileExpr(v, locals);
       return;
@@ -465,8 +488,7 @@ class Walker {
 
   private slotValues(rec: Expr, locals: ReadonlySet<string>): void {
     for (const f of recordFieldsOf(rec)) {
-      this.addUnpositioned("slot", f.name);
-      this.expr(f.value, locals);
+      this.recordKey("slot", f, () => this.expr(f.value, locals));
     }
   }
 
@@ -484,8 +506,7 @@ class Walker {
 
   private mocks(rec: Expr, locals: ReadonlySet<string>): void {
     for (const m of recordFieldsOf(rec)) {
-      this.addUnpositioned("effect", m.name);
-      this.mockScript(m.value, locals);
+      this.recordKey("effect", m, () => this.mockScript(m.value, locals));
     }
   }
 
@@ -501,9 +522,19 @@ class Walker {
     }
   }
 
-  private addUnpositioned(layer: RefLayer, name: string): void {
-    if (!this.index[layer].has(name)) return;
-    this.out.push({ layer, name });
+  // `{count}` is one token for the key and its value. When the value names something else
+  // (a `for-all` name, a mock's script), a rewrite for the key would change it too, so the key
+  // gets no position and `rename` refuses the name.
+  private recordKey(layer: RefLayer, f: RecordField, walkValue: () => void): void {
+    if (!isWrittenAsItsValue(f)) {
+      this.add(layer, f.name, f.pos);
+      walkValue();
+      return;
+    }
+    const from = this.out.length;
+    walkValue();
+    if (this.out.slice(from).some((r) => r.layer === layer && r.name === f.name)) return;
+    if (this.index[layer].has(f.name)) this.out.push({ layer, name: f.name });
   }
 
   app(a: AppDef): void {
@@ -530,6 +561,11 @@ class Walker {
       }
     }
   }
+}
+
+/** `{name}`: the parser reads it as `{name: name}`, its value a `Ref` at the key's own token. */
+function isWrittenAsItsValue(f: RecordField): boolean {
+  return f.value.kind === "Ref" && f.value.pos.line === f.pos.line && f.value.pos.col === f.pos.col;
 }
 
 function withPatternBinds(

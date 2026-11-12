@@ -1,5 +1,6 @@
 import type { Expr, Pos, TileDef, TileExpr, TypeDef, TypeExpr } from "./ast.ts";
 import { isTileExpr } from "./ast.ts";
+import { CHILD_RENDERING_BUILTINS } from "./builtins.ts";
 
 /** An edge to another definition, positioned at the identifier that names it. */
 export type GraphEdge = { readonly to: string; readonly pos: Pos };
@@ -10,9 +11,19 @@ export type Cycle = {
   readonly pos: Pos;
 };
 
-export function expansionTargets(body: TileExpr): readonly GraphEdge[] {
-  const out: GraphEdge[] = [];
-  walkTileBody(body, out);
+/**
+ * `root`: the node is one the body renders at its top, reached through `for` / `when` / `if` /
+ * `match` alone, so a call site of the tile merges its props onto it (`_attachProps`). `call`
+ * is absent for an identifier argument standing in for a tile.
+ */
+export type TileEdge = GraphEdge & {
+  readonly root: boolean;
+  readonly call?: TileExpr & { kind: "TileCall" };
+};
+
+export function expansionTargets(body: TileExpr): readonly TileEdge[] {
+  const out: TileEdge[] = [];
+  walkTileBody(body, out, true);
   return out;
 }
 
@@ -135,28 +146,32 @@ export function aliasTarget(
   return null;
 }
 
-function walkTileBody(t: TileExpr, out: GraphEdge[]): void {
+function walkTileBody(t: TileExpr, out: TileEdge[], root: boolean): void {
   switch (t.kind) {
     case "TileFor":
     case "TileWhen":
-      walkTileBody(t.body, out);
+      walkTileBody(t.body, out, root);
       return;
     case "TileIf":
-      walkTileBody(t.consequent, out);
-      walkTileBody(t.alternate, out);
+      walkTileBody(t.consequent, out, root);
+      walkTileBody(t.alternate, out, root);
       return;
     case "TileMatch":
-      for (const arm of t.arms) walkTileBody(arm.body, out);
+      for (const arm of t.arms) walkTileBody(arm.body, out, root);
       return;
     case "TileCall": {
-      out.push({ to: t.name, pos: t.pos });
+      out.push({ to: t.name, pos: t.pos, root, call: t });
+      // Codegen renders the positional arguments of these builtins alone, as children; every
+      // other call reads them as values (`text(leaf)`, `Card(leaf)`) or drops them
+      // (`button(leaf)`), so nothing written there is inlined.
+      if (!CHILD_RENDERING_BUILTINS.has(t.name)) return;
       for (const a of t.args) {
         const v = a.value;
         if (a.name !== undefined) continue;
-        if (isTileExpr(v)) walkTileBody(v, out);
+        if (isTileExpr(v)) walkTileBody(v, out, false);
         else if ((v as Expr).kind === "Ref") {
           const ref = v as Expr & { kind: "Ref" };
-          out.push({ to: ref.name, pos: ref.pos });
+          out.push({ to: ref.name, pos: ref.pos, root: false });
         }
       }
       return;
@@ -167,6 +182,62 @@ function walkTileBody(t: TileExpr, out: GraphEdge[]): void {
       return;
     }
   }
+}
+
+/**
+ * Every node that can reach itself: each node of a strongly connected component of more than one
+ * node, and each node with an edge to itself. Unlike `findCycles`, which reports each loop once,
+ * this names every node on one, however the walk first reached it.
+ */
+export function nodesOnCycles(
+  nodes: Iterable<string>,
+  edgesOf: (node: string) => readonly GraphEdge[],
+): Set<string> {
+  const on = new Set<string>();
+  const order = new Map<string, number>();
+  const low = new Map<string, number>();
+  const stack: string[] = [];
+  const stacked = new Set<string>();
+  const lowOf = (node: string): number => low.get(node) ?? 0;
+
+  for (const root of nodes) {
+    if (order.has(root)) continue;
+    const frames: { node: string; edges: readonly GraphEdge[]; next: number }[] = [];
+    const enter = (node: string): void => {
+      order.set(node, order.size);
+      low.set(node, order.size - 1);
+      stack.push(node);
+      stacked.add(node);
+      frames.push({ node, edges: edgesOf(node), next: 0 });
+    };
+    enter(root);
+    while (frames.length > 0) {
+      const frame = frames[frames.length - 1];
+      if (!frame) break;
+      const edge = frame.edges[frame.next];
+      if (edge) {
+        frame.next += 1;
+        if (edge.to === frame.node) on.add(frame.node);
+        else if (!order.has(edge.to)) enter(edge.to);
+        else if (stacked.has(edge.to)) {
+          low.set(frame.node, Math.min(lowOf(frame.node), order.get(edge.to) ?? 0));
+        }
+        continue;
+      }
+      frames.pop();
+      const parent = frames[frames.length - 1];
+      if (parent) low.set(parent.node, Math.min(lowOf(parent.node), lowOf(frame.node)));
+      if (lowOf(frame.node) !== order.get(frame.node)) continue;
+      const component: string[] = [];
+      for (let top = stack.pop(); top !== undefined; top = stack.pop()) {
+        stacked.delete(top);
+        component.push(top);
+        if (top === frame.node) break;
+      }
+      if (component.length > 1) for (const node of component) on.add(node);
+    }
+  }
+  return on;
 }
 
 export function findCycles(

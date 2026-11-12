@@ -5,12 +5,199 @@ import {
   type ReducerDef,
   type TileDef,
   type TileExpr,
+  writtenProp,
 } from "../ast.ts";
-import { BUILTIN_TILES } from "../builtins.ts";
-import { expansionTargets } from "../def-graph.ts";
+import { BUILTIN_TILES, CHILD_RENDERING_BUILTINS } from "../builtins.ts";
+import { boundaryTarget, expansionTargets } from "../def-graph.ts";
+import { HANDLER_NAMES, handlerReducerName, UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
 import type { SymbolTable } from "./context.ts";
 
-export function collectTileBuiltinKinds(
+/**
+ * The kinds a handler written at the tile's call site can land on (W0213). A nested tile's
+ * `error-boundary` fallback is rendered without that call site's handlers, so it is left out.
+ */
+export function collectTileBuiltinKinds(tileName: string, sym: SymbolTable): Set<string> {
+  return kindsIn(renderedTree(tileName, sym, false));
+}
+
+/** Of those, the kinds a handler written at the tile's call site is merged onto: its root's. */
+export function collectTileRootKinds(tileName: string, sym: SymbolTable): Set<string> {
+  return new Set([...renderedTree(tileName, sym, false).root.values()].map((e) => e.kind));
+}
+
+/** The kinds a subscription on the tile is wired onto (W0212), a nested tile's fallback included. */
+export function subscribedKinds(tileName: string, sym: SymbolTable): Set<string> {
+  return kindsIn(renderedTree(tileName, sym, true));
+}
+
+function kindsIn(tree: RenderedTree): Set<string> {
+  return new Set([...tree.root.values(), ...tree.inner.values()].map((e) => e.kind));
+}
+
+/** `id` is `null` when there is no literal to read: computed, absent, or unknown at a call site. */
+type RenderedElement = { readonly kind: string; readonly id: string | null };
+
+/**
+ * `root` holds the elements a call site of the tile merges its props onto (`_attachProps`);
+ * `inner` the rest. Each is keyed by kind and id, so an element reached along many paths is
+ * held once.
+ */
+type RenderedTree = {
+  readonly root: ReadonlyMap<string, RenderedElement>;
+  readonly inner: ReadonlyMap<string, RenderedElement>;
+};
+
+const NOTHING_RENDERED: RenderedTree = Object.freeze({ root: new Map(), inner: new Map() });
+
+function addElement(into: Map<string, RenderedElement>, el: RenderedElement): void {
+  into.set(JSON.stringify([el.kind, el.id]), el);
+}
+
+// The edges codegen lowers a tile by: its body's expansion, plus, with `fallbacks`, the
+// error-boundary fallbacks of each tile called in it, which render in that call's place. The
+// tile's own fallback replaces its tree and renders outside it, so it is not included.
+function renderedTree(
+  tileName: string,
+  sym: SymbolTable,
+  fallbacks: boolean,
+  memo: Map<string, RenderedTree> = new Map(),
+): RenderedTree {
+  const known = memo.get(tileName);
+  if (known) return known;
+  if (BUILTIN_TILES.has(tileName)) {
+    return { root: new Map([[tileName, { kind: tileName, id: null }]]), inner: new Map() };
+  }
+  const def = sym.tiles.get(tileName);
+  if (!def) return NOTHING_RENDERED;
+  memo.set(tileName, NOTHING_RENDERED);
+  const root = new Map<string, RenderedElement>();
+  const inner = new Map<string, RenderedElement>();
+  for (const edge of expansionTargets(def.body)) {
+    const here = edge.root ? root : inner;
+    if (BUILTIN_TILES.has(edge.to)) {
+      const id = edge.call ? writtenProp(edge.call, "id")?.value : undefined;
+      addElement(here, { kind: edge.to, id: id?.kind === "Str" ? id.value : null });
+      continue;
+    }
+    const callee = sym.tiles.get(edge.to);
+    if (!callee) continue;
+    const sub = renderedTree(callee.name, sym, fallbacks, memo);
+    const decided = edge.call ? callSiteId(edge.call) : undefined;
+    for (const el of sub.root.values()) {
+      addElement(here, decided === undefined ? el : { kind: el.kind, id: decided });
+    }
+    for (const el of sub.inner.values()) addElement(inner, el);
+    // Only a call is lowered with its callee's boundary; an identifier
+    // argument standing in for the tile inlines the body alone.
+    for (const fb of fallbacks && edge.call ? fallbackChain(callee, sym) : []) {
+      const fallback = renderedTree(fb, sym, fallbacks, memo);
+      for (const el of fallback.root.values()) addElement(here, el);
+      for (const el of fallback.inner.values()) addElement(inner, el);
+    }
+  }
+  const tree: RenderedTree = { root, inner };
+  memo.set(tileName, tree);
+  return tree;
+}
+
+/**
+ * The fallbacks that can render in the tile's place: its `error-boundary`, that fallback's own,
+ * and so on, since each is placed with its boundary like any other tile. The chain ends at a
+ * tile already on it, which E0005 reports after the selector checks run.
+ */
+function fallbackChain(
+  def: TileDef,
+  sym: SymbolTable,
+  seen: ReadonlySet<string> = new Set([def.name]),
+): string[] {
+  const boundary = boundaryTarget(def);
+  const fallback = boundary ? sym.tiles.get(boundary.to) : undefined;
+  if (!fallback || seen.has(fallback.name)) return [];
+  return [fallback.name, ...fallbackChain(fallback, sym, new Set([...seen, fallback.name]))];
+}
+
+/**
+ * What one use of a tile leaves the elements it renders at its root with: a literal `id`, `null`
+ * where the id is unknown, or `undefined` where the use writes none, so they keep their own.
+ */
+type Imposed = string | null | undefined;
+
+// A call site's props are merged onto its tile's root elements one prop at a time, so a literal
+// id written there replaces theirs, and a call site that writes no id leaves theirs.
+function callSiteId(call: TileExpr & { kind: "TileCall" }): Imposed {
+  const id = writtenProp(call, "id")?.value;
+  if (id === undefined) return undefined;
+  return id.kind === "Str" ? id.value : null;
+}
+
+/** A place the tile renders from: the tile whose body renders it, at its root or not, and what that call site imposes. */
+type Use = { readonly by: string; readonly root: boolean; readonly id: Imposed };
+
+function usesByTile(sym: SymbolTable): Map<string, Use[]> {
+  const uses = new Map<string, Use[]>();
+  const add = (tile: string, use: Use): void => {
+    uses.set(tile, [...(uses.get(tile) ?? []), use]);
+  };
+  for (const def of sym.tiles.values()) {
+    for (const edge of expansionTargets(def.body)) {
+      const id = edge.call ? callSiteId(edge.call) : undefined;
+      add(edge.to, { by: def.name, root: edge.root, id });
+      // A call's fallbacks render in its place, outside the props the call writes.
+      const callee = edge.call ? sym.tiles.get(edge.to) : undefined;
+      for (const fb of callee ? fallbackChain(callee, sym) : []) {
+        add(fb, { by: def.name, root: edge.root, id: undefined });
+      }
+    }
+  }
+  return uses;
+}
+
+// A route renders its tile, or one of that tile's fallbacks, with no call site at all.
+function routeTargets(sym: SymbolTable): Set<string> {
+  const targets = [
+    ...(sym.app?.routes ?? []),
+    ...[...sym.tiles.values()].flatMap((t) => t.subRoutes ?? []),
+  ].flatMap((r) => (r.tile.startsWith(">>") ? [] : [r.tile]));
+  const fallbacks = targets.flatMap((name) => {
+    const def = sym.tiles.get(name);
+    return def ? fallbackChain(def, sym) : [];
+  });
+  return new Set([...targets, ...fallbacks]);
+}
+
+// Each call site up a chain of tiles that render the tile at their root merges its props onto
+// the same elements, the outermost last (`_attachProps`), so a use is followed up that chain.
+function imposedIds(
+  tile: string,
+  uses: ReadonlyMap<string, readonly Use[]>,
+  routes: ReadonlySet<string>,
+  memo: Map<string, ReadonlySet<Imposed>>,
+): ReadonlySet<Imposed> {
+  const known = memo.get(tile);
+  if (known) return known;
+  memo.set(tile, new Set([undefined]));
+  const out = new Set<Imposed>();
+  if (routes.has(tile)) out.add(undefined);
+  for (const use of uses.get(tile) ?? []) {
+    if (!use.root) {
+      out.add(use.id);
+      continue;
+    }
+    for (const above of imposedIds(use.by, uses, routes, memo)) {
+      out.add(above === undefined ? use.id : above);
+    }
+  }
+  // A tile nothing renders keeps its own ids, as it would wherever it rendered.
+  if (out.size === 0) out.add(undefined);
+  memo.set(tile, out);
+  return out;
+}
+
+/**
+ * The builtin kinds `tileName` renders: the tiles codegen inlines into its tree. Unlike
+ * `collectTileBuiltinKinds`, a positional argument counts only where its builtin renders it.
+ */
+export function collectRenderedBuiltinKinds(
   tileName: string,
   sym: SymbolTable,
   visited: Set<string> = new Set(),
@@ -21,56 +208,102 @@ export function collectTileBuiltinKinds(
   const def = sym.tiles.get(tileName);
   if (!def) return new Set();
   const out = new Set<string>();
-  for (const target of expansionTargets(def.body)) {
-    for (const kind of collectTileBuiltinKinds(target.to, sym, visited)) out.add(kind);
+  for (const target of renderedTiles(def.body, sym)) {
+    for (const kind of collectRenderedBuiltinKinds(target, sym, visited)) out.add(kind);
   }
   return out;
+}
+
+function renderedTiles(t: TileExpr, sym: SymbolTable, out: string[] = []): string[] {
+  switch (t.kind) {
+    case "TileFor":
+    case "TileWhen":
+      return renderedTiles(t.body, sym, out);
+    case "TileIf":
+      renderedTiles(t.consequent, sym, out);
+      return renderedTiles(t.alternate, sym, out);
+    case "TileMatch":
+      for (const arm of t.arms) renderedTiles(arm.body, sym, out);
+      return out;
+    case "TileCall":
+      out.push(t.name);
+      if (!CHILD_RENDERING_BUILTINS.has(t.name)) return out;
+      for (const arg of t.args) {
+        if (arg.name !== undefined) continue;
+        const v = arg.value;
+        if (isTileExpr(v)) renderedTiles(v, sym, out);
+        else if (v.kind === "Ref" && sym.tiles.has(v.name)) out.push(v.name);
+      }
+      return out;
+    default:
+      assertNever(t);
+      return out;
+  }
 }
 
 type TileIdCollection =
   | { readonly known: true; readonly ids: ReadonlySet<string> }
   | { readonly known: false };
 
-const ID_COLL_UNKNOWN: TileIdCollection = Object.freeze({ known: false });
-
-function mergeIdCollections(a: TileIdCollection, b: TileIdCollection): TileIdCollection {
-  if (!a.known || !b.known) return ID_COLL_UNKNOWN;
-  const out = new Set(a.ids);
-  for (const v of b.ids) out.add(v);
-  return { known: true, ids: out };
+// The subscription reaches the tile wherever it renders, so each element at its root has
+// the id each use leaves it with.
+export function subscriptionIds(tile: TileDef, ev: string, sym: SymbolTable): TileIdCollection {
+  const tree = renderedTree(tile.name, sym, true);
+  const imposed = imposedIds(tile.name, usesByTile(sym), routeTargets(sym), new Map());
+  const fires = UI_EVENT_TILE_KINDS[ev];
+  const ids = new Set<string>();
+  let known = true;
+  const read = (id: string | null): void => {
+    if (id === null) known = false;
+    else ids.add(id);
+  };
+  for (const el of tree.root.values()) {
+    if (fires && !fires.has(el.kind)) continue;
+    for (const id of imposed) read(id === undefined ? el.id : id);
+  }
+  for (const el of tree.inner.values()) {
+    if (fires && !fires.has(el.kind)) continue;
+    read(el.id);
+  }
+  return known ? { known: true, ids } : { known: false };
 }
 
-export function collectTileDeclaredIds(def: TileDef): TileIdCollection {
-  return walkTileExprForDeclaredIds(def.body);
+/**
+ * Whether a handler anywhere names the reducer. `onClick=r` is filtered by `r`'s `#id` too, on
+ * whatever element carries it, so E0212 cannot tell which ids reach it.
+ */
+export function namedByHandler(reducer: string, sym: SymbolTable): boolean {
+  const named = new Set<string>();
+  for (const def of sym.tiles.values()) collectHandlerReducers(def.body, named);
+  return named.has(reducer);
 }
 
-function walkTileExprForDeclaredIds(expr: TileExpr): TileIdCollection {
+function collectHandlerReducers(expr: TileExpr, out: Set<string>): void {
+  const add = (value: Expr | TileExpr): void => {
+    const name = handlerReducerName(value);
+    if (name !== null) out.add(name);
+  };
   switch (expr.kind) {
     case "TileFor":
     case "TileWhen":
-      return walkTileExprForDeclaredIds(expr.body);
+      collectHandlerReducers(expr.body, out);
+      return;
     case "TileIf":
-      return mergeIdCollections(
-        walkTileExprForDeclaredIds(expr.consequent),
-        walkTileExprForDeclaredIds(expr.alternate),
-      );
-    case "TileMatch": {
-      let acc: TileIdCollection = ID_COLL_UNKNOWN;
-      for (let i = 0; i < expr.arms.length; i++) {
-        const armIds = walkTileExprForDeclaredIds(expr.arms[i]!.body);
-        acc = i === 0 ? armIds : mergeIdCollections(acc, armIds);
+      collectHandlerReducers(expr.consequent, out);
+      collectHandlerReducers(expr.alternate, out);
+      return;
+    case "TileMatch":
+      for (const arm of expr.arms) collectHandlerReducers(arm.body, out);
+      return;
+    case "TileCall":
+      for (const p of expr.props) if (HANDLER_NAMES.has(p.name)) add(p.value);
+      for (const a of expr.args) {
+        if (a.name !== undefined && HANDLER_NAMES.has(a.name)) add(a.value);
+        else if (isTileExpr(a.value)) collectHandlerReducers(a.value, out);
       }
-      return acc;
-    }
-    case "TileCall": {
-      const id = expr.props.find((p) => p.name === "id")?.value;
-      if (id?.kind !== "Str") return ID_COLL_UNKNOWN;
-      return { known: true, ids: new Set([id.value]) };
-    }
-    default: {
-      const _exhaustive: never = expr;
-      return _exhaustive;
-    }
+      return;
+    default:
+      assertNever(expr);
   }
 }
 
@@ -94,7 +327,7 @@ export function collectPrefetchTargets(expr: TileExpr, out: Set<string>): void {
       return;
     case "TileCall": {
       if (expr.name === "link") {
-        const v = expr.props.find((p) => p.name === "prefetch")?.value;
+        const v = writtenProp(expr, "prefetch")?.value;
         if (v?.kind === "Ref") out.add(v.name);
         else if (v?.kind === "Str") out.add(v.value);
       }
@@ -104,13 +337,6 @@ export function collectPrefetchTargets(expr: TileExpr, out: Set<string>): void {
     default:
       assertNever(expr);
   }
-}
-
-export function writtenValue(t: TileExpr & { kind: "TileCall" }, name: string): Expr | undefined {
-  const fromProp = t.props.find((p) => p.name === name)?.value;
-  if (fromProp !== undefined) return fromProp;
-  const fromArg = t.args.find((a) => a.name === name)?.value;
-  return fromArg === undefined || isTileExpr(fromArg) ? undefined : fromArg;
 }
 
 export function collectElementIds(expr: TileExpr, out: Set<string>): void {
@@ -127,7 +353,7 @@ export function collectElementIds(expr: TileExpr, out: Set<string>): void {
       for (const arm of expr.arms) collectElementIds(arm.body, out);
       return;
     case "TileCall": {
-      const id = writtenValue(expr, "id");
+      const id = writtenProp(expr, "id")?.value;
       if (id?.kind === "Str") out.add(id.value);
       for (const a of expr.args) if (isTileExpr(a.value)) collectElementIds(a.value, out);
       return;
