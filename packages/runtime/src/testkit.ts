@@ -121,7 +121,7 @@ export const _stdlibTest = {
     name: string;
     vars: Record<string, GenDesc>;
     trial: (binds: Record<string, unknown>) => boolean;
-    count?: number;
+    count?: number | undefined;
     shrink?: boolean;
     seed?: number;
   }): TestResult {
