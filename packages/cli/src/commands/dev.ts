@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import type { Command, OptionValues } from "commander";
 import type { DevCmdOptions } from "../dev.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage, requireValue } from "./_shared/usage.ts";
 
 const USAGE =
@@ -36,7 +37,7 @@ export function registerDev(program: Command): string {
     .allowExcessArguments(false)
     .action(async (input: string | undefined, options: DevOptions) => {
       if (!input) exitWithUsage(USAGE);
-      const inputPath = resolve(process.cwd(), input);
+      const inputPath = sourceFileArg(input);
       const devOpts: DevCmdOptions = {
         ...(options.port !== undefined ? { port: options.port } : {}),
         ...(options.episodeLog !== undefined ? { episodeLog: options.episodeLog } : {}),
