@@ -1,13 +1,25 @@
 import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Def, Program, Token } from "@kumikijs/compiler";
-import { buildDefIndex, lex, parse, type Reference, referencesIn } from "@kumikijs/compiler";
+import {
+  buildDefIndex,
+  lex,
+  type Pos,
+  parse,
+  type Reference,
+  referencesIn,
+} from "@kumikijs/compiler";
 
+/** Where a definition's text is: from its first token to its last, whatever the line layout. */
 export type DefRange = {
-  /** 1-based start line in the source file. */
+  /** 1-based line of its first token. */
   startLine: number;
-  /** 1-based end line, inclusive. */
+  /** 1-based line its last token ends on. */
   endLine: number;
+  /** Offset in the source of its first token. */
+  start: number;
+  /** Offset in the source just past its last token. */
+  end: number;
 };
 
 export type DefEntry = {
@@ -15,6 +27,8 @@ export type DefEntry = {
   name: string;
   def: Def;
   range: DefRange;
+  /** Where its own name is spelled: the token after its keyword. */
+  namePos: Pos | undefined;
 };
 
 export type Store = {
@@ -66,7 +80,7 @@ export function loadSource(source: string): Store {
   const lines = source.split(LINE_BREAK);
   const tokens = lex(source);
   const program = parse(tokens);
-  const defs = buildEntries(program, lines, tokens);
+  const defs = buildEntries(program, source, tokens);
   const byQName = new Map<string, DefEntry>();
   for (const e of defs) byQName.set(`${e.layer}.${e.name}`, e);
   return { source, lines, program, defs, byQName };
@@ -98,10 +112,7 @@ export function joinLines(source: string, lines: readonly string[]): string {
   return lines.join("\n").split(LINE_BREAK).join(lineBreakOf(source));
 }
 
-/**
- * The empty range `to === from - 1` inserts before line `from`: the store gives a
- * definition that range when the next one starts on its line.
- */
+/** The empty range `to === from - 1` inserts before line `from`. */
 export function spliceLines(
   text: string,
   from: number,
@@ -125,36 +136,83 @@ export function spliceLines(
   return prev === null ? "" : text.slice(0, prev.end);
 }
 
-function buildEntries(program: Program, lines: string[], tokens: Token[]): DefEntry[] {
-  const out: DefEntry[] = [];
-  for (let i = 0; i < program.defs.length; i++) {
-    const d = program.defs[i]!;
-    const layer = LAYER_OF[d.kind];
-    const name = "name" in d ? d.name : "_";
-    const start = (d as { pos?: { line: number } }).pos?.line ?? 1;
-    const next = program.defs[i + 1];
-    const nextStart = next && (next as { pos?: { line: number } }).pos?.line;
-    const endLine = nextStart ? nextStart - 1 : lines.length;
-    out.push({ layer, name, def: d, range: { startLine: start, endLine } });
+function buildEntries(program: Program, source: string, tokens: Token[]): DefEntry[] {
+  const lineStarts = [0];
+  for (let i = source.indexOf("\n"); i !== -1; i = source.indexOf("\n", i + 1)) {
+    lineStarts.push(i + 1);
   }
-  // Trim trailing blank/comment lines from each range.
-  for (const e of out) {
-    let end = e.range.endLine;
-    while (end > e.range.startLine) {
-      const line = lines[end - 1] ?? "";
-      if (line.trim() === "" || line.trim().startsWith("#")) end--;
-      else break;
+  const offsetOf = (p: Pos): number => lineStarts[p.line - 1]! + p.col - 1;
+  // A definition's first token is its keyword, and its tokens run up to the next one's.
+  const firsts: number[] = [];
+  let at = 0;
+  for (const d of program.defs) {
+    while (at < tokens.length && !samePos(tokens[at]!.pos, d.pos)) at++;
+    firsts.push(at);
+  }
+  return program.defs.map((d, i) => {
+    const first = tokens[firsts[i]!]!;
+    const last = tokens[(firsts[i + 1] ?? tokens.length - 1) - 1]!;
+    const lastAt = offsetOf(last.pos);
+    const end = lastAt + tokenLength(source, lastAt, last);
+    const own = "name" in d ? d.name : "_";
+    const name = tokens[firsts[i]! + 1];
+    return {
+      layer: LAYER_OF[d.kind],
+      name: own,
+      def: d,
+      range: {
+        startLine: first.pos.line,
+        endLine: last.pos.line + (source.slice(lastAt, end).match(/\n/g)?.length ?? 0),
+        start: offsetOf(first.pos),
+        end,
+      },
+      namePos: name?.kind === "ident" && name.value === own ? name.pos : undefined,
+    };
+  });
+}
+
+function samePos(a: Pos, b: Pos): boolean {
+  return a.line === b.line && a.col === b.col;
+}
+
+/** How many characters of `source`, from `at`, the token `t` there takes. */
+function tokenLength(source: string, at: number, t: Token): number {
+  switch (t.kind) {
+    case "num":
+      return t.raw.length;
+    case "str": {
+      // A string's value has its escapes decoded, so its length is read off the source.
+      let i = at + 1;
+      while (i < source.length && source[i] !== '"') i += source[i] === "\\" ? 2 : 1;
+      return i + 1 - at;
     }
-    e.range.endLine = end;
+    case "eof":
+      return 0;
+    default:
+      return t.value.length;
   }
-  void tokens;
-  return out;
+}
+
+/** The definition's text, from its first token to its last, with `\n` line breaks. */
+export function definitionText(store: Store, entry: DefEntry): string {
+  return store.source.slice(entry.range.start, entry.range.end).split(LINE_BREAK).join("\n");
+}
+
+/** Where `pos`, a position in the file, is in the definition's text, which starts at 1:1. */
+export function posInText(entry: DefEntry, pos: Pos): Pos {
+  const line = pos.line - entry.range.startLine + 1;
+  return { line, col: line === 1 ? pos.col - entry.def.pos.col + 1 : pos.col };
+}
+
+/** Where `pos`, a position in the definition's text, is in the file. */
+export function posInFile(entry: DefEntry, pos: Pos): Pos {
+  const line = pos.line + entry.range.startLine - 1;
+  return { line, col: pos.line === 1 ? pos.col + entry.def.pos.col - 1 : pos.col };
 }
 
 export function viewDef(store: Store, qname: string): string | null {
   const e = store.byQName.get(qname);
-  if (!e) return null;
-  return store.lines.slice(e.range.startLine - 1, e.range.endLine).join("\n");
+  return e ? definitionText(store, e) : null;
 }
 
 export function viewWithDeps(store: Store, qname: string): string | null {

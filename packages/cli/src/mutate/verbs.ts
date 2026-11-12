@@ -21,6 +21,8 @@ import {
   removedText,
   respell,
   withHeader,
+  withoutDefinitions,
+  withText,
 } from "./definition-text.ts";
 import { enforceLock } from "./locks.ts";
 import { type DefSpec, logOp, opLogPath, opShapeProblem, type RawOp } from "./op-log.ts";
@@ -75,8 +77,7 @@ function replaceDefLocked(path: string, qname: string, body: string): ReplaceRes
   if (!entry) throw new Error(`Definition "${qname}" not found`);
   const prev = definitionText(store, entry);
   const whole = withHeader(entry.layer, body, () => headerOf(store, entry, "replace"));
-  const inserted = assemble(entry.layer, entry.name, whole).split(/\r?\n/);
-  const next = spliceLines(store.source, entry.range.startLine, entry.range.endLine, inserted);
+  const next = withText(store, entry, assemble(entry.layer, entry.name, whole));
   const opId = commit(path, next, "replace", () =>
     logOp(path, { op: "replace", layer: entry.layer, name: entry.name, body: whole, prev }),
   );
@@ -169,11 +170,7 @@ function removeSetLocked(
     ...removedText(store, e),
   }));
   if (main === undefined) throw new Error("remove rejected: nothing to remove");
-  // Bottom up, so the line numbers of the entries still to cut stay valid.
-  let next = store.source;
-  for (const e of [...entries].sort((a, b) => b.range.startLine - a.range.startLine)) {
-    next = spliceLines(next, e.range.startLine, e.range.endLine, []);
-  }
+  const next = withoutDefinitions(store.source, set);
   const opId = commit(path, next, "remove", () =>
     logOp(path, {
       op: "remove",
@@ -236,13 +233,7 @@ function editDefLocked(path: string, qname: string, patch: unknown): string {
   const entry = store.byQName.get(qname);
   if (!entry) throw new Error(`Definition "${qname}" not found`);
   const prev = definitionText(store, entry);
-  const target = store.lines.slice(entry.range.startLine - 1, entry.range.endLine);
-  const next = spliceLines(
-    store.source,
-    entry.range.startLine,
-    entry.range.endLine,
-    patchedLines(target, qname, patch),
-  );
+  const next = withText(store, entry, patchedLines(prev.split("\n"), qname, patch).join("\n"));
   return commit(path, next, "edit", () => {
     const updatedStore = load(path);
     const updatedEntry = updatedStore.byQName.get(qname);

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { joinLines, load, loadSource, type Store, spliceLines } from "../store.ts";
 import { withWriteLock } from "../write-lock.ts";
 import { commit } from "./commit.ts";
-import { bodyOf, definitionText } from "./definition-text.ts";
+import { bodyOf, definitionText, withText } from "./definition-text.ts";
 import { enforceLock } from "./locks.ts";
 import { type DefSpec, logOp } from "./op-log.ts";
 
@@ -28,12 +28,7 @@ export function replaceText(path: string, qname: string, text: string): string {
     const entry = store.byQName.get(qname);
     if (!entry) throw new Error(`Definition "${qname}" not found`);
     const prev = definitionText(store, entry);
-    const next = spliceLines(
-      store.source,
-      entry.range.startLine,
-      entry.range.endLine,
-      text.split("\n"),
-    );
+    const next = withText(store, entry, text);
     return commit(path, next, "replace", () => {
       const written = load(path);
       const now = written.byQName.get(qname);

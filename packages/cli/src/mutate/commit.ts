@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { check, lex, parse, severityOf } from "@kumikijs/compiler";
-import { loadSource, type Store } from "../store.ts";
+import { definitionText, loadSource, type Store } from "../store.ts";
 import { messageOf } from "../text.ts";
 import { atomicWriteFileSync } from "../write-lock.ts";
 import { lockViolation } from "./locks.ts";
@@ -50,7 +50,7 @@ function definitionTexts(source: string): Map<string, string> {
   }
   for (const e of store.defs) {
     const q = `${e.layer}.${e.name}`;
-    const text = store.lines.slice(e.range.startLine - 1, e.range.endLine).join("\n");
+    const text = definitionText(store, e);
     // A name defined twice keeps both texts, so touching either one shows.
     const prior = out.get(q);
     out.set(q, prior === undefined ? text : `${prior}\n\0\n${text}`);

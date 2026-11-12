@@ -1,6 +1,6 @@
 // The `\n` join the write verbs used before is the oracle. On an LF text the splice must give its
-// bytes for every range the store can hand it — including the empty range a definition sharing its
-// first line with the next one gets — and on a CRLF text the same lines, ended with CRLF.
+// bytes for every range of lines — including the empty range, which inserts before a line — and
+// on a CRLF text the same lines, ended with CRLF.
 
 import { describe, expect, it } from "vitest";
 import { lineSpan, spliceLines } from "../src/store.ts";
