@@ -47,7 +47,7 @@ export function subscribedKinds(
 
 // Answers are kept, so a tile is walked once however many positions ask about it, and the walk is
 // iterative because nothing bounds how long a program may chain tiles. With `fallbacks`, a call
-// also leads to its callee's `error-boundary` fallback, which renders in that call's place.
+// also leads to its callee's `error-boundary` fallbacks, which render in that call's place.
 function renderedKinds(
   tiles: ReadonlyMap<string, TileDef>,
   fallbacks: boolean,
@@ -61,8 +61,7 @@ function renderedKinds(
       if (!fallbacks) return edges;
       return edges.flatMap((edge) => {
         const callee = edge.call ? tiles.get(edge.to) : undefined;
-        const boundary = callee ? boundaryTarget(callee) : null;
-        return boundary ? [edge, boundary] : [edge];
+        return callee ? [edge, ...fallbackChain(callee, tiles)] : [edge];
       });
     },
     (name) => (BUILTIN_TILES.has(name) ? [name] : []),
@@ -88,8 +87,8 @@ function addElement(into: Map<string, RenderedElement>, el: RenderedElement): vo
   into.set(JSON.stringify([el.kind, el.id]), el);
 }
 
-// The edges codegen lowers a tile by: its body's expansion, plus the error-boundary fallback of
-// each tile called in it, which renders in that call's place. The tile's own fallback replaces its
+// The edges codegen lowers a tile by: its body's expansion, plus the error-boundary fallbacks of
+// each tile called in it, which render in that call's place. The tile's own fallback replaces its
 // tree and renders outside it, so it is not included.
 function renderedTree(tileName: string, sym: SymbolTable): RenderedTree {
   const callees = (name: string): string[] => {
@@ -98,8 +97,8 @@ function renderedTree(tileName: string, sym: SymbolTable): RenderedTree {
     return expansionTargets(def.body).flatMap((edge) => {
       const callee = sym.tiles.get(edge.to);
       if (!callee) return [];
-      const boundary = edge.call ? boundaryTarget(callee) : null;
-      return boundary && sym.tiles.has(boundary.to) ? [callee.name, boundary.to] : [callee.name];
+      const placed = edge.call ? fallbackChain(callee, sym.tiles) : [];
+      return [callee.name, ...placed.map((fb) => fb.to)];
     });
   };
   return bottomUp(tileName, callees, NOTHING_RENDERED, (name, treeOf) => {
@@ -124,9 +123,8 @@ function renderedTree(tileName: string, sym: SymbolTable): RenderedTree {
       for (const el of sub.inner.values()) addElement(inner, el);
       // Only a call is lowered with its callee's boundary; an identifier
       // argument standing in for the tile inlines the body alone.
-      const boundary = edge.call ? boundaryTarget(callee) : null;
-      if (boundary && sym.tiles.has(boundary.to)) {
-        const fallback = treeOf(boundary.to);
+      for (const fb of edge.call ? fallbackChain(callee, sym.tiles) : []) {
+        const fallback = treeOf(fb.to);
         for (const el of fallback.root.values()) addElement(here, el);
         for (const el of fallback.inner.values()) addElement(inner, el);
       }
@@ -173,6 +171,22 @@ function bottomUp<T>(
 }
 
 /**
+ * The fallbacks that can render in the tile's place: its `error-boundary`, that fallback's own,
+ * and so on, since each is placed with its boundary like any other tile. The chain ends at a
+ * tile already on it, which E0005 reports after the selector checks run.
+ */
+function fallbackChain(
+  def: TileDef,
+  tiles: ReadonlyMap<string, TileDef>,
+  seen: ReadonlySet<string> = new Set([def.name]),
+): GraphEdge[] {
+  const boundary = boundaryTarget(def);
+  const fallback = boundary ? tiles.get(boundary.to) : undefined;
+  if (!boundary || !fallback || seen.has(fallback.name)) return [];
+  return [boundary, ...fallbackChain(fallback, tiles, new Set([...seen, fallback.name]))];
+}
+
+/**
  * What one use of a tile leaves the elements it renders at its root with: a literal `id`, `null`
  * where the id is unknown, or `undefined` where the use writes none, so they keep their own.
  */
@@ -200,16 +214,17 @@ function usesByTile(sym: SymbolTable): Map<string, Use[]> {
     for (const edge of expansionTargets(def.body)) {
       const id = edge.call ? callSiteId(edge.call) : undefined;
       add(edge.to, { by: def.name, root: edge.root, id });
-      // A call's fallback renders in its place, outside the props the call writes.
+      // A call's fallbacks render in its place, outside the props the call writes.
       const callee = edge.call ? sym.tiles.get(edge.to) : undefined;
-      const boundary = callee ? boundaryTarget(callee) : null;
-      if (boundary) add(boundary.to, { by: def.name, root: edge.root, id: undefined });
+      for (const fb of callee ? fallbackChain(callee, sym.tiles) : []) {
+        add(fb.to, { by: def.name, root: edge.root, id: undefined });
+      }
     }
   }
   return uses;
 }
 
-// A route renders its tile, or that tile's fallback, with no call site at all.
+// A route renders its tile, or one of that tile's fallbacks, with no call site at all.
 function routeTargets(sym: SymbolTable): Set<string> {
   const targets = [
     ...(sym.app?.routes ?? []),
@@ -217,8 +232,7 @@ function routeTargets(sym: SymbolTable): Set<string> {
   ].flatMap((r) => (r.tile.startsWith(">>") ? [] : [r.tile]));
   const fallbacks = targets.flatMap((name) => {
     const def = sym.tiles.get(name);
-    const boundary = def ? boundaryTarget(def) : null;
-    return boundary ? [boundary.to] : [];
+    return def ? fallbackChain(def, sym.tiles).map((fb) => fb.to) : [];
   });
   return new Set([...targets, ...fallbacks]);
 }
