@@ -1,7 +1,7 @@
-import { resolve } from "node:path";
 import type { Command } from "commander";
 import { describeEdit, replaceDef } from "../mutate.ts";
 import { bodyFileOption, resolveBody } from "./_shared/body-input.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki replace <file> <qname> <body>";
@@ -27,8 +27,9 @@ export function registerReplace(program: Command): string {
       ) => {
         if (!file || !qname) exitWithUsage(USAGE);
         const body = resolveBody({ positional: rest, bodyFile: options.bodyFile, usage: USAGE });
+        const path = sourceFileArg(file);
         printOrExit(() => {
-          const result = replaceDef(resolve(process.cwd(), file), qname, body);
+          const result = replaceDef(path, qname, body);
           return describeEdit({ op: "replace", qname, ...result });
         });
       },
