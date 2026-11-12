@@ -1,7 +1,8 @@
-import { type AppShape, hydrate, renderToString, routing } from "@kumikijs/runtime";
-import { describe, expect, it, onTestFinished } from "vitest";
-import { freshRoot, mountSource, navigate, press, tick } from "./helpers/dom.ts";
+import { type AppShape, renderToString, routing } from "@kumikijs/runtime";
+import { describe, expect, it } from "vitest";
+import { hydrateSource, mountSource, navigate, press } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
+import { withApp } from "./helpers/source.ts";
 
 /** A `log` slot, and a reducer per name that records `+Name` on mount and `-Name` on unmount. */
 const logging = (...names: string[]): string =>
@@ -40,12 +41,12 @@ tile A = B`,
       left: ["-A", "-B", "-C"],
     },
   ])("fires mount for $fires, and unmount for each when it leaves", async (row) => {
-    const { app, root } = await mountSource(`${logging(...row.names)}
+    const { app, root } = await mountSource(
+      withApp(`${logging(...row.names)}
 ${HIDE}
 ${row.tiles}
-tile App = column(HideBtn, when(show, ${row.top}))
-app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
-`);
+tile App = column(HideBtn, when(show, ${row.top}))`),
+    );
     expect(app.live?.log).toEqual(row.shown);
 
     await press(root, "hide");
@@ -54,7 +55,8 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
   it("fires for both through keyed rows of an in= tile whose body calls another", async () => {
     // Losing one row leaves both tiles on screen in the others; clearing the list takes the last.
-    const { app, root } = await mountSource(`${logging("Row", "Cell")}
+    const { app, root } = await mountSource(
+      withApp(`${logging("Row", "Cell")}
 slot items : List(Int) = [1, 2, 3]
 reducer drop on=ui.click(DropBtn) do= items := [1, 3]
 reducer clear on=ui.click(ClearBtn) do= items := []
@@ -62,9 +64,8 @@ tile DropBtn = button(text="drop", onClick=drop)
 tile ClearBtn = button(text="clear", onClick=clear)
 tile Cell in=Int = text("cell " + $1.show)
 tile Row in=Int = Cell($1)
-tile App = column(DropBtn, ClearBtn, column(for i in items Row(i)))
-app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
-`);
+tile App = column(DropBtn, ClearBtn, column(for i in items Row(i)))`),
+    );
     expect(root.textContent).toContain("cell 2");
     expect(app.live?.log).toEqual(["+Row", "+Cell"]);
 
@@ -77,15 +78,15 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 
   it("fires for both when the whole body is a for over calls of another tile", async () => {
-    const { app, root } = await mountSource(`${logging("Outer", "Inner")}
+    const { app, root } = await mountSource(
+      withApp(`${logging("Outer", "Inner")}
 slot items : List(Int) = [1, 2]
 reducer clear on=ui.click(ClearBtn) do= items := []
 tile ClearBtn = button(text="clear", onClick=clear)
 tile Inner in=Int = text("inner " + $1.show)
 tile Outer = for i in items Inner(i)
-tile App = column(ClearBtn, column(Outer))
-app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
-`);
+tile App = column(ClearBtn, column(Outer))`),
+    );
     expect(app.live?.log).toEqual(["+Outer", "+Inner"]);
 
     await press(root, "clear");
@@ -94,8 +95,9 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
   it("follows the branch a when or a match picks", async () => {
     // A `match` arm that is a builtin keeps `Outer` on screen, so only `Inner` leaves; a `when` that
-    // turns off leaves `Outer` nothing to render, so both leave.
-    const { app, root } = await mountSource(`${logging("Outer", "Inner", "Gate")}
+    // turns off leaves `Outer` nothing to render, so `Gate` and `Outer` leave.
+    const { app, root } = await mountSource(
+      withApp(`${logging("Outer", "Inner", "Gate")}
 ${HIDE}
 slot sel : Option(Int) = Some(1)
 reducer clr on=ui.click(ClrBtn) do= sel := None
@@ -105,9 +107,8 @@ tile Outer = match sel with
     | Some(x) -> Inner
     | None -> text("none")
 tile Gate = when(show, Outer)
-tile App = column(HideBtn, ClrBtn, Gate)
-app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
-`);
+tile App = column(HideBtn, ClrBtn, Gate)`),
+    );
     expect(app.live?.log).toEqual(["+Gate", "+Outer", "+Inner"]);
 
     await press(root, "clear");
@@ -118,19 +119,70 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
     expect(app.live?.log).toEqual(["+Gate", "+Outer", "+Inner", "-Inner", "-Gate", "-Outer"]);
   });
 
-  it("keeps a tile mounted while it is still another tile's whole body", async () => {
-    const { app, root } = await mountSource(`${logging("Outer", "Inner")}
+  it.each([
+    {
+      leaves: "the standalone tile",
+      app: "column(HideBtn, Outer, when(show, Inner))",
+      after: ["+Outer", "+Inner"],
+    },
+    {
+      leaves: "the tile whose whole body it is",
+      app: "column(HideBtn, when(show, Outer), Inner)",
+      after: ["+Outer", "+Inner", "-Outer"],
+    },
+  ])("keeps a tile mounted while it is still on screen, when $leaves leaves", async (row) => {
+    const { app, root } = await mountSource(
+      withApp(`${logging("Outer", "Inner")}
 ${HIDE}
 tile Inner = text("inner")
 tile Outer = Inner
-tile App = column(HideBtn, Outer, when(show, Inner))
-app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
-`);
+tile App = ${row.app}`),
+    );
     expect(app.live?.log).toEqual(["+Outer", "+Inner"]);
 
     await press(root, "hide");
     expect(root.textContent).toContain("inner");
-    expect(app.live?.log).toEqual(["+Outer", "+Inner"]);
+    expect(app.live?.log).toEqual(row.after);
+  });
+
+  it.each([
+    {
+      between: "two whole-body tiles that share it",
+      names: ["A", "B", "Inner"],
+      tiles: `tile A = Inner
+tile B = Inner`,
+      some: "A",
+      none: "B",
+      shown: ["+A", "+Inner"],
+      after: ["+A", "+Inner", "+B", "-A"],
+    },
+    {
+      between: "a whole-body tile and the tile it is",
+      names: ["Outer", "Inner"],
+      tiles: "tile Outer = Inner",
+      some: "Outer",
+      none: "Inner",
+      shown: ["+Outer", "+Inner"],
+      after: ["+Outer", "+Inner", "-Outer"],
+    },
+  ])("keeps the shared tile mounted when a match switches between $between", async (row) => {
+    const { app, root } = await mountSource(
+      withApp(`${logging(...row.names)}
+slot sel : Option(Int) = Some(1)
+reducer clr on=ui.click(ClrBtn) do= sel := None
+tile ClrBtn = button(text="clear", onClick=clr)
+tile Inner = text("inner")
+${row.tiles}
+tile Pick = match sel with
+    | Some(x) -> ${row.some}
+    | None -> ${row.none}
+tile App = column(ClrBtn, Pick)`),
+    );
+    expect(app.live?.log).toEqual(row.shown);
+
+    await press(root, "clear");
+    expect(root.textContent).toContain("inner");
+    expect(app.live?.log).toEqual(row.after);
   });
 
   it.each([
@@ -168,16 +220,16 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> Other} init=[]`,
   });
 
   it("fires for both when an error-boundary fallback's body is a user tile", async () => {
-    const { app, root } = await mountSource(`${logging("Oops", "Inner", "Boom")}
+    const { app, root } = await mountSource(
+      withApp(`${logging("Oops", "Inner", "Boom")}
 slot broken : Bool = true
 reducer fix on=ui.click(FixBtn) do= broken := false
 tile FixBtn = button(text="fix", onClick=fix)
 tile Inner = text("inner")
 tile Oops in=PanicInfo = Inner
 tile Boom error-boundary=Oops = column(when(broken, text(panic("bang"))), text("boom ok"))
-tile App = column(FixBtn, Boom)
-app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
-`);
+tile App = column(FixBtn, Boom)`),
+    );
     expect(root.textContent).toContain("inner");
     expect(app.live?.log).toEqual(["+Oops", "+Inner"]);
 
@@ -186,63 +238,75 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
     expect(app.live?.log).toEqual(["+Oops", "+Inner", "+Boom", "-Oops", "-Inner"]);
   });
 
+  // While the boundary shows its fallback, the node is the whole tree of the wrapping tile and the
+  // fallback, so those two fire and the tile declaring the boundary does not.
   it.each([
     {
       where: "at a call site",
-      src: `slot broken : Bool = true
+      names: ["Outer", "Boom", "Oops"],
+      src: withApp(`slot broken : Bool = true
 reducer fix on=ui.click(FixBtn) do= broken := false
 tile FixBtn = button(text="fix", onClick=fix)
 tile Oops in=PanicInfo = text("oops")
 tile Boom error-boundary=Oops = column(when(broken, text(panic("bang"))), text("boom ok"))
 tile Outer = Boom
-tile App = column(FixBtn, Outer)
-app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`,
+tile App = column(FixBtn, Outer)`),
       leave: (_app: AppShape, root: HTMLElement) => press(root, "fix"),
+      shown: ["+Outer", "+Oops"],
+      after: ["+Outer", "+Oops", "+Boom", "-Oops"],
     },
     {
       where: "as a route target",
+      names: ["Page", "Boom", "Oops", "Other"],
       src: `tile Oops in=PanicInfo = text("oops")
 tile Boom error-boundary=Oops = column(text(panic("bang")))
 tile Page = Boom
 tile Other = text("other")
 app M caps=[] routes={"/" -> Page, "/other" -> Other, "/404" -> Other} init=[]`,
       leave: (app: AppShape) => navigate(app, "/other"),
+      shown: ["+Page", "+Oops"],
+      after: ["+Page", "+Oops", "+Other", "-Page", "-Oops"],
     },
     {
       where: "as a for row",
-      src: `slot items : List(Int) = [1, 2, 3]
+      names: ["Row", "Cell", "Oops"],
+      src: withApp(`slot items : List(Int) = [1, 2, 3]
 reducer drop on=ui.click(DropBtn) do= items := [1, 3]
 tile DropBtn = button(text="drop", onClick=drop)
 tile Oops in=PanicInfo = text("oops")
 tile Cell in=Int error-boundary=Oops = column(when($1 == 2, text(panic("two"))), text("cell " + $1.show))
 tile Row in=Int = Cell($1)
-tile App = column(DropBtn, column(for i in items Row(i)))
-app M caps=[] routes={"/" -> App, "/404" -> App} init=[]`,
+tile App = column(DropBtn, column(for i in items Row(i)))`),
       leave: (_app: AppShape, root: HTMLElement) => press(root, "drop"),
+      shown: ["+Row", "+Cell", "+Oops"],
+      after: ["+Row", "+Cell", "+Oops", "-Oops"],
     },
   ])("fires a fallback's mount and unmount when the tile declaring the boundary is another tile's whole body, $where", async ({
+    names,
     src,
     leave,
+    shown,
+    after,
   }) => {
-    const { app, root } = await mountSource(`${logging("Oops")}\n${src}\n`);
+    const { app, root } = await mountSource(`${logging(...names)}\n${src}\n`);
     expect(root.textContent).toContain("oops");
-    expect(app.live?.log).toEqual(["+Oops"]);
+    expect(app.live?.log).toEqual(shown);
 
     await leave(app, root);
     expect(root.textContent).not.toContain("oops");
-    expect(app.live?.log).toEqual(["+Oops", "-Oops"]);
+    expect(app.live?.log).toEqual(after);
   });
 
   it("keeps the element and fires nothing again when the tree re-renders", async () => {
-    const { app, root } = await mountSource(`${logging("Outer", "Inner")}
+    const { app, root } = await mountSource(
+      withApp(`${logging("Outer", "Inner")}
 slot n : Int = 0
 reducer bump on=ui.click(BumpBtn) do= n := n + 1
 tile BumpBtn = button(text="bump", onClick=bump)
 tile Inner = text("inner " + n.show) {test-id: "inner"}
 tile Outer = Inner
-tile App = column(BumpBtn, Outer)
-app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
-`);
+tile App = column(BumpBtn, Outer)`),
+    );
     const before = root.querySelector('[data-kumiki-test="inner"]');
     expect(before?.textContent).toBe("inner 0");
 
@@ -257,29 +321,19 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
   it("serves the same HTML as the tree written out, and hydration fires each mount once", async () => {
     // The marker is never rendered, so the server's HTML is that of the same tree with no user tiles;
     // the client's first render is where both tiles are first seen.
-    const src = `${logging("Outer", "Inner")}
+    const src = withApp(
+      `${logging("Outer", "Inner")}
 tile Inner = text("inner")
 tile Outer = Inner
-tile Home = column(text("home"), Outer)
-app M caps=[] routes={"/" -> Home, "/404" -> Home} init=[]
-`;
-    const written = `tile Home = column(text("home"), text("inner"))
-app M caps=[] routes={"/" -> Home, "/404" -> Home} init=[]
-`;
-    const rendered = await renderToString(await loadSource(src), { route: "/", routing });
+tile Home = column(text("home"), Outer)`,
+      "Home",
+    );
+    const written = withApp(`tile Home = column(text("home"), text("inner"))`, "Home");
     const plain = await renderToString(await loadSource(written), { route: "/", routing });
-    expect(rendered.html).toContain("inner");
-    expect(rendered.html).toBe(plain.html);
 
-    const app = await loadSource(src);
-    const root = freshRoot();
-    root.innerHTML = rendered.html;
-    const handle = hydrate(app, root, rendered, { router: "memory" });
-    onTestFinished(() => {
-      handle.dispose();
-      root.remove();
-    });
-    await tick(0);
+    const { app, root, html } = await hydrateSource(src);
+    expect(html).toContain("inner");
+    expect(html).toBe(plain.html);
     expect(root.textContent).toContain("inner");
     expect(app.live?.log).toEqual(["+Outer", "+Inner"]);
   });
