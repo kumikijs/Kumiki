@@ -1,0 +1,36 @@
+# Feature: `kumiki patch revert` puts back the text an op replaced or removed,
+# where it was, so the file reads as it did before the op.
+#
+#   kumiki replace <file> slot.count 'N = 5'
+#   kumiki edit    <file> reducer.reset '{"find": "count := 0", "replace": "count := 1"}'
+#   kumiki remove  <file> tile.ResetBtn --cascade
+#   kumiki patch revert <file> <op-id>
+#
+# These definitions are written by hand, aligned in columns, and no op made
+# them. A `replace` or an `edit` records the definition's text before the op,
+# and a `remove` records the text of each definition it deletes and where that
+# stood. Reverting any of the three ops above right after it leaves this file
+# byte for byte as it is. The cascade takes `reducer.reset`, `tile.App` and
+# `app.Counter` with `tile.ResetBtn`, and its revert puts all four back where
+# they were, after the comment that stays above `tile.App`.
+
+type   N      = nominal Int where between(0, 999)
+slot   count  : N    = 0
+
+reducer inc    on=ui.click(IncBtn)   do= if count < 999 then count := count + 1
+reducer dec    on=ui.click(DecBtn)   do= if count > 0   then count := count - 1
+reducer reset  on=ui.click(ResetBtn) do= count := 0
+
+tile   IncBtn   = button(text="+")
+tile   DecBtn   = button(text="-")
+tile   ResetBtn = button(text="reset")
+
+# The count over its three buttons.
+tile   App = column(
+               heading("Count: " + count),
+               row(DecBtn, ResetBtn, IncBtn) {gap: "sm"})
+
+app    Counter
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

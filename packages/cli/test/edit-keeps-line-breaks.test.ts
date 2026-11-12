@@ -151,14 +151,17 @@ describe("a line break inside a body or a patch", () => {
 });
 
 describe("patch revert and patch apply", () => {
-  it("a revert of a cascade writes the definitions it restores with the file's CRLF", () => {
-    const revert = (file: string): void => {
-      patchRevert(file, removeDef(file, "tile.App", true).opId);
-    };
-    const lf = after(LF, revert);
-    expect(lf).toContain("tile App = column(\n");
-    expect(lf).toContain("app Counter\n    caps   = []\n");
-    expect(after(CRLF, revert)).toBe(crlf(lf));
+  const reverted = [
+    { op: "a cascade", run: (f: string) => removeDef(f, "tile.App", true).opId },
+    { op: "a replace", run: (f: string) => replaceDef(f, "slot.count", "N = 3").opId },
+  ];
+  it.each(
+    reverted.flatMap(({ op, run }) => [
+      { op, file: "an LF", source: LF, run },
+      { op, file: "a CRLF", source: CRLF, run },
+    ]),
+  )("a revert of $op puts $file file back byte for byte", ({ source, run }) => {
+    expect(after(source, (file) => patchRevert(file, run(file)))).toBe(source);
   });
 
   it("a revert of a rename puts a CRLF file back byte for byte", () => {
