@@ -158,6 +158,25 @@ const UNDEFINED_NAME: ReadonlyMap<string, Planner> = new Map([
   ],
 ]);
 
+// A name E0105 reports names no value either, so a slot, `fn` or reducer written in its place is
+// E0128, and so is a builtin's bare name in a container: only the program's own tiles repair it.
+const closeTile = nameRepair({
+  prefix: "",
+  quoted: 1,
+  pool: (store) => namesIn(store, "tile"),
+  noSuggestion: "no-close-name-suggestion",
+  anchored: true,
+});
+
+// The checker does not look a variant tag up as a value there, but it is one, so a tile written in
+// its place renders something else.
+const undefinedTile: Planner = (err, store) => {
+  const name = /"([^"]+)"/.exec(err.message)?.[1];
+  return name !== undefined && constructorTags(store.program).includes(name)
+    ? { reason: "e0105-variant-tag-is-a-value" }
+    : closeTile(err, store);
+};
+
 const undefinedCallee = nameRepair({
   prefix: "e0116-",
   quoted: 1,
@@ -180,7 +199,7 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
       return anyDefinition(err, store);
     },
   ],
-  ["E0105", anyDefinition], // undef-tile
+  ["E0105", undefinedTile], // undef-tile
   ["E0107", anyDefinition], // undef-motion
   [
     "E0211", // undef-tile-in-selector

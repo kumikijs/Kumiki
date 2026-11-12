@@ -4,9 +4,9 @@ import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { refType } from "../stdlib-types.ts";
 import {
-  firesUnheardIn,
+  firesUnheardClauses,
   UI_EVENT_TILE_KINDS,
-  type WrappedUnreached,
+  wrappedClause,
   wrappedUnreached,
 } from "../ui-lifts.ts";
 import {
@@ -164,29 +164,15 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
 // the event; "no descendant fires it" would be untrue of them. No row records a kind that fires
 // unheard under key, focus or blur, so the two reasons never both apply.
 function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet<string>): string {
-  const unheard = firesUnheardIn(ev, kinds);
+  const unheard = firesUnheardClauses(ev, kinds);
   if (unheard.length > 0) {
-    const clauses = unheard.map(
-      (g) =>
-        `a ${g.kinds.join(" / ")} fires "${ev}", and its renderer ${g.instead}, never calling ${g.handler}`,
-    );
-    return `"${ev}" never reaches a reducer in tile "${tile}": ${clauses.join("; ")}`;
+    return `"${ev}" never reaches a reducer in tile "${tile}": ${unheard.join("; ")}`;
   }
   const unreached = wrappedUnreached(ev, kinds).map((g) => wrappedClause(ev, g));
   if (unreached.length > 0) {
     return `"${ev}" never reaches a listener in tile "${tile}": ${unreached.join("; ")}`;
   }
   return `tile "${tile}" has no descendant that fires "${ev}"`;
-}
-
-function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
-  const kinds = g.kinds.join(" / ");
-  return g.bubbles
-    ? `a ${kinds} takes no "${ev}" listener on the <${g.wrapper}> around its <${g.focused}>, ` +
-        `since a control in its panel takes the subscription instead — ` +
-        `write ${g.handler}= on the ${kinds} to hear a "${ev}" on its <${g.focused}>`
-    : `the runtime listens for "${ev}" on a ${kinds}'s <${g.wrapper}>, ` +
-        `and the "${ev}" its <${g.focused}> fires does not bubble to the <${g.wrapper}>`;
 }
 
 function declaredRoutePatterns(

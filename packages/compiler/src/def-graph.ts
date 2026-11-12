@@ -1,5 +1,6 @@
 import type { Expr, Pos, TileDef, TileExpr, TypeDef, TypeExpr } from "./ast.ts";
 import { isTileExpr } from "./ast.ts";
+import { CHILD_RENDERING_BUILTINS } from "./builtins.ts";
 
 /** An edge to another definition, positioned at the identifier that names it. */
 export type GraphEdge = { readonly to: string; readonly pos: Pos };
@@ -160,6 +161,10 @@ function walkTileBody(t: TileExpr, out: TileEdge[], root: boolean): void {
       return;
     case "TileCall": {
       out.push({ to: t.name, pos: t.pos, root, call: t });
+      // Codegen renders the positional arguments of these builtins alone, as children; every
+      // other call reads them as values (`text(leaf)`, `Card(leaf)`) or drops them
+      // (`button(leaf)`), so nothing written there is inlined.
+      if (!CHILD_RENDERING_BUILTINS.has(t.name)) return;
       for (const a of t.args) {
         const v = a.value;
         if (a.name !== undefined) continue;
