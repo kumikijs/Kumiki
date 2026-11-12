@@ -9,9 +9,7 @@ export {
   newId,
   type OpLogEntry,
   type OpLogOptions,
-  type OpLogRead,
   readOpLog,
-  readOpLogResult,
   type SkippedOpLogLine,
 } from "./mutate/op-log.ts";
 export {

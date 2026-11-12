@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
   addDef,
@@ -7,7 +7,6 @@ import {
   patchApplyFile,
   patchRevert,
   readOpLog,
-  readOpLogResult,
   removeDef,
   renameDef,
   replaceDef,
@@ -60,23 +59,24 @@ const logLines = (): Array<Record<string, unknown>> => {
 };
 
 /** The line of the log a read skipped. */
-const at = (line: number): SkippedOpLogLine => ({ path: logPath(), line });
+const at = (line: number): SkippedOpLogLine => ({ log: logPath(), line });
 
 /** The CLI's warning about the line of the log a read skipped. */
 const warning = (line: number): string =>
   `warning: ${logPath()}:${line}: skipped the last line, which is not valid JSON and has no newline after it; the next op logged replaces it`;
 
+const ids = (entries: Array<{ "op-id": string }>): string[] => entries.map((e) => e["op-id"]);
+
 describe("an op log whose last line is torn", () => {
-  it("reads as its complete entries and the line it skipped", () => {
+  it("reads as its complete entries, handing the line it skipped to onSkipped", () => {
     const first = replaceDef(file, "slot.a", "Int = 1").opId;
     appendFileSync(logPath(), TORN);
 
-    const read = readOpLogResult(file);
-    expect(read.entries.map((e) => e["op-id"])).toEqual([first]);
-    expect(read.skipped).toEqual(at(2));
-    expect(readOpLog(file)).toEqual(read.entries);
-    expect(viewHistory(file, "slot.a", report).map((e) => e["op-id"])).toEqual([first]);
+    expect(ids(readOpLog(file, report))).toEqual([first]);
     expect(reported).toEqual([at(2)]);
+    expect(ids(readOpLog(file))).toEqual([first]);
+    expect(ids(viewHistory(file, "slot.a", report))).toEqual([first]);
+    expect(reported).toEqual([at(2), at(2)]);
     expect(warnings).toEqual([]);
   });
 
@@ -90,18 +90,20 @@ describe("an op log whose last line is torn", () => {
     expect(logLines().map((e) => e["op-id"])).toEqual([first, second]);
     expect(logLines()[1]?.["parent-ops"]).toEqual([first]);
     expect(reported).toEqual([at(2)]);
-    expect(readOpLogResult(file).skipped).toBeNull();
+    readOpLog(file, report);
+    expect(reported).toEqual([at(2)]);
   });
 
   it("takes the next write when it is the only line", () => {
     writeFileSync(logPath(), TORN);
-    expect(readOpLogResult(file)).toEqual({ entries: [], skipped: at(1) });
+    expect(readOpLog(file, report)).toEqual([]);
+    expect(reported).toEqual([at(1)]);
 
     const id = addDef(file, "slot", "b", "Int = 0", report);
 
     expect(logLines().map((e) => e["op-id"])).toEqual([id]);
     expect(logLines()[0]?.["parent-ops"]).toEqual([]);
-    expect(reported).toEqual([at(1)]);
+    expect(reported).toEqual([at(1), at(1)]);
   });
 
   it("takes the next write after entries that end in CRLF", () => {
@@ -159,7 +161,7 @@ describe("what a verb reports of an op log whose last line is torn", () => {
     expect(warnings).toEqual([]);
   });
 
-  it("hands it over before a verb that then fails", () => {
+  it("hands it over before a patch revert whose op-id is not in the log", () => {
     // The op-id asked for may be the one on the torn line: the skipped line is
     // what says why it is not found.
     expect(() => patchRevert(file, "op_ON_THE_TORN_LINE", report)).toThrowError("not found in log");
@@ -169,22 +171,38 @@ describe("what a verb reports of an op log whose last line is torn", () => {
 
 describe("an op log with nothing to skip", () => {
   it.each([
-    ["holds complete entries", (entries: string) => entries],
-    ["is empty", () => ""],
-  ])("reads with nothing skipped when it %s", (_, layout) => {
-    replaceDef(file, "slot.a", "Int = 1");
-    writeFileSync(logPath(), layout(logText()));
-    const entries = readOpLog(file);
+    ["holds complete entries", true],
+    ["is empty", false],
+  ])("reads with nothing skipped when it %s", (_, kept) => {
+    const first = replaceDef(file, "slot.a", "Int = 1").opId;
+    if (!kept) writeFileSync(logPath(), "");
+    const before = kept ? [first] : [];
 
-    expect(readOpLogResult(file)).toEqual({ entries, skipped: null });
-    replaceDef(file, "slot.a", "Int = 7", report);
-    expect(viewHistory(file, "slot.a", report)).toHaveLength(entries.length + 1);
+    expect(ids(readOpLog(file, report))).toEqual(before);
+    const next = replaceDef(file, "slot.a", "Int = 7", report).opId;
+    expect(ids(viewHistory(file, "slot.a", report))).toEqual([...before, next]);
     expect(reported).toEqual([]);
   });
 
   it("reads with nothing skipped when there is no log", () => {
-    expect(readOpLogResult(file)).toEqual({ entries: [], skipped: null });
+    expect(readOpLog(file, report)).toEqual([]);
     expect(viewHistory(file, "slot.a", report)).toEqual([]);
+    expect(reported).toEqual([]);
+  });
+});
+
+describe("an op log that cannot be read", () => {
+  it("fails every verb that reads it, naming the log", () => {
+    mkdirSync(logPath());
+    const source = readFileSync(file, "utf8");
+    const where = `${logPath()}: cannot be read (EISDIR`;
+
+    expect(() => readOpLog(file)).toThrowError(where);
+    expect(() => viewHistory(file, "slot.a", report)).toThrowError(where);
+    expect(() => replaceDef(file, "slot.a", "Int = 7", report)).toThrowError(
+      `replace rejected: the op could not be logged (${where}`,
+    );
+    expect(readFileSync(file, "utf8")).toBe(source);
     expect(reported).toEqual([]);
   });
 });
@@ -242,6 +260,25 @@ describe("patch apply and patch revert on an op log whose last line is torn", ()
     expect(readFileSync(file, "utf8")).toBe("slot a : Int = 2\n\nslot b : Int = 0\n");
     expect(logLines().map((e) => e["op-id"])).toEqual([first, ...ids]);
     // The bundle's first op cut the torn line off, so only it read one.
+    expect(reported).toEqual([at(2)]);
+  });
+
+  it.each([
+    ["add", { op: "add", layer: "slot", name: "b", body: "Int = 0" }],
+    ["replace", { op: "replace", layer: "slot", name: "a", body: "Int = 2" }],
+    ["edit", { op: "edit", layer: "slot", name: "a", patch: { find: "1", replace: "2" } }],
+    ["rename", { op: "rename", layer: "slot", name: "a", newName: "z" }],
+    ["remove", { op: "remove", layer: "slot", name: "a" }],
+    [
+      "cascade remove that lists what it removed",
+      { op: "remove", layer: "slot", name: "a", cascade: true, removed: ["slot.a"] },
+    ],
+  ])("patch apply whose first op is %s hands the skipped line to onSkipped", (_, op) => {
+    replaceDef(file, "slot.a", "Int = 1");
+    appendFileSync(logPath(), TORN);
+
+    patchApplyFile(file, bundle(op), report);
+
     expect(reported).toEqual([at(2)]);
   });
 
@@ -312,8 +349,7 @@ describe("an op log with a line that is not an op", () => {
     const before = { source: readFileSync(file, "utf8"), log: logText() };
     const where = `${logPath()}:${line}: ${problem}`;
 
-    expect(() => readOpLogResult(file)).toThrowError(where);
-    expect(() => readOpLog(file)).toThrowError(where);
+    expect(() => readOpLog(file, report)).toThrowError(where);
     expect(() => viewHistory(file, "slot.a", report)).toThrowError(where);
     expect(() => replaceDef(file, "slot.a", "Int = 7", report)).toThrowError(
       `replace rejected: the op could not be logged (${where}`,
@@ -323,9 +359,6 @@ describe("an op log with a line that is not an op", () => {
   });
 });
 
-// The CLI is where the skipped line is printed: once per verb, on stderr,
-// before anything the verb then prints there, and with stdout as it is for a
-// log with nothing to skip.
 describe("the kumiki verbs on an op log whose last line is torn", () => {
   let first = "";
   beforeEach(() => {
@@ -359,13 +392,17 @@ describe("the kumiki verbs on an op log whose last line is torn", () => {
       () => ["view", file, "slot.a", "--history"],
       /^op_\w+ {2}\S+ {2}replace {2}by \S+$/,
     ],
-  ])("%s warns of the skipped line once", SPAWN, (_, args, stdout) => {
-    const run = runCli(args());
+  ])(
+    "%s warns of the skipped line once on stderr, and answers on stdout",
+    SPAWN,
+    (_, args, stdout) => {
+      const run = runCli(args());
 
-    expect(run.stderr).toBe(`${warning(2)}\n`);
-    expect(run.stdout.trimEnd()).toMatch(stdout);
-    expect(run.code).toBe(0);
-  });
+      expect(run.stderr).toBe(`${warning(2)}\n`);
+      expect(run.stdout.trimEnd()).toMatch(stdout);
+      expect(run.code).toBe(0);
+    },
+  );
 
   it("warns before the error of a verb that then fails", SPAWN, () => {
     const run = runCli(["patch", "revert", file, "op_ON_THE_TORN_LINE"]);

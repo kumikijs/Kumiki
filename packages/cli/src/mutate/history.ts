@@ -2,7 +2,7 @@ import { loadSource, requireSourceFile } from "../store.ts";
 import { escapeRegExp } from "../text.ts";
 import { withWriteLock } from "../write-lock.ts";
 import { assemble, bodyOf, nameSites, respell, splitQname } from "./definition-text.ts";
-import { type DefSpec, type OpLogEntry, type OpLogOptions, readOpLogFor } from "./op-log.ts";
+import { type DefSpec, type OpLogEntry, type OpLogOptions, readOpLog } from "./op-log.ts";
 import { addDefs, removeDef, removeSet, renameDef, replaceDef } from "./verbs.ts";
 
 export function patchRevert(path: string, opId: string, options: OpLogOptions = {}): string {
@@ -13,7 +13,7 @@ export function patchRevert(path: string, opId: string, options: OpLogOptions = 
 // The verbs that log the revert read the log again under the same write lock, without `options`:
 // a line they skip is the one already handed over here.
 function patchRevertLocked(path: string, opId: string, options: OpLogOptions): string {
-  const log = readOpLogFor(path, options).entries;
+  const log = readOpLog(path, options);
   const idx = log.findIndex((e) => e["op-id"] === opId);
   if (idx === -1) throw new Error(`patch revert: op-id "${opId}" not found in log`);
   const target = log[idx]!;
@@ -218,7 +218,7 @@ function namesDef(op: OpLogEntry, qname: string): boolean {
 }
 
 export function viewHistory(path: string, qname: string, options: OpLogOptions = {}): OpLogEntry[] {
-  const log = readOpLogFor(path, options).entries;
+  const log = readOpLog(path, options);
   const followed = new Set<OpLogEntry>();
   for (const [e, current] of namesBack(log, log.length, qname, false)) {
     if (namesDef(e, current) || renamedBy(e)?.to === current) followed.add(e);

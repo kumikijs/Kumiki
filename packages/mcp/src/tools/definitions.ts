@@ -20,7 +20,7 @@ import {
 } from "@kumikijs/cli";
 import { z } from "zod";
 import { absPath } from "../input.ts";
-import { json, text } from "../wire.ts";
+import { errText, json, text } from "../wire.ts";
 import type { RegisterTool } from "./registrar.ts";
 
 function notFound(name: string): Error {
@@ -28,20 +28,33 @@ function notFound(name: string): Error {
 }
 
 const SKIPPED_LINE_NOTE =
-  ' When the op log\'s last line is torn and skipped, a second text block follows: `{"warnings": [{"kind": "malformed-jsonl", "message"}]}`, naming the log and the line.';
+  ' When the op log\'s last line is torn and skipped, a second text item follows the answer, or the error: `warnings:` followed by a JSON list, `[{"kind": "malformed-jsonl", "message"}]`, whose message names the log and the line.';
 
 // A client does not read the server's stderr, so a torn op-log line the read skipped follows the
-// answer as a second block. The answer itself is the same either way, so a client reading the op-id
-// off the first block reads it whether or not a line was skipped.
+// answer, or the error, as a second item. The first item is the same either way, so a client reading
+// the op-id off it reads it whether or not a line was skipped.
 function opLogAnswer<T>(run: (options: OpLogOptions) => T, answer: (value: T) => string) {
   const skipped: SkippedOpLogLine[] = [];
-  const result = text(answer(run({ onSkipped: (line) => skipped.push(line) })));
-  if (skipped.length === 0) return result;
+  let value: T;
+  try {
+    value = run({ onSkipped: (line) => skipped.push(line) });
+  } catch (e) {
+    if (skipped.length === 0) throw e;
+    const error = errText(e);
+    return { ...error, content: [...error.content, ...skippedItem(skipped)] };
+  }
+  const result = text(answer(value));
+  return { content: [...result.content, ...skippedItem(skipped)] };
+}
+
+/** Labelled as `withWarnings` labels a compile's warnings, for a client that joins the items. */
+function skippedItem(skipped: readonly SkippedOpLogLine[]) {
+  if (skipped.length === 0) return [];
   const warnings = skipped.map((line) => ({
     kind: "malformed-jsonl",
     message: describeSkipped(line),
   }));
-  return { content: [...result.content, ...text(json({ warnings })).content] };
+  return text(`warnings:\n${json(warnings)}`).content;
 }
 
 export function registerDefinitionTools(tool: RegisterTool): void {

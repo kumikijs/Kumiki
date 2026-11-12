@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   COUNTER,
   call,
-  callBlocks,
   callOnce,
   callTool,
   errorMessage,
@@ -203,9 +202,8 @@ describe("ownership locks", () => {
   });
 });
 
-// A client does not read the server's stderr, so a tool that read a torn last line answers as it
-// would without it, then names the line in a second block, as the episode tools report a line they
-// could not read.
+// A client does not read the server's stderr. The second item is labelled as `withWarnings` labels
+// the compile tools' warnings, and holds the episode tools' warning shape.
 describe("a tool that reads an op log whose last line is torn", () => {
   const workdir = useWorkdir();
   let file: string;
@@ -219,15 +217,19 @@ describe("a tool that reads an op log whose last line is torn", () => {
   /** The start of an op-log line, cut off mid-key. */
   const TORN = '{"op":"replace","layer":"slot","na';
 
-  /** The second block of an answer from a log whose line `line` was skipped. */
-  const skipped = (line: number) => ({
-    warnings: [
-      {
-        kind: "malformed-jsonl",
-        message: `${log}:${line}: skipped the last line, which is not valid JSON and has no newline after it; the next op logged replaces it`,
-      },
-    ],
-  });
+  /** The warnings of an answer from a log whose line `line` was skipped. */
+  const skipped = (line: number) => [
+    {
+      kind: "malformed-jsonl",
+      message: `${log}:${line}: skipped the last line, which is not valid JSON and has no newline after it; the next op logged replaces it`,
+    },
+  ];
+
+  /** The JSON list a `warnings:` item holds. */
+  const warningsIn = (item = ""): unknown => {
+    expect(item.startsWith("warnings:\n")).toBe(true);
+    return JSON.parse(item.slice("warnings:\n".length));
+  };
 
   /** Log one op, then the start of another cut off. The logged op's id. */
   const seedTorn = async (client: Client): Promise<string> => {
@@ -244,31 +246,27 @@ describe("a tool that reads an op log whose last line is torn", () => {
     await withClient(async (client) => {
       const first = await seedTorn(client);
 
-      const blocks = await callBlocks(client, "kumiki_history", {
-        path: file,
-        name: "slot.count",
-      });
+      const res = await call(client, "kumiki_history", { path: file, name: "slot.count" });
 
-      expect(blocks).toHaveLength(2);
-      const [entries = "", warnings = ""] = blocks;
+      expect(res.isError).toBe(false);
+      expect(res.items).toHaveLength(2);
+      const [entries = "", warnings] = res.items;
       const ids = (JSON.parse(entries) as Array<{ "op-id": string }>).map((e) => e["op-id"]);
       expect(ids).toEqual([first]);
-      expect(JSON.parse(warnings)).toEqual(skipped(2));
+      expect(warningsIn(warnings)).toEqual(skipped(2));
     });
   });
 
   it("kumiki_history of a log that is only the torn line has no history to list", async () => {
     writeFileSync(log, TORN);
     await withClient(async (client) => {
-      const blocks = await callBlocks(client, "kumiki_history", {
-        path: file,
-        name: "slot.count",
-      });
+      const res = await call(client, "kumiki_history", { path: file, name: "slot.count" });
 
-      expect(blocks).toHaveLength(2);
-      const [answer, warnings = ""] = blocks;
+      expect(res.isError).toBe(false);
+      expect(res.items).toHaveLength(2);
+      const [answer, warnings] = res.items;
       expect(answer).toBe("(no history for slot.count)");
-      expect(JSON.parse(warnings)).toEqual(skipped(1));
+      expect(warningsIn(warnings)).toEqual(skipped(1));
     });
   });
 
@@ -298,39 +296,84 @@ describe("a tool that reads an op log whose last line is torn", () => {
     await withClient(async (client) => {
       await seedTorn(client);
 
-      const blocks = await callBlocks(client, tool, { path: file, ...args });
+      const res = await call(client, tool, { path: file, ...args });
 
-      expect(blocks).toHaveLength(2);
-      const [edit, warnings = ""] = blocks;
+      expect(res.isError).toBe(false);
+      expect(res.items).toHaveLength(2);
+      const [edit, warnings] = res.items;
       expect(edit).toMatch(answer);
-      expect(JSON.parse(warnings)).toEqual(skipped(2));
+      expect(warningsIn(warnings)).toEqual(skipped(2));
     });
   });
 
-  it("answers with the answer alone when there is nothing to skip", async () => {
+  it("answers with the error alone when the tool fails before it reads the log", async () => {
     await withClient(async (client) => {
-      // No log yet, then a log of complete entries, then an empty one.
-      const first = await callBlocks(client, "kumiki_replace", {
+      await seedTorn(client);
+
+      const res = await call(client, "kumiki_replace", {
         path: file,
-        name: "slot.count",
-        body: "N = 1",
+        name: "slot.nope",
+        body: "N = 5",
       });
-      expect(first).toHaveLength(1);
-      const history = await callBlocks(client, "kumiki_history", {
-        path: file,
-        name: "slot.count",
-      });
-      expect(history).toHaveLength(1);
-      expect(JSON.parse(history[0] ?? "")).toHaveLength(1);
-      writeFileSync(log, "");
-      const added = await callBlocks(client, "kumiki_add", {
-        path: file,
-        layer: "slot",
-        name: "step",
-        body: "Int = 1",
-      });
-      expect(added).toHaveLength(1);
-      expect(added[0]).toMatch(/^added slot\.step {2}\(op_\w+\)$/);
+
+      expect(res.isError).toBe(true);
+      expect(res.items).toHaveLength(1);
     });
+  });
+});
+
+describe("a tool that reads an op log with nothing to skip answers with the answer alone", () => {
+  const workdir = useWorkdir();
+  let file: string;
+  let log: string;
+  beforeEach(() => {
+    file = join(workdir.path, "counter.kumiki");
+    log = `${file}.kumiki-ops.jsonl`;
+    copyFileSync(COUNTER, file);
+  });
+
+  /** Lay the log out, before the call, as each case names it. */
+  const layouts: Array<[string, () => Promise<void>]> = [
+    ["with no log", async () => undefined],
+    [
+      "with a log of complete entries",
+      async () => {
+        await callOnce("kumiki_replace", { path: file, name: "slot.count", body: "N = 1" });
+      },
+    ],
+    [
+      "with an empty log",
+      async () => {
+        writeFileSync(log, "");
+      },
+    ],
+  ];
+
+  const tools: Array<[string, Record<string, unknown>, RegExp]> = [
+    ["kumiki_history", { name: "slot.count" }, /^(\(no history for slot\.count\)|\[[\s\S]*\])$/],
+    [
+      "kumiki_add",
+      { layer: "slot", name: "step", body: "Int = 1" },
+      /^added slot\.step {2}\(op_\w+\)$/,
+    ],
+    [
+      "kumiki_replace",
+      { name: "slot.count", body: "N = 5" },
+      /^replaced slot\.count {2}\(op_\w+\)$/,
+    ],
+  ];
+
+  it.each(
+    layouts.flatMap(([where, lay]) =>
+      tools.map(([tool, args, answer]) => [`${tool} ${where}`, lay, tool, args, answer] as const),
+    ),
+  )("%s", async (_, lay, tool, args, answer) => {
+    await lay();
+
+    const res = await callOnce(tool, { path: file, ...args });
+
+    expect(res.isError).toBe(false);
+    expect(res.items).toHaveLength(1);
+    expect(res.items[0]).toMatch(answer);
   });
 });

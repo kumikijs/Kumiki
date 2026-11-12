@@ -5,7 +5,7 @@
 // `node:fs` imports through `vi.mock`.
 
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
-import { readOpLog, replaceDef } from "@kumikijs/cli";
+import { type OpLogOptions, readOpLog, replaceDef, type SkippedOpLogLine } from "@kumikijs/cli";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { seed } from "./helpers/files.ts";
 import { logPath } from "./helpers/op-log.ts";
@@ -76,6 +76,13 @@ const allButNewline = (data: string): string => data.slice(0, -1);
 
 let file = "";
 let log = "";
+/** What a verb handed to `report.onSkipped`. */
+let reported: SkippedOpLogLine[] = [];
+const report: OpLogOptions = {
+  onSkipped: (line) => {
+    reported.push(line);
+  },
+};
 function reset(): void {
   fault.lands = undefined;
   fault.cutBack = false;
@@ -87,6 +94,7 @@ beforeEach(() => {
   reset();
   file = seed("slot a : Int = 0\n", "c.kumiki");
   log = logPath(file);
+  reported = [];
 });
 afterEach(() => {
   reset();
@@ -113,16 +121,17 @@ function seedLog(tail: string): string {
 }
 
 describe("an append to the op log that fails partway", () => {
-  it("after a skipped last line was cut off says so, and leaves the complete entries", () => {
+  it("after a skipped last line was cut off says so, leaves the complete entries, and hands the line over", () => {
     const entries = seedLog(TORN);
     const source = readFileSync(file, "utf8");
     fault.lands = half;
 
-    expect(errorOf(() => replaceDef(file, "slot.a", "Int = 7"))).toBe(
+    expect(errorOf(() => replaceDef(file, "slot.a", "Int = 7", report))).toBe(
       `replace rejected: the op could not be logged (${ENOSPC}; ${log} holds its complete entries, and its skipped last line was cut off); the file was restored`,
     );
     expect(readFileSync(file, "utf8")).toBe(source);
     expect(readLog()).toBe(entries);
+    expect(reported).toEqual([{ log, line: 2 }]);
   });
 
   it.each([
@@ -152,15 +161,17 @@ describe("an append to the op log that fails partway", () => {
 });
 
 describe("a skipped last line that cannot be cut off the op log", () => {
-  it("leaves the log as it was and says nothing was written", () => {
+  it("leaves the log as it was, says nothing was written, and hands the line over first", () => {
     seedLog(TORN);
     const before = { source: readFileSync(file, "utf8"), log: readLog() };
     fault.cutOff = true;
 
-    expect(errorOf(() => replaceDef(file, "slot.a", "Int = 7"))).toBe(
+    expect(errorOf(() => replaceDef(file, "slot.a", "Int = 7", report))).toBe(
       `replace rejected: the op could not be logged (EIO: i/o error, open '${log}'); the file was restored and nothing was written`,
     );
     expect({ source: readFileSync(file, "utf8"), log: readLog() }).toEqual(before);
+    // The error says nothing of the skipped line, so this is the one trace of it.
+    expect(reported).toEqual([{ log, line: 2 }]);
   });
 });
 
