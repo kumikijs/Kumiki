@@ -3,7 +3,7 @@
 "@kumikijs/mcp": patch
 ---
 
-A lock file that is not the shape `lock` writes is refused by name, instead of being misread
+A command refuses a lock file that is not in the shape `lock` writes, naming the file and what is wrong with it, instead of misreading it
 
 The ownership lock file `<file>.kumiki-locks.json` was used as found. A
 hand-edited `"patterns": "slot.*"`, one string rather than a list of one, was
@@ -25,23 +25,29 @@ is not text), a raw `SyntaxError` for a file that is not JSON, or a misread
 table: an entry without `agent` was held by `undefined`, and a top-level `[]`
 counted as no locks for every op while `lock` and `unlock` threw.
 
-Every reader of the lock file now checks it first: `add`, `replace`, `remove`,
-`rename`, `edit`, `patch apply`, `patch revert`, `lock`, `unlock`, and the MCP
-tools `kumiki_add`, `kumiki_replace`, `kumiki_remove`, `kumiki_rename` and
-`kumiki_edit`. A file that is not JSON, or not
-`{"entries": [{"agent": <text>, "patterns": [<text>, …]}]}`, is refused with
-exit `1` (an `{"error": …}` envelope with `isError` in MCP). The source file and
-the lock file are left as they were, and the message names the lock file and
-the first field that is wrong:
+Every reader of the lock file now checks it before acting on it: `add`,
+`replace`, `remove`, `rename`, `edit`, `patch apply`, `patch revert`, `lock`,
+`unlock`, and the MCP tools `kumiki_add`, `kumiki_replace`, `kumiki_remove`,
+`kumiki_rename` and `kumiki_edit`. A file that cannot be read, is not JSON, or
+is not `{"entries": [{"agent": <text>, "patterns": [<text>, …]}]}` is refused
+with exit `1` (in MCP, `isError` and the envelope
+`{"error": {"kind": "lock-file", …}}`, so a client can tell it from a lock
+violation). The source file and the lock file are left as they were, and the
+message names the lock file and what is wrong with it: the error reading it
+(a directory at its path), the parser's error, which says where it stopped
+(`["slot.*",]`), or the first part not in that shape, a field by its path
+where there is one:
 
 ```
 $ KUMIKI_AUTHOR=agent:b kumiki replace c.kumiki tile.Zed 'text("z")'
 Error: Lock file "/work/c.kumiki.kumiki-locks.json" is unreadable: entries[0].patterns is not a list. Fix it to the shape `lock` writes, {"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}]}, or delete it to release every lock.
 ```
 
-A missing lock file still means no locks, and a lock file in the shape `lock`
-writes behaves as before. That includes an empty `entries` list, fields `lock`
-does not write (ignored, and kept when `lock` or `unlock` rewrites the file),
-and an entry whose `patterns` is an empty list, which earlier versions of
-`lock` wrote for a pattern of only commas: it locks nothing, and `unlock`
-releases it.
+A missing lock file still means no locks, and so does one removed just as a
+command reads it. A lock file in the shape `lock` writes behaves as before,
+with a leading UTF-8 byte order mark or without. That includes an empty
+`entries` list, fields `lock` does not write (ignored, and kept when `lock` or
+`unlock` rewrites the file), two entries for one agent (both read, and both
+released by `unlock`), and an entry whose `patterns` is an empty list, which
+earlier versions of `lock` wrote for a pattern of only commas: it locks
+nothing, and `unlock` releases it.
