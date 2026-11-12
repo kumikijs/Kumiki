@@ -7,6 +7,7 @@ import type { Command } from "commander";
 import { formatDiagnostic } from "../diagnostic.ts";
 import { builtinIconSubset } from "../icons.ts";
 import { capsFor, reportCapabilitySearch } from "./_shared/caps.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage } from "./_shared/usage.ts";
 
 const require = createRequire(import.meta.url);
@@ -89,7 +90,7 @@ export async function buildCmd(
   outdirArg: string,
   options: BuildOptions = {},
 ): Promise<void> {
-  const inputPath = resolve(process.cwd(), inputArg);
+  const inputPath = sourceFileArg(inputArg);
   const outdir = resolve(process.cwd(), outdirArg);
   const source = readFileSync(inputPath, "utf8");
   const caps = capsFor(inputPath);
