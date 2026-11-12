@@ -173,17 +173,21 @@ function bottomUp<T>(
 /**
  * The fallbacks that can render in the tile's place: its `error-boundary`, that fallback's own,
  * and so on, since each is placed with its boundary like any other tile. The chain ends at a
- * tile already on it, which E0005 reports after the selector checks run.
+ * tile already on it, which E0005 reports after the selector checks run. It is followed in a
+ * loop, since nothing bounds how long a program may chain fallbacks.
  */
-function fallbackChain(
-  def: TileDef,
-  tiles: ReadonlyMap<string, TileDef>,
-  seen: ReadonlySet<string> = new Set([def.name]),
-): GraphEdge[] {
-  const boundary = boundaryTarget(def);
-  const fallback = boundary ? tiles.get(boundary.to) : undefined;
-  if (!boundary || !fallback || seen.has(fallback.name)) return [];
-  return [boundary, ...fallbackChain(fallback, tiles, new Set([...seen, fallback.name]))];
+function fallbackChain(def: TileDef, tiles: ReadonlyMap<string, TileDef>): GraphEdge[] {
+  const chain: GraphEdge[] = [];
+  const seen = new Set([def.name]);
+  let boundary = boundaryTarget(def);
+  while (boundary) {
+    const fallback = tiles.get(boundary.to);
+    if (!fallback || seen.has(fallback.name)) break;
+    chain.push(boundary);
+    seen.add(fallback.name);
+    boundary = boundaryTarget(fallback);
+  }
+  return chain;
 }
 
 /**

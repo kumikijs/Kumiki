@@ -224,6 +224,37 @@ describe("a check that follows tiles into the tiles they inline reaches the repo
     expect(result.errors[0]?.message).toContain('has id "leaf"');
   });
 
+  // Each fallback names the next as its own, and a fallback renders with its boundary like any
+  // other tile, so the button at the end can render where `W` is.
+  const fallbacks = [
+    "tile T0 = column(W)",
+    "tile W error-boundary=F0 = text(\"w\")",
+    ...Array.from({ length: LONG }, (_, i) =>
+      i === LONG - 1
+        ? `tile F${i} in=PanicInfo = button(text="go", id="leaf")`
+        : `tile F${i} in=PanicInfo error-boundary=F${i + 1} = text("f")`,
+    ),
+  ];
+
+  it("answers a ui.click reducer that reaches the end of a chain of fallbacks", () => {
+    const result = build(program([...fallbacks, "reducer r on=ui.click(T0) do= c := c + 1"], head));
+    expect(result.kind).toBe("fail");
+    if (result.kind !== "fail") return;
+    expect(result.errors.map((e) => e.code)).toEqual(["E0237"]);
+    expect(result.warnings.filter((w) => w.code === "W0212")).toEqual([]);
+  });
+
+  it("answers a ui.click(T0#id) reducer, reading the ids down a chain of fallbacks", () => {
+    const result = build(
+      program([...fallbacks, "reducer r on=ui.click(T0#other) do= c := c + 1"], head),
+      { strictSelectorId: true },
+    );
+    expect(result.kind).toBe("fail");
+    if (result.kind !== "fail") return;
+    expect(result.errors.map((e) => e.code)).toEqual(["E0212", "E0237"]);
+    expect(result.errors[0]?.message).toContain('has id "leaf"');
+  });
+
   // A sub-routes tile may hold its outlet in any tile it renders, so E0113 follows the chain.
   const routed = (leaf: string) =>
     [
