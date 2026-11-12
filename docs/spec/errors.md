@@ -1107,13 +1107,15 @@ The bound type is unaliased first, so `type Qty = Int where positive` and a `nom
 
 A `match` used as a value has no arm for some value of its scrutinee's type ([Language §1.9](./language.md#_1-9-expression-language)). A value `match` evaluates to one of its arms, so a value none of them matches would leave it nothing to evaluate to.
 
-> ``This match on "<T>" has no arm for <values>[, among others], and a match used as a value has to evaluate to one of its arms. Add the missing arms, or end with `_ -> …` ``
+> ``This match on "<T>" has no arm for <values>[, among others], and a match used as a value has to evaluate to one of its arms. Add the missing arms, or end with `_ -> …`[. The match at <line>:<col> ends this match's last arm, so it takes every arm written after it: put it in parentheses, `(match … with …)`, for an arm after it to be this match's] ``
 
 Each value left out is written as the pattern that would match it, in the order the type declares its variants (`None` before `Some`, `Ok` before `Err`): `Blue` for a variant with no payload, `Some(_)` for one with a payload, and `(None, Green)` for a combination of a tuple's items. `_` stands for every value of an item whose type has no variants, and for the items after the point where no arm applies any more: `(None, _)` when no arm takes a `None` at all. The message names up to eight values; when there are more, the list ends with `, among others`. A variant pattern's binds take any payload, so `Some(v)` covers every `Some`; tuples are the only patterns that nest. `Bool`, `Int`, `Text`, a record and a `List` have no variants, and there are no literal patterns ([Language §1.9.1](./language.md#_1-9-1-prohibitions)), so `_` or a name is the arm that covers one.
 
 Coverage is judged once every arm's pattern fits the scrutinee: an arm that does not is [E0207](#e0207-pat-arity-mismatch), [E0208](#e0208-pat-type-mismatch) or [E0209](#e0209-pat-unknown-variant), reported alone. Where the scrutinee's type cannot be decided, for example `$el`, whose props the checker does not type, the result of a `fold`, `map` or `zip`, or a `map-request`'s `$1`, nothing is reported here, and a value no arm matches is a panic at run time ([Lifecycle §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)). A tuple with one such item is still judged on its other items, and its type is written with `?` in that place: `match (cs.fold(c, $2), c) with | (_, Red) -> 1 | (_, Green) -> 2` is reported on `Tuple(?, Color)` for `(_, Blue)`. The values the checker can name are reported even when other values hinge on an undecidable item. A `match` statement in a reducer body and a `match` in tile position are not values, and this code does not reach them.
 
-**Fix**: Add an arm for each value the message lists, or end the `match` with `_ -> …` for every value the other arms leave out.
+The bracketed sentence is added when the last arm ends in a `match` that nothing closes off ([Language §1.9](./language.md#_1-9-expression-language)). That `match` takes every arm written after it, so a `_ -> …` added at the end would be its arm, not this one's: `match x with | Red -> match y with | Small -> 1 | other -> 3` is reported on `Color` for `Green, Blue`, naming where `match y` is. When the inner `match` also takes an arm it can never reach, that arm is [W0219](#w0219-unreachable-nested-arm-warning) as well.
+
+**Fix**: Add an arm for each value the message lists, or end the `match` with `_ -> …` for every value the other arms leave out. When the message names an inner `match`, put that `match` in parentheses first.
 
 ### E0228 `undef-route-pattern`
 
@@ -1293,6 +1295,28 @@ A `radio` writes both `group` and `name`, as arguments or in its props block.
 `name` spells a radio's `group`, because the group is the `name` attribute of its `<input>` ([Forms §5.5.2](./forms.md#_5-5-2-radio)). With both, `group` is the one read, so `name` is a second answer to which set the radio is in, and like the argument [W0216](#w0216-selection-beside-bind-warning) reports, it leaves nothing behind.
 
 **Fix**: Remove one of them. `group` is the spelling this spec uses.
+
+### W0219 `unreachable-nested-arm` (warning)
+
+A `match` that ends an arm of another `match` takes an arm that its own arms above already cover ([Language §1.9](./language.md#_1-9-expression-language)). Nothing closes the inner `match` off before the outer one's next arm, so it takes every arm written after it, the ones laid out for the outer `match` included. An arm written after its arms already match every value can never run. In
+
+```kumiki invalid
+fn f(x: Color, y: Size) -> Int = match x with | Red -> match y with | Small -> 1 | Large -> 2 | _ -> 3
+```
+
+`| _ -> 3` is the third arm of `match y`, after `Small` and `Large` have matched every `Size`, and `match x` has no arm for `Green` or `Blue`. Written as statements, the same arms would be reported by nothing else, since [E0227](#e0227-non-exhaustive-match) reaches only a value `match`, and a click meant to run `n := 3` would run no arm.
+
+> ``The arm `<pattern>` can never be reached: it belongs to the match at <line>:<col>, whose arms above it already match every value. That match ends an arm of the match at <line>:<col>, so it takes every arm written after it. To give this arm to the match at <line>:<col>, <fix>``
+
+`<fix>` is how the inner `match` is closed off in its form:
+
+- a value: ``put the inner match in parentheses: `(match … with …)` ``
+- a statement: ``put the inner match in braces: `{ match … with … }` ``
+- a tile, which has no parentheses: `move the inner match into a tile of its own and name that tile in the arm`
+
+It is a warning, because the program runs as it is parsed: a statement or tile `match` may leave values out ([Language §1.9](./language.md#_1-9-expression-language)), so `check` passes and the app builds. A value `match` that the inner one leaves without an arm for some of its values is still [E0227](#e0227-non-exhaustive-match). It is reported at the first such arm, written as its pattern, once for each inner `match`, and the arm is judged once every arm's pattern fits the scrutinee, as for E0227. Where `match`es end an arm one inside another, each is judged against the one whose arm it ends, so an arm is reported on the innermost `match` that takes it. The layout is not read: the arm is reported whether it is written on the inner `match`'s line or indented under the outer one. A `match` closed off in parentheses or braces, and a `match` that ends no other `match`'s arm, are not reported here, whatever arms they hold.
+
+**Fix**: Close the inner `match` off as the message says, so that the arm is the outer `match`'s, or delete the arm if it was meant for the inner one.
 
 ### E0231 `reserved-type-name`
 

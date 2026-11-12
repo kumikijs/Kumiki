@@ -193,7 +193,7 @@ export class StatementParser extends ExpressionParser {
       return { kind: "IfStmt", cond, consequent: thenBody, alternate: elseBody, pos: start.pos };
     }
     if (this.matchKw("match")) {
-      return { kind: "MatchStmt", ...this.parseMatch(() => this.parseStatementBody()) };
+      return this.parseMatch("MatchStmt", () => this.parseStatementBody());
     }
     if (this.matchOp("(") && this.matchTAt(1, "op", ")")) {
       const tok = this.next();

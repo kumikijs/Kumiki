@@ -56,6 +56,7 @@ import {
   undefMemberError,
 } from "./members.ts";
 import {
+  checkArmsAfterNestedMatch,
   checkMatchCovers,
   checkPatternAgainstType,
   checkPatternBindsAreDistinct,
@@ -510,7 +511,10 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         if (errors.length > before) patternsFit = false;
         checkExpr(arm.body, sym, errors, inner);
       });
-      if (patternsFit) checkMatchCovers(e, scrutType, sym, errors);
+      if (patternsFit) {
+        checkMatchCovers(e, scrutType, sym, errors);
+        checkArmsAfterNestedMatch(e, "value", scrutType, sym, errors);
+      }
       return;
     }
     case "IfExpr":

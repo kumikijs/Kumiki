@@ -1070,13 +1070,15 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 
 値として使う `match` に、scrutinee の型のある値に対する arm がない（[言語 §1.9](./language.md#_1-9-式言語)）。値としての `match` はいずれかの arm の値に評価されるので、どの arm にも一致しない値があると、評価される値がなくなる。
 
-> ``This match on "<T>" has no arm for <values>[, among others], and a match used as a value has to evaluate to one of its arms. Add the missing arms, or end with `_ -> …` ``
+> ``This match on "<T>" has no arm for <values>[, among others], and a match used as a value has to evaluate to one of its arms. Add the missing arms, or end with `_ -> …`[. The match at <line>:<col> ends this match's last arm, so it takes every arm written after it: put it in parentheses, `(match … with …)`, for an arm after it to be this match's] ``
 
 取りこぼした値はそれぞれ、それに一致するパターンとして、型が variant を宣言した順（`Some` より `None`、`Err` より `Ok` が先）に書かれる。ペイロードのない variant は `Blue`、ペイロードのある variant は `Some(_)`、tuple の要素の組み合わせは `(None, Green)` である。`_` は、variant を持たない型の要素のすべての値と、どの arm も当てはまらなくなった位置より後の要素を表す。`None` を受ける arm が 1 つもなければ `(None, _)` になる。メッセージが挙げる値は 8 個までで、それより多いときは一覧が `, among others` で終わる。variant パターンの bind はどのペイロードも受けるので `Some(v)` はすべての `Some` を覆い、入れ子になるパターンは tuple だけである。`Bool`・`Int`・`Text`・レコード・`List` には variant がなく、リテラルパターンもない（[言語 §1.9.1](./language.md#_1-9-1-禁止事項)）ので、これらを覆う arm は `_` か名前である。
 
 網羅は、すべての arm のパターンが scrutinee に合っているときに判定する。合わない arm は [E0207](#e0207-pat-arity-mismatch)・[E0208](#e0208-pat-type-mismatch)・[E0209](#e0209-pat-unknown-variant) であり、それだけが報告される。scrutinee の型が決められない場合（たとえばチェッカーが props に型を付けない `$el`、`fold`・`map`・`zip` の結果、`map-request` の `$1`）、ここでは何も報告せず、どの arm にも一致しない値は実行時に panic になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。そうした要素を 1 つ含む tuple も、ほかの要素では判定され、型のその位置は `?` と書かれる。`match (cs.fold(c, $2), c) with | (_, Red) -> 1 | (_, Green) -> 2` は `Tuple(?, Color)` について `(_, Blue)` を報告する。チェッカーが挙げられる値は、ほかの値が決められない要素に左右されるときでも報告する。reducer 本体の `match` 文とタイル位置の `match` は値ではなく、このコードの対象外である。
 
-**修正**：メッセージが挙げる値ごとに arm を足すか、ほかの arm が取りこぼす値すべてのために `match` を `_ -> …` で終える。
+括弧内の文は、最後の arm が、何にも閉じられていない `match` で終わるときに加わる（[言語 §1.9](./language.md#_1-9-式言語)）。その `match` はその後に書かれたすべての arm を取るので、末尾に足した `_ -> …` はこの `match` ではなくその `match` の arm になる。`match x with | Red -> match y with | Small -> 1 | other -> 3` は `Color` について `Green, Blue` を報告し、`match y` の位置を名指す。内側の `match` が決して到達しない arm も取るときは、その arm は [W0219](#w0219-unreachable-nested-arm-warning) にもなる。
+
+**修正**：メッセージが挙げる値ごとに arm を足すか、ほかの arm が取りこぼす値すべてのために `match` を `_ -> …` で終える。メッセージが内側の `match` を名指すときは、先にその `match` を括弧に入れる。
 
 ### E0228 `undef-route-pattern`
 
@@ -1256,6 +1258,28 @@ bind していないコントロールが選択状態を読む prop — `check` 
 `name` は radio の `group` の別の書き方である。グループはその `<input>` の `name` 属性だからである（[フォーム §5.5.2](./forms.md#_5-5-2-radio)）。両方あれば読まれるのは `group` なので、`name` はラジオがどの組に入るかという問いへの 2 つめの答えであり、[W0216](#w0216-selection-beside-bind-warning) が報告する引数と同じく何の痕跡も残さない。
 
 **修正**：どちらかを取り除く。この仕様が使う書き方は `group` である。
+
+### W0219 `unreachable-nested-arm` (warning)
+
+ほかの `match` の arm を終える `match` が、自身の上の arm がすでに覆っている arm を取っている（[言語 §1.9](./language.md#_1-9-式言語)）。外側の次の arm の前で内側の `match` を閉じるものがないので、内側はその後に書かれたすべての arm を、外側の `match` のために並べられたものも含めて取る。arm がすでにすべての値に一致した後に書かれた arm は決して実行されない。
+
+```kumiki invalid
+fn f(x: Color, y: Size) -> Int = match x with | Red -> match y with | Small -> 1 | Large -> 2 | _ -> 3
+```
+
+では、`| _ -> 3` は `Small` と `Large` がすべての `Size` に一致した後の、`match y` の 3 つ目の arm であり、`match x` には `Green` にも `Blue` にも arm がない。同じ arm を文として書くと、[E0227](#e0227-non-exhaustive-match) は値としての `match` にしか及ばないので、ほかに報告するものがなく、`n := 3` を実行するはずのクリックはどの arm も実行しない。
+
+> ``The arm `<pattern>` can never be reached: it belongs to the match at <line>:<col>, whose arms above it already match every value. That match ends an arm of the match at <line>:<col>, so it takes every arm written after it. To give this arm to the match at <line>:<col>, <fix>``
+
+`<fix>` は、その形で内側の `match` を閉じる方法である。
+
+- 値：``put the inner match in parentheses: `(match … with …)` ``
+- 文：``put the inner match in braces: `{ match … with … }` ``
+- 括弧を持たないタイル：`move the inner match into a tile of its own and name that tile in the arm`
+
+プログラムは構文解析されたとおりに動くので、これは警告である。文やタイルの `match` は値を取りこぼしてよい（[言語 §1.9](./language.md#_1-9-式言語)）ので、`check` は通り、アプリはビルドされる。内側の `match` によってある値の arm を欠いた値としての `match` は、引き続き [E0227](#e0227-non-exhaustive-match) になる。そうした最初の arm の位置で、そのパターンとして書いて、内側の `match` ごとに 1 件報告する。arm は、E0227 と同じく、すべての arm のパターンが scrutinee に合っているときに判定する。`match` が入れ子になって arm を終えるときは、それぞれを、それが arm を終える `match` に対して判定するので、arm はそれを取るいちばん内側の `match` で報告される。レイアウトは読まれない。arm は、内側の `match` の行に書かれていても、外側の下にインデントされていても報告される。括弧か波括弧で閉じた `match` と、ほかの `match` の arm を終えない `match` は、どんな arm を持っていてもここでは報告されない。
+
+**修正**：メッセージのとおりに内側の `match` を閉じて、arm を外側の `match` のものにするか、内側のための arm だったならその arm を削除する。
 
 ### E0231 `reserved-type-name`
 

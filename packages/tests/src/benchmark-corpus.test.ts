@@ -18,6 +18,8 @@ const KNOWN_BAD: Record<string, "parse" | readonly string[]> = {
   ],
   "learning-cost/v3-issue-tracker/results/Codex/output.kumiki": ["E0128"],
   "learning-cost/v4-project-management/results/Claude/output.kumiki": "parse",
+  // A warning, so it still builds: TaskDetailPage's outer `| None` arm is the inner match's.
+  "learning-cost/v4-project-management/results/Codex/output.kumiki": ["W0219"],
   "learning-cost/v4-project-management/results/Gemini/output.kumiki": "parse",
 };
 

@@ -54,8 +54,8 @@ function evalFile(path) {
     return result;
   }
 
-  // Typecheck
-  const errors = check(program);
+  // Typecheck: a warning does not fail it, as `kumiki check` exits 0 on warnings alone.
+  const errors = check(program).filter((e) => e.severity !== "warning");
   result.errorCount = errors.length;
   for (const err of errors) {
     const cat = classify(err);
