@@ -1,0 +1,47 @@
+# Feature (routing.md): a sub-route the router never reaches. A parent's
+# `sub-routes` map applies only when the match order picks that parent for the
+# path, and `"/settings/:section"` outranks `"/settings/*"`. Every path the
+# layout's `"/settings/account"` matches is one the sibling matches too, so
+# `/settings/account` renders the section page without the layout, and
+# `enterAccount` never runs. check warns at that key (W0218), naming the
+# sibling, the parent and the reducer that waits on it.
+#
+# The layout's `"/settings/*"` child is only partly shadowed: the sibling takes
+# `/settings/billing`, but `/settings` and `/settings/a/b` are paths only the
+# wildcard matches, so the layout renders that child there, and check says
+# nothing about it.
+
+slot log : Text = ""
+
+reducer enterAccount on=route.enter("/settings/account")  do= log := log + "+account;"
+reducer enterSection on=route.enter("/settings/:section") do= log := log + "+section;"
+
+tile Log = text("log: " + log)
+
+tile Account = column(heading("Account child"))
+tile Rest    = column(heading("Rest of settings"))
+tile Section = page(heading("Section " + route.params.get-or("section", "?")), Log)
+
+tile Layout
+    sub-routes = {
+        "/settings/account" -> Account,
+        "/settings/*"       -> Rest
+    }
+    = page(heading("Settings layout"), route-outlet(), Log)
+
+tile Home = page(
+    heading("Home"),
+    link(to="/settings/account") {text: "Account settings"},
+    Log)
+
+tile NotFound = page(heading("404"))
+
+app ShadowedSubRoute
+    caps   = [nav.push]
+    routes = {
+        "/"                  -> Home,
+        "/settings/:section" -> Section,
+        "/settings/*"        -> Layout,
+        "/404"               -> NotFound
+    }
+    init   = []
