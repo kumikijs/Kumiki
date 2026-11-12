@@ -228,7 +228,7 @@ describe("a check that follows tiles into the tiles they inline reaches the repo
   // other tile, so the button at the end can render where `W` is.
   const fallbacks = [
     "tile T0 = column(W)",
-    "tile W error-boundary=F0 = text(\"w\")",
+    'tile W error-boundary=F0 = text("w")',
     ...Array.from({ length: LONG }, (_, i) =>
       i === LONG - 1
         ? `tile F${i} in=PanicInfo = button(text="go", id="leaf")`
