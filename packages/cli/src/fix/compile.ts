@@ -167,8 +167,8 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   ["E0102", anyDefinition], // undef-reducer
   [
     "E0103", // undef-ref / undef-slot
-    // A read after the body that declared it is out of scope, not misspelled: a renamed read can
-    // type-check, and the regression gate then counts it as resolved.
+    // A read after the scope that declared it ended is out of scope, not misspelled: a renamed
+    // read can type-check, and the regression gate then counts it as resolved.
     (err, store) =>
       err.endedScope !== undefined
         ? { reason: "e0103-read-after-scope-ended" }

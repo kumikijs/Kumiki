@@ -1,8 +1,7 @@
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
 import type { Command } from "commander";
 import { viewHash, viewHistory } from "../mutate.ts";
 import { load, viewDef, viewWithDeps } from "../store.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki view <input.kumiki> <qname> [--with-deps|--hash|--history]";
@@ -10,12 +9,8 @@ const USAGE = "Usage: kumiki view <input.kumiki> <qname> [--with-deps|--hash|--h
 type ViewMode = "text" | "with-deps" | "hash" | "history";
 
 export function viewCmd(inputArg: string, qname: string, mode: ViewMode): void {
-  const path = resolve(process.cwd(), inputArg);
+  const path = sourceFileArg(inputArg);
   if (mode === "history") {
-    if (!existsSync(path)) {
-      console.error(`File "${path}" not found`);
-      process.exit(1);
-    }
     const log = viewHistory(path, qname);
     if (log.length === 0) {
       console.log(`(no history for ${qname})`);

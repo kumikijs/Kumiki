@@ -179,9 +179,9 @@ describe("known gap: W0213 does not see a firing kind that is not the root", () 
   const REDUCER = `slot n : Int = 0
 reducer open on=app.start do= n := n + 1`;
 
-  const src = (tiles: string) => `${REDUCER}
+  const src = (tiles: string, handler = "onClick") => `${REDUCER}
 ${tiles}
-tile App = column(Card {onClick: open}, text(n.show))
+tile App = column(Card {${handler}: open}, text(n.show))
 app A
     caps   = []
     routes = {"/" -> App, "/404" -> App}
@@ -200,6 +200,12 @@ app A
   it("and says nothing about it, nested or through another tile", () => {
     expect(codesOf(src('tile Card = box(button(text="go"))'))).toEqual([]);
     expect(codesOf(src('tile Deep = button(text="go")\ntile Card = box(Deep)'))).toEqual([]);
+  });
+
+  it("but reports onFocus on a details root that holds a panel, as focus does not bubble", () => {
+    expect(codesOf(src('tile Card = details(summary="Q", text("a"))', "onFocus"))).toEqual([
+      "W0213",
+    ]);
   });
 });
 
@@ -307,6 +313,7 @@ app A
       });
 
       it(`merges a ${handler} written on ${kind} with a ui.${ev} selector on it, once`, () => {
+        expect(codesOf(explicit(ev, tile))).toEqual([]);
         const js = loweredOf(explicit(ev, tile));
         const merged = `${handler}: _h("hitExplicit", "hitSelector")`;
         expect(js.split(merged)).toHaveLength(2);

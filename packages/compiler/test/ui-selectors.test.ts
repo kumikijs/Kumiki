@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { BUILTIN_TILES } from "../src/builtins.ts";
+import { UI_LIFTS, wrapperNeverReceives } from "../src/ui-lifts.ts";
 import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 import { withApp } from "./helpers/programs.ts";
 
@@ -278,6 +280,58 @@ describe("W0212 ui-event-tile-mismatch", () => {
       .map((e) => /Reducer "([^"]+)"/.exec(e.message)?.[1]);
     expect(warned).toEqual(["risky"]);
   });
+
+  it.each([
+    {
+      depth: "the fallback of a nested tile's fallback",
+      chain: `tile FbA in=PanicInfo error-boundary=Last = text("fb " + n.get.show)`,
+    },
+    {
+      depth: "a fallback three tiers down",
+      chain: `tile FbB in=PanicInfo error-boundary=Last = text("fb " + n.get.show)
+tile FbA in=PanicInfo error-boundary=FbB = text("fb " + n.get.show)`,
+    },
+  ])("walks $depth, which renders in the place of the one that panicked", ({ chain }) => {
+    // Only `Last` fires click. It renders in `Card`, where `Widget` is, but outside `FbA`.
+    const src = withApp(`
+slot n : Option(Int) = None
+slot hits : Int = 0
+reducer onCard on=ui.click(Card) do= hits := hits + 1
+reducer onFallback on=ui.click(FbA) do= hits := hits + 1
+tile Last in=PanicInfo = button(text="retry")
+${chain}
+tile Widget error-boundary=FbA = text("w " + n.get.show)
+tile Card = column(text("card"), Widget)
+tile App = column(Card)`);
+    const warned = checkSource(src)
+      .filter((e) => e.code === "W0212")
+      .map((e) => /Reducer "([^"]+)"/.exec(e.message)?.[1]);
+    expect(warned).toEqual(["onFallback"]);
+  });
+
+  it.each([
+    [
+      "a fallback that names itself",
+      "tile Oops in=PanicInfo error-boundary=Oops = text(n.get.show)",
+    ],
+    [
+      "two fallbacks that name each other",
+      `tile Oops in=PanicInfo error-boundary=Mid = text(n.get.show)
+tile Mid in=PanicInfo error-boundary=Oops = text(n.get.show)`,
+    ],
+  ])("ends a chain of fallbacks at %s, which E0005 then reports", (_label, chain) => {
+    // The selector checks run before the cycle check, so they meet the loop first.
+    const src = `
+slot n : Option(Int) = None
+slot hits : Int = 0
+reducer onCard on=ui.click(Card#x) do= hits := hits + 1
+${chain}
+tile Widget error-boundary=Oops = text(n.get.show)
+tile Card = column(Widget)
+tile App = column(Card)
+app A caps=[] routes={"/" -> App, "/w" -> Widget, "/404" -> App} init=[]`;
+    expect(codesOf(src, { strictSelectorId: true })).toContain("E0005");
+  });
 });
 
 describe("W0212 gives the reason that holds when the element fires the event", () => {
@@ -478,6 +532,7 @@ describe("W0212 gives the reason that holds when the element fires the event", (
 
     it.each([
       ["change", "tile D = editable(bind=note)", "editable"],
+      ["input", 'tile D = text("hi")', "text"],
       ["input", 'tile D = button(text="b")', "button"],
     ])("keeps 'no descendant fires it' for ui.%s on `%s`", (ev, tiles, kind) => {
       const message = w0212(ev, tiles);
@@ -486,12 +541,317 @@ describe("W0212 gives the reason that holds when the element fires the event", (
     });
   });
 
-  // The <span> does fire click; this pins the wording that is still untrue of it, so that the
-  // change which gives a text its own reason changes this test on purpose.
-  it("still says no descendant fires click for a text, although its <span> fires it", () => {
-    const message = w0212("click", 'tile D = text("hi")');
-    expect(message).toContain(`but tile "D" has no descendant that fires "click" (`);
-    expect(message).toContain("observed in body: text)");
+  describe("under click, says the renderer never calls onClick", () => {
+    it.each([
+      ["a text", 'tile D = text("hi")', "text"],
+      ["a box, naming the kinds in its body together", 'tile D = box(text("hi"))', "box, text"],
+    ])("says so for %s", (_, tiles, observed) => {
+      const named = observed.replace(", ", " / ");
+      expect(w0212("click", tiles)).toBe(
+        `Reducer "r" subscribes to ui.click(D) but "click" never reaches a reducer in tile "D": ` +
+          `a ${named} fires "click", and its renderer never calls onClick ` +
+          `(DOM-allowed: button, check, switch, radio; observed in body: ${observed}). ` +
+          `The handler is silently dropped.`,
+      );
+    });
+
+    it.each([
+      ["an image", 'image(src="/a.png", alt="a")'],
+      ["a heading", 'heading("Title")'],
+      ["an input", "input(bind=note)"],
+      ["a select", "select(bind=size, options=sizes())"],
+      ["a video", 'video(src="/a.mp4", controls=true)'],
+    ])("says so for %s", (named, tile) => {
+      const message = w0212("click", `tile D = ${tile}`);
+      expect(message).toContain(
+        `"click" never reaches a reducer in tile "D": ` +
+          `${named} fires "click", and its renderer never calls onClick (`,
+      );
+      expect(message).not.toContain("has no descendant");
+    });
+
+    it("takes its article from the first kind it names", () => {
+      expect(w0212("click", 'tile D = row(image(src="/a.png", alt="a"), text("x"))')).toContain(
+        `an image / row / text fires "click", and its renderer never calls onClick (`,
+      );
+    });
+
+    it("gives a link its own reason, and the other kinds the default", () => {
+      expect(w0212("click", 'tile D = row(link(to="/", text="home"), text("x"))')).toContain(
+        `"click" never reaches a reducer in tile "D": ` +
+          `a link fires "click", and its renderer listens for it only to navigate, never calling onClick; ` +
+          `a row / text fires "click", and its renderer never calls onClick (`,
+      );
+    });
+  });
+
+  describe("W0213 gives the reason W0212 gives for the kind", () => {
+    const w0213 = (tiles: string) => {
+      const src = `
+        type Size = S | M
+        fn sizes() -> List({label: Text, value: Size})
+           = [{label: "Small", value: S}, {label: "Medium", value: M}]
+        slot size : Size = S
+        slot done : Bool = false
+        slot note : Text = ""
+        slot hits : Int = 0
+        reducer r on=app.start do= hits := hits + 1
+        ${tiles}
+        tile App = column(D)
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      const found = checkSource(src).filter((e) => e.code === "W0213");
+      expect(found).toHaveLength(1);
+      return found[0]!.message;
+    };
+    const reasonOf = (ev: string, tiles: string) => {
+      const message = w0212(ev, tiles);
+      const start = message.indexOf(`tile "D": `) + `tile "D": `.length;
+      return message.slice(start, message.indexOf(" (DOM-allowed"));
+    };
+    const ONTO = "Put it on button / check / radio / switch";
+
+    it("says a link listens for click only to navigate", () => {
+      const message = w0213('tile D = link(to="/", text="home", onClick=r)');
+      expect(message).toBe(
+        `"onClick" on link() is dropped — a link fires "click", and its renderer listens for it ` +
+          `only to navigate, never calling onClick. ${ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+      );
+      expect(message).toContain(`— ${reasonOf("click", 'tile D = link(to="/", text="home")')}. `);
+    });
+
+    it("says a container's renderer never calls onClick", () => {
+      const message = w0213('tile D = row(text("x"), onClick=r)');
+      expect(message).toBe(
+        `"onClick" on row() is dropped — a row fires "click", and its renderer never calls onClick. ` +
+          `${ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+      );
+      expect(w0213('tile D = text("x") {onClick: r}')).toContain(
+        `— ${reasonOf("click", 'tile D = text("x")')}. `,
+      );
+    });
+
+    // One builtin of each kind a firesUnheard record names: the event of its row, the handler
+    // that row lifts, the builtin as W0212 sees it, and the builtin carrying the handler.
+    const RECORDED = [
+      [
+        "link",
+        "click",
+        "onClick",
+        'link(to="/", text="home")',
+        'link(to="/", text="home", onClick=r)',
+      ],
+      [
+        "slider",
+        "input",
+        "onInput",
+        "slider(bind=hits, min=0, max=10)",
+        "slider(bind=hits, min=0, max=10, onInput=r)",
+      ],
+      ["check", "input", "onInput", "check(value=done)", "check(value=done, onInput=r)"],
+      [
+        "radio",
+        "input",
+        "onInput",
+        'radio(group="g", selected=done)',
+        'radio(group="g", selected=done, onInput=r)',
+      ],
+      ["switch", "input", "onInput", "switch(value=done)", "switch(value=done, onInput=r)"],
+      [
+        "select",
+        "input",
+        "onInput",
+        "select(bind=size, options=sizes())",
+        "select(bind=size, options=sizes(), onInput=r)",
+      ],
+    ] as const;
+
+    it("has a case for every kind a firesUnheard record names", () => {
+      const recorded = UI_LIFTS.flatMap((l) =>
+        Object.keys(l.firesUnheard ?? {}).map((kind) => `${l.ev} ${kind}`),
+      );
+      expect(RECORDED.map(([kind, ev]) => `${ev} ${kind}`).sort()).toEqual(recorded.sort());
+    });
+
+    it.each(
+      RECORDED,
+    )("gives W0212's reason for the handler on a %s", (kind, ev, handler, tile, withHandler) => {
+      expect(w0213(`tile D = ${withHandler}`)).toContain(
+        `"${handler}" on ${kind}() is dropped — ${reasonOf(ev, `tile D = ${tile}`)}. `,
+      );
+    });
+
+    it("says it of a user tile's body, and names the body", () => {
+      const inner = 'tile Inner = box(text("clickme"))';
+      const message = w0213(`${inner}\ntile D = column(Inner(onClick=r))`);
+      expect(message).toBe(
+        `"onClick" on Inner() is dropped — Inner renders nothing that calls it: ` +
+          `a box / text fires "click", and its renderer never calls onClick ` +
+          `(observed in body: box, text). ${ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+      );
+      expect(message).toContain(
+        `calls it: ${reasonOf("click", 'tile D = box(text("clickme"))')} (`,
+      );
+    });
+
+    it("joins a user tile's clauses with '; ', the link's first", () => {
+      const inner = 'tile Inner = row(link(to="/", text="h"), text("x"))';
+      expect(w0213(`${inner}\ntile D = column(Inner(onClick=r))`)).toBe(
+        `"onClick" on Inner() is dropped — Inner renders nothing that calls it: ` +
+          `a link fires "click", and its renderer listens for it only to navigate, never calling onClick; ` +
+          `a row / text fires "click", and its renderer never calls onClick ` +
+          `(observed in body: link, row, text). ${ONTO}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+      );
+    });
+
+    it("gives a clause only for the kinds in an onInput body that fire input", () => {
+      const inner = 'tile Inner = box(slider(bind=hits, min=0, max=10), text("x"))';
+      expect(w0213(`${inner}\ntile D = column(Inner(onInput=r))`)).toBe(
+        `"onInput" on Inner() is dropped — Inner renders nothing that calls it: ` +
+          `a slider fires "input", and its renderer listens for it only to write the bind, never calling onInput ` +
+          `(observed in body: box, slider, text). ` +
+          `Put it on editable / input / textarea, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+      );
+    });
+
+    it("keeps 'does not fire it' for a handler no ui event lifts to", () => {
+      const onto =
+        "Put it on drawer / modal / popover, or subscribe with a reducer's on=ui.<event>(<Tile>)";
+      expect(w0213('tile D = row(text("x")) {onClose: r}')).toBe(
+        `"onClose" on row() is dropped — row does not fire it. ${onto}`,
+      );
+      expect(w0213('tile Inner = box(text("x"))\ntile D = column(Inner() {onClose: r})')).toBe(
+        `"onClose" on Inner() is dropped — Inner renders nothing that fires it ` +
+          `(observed in body: box, text). ${onto}`,
+      );
+    });
+
+    it("keeps 'does not fire it' where the element does not fire the event", () => {
+      expect(w0213('tile D = row(text("x")) {onChange: r}')).toBe(
+        `"onChange" on row() is dropped — row does not fire it. ` +
+          `Put it on check / input / radio / select / slider / switch / textarea, ` +
+          `or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+      );
+      expect(
+        w0213('tile Inner = box(text("x"))\ntile D = column(Inner() {onChange: r})'),
+      ).toContain(`— Inner renders nothing that fires it (observed in body: box, text). `);
+    });
+
+    describe("on a wrapped control, says focus / blur do not bubble to the wrapper", () => {
+      const FOCUS_ONTO =
+        "Put it on button / editable / input / link / select / slider / textarea / video";
+      const subscribe = (ev: string) =>
+        `or subscribe with a reducer's on=ui.${ev}(<Tile>) on a tile that takes focus itself`;
+
+      /** A call of each kind whose wrapper never receives focus, with the arguments it requires. */
+      const CALL: Readonly<Record<string, string>> = {
+        check: "check(value=done)",
+        radio: 'radio(group="g", selected=done)',
+        switch: "switch(value=done)",
+        details: 'details(summary="Q", text("a"))',
+      };
+      const callOf = (kind: string): string => {
+        const call = CALL[kind];
+        if (call === undefined) expect.fail(`no sample call of ${kind}, a kind the table wraps`);
+        return call;
+      };
+      const withHandler = (call: string, handler: string) => call.replace(/\)$/, `, ${handler}=r)`);
+      const HANDLER = { focus: "onFocus", blur: "onBlur" } as const;
+      const PAIRS = (["focus", "blur"] as const).flatMap((ev) =>
+        wrapperNeverReceives(ev, BUILTIN_TILES).flatMap(({ kinds }) =>
+          kinds.map((kind) => [HANDLER[ev], kind, ev] as const),
+        ),
+      );
+
+      it("has a row for each wrapped kind, under focus and under blur", () => {
+        expect(PAIRS.map(([handler, kind]) => `${handler} ${kind}`).sort()).toEqual(
+          Object.keys(CALL)
+            .flatMap((kind) => [`onBlur ${kind}`, `onFocus ${kind}`])
+            .sort(),
+        );
+      });
+
+      it("says so in full of onFocus on a check", () => {
+        expect(w0213("tile D = check(value=done, onFocus=r)")).toBe(
+          `"onFocus" on check() is dropped — the runtime listens for "focus" on a check's <label>, ` +
+            `and the "focus" its <input> fires does not bubble to the <label>. ` +
+            `${FOCUS_ONTO}, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`,
+        );
+      });
+
+      it("says so in full of onBlur on a details", () => {
+        expect(w0213('tile D = details(summary="Q", text("a"), onBlur=r)')).toBe(
+          `"onBlur" on details() is dropped — the runtime listens for "blur" on a details's <details>, ` +
+            `and the "blur" its <summary> fires does not bubble to the <details>. ` +
+            `${FOCUS_ONTO}, or subscribe with a reducer's on=ui.blur(<Tile>) on a tile that takes focus itself`,
+        );
+      });
+
+      it("says so in full of onFocus on a user tile over a check", () => {
+        expect(w0213("tile Inner = check(value=done)\ntile D = column(Inner(onFocus=r))")).toBe(
+          `"onFocus" on Inner() is dropped — Inner renders nothing at its root where "focus" reaches it: ` +
+            `the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires ` +
+            `does not bubble to the <label> (observed at its root: check). ` +
+            `${FOCUS_ONTO}, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`,
+        );
+      });
+
+      it.each(PAIRS)("gives W0212's reason for %s on a %s", (handler, kind, ev) => {
+        expect(w0213(`tile D = ${withHandler(callOf(kind), handler)}`)).toBe(
+          `"${handler}" on ${kind}() is dropped — ${reasonOf(ev, `tile D = ${callOf(kind)}`)}. ` +
+            `${FOCUS_ONTO}, ${subscribe(ev)}`,
+        );
+      });
+
+      it.each(PAIRS)("gives it for %s on a user tile over a %s", (handler, kind, ev) => {
+        expect(w0213(`tile Inner = ${callOf(kind)}\ntile D = column(Inner(${handler}=r))`)).toBe(
+          `"${handler}" on Inner() is dropped — Inner renders nothing at its root where "${ev}" ` +
+            `reaches it: ${reasonOf(ev, `tile D = ${callOf(kind)}`)} (observed at its root: ${kind}). ` +
+            `${FOCUS_ONTO}, ${subscribe(ev)}`,
+        );
+      });
+
+      it("names every wrapped kind a user tile may render at its root", () => {
+        expect(
+          w0213(
+            "tile Inner = if done then check(value=done) else switch(value=done)\n" +
+              "tile D = column(Inner() {onBlur: r})",
+          ),
+        ).toContain(
+          `— Inner renders nothing at its root where "blur" reaches it: the runtime listens for ` +
+            `"blur" on a check / switch's <label>, and the "blur" its <input> fires does not bubble ` +
+            `to the <label> (observed at its root: check, switch). `,
+        );
+      });
+
+      it.each([
+        ["onFocus on an input", "input(bind=note, onFocus=r)"],
+        ["onClick on a check", "check(value=done, onClick=r)"],
+        ["onChange on a check", "check(value=done, onChange=r)"],
+        ["onKeyDown on a check", "check(value=done, onKeyDown=r)"],
+        ["onKeyDown on a details", 'details(summary="Q", text("a"), onKeyDown=r)'],
+        ["onMouseEnter on a radio", 'radio(group="g", selected=done, onMouseEnter=r)'],
+        [
+          "onFocus on a user tile that may render an input",
+          "Inner(onFocus=r)\ntile Inner = if done then check(value=done) else input(bind=note)",
+        ],
+        [
+          "onFocus on a user tile whose root is a row",
+          "Inner(onFocus=r)\ntile Inner = row(check(value=done))",
+        ],
+      ])("says nothing of %s", (_, tile) => {
+        const src = `
+          slot done : Bool = false
+          slot note : Text = ""
+          slot hits : Int = 0
+          reducer r on=app.start do= hits := hits + 1
+          tile D = ${tile}
+          tile App = column(D)
+          app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+        `;
+        expect(codesOf(src)).toEqual([]);
+      });
+    });
   });
 });
 
@@ -849,7 +1209,6 @@ tile App = column(Computed, Missing, Known)`);
     });
 
     it("takes the id a call site writes on a user tile as its root's", () => {
-      // `Three`'s call site writes another prop, which leaves the id to the runtime.
       const src = withApp(`
 slot log : Text = ""
 tile Four  = button(text="four") {id: "four"}
@@ -863,7 +1222,7 @@ reducer otherProp   on=ui.click(Three#zz)  do= log := log + "x"
 reducer wrapCallSite on=ui.click(Wrap#w5)  do= log := log + "x"
 reducer wrapOwnId   on=ui.click(Wrap#b5)   do= log := log + "x"
 tile App = column(Four(id="five"), Four, Three {variant: "ghost"}, Wrap)`);
-      expect(flagged(src)).toEqual(["neither", "wrapOwnId"]);
+      expect(flagged(src)).toEqual(["neither", "otherProp", "wrapOwnId"]);
       const neither = checkStrict(src).find((d) => d.message.includes("Four#six"));
       expect(neither?.message).toContain('"five" | "four"');
     });
@@ -895,6 +1254,53 @@ tile App = column(Outer)`);
       expect(checkStrict(src).find((d) => d.code === "E0212")?.message).toContain('"fb" | "r"');
     });
 
+    it("takes the fallback of a nested tile's fallback, which renders in its place", () => {
+      const src = withApp(`
+slot n : Option(Int) = None
+slot log : Text = ""
+tile Last in=PanicInfo = button(text="retry", id="again")
+tile FbA in=PanicInfo error-boundary=Last = text("fb " + n.get.show)
+tile Widget error-boundary=FbA = text("w " + n.get.show)
+tile Card = column(button(text="save", id="save"), Widget)
+reducer cardAgain on=ui.click(Card#again) do= log := log + "x"
+reducer cardBad   on=ui.click(Card#zz)    do= log := log + "x"
+tile App = column(Card)`);
+      expect(flagged(src)).toEqual(["cardBad"]);
+      expect(checkStrict(src).find((d) => d.code === "E0212")?.message).toContain(
+        '"again" | "save"',
+      );
+    });
+
+    // `Last` is also called with another id, so only its place along a chain keeps its own.
+    const LAST = `slot n : Option(Int) = None
+slot log : Text = ""
+tile Last = button(text="retry", id="again")
+tile FbA in=PanicInfo error-boundary=Last = text("fb " + n.get.show)
+tile Risky error-boundary=FbA = text("r " + n.get.show)
+reducer lastOwn    on=ui.click(Last#again) do= log := log + "x"
+reducer lastCalled on=ui.click(Last#x)     do= log := log + "x"
+reducer lastBad    on=ui.click(Last#zz)    do= log := log + "x"`;
+    it.each([
+      {
+        where: "a call site",
+        rest: `tile App = column(Risky, Last(id="x"))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`,
+      },
+      {
+        where: "a route target",
+        rest: `tile App = column(Last(id="x"))
+app A caps=[] routes={"/" -> App, "/r" -> Risky, "/404" -> App} init=[]`,
+      },
+      {
+        where: "a sub-routes target",
+        rest: `tile Shell sub-routes={"/s/r" -> Risky} = column(route-outlet())
+tile App = column(Last(id="x"))
+app A caps=[] routes={"/" -> App, "/s/*" -> Shell, "/404" -> App} init=[]`,
+      },
+    ])("keeps the own id of the fallback of a fallback at $where", ({ rest }) => {
+      expect(flagged(`${LAST}\n${rest}`)).toEqual(["lastBad"]);
+    });
+
     it("leaves a tile with no element that fires the event to W0212", () => {
       const src = withApp(`
 slot log : Text = ""
@@ -909,7 +1315,7 @@ tile App = column(T)`);
 
     it.each([
       ["a computed id, which leaves it unknown", "Btn(id=name)", []],
-      ["another prop, which leaves it unknown", 'Btn {variant: "ghost"}', []],
+      ["another prop, which leaves it the tile's", 'Btn {variant: "ghost"}', ["r"]],
       ["`key` alone, which leaves it the tile's", "for s in xs Btn {key: s}", ["r"]],
       ["a handler alone, which leaves it the tile's", "Btn(onClick=other)", ["r"]],
     ])("reads a call site that writes %s", (_label, call, expected) => {

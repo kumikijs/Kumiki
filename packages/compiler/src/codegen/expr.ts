@@ -719,52 +719,84 @@ export function policyKeyOfJs(key: Expr, gen: GenCtx, reducerScope: boolean): st
 
 /** A value `match` has to evaluate to one of its arms, so a miss panics rather than let `undefined` reach a slot or a render. */
 export function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): string {
-  const sc = jsOfExpr(e.scrutinee, ctx);
-  const armsJs = e.arms.map((arm) => matchArmJs(arm.pattern, arm.body, ctx, "_v")).join(" else ");
   const miss = JSON.stringify(
     `No arm of the match at ${e.pos.line}:${e.pos.col} matches its value`,
   );
-  return `((_v) => { ${armsJs} else { return _s.panic(${miss}); } })(${sc})`;
+  return matchValueJs(
+    jsOfExpr(e.scrutinee, ctx),
+    e.arms,
+    ctx,
+    (arm, inner) => jsOfExpr(arm.body, inner),
+    `_s.panic(${miss})`,
+  );
 }
 
-function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string {
-  if (p.kind === "PWildcard") {
-    return `if (true) { return ${jsOfExpr(body, ctx)}; }`;
-  }
-  if (p.kind === "PBind") {
-    const inner = addBind(ctx, p.name);
-    return `if (true) { const ${bindRef(inner, p.name)} = ${scVar}; return ${jsOfExpr(body, inner)}; }`;
-  }
-  if (p.kind === "PTuple") {
-    const { guard, binds, inner } = tupleArm(p, ctx, scVar);
-    return `if (${guard}) { ${binds} return ${jsOfExpr(body, inner)}; }`;
-  }
-  const tag = p.name;
-  const inner = childCtx(ctx);
-  const bindAssigns: string[] = [];
-  for (let i = 0; i < p.binds.length; i++) {
-    const name = p.binds[i]!;
-    if (name === "_") continue;
-    bindAssigns.push(`const ${declareBind(inner, name)} = (${scVar})[${JSON.stringify(`_${i}`)}];`);
-  }
-  return `if (_s.variantIs(${scVar}, ${JSON.stringify(tag)})) { ${bindAssigns.join(" ")} return ${jsOfExpr(body, inner)}; }`;
-}
+/** The name a match binds its scrutinee to, so every arm tests the one value it evaluated to. */
+const MATCHED = "_v";
 
-export function tupleArm(
-  p: Pattern & { kind: "PTuple" },
+export function matchValueJs<A extends { pattern: Pattern }>(
+  scrutinee: string,
+  arms: readonly A[],
   ctx: EvalCtx,
-  scVar: string,
-): { guard: string; binds: string; inner: EvalCtx } {
-  const inner = childCtx(ctx);
-  const guards: string[] = [`Array.isArray(${scVar})`, `(${scVar}).length === ${p.items.length}`];
-  const binds: string[] = [];
-  for (let i = 0; i < p.items.length; i++) {
-    walkPatternForTupleArm(p.items[i]!, `(${scVar})[${i}]`, inner, guards, binds);
-  }
-  return { guard: guards.join(" && "), binds: binds.join(" "), inner };
+  value: (arm: A, inner: EvalCtx) => string,
+  fallback: string,
+): string {
+  const armsJs = matchArmsJs(arms, ctx, { kind: "return", value });
+  return `((${MATCHED}) => { ${armsJs} return ${fallback}; })(${scrutinee})`;
 }
 
-export function walkPatternForTupleArm(
+/** A match statement: a block named `label` around its arms, each of which runs and leaves it. */
+export function matchStmtJs<A extends { pattern: Pattern }>(
+  scrutinee: string,
+  arms: readonly A[],
+  ctx: EvalCtx,
+  run: (arm: A, inner: EvalCtx) => string,
+  label: string,
+): string {
+  const armsJs = matchArmsJs(arms, ctx, { kind: "break", run, label });
+  return `${label}: { const ${MATCHED} = ${scrutinee};\n  ${armsJs}\n}`;
+}
+
+/** How an arm leaves the match once it is done, so the arms after it are never tried. */
+type ArmExit<A> =
+  | { kind: "return"; value: (arm: A, inner: EvalCtx) => string }
+  | { kind: "break"; run: (arm: A, inner: EvalCtx) => string; label: string };
+
+/**
+ * One `if` per arm, side by side rather than each in the `else` of the one before it, so the
+ * output nests no deeper for 1,000 arms than for 2. Each arm's exit is written here, so no
+ * caller can leave one out and let the next arm run too.
+ */
+function matchArmsJs<A extends { pattern: Pattern }>(
+  arms: readonly A[],
+  ctx: EvalCtx,
+  exit: ArmExit<A>,
+): string {
+  return arms
+    .map((arm) => {
+      const { guard, binds, inner } = patternArm(arm.pattern, ctx);
+      const then =
+        exit.kind === "return"
+          ? ` return ${exit.value(arm, inner)}; }`
+          : `\n  ${exit.run(arm, inner)}\n  break ${exit.label};\n}`;
+      return `if (${guard}) {${binds === "" ? "" : ` ${binds}`}${then}`;
+    })
+    .join(" ");
+}
+
+function patternArm(p: Pattern, ctx: EvalCtx): { guard: string; binds: string; inner: EvalCtx } {
+  const inner = childCtx(ctx);
+  const guards: string[] = [];
+  const binds: string[] = [];
+  walkPattern(p, MATCHED, inner, guards, binds);
+  return {
+    guard: guards.length === 0 ? "true" : guards.join(" && "),
+    binds: binds.join(" "),
+    inner,
+  };
+}
+
+function walkPattern(
   p: Pattern,
   accessor: string,
   inner: EvalCtx,
@@ -790,7 +822,7 @@ export function walkPatternForTupleArm(
     case "PTuple":
       guards.push(`Array.isArray(${accessor})`, `(${accessor}).length === ${p.items.length}`);
       for (let i = 0; i < p.items.length; i++) {
-        walkPatternForTupleArm(p.items[i]!, `(${accessor})[${i}]`, inner, guards, binds);
+        walkPattern(p.items[i]!, `(${accessor})[${i}]`, inner, guards, binds);
       }
       return;
     default: {
