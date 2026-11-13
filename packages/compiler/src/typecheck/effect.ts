@@ -1,11 +1,19 @@
 import { nearestName } from "@kumikijs/runtime/text-distance";
 import { typeToString, unaliasType } from "../assignable.ts";
 import type { EffectDef, Expr, Pos, TypeExpr } from "../ast.ts";
-import { BUILTIN_EFFECTS, declaresNoInput, failsWithText, requestSchema } from "../capabilities.ts";
+import {
+  BUILTIN_EFFECTS,
+  declaresNoInput,
+  failsWithText,
+  requestFieldType,
+  requestSchema,
+} from "../capabilities.ts";
 import { type UnkeyedPart, unkeyedPart } from "../unkeyed-part.ts";
+import { checkAgainst } from "./against.ts";
 import { type Ctx, type KumikiError, pureScope, type SymbolTable } from "./context.ts";
-import { checkExpr } from "./expr.ts";
+import { checkExpr, letInScope } from "./expr.ts";
 import { inferType } from "./infer.ts";
+import { armScope, matchedType } from "./patterns.ts";
 import { resolveType } from "./types.ts";
 
 export function effectPayloadType(
@@ -89,8 +97,9 @@ export function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiErro
   }
   checkTextFailure(eff, sym, errors);
   if (eff.mapRequest) {
-    checkExpr(eff.mapRequest, sym, errors, effectScope(eff, sym));
-    checkRequestFields(eff.mapRequest, eff.cap, errors);
+    const scope = effectScope(eff, sym);
+    checkExpr(eff.mapRequest, sym, errors, scope);
+    checkRequestFields(eff.mapRequest, { cap: eff.cap, sym, errors }, scope);
   }
   // The key runs at dispatch time, so a name unchecked here fails on the first
   // dispatch rather than at check time.
@@ -136,21 +145,33 @@ function effectScope(eff: EffectDef, sym: SymbolTable): Ctx {
   return pureScope([{ name: "$1", type: eff.inType }]);
 }
 
+type RequestCheck = {
+  readonly cap: string;
+  readonly sym: SymbolTable;
+  readonly errors: KumikiError[];
+};
+
 /**
  * Only a literal that lands in the request is checked; a request computed any other way (a `fn`
- * call, a slot, `$1`) has its fields decided at run time.
+ * call, a slot, `$1`) has its fields decided at run time. `ctx` is the scope the literal is read
+ * in, so a name a `let` or a `match` arm binds has its type there.
  */
-function checkRequestFields(e: Expr, cap: string, errors: KumikiError[]): void {
+function checkRequestFields(e: Expr, req: RequestCheck, ctx: Ctx): void {
+  const { cap, sym, errors } = req;
   // Each literal is held to its own schema: whether it names `key` decides `indexed.read`'s.
-  const refuse = (named: readonly { name: string; pos: Pos }[]): void => {
+  const check = (named: readonly { name: string; pos: Pos; value: Expr }[]): void => {
     const schema = requestSchema(
       cap,
       named.map((n) => n.name),
     );
     if (!schema) return;
     const { request, fields } = schema;
-    for (const { name, pos } of named) {
-      if (fields.includes(name)) continue;
+    for (const { name, pos, value } of named) {
+      if (fields.includes(name)) {
+        const type = requestFieldType(name);
+        if (type) checkAgainst(value, type, sym, errors, ctx);
+        continue;
+      }
       const nearest = nearestName(name, fields);
       const hint = nearest === null ? "" : ` — did you mean "${nearest}"?`;
       errors.push({
@@ -163,25 +184,30 @@ function checkRequestFields(e: Expr, cap: string, errors: KumikiError[]): void {
   };
   switch (e.kind) {
     case "RecordLit":
-      refuse(e.fields);
+      check(e.fields);
       return;
     case "MapLit":
-      refuse(
+      check(
         e.entries.flatMap((ent) =>
-          ent.key.kind === "Str" ? [{ name: ent.key.value, pos: ent.key.pos }] : [],
+          ent.key.kind === "Str"
+            ? [{ name: ent.key.value, pos: ent.key.pos, value: ent.value }]
+            : [],
         ),
       );
       return;
     case "IfExpr":
-      checkRequestFields(e.consequent, cap, errors);
-      checkRequestFields(e.alternate, cap, errors);
+      checkRequestFields(e.consequent, req, ctx);
+      checkRequestFields(e.alternate, req, ctx);
       return;
     case "LetIn":
-      checkRequestFields(e.body, cap, errors);
+      checkRequestFields(e.body, req, letInScope(e, sym, ctx));
       return;
-    case "MatchExpr":
-      for (const arm of e.arms) checkRequestFields(arm.body, cap, errors);
+    case "MatchExpr": {
+      const scrutType = matchedType(inferType(e.scrutinee, sym, ctx), e.arms, sym);
+      for (const arm of e.arms)
+        checkRequestFields(arm.body, req, armScope(arm, scrutType, sym, ctx));
       return;
+    }
     default:
       return;
   }

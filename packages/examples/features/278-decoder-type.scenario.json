@@ -1,0 +1,26 @@
+{
+  "effects": {
+    "storage-write": [{ "outcome": "ok", "value": null }],
+    "storage-read": [{ "outcome": "ok", "value": { "_tag": "Some", "_0": "hello" } }]
+  },
+  "steps": [
+    {
+      "label": "nothing has run yet",
+      "expect": { "noErrors": true, "state": { "shown": "idle" } }
+    },
+    {
+      "label": "save writes the note",
+      "do": { "click": "#save" },
+      "expect": { "noErrors": true, "state": { "shown": "saved" } }
+    },
+    {
+      "label": "load reads it back with the decoder its input carries",
+      "do": { "click": "#load" },
+      "expect": {
+        "noErrors": true,
+        "state": { "shown": "loaded hello" },
+        "domIncludes": ["shown: loaded hello"]
+      }
+    }
+  ]
+}

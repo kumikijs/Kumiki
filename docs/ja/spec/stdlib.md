@@ -55,6 +55,7 @@ let id = emit fetchQuote()
 | `Email` | `nominal Text where email` |
 | `Uuid` | `nominal Text where uuid` |
 | `Duration` | `nominal Int` (ミリ秒) |
+| `Decoder` | 不透明：`Decoder.Json(T)`・`Decoder.Text`・`Decoder.Bytes`・`Decoder.None` が組み立てるものであり、それ以外のものではない — リテラルは `Decoder` にならず、メンバは `show` だけで、テキストとしての読み方も持たない。リクエストの `decode` はこれである（[HTTP §6.1.4](./http.md#_6-1-4-decoder-型)） |
 | `Route` | `{path: Text, pattern: Text, params: Map(Text, Text), query: Map(Text, Text), hash: Option(Text)}` — [ルーティング §3.2](./routing.md#_3-2-current-route-state) 参照 |
 | `FormData` | `Map(Text, FormValue)` |
 | `FormValue` | `TextV(Text) \| NumberV(Float) \| BoolV(Bool) \| FileV(File)` |
@@ -62,7 +63,7 @@ let id = emit fetchQuote()
 | `PanicInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text}` — `app.error` と `error-boundary` tile の `in=` に渡る値（[ライフサイクル §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)） |
 | `RouteErrorInfo` | `{message: Text, location: Text, episode-id: Option(Text), cause: Option(Text), category: Text, pattern: Text}` — `route.error(<pattern>)` に渡る値：`PanicInfo` のフィールドと、その reducer が指す `pattern` |
 
-プログラムはこれらの名前を宣言せずに使う。`PanicInfo`・`RouteErrorInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue` は**予約**されている：その値をランタイムまたは標準ライブラリが組み立てる、あるいは読むので、これらの名前で宣言した `type` は [E0231](./errors.md#e0231-reserved-type-name) であり、名前は上の定義を保つ。`Url`・`Email`・`Uuid`・`FormData` が名指すのは、プログラムだけが値を組み立てる型である。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はその型を意味する（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 6）。`File` はプリミティブの名前であり — 型の位置ではそれ自身として読まれる — プリミティブとともに予約されている。
+プログラムはこれらの名前を宣言せずに使う。`PanicInfo`・`RouteErrorInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue`・`Decoder` は**予約**されている：その値をランタイムまたは標準ライブラリが組み立てる、あるいは読むので、これらの名前で宣言した `type` は [E0231](./errors.md#e0231-reserved-type-name) であり、名前は上の定義を保つ。`Url`・`Email`・`Uuid`・`FormData` が名指すのは、プログラムだけが値を組み立てる型である。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はその型を意味する（[言語 §1.3.6](./language.md#_1-3-6-不変条件) 不変条件 6）。`File` はプリミティブの名前であり — 型の位置ではそれ自身として読まれる — プリミティブとともに予約されている。
 
 ---
 
@@ -604,7 +605,7 @@ TypeName.show(value)       : Text         ; 値の文字列表現
 
 引数は `Text` であり、それ以外は [E0201](./errors.md#e0201-type-mismatch) になる。
 
-それ以外の基底型 — レコード、ユニオン、コンテナ、`File`、`EffectId`、`Unit`、またはそれらの上の `nominal` — にはテキストの読み方がなく、それに対する `T.parse` は [E0802](./errors.md#e0802-unimplemented-function) になる。型引数なしで書かれた型コンストラクタ（`List`、`type Box(T) = …` に対する `Box`）はそもそも型ではなく、それに対する `T.parse` はこれではなく [E0124](./errors.md#e0124-type-constructor-qualifier) になる。以前は生のテキストを `Some` で包んで返しており、呼び出し自身の型はそれを `T` だと主張していた。
+それ以外の基底型 — レコード、ユニオン、コンテナ、`File`、`EffectId`、`Decoder`、`Unit`、またはそれらの上の `nominal` — にはテキストの読み方がなく、それに対する `T.parse` は [E0802](./errors.md#e0802-unimplemented-function) になる。型引数なしで書かれた型コンストラクタ（`List`、`type Box(T) = …` に対する `Box`）はそもそも型ではなく、それに対する `T.parse` はこれではなく [E0124](./errors.md#e0124-type-constructor-qualifier) になる。以前は生のテキストを `Some` で包んで返しており、呼び出し自身の型はそれを `T` だと主張していた。
 
 ### 2.4.4 乱数
 

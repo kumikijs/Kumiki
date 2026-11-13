@@ -11,6 +11,10 @@ const PRIM_TS: Record<Exclude<PrimName, "File">, string> = {
   Unit: "null",
   Bytes: "Uint8Array",
   EffectId: "string",
+  // The sentinel a decoder lowers to, or `Decoder.Json(T)`'s check, which answers the predicate a
+  // parsed value fails.
+  Decoder:
+    '"json" | "text" | "bytes" | "none" | ((value: {} | null) => { kind: string; args: (number | string)[]; path: readonly (string | number | object)[] } | undefined)',
 };
 
 const STDLIB_BY_NAME: ReadonlyMap<string, TypeDef> = new Map(STDLIB_TYPES.map((t) => [t.name, t]));

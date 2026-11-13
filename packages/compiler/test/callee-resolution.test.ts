@@ -11,7 +11,7 @@ import {
   UNQUALIFIED_BUILTIN_CALLS,
 } from "../src/builtin-calls.ts";
 import { jsBinding } from "../src/codegen/context.ts";
-import { checkSource, codesOf, messagesOf } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf, messagesOf, posOf } from "./helpers/diagnostics.ts";
 import { compileOrFail, fnLowering } from "./helpers/module.ts";
 
 function inReducer(expr: string): string {
@@ -71,8 +71,9 @@ describe("E0116 undef-call", () => {
   });
 });
 
-// `map-request` is a position no declared type judges, so a capitalised name there
-// is decided by its own resolution alone. `Status` is declared below its first use.
+// A `map-request` field other than `decode` is a position no declared type judges, so a
+// capitalised name there is decided by its own resolution alone. `Status` is declared below
+// its first use.
 function inRequest(request: string): string {
   return `slot s : Status = Idle
 effect load cap=http.post in=Unit out=Result(Text, HttpError) map-request=${request}
@@ -102,21 +103,22 @@ describe("E0116 undef-variant / undef-qualifier", () => {
   it.each([
     {
       name: "a tag no type declares",
-      request: '{url: "/x", decode: Nonsense}',
+      request: '{url: "/x", body: Nonsense}',
+      at: "Nonsense",
       kind: "undef-variant",
       message: 'Reference to undefined variant "Nonsense"',
     },
     {
       name: "the qualifier of a bare member when the qualifier names nothing",
       request: '{url: "/x", decode: Decodr.None}',
+      at: "Decodr.None",
       kind: "undef-qualifier",
       message:
         'Reference to undefined qualifier "Decodr" in "Decodr.None" — did you mean "Decoder"?',
     },
-  ])("reports $name", ({ request, kind, message }) => {
-    expect(checkSource(inRequest(request))).toEqual([
-      { code: "E0116", kind, message, pos: { line: 2, col: 95 } },
-    ]);
+  ])("reports $name", ({ request, at, kind, message }) => {
+    const src = inRequest(request);
+    expect(checkSource(src)).toEqual([{ code: "E0116", kind, message, pos: posOf(src, at) }]);
   });
 
   it.each(["Nonsense", "Decodr.None"])("refuses to build %s", (expr) => {
@@ -736,18 +738,6 @@ describe("a qualified stdlib member is read the same way without its parentheses
     expect(codesOf(inReducer("t := (Decoder.if(a)).show"))).toEqual(["E0116"]);
   });
 
-  it("claims the qualifier position and not the name", () => {
-    const src = `type Decoder = Short | Long
-slot d : Decoder = Short
-slot t : Text = ""
-reducer pick on=ui.click(B) do= d := Long
-tile B = button(text="b")
-tile App = column(B, text(t), text(d.show))
-app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
-`;
-    expect(codesOf(src)).toEqual([]);
-  });
-
   it("leaves a listed name usable as a value and as a pattern", () => {
     const src = `type Span = Duration | Instant
 slot p : Span = Duration
@@ -1133,8 +1123,8 @@ describe("the qualifier of a type-member call", () => {
     expect(codesOf(inReducer("t := Probe.frish()"))).toEqual(["E0116"]);
   });
 
-  it("reports a namespace that is not a type either", () => {
-    expect(codesOf(inReducer('t := Decoder.parse(t).get-or("")'))).toEqual(["E0117"]);
+  it("reports a namespace whose type has no reading of a text", () => {
+    expect(codesOf(inReducer("t := Decoder.parse(t).show"))).toEqual(["E0802"]);
   });
 
   it("keeps a qualified E0116's message shape readable too", () => {

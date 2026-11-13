@@ -1,0 +1,44 @@
+# Feature (http.md): `Decoder` is a type — the type of `Decoder.Json(T)`,
+# `Decoder.Text`, `Decoder.Bytes` and `Decoder.None`, and of nothing else.
+#
+# So an effect can take its decoder in its input, declared as http.md declares
+# a storage read:
+#
+#   in={key: Text, decode: Decoder}
+#
+# That declaration used to be E0117, since "Decoder" named no type, and a
+# `map-request` could put any value in `decode` without a report. A `decode`
+# that is not a Decoder is now refused at `check`: `decode: "TEXT"` is E0201
+# `Expected Decoder but got Text` in a `map-request`, and E0202 in an emit's
+# argument, where it used to reach the handler.
+#
+# `load` passes the decoder a `fn` answers, typed `-> Decoder`.
+
+slot shown : Text = "idle"
+
+effect storage-write cap=storage.write
+                     in={key: Text, value: Text}
+                     out=Result(Unit, Text)
+
+effect storage-read cap=storage.read
+                    in={key: Text, decode: Decoder}
+                    out=Result(Option(Text), Text)
+
+fn noteDecoder() -> Decoder = Decoder.Json(Text)
+
+reducer save      on=ui.click(SaveBtn)          do= emit storage-write({key: "note", value: "hello"})
+reducer load      on=ui.click(LoadBtn)          do= emit storage-read({key: "note", decode: noteDecoder()})
+reducer saved     on=storage-write.ok(_, _)     do= shown := "saved"
+reducer loaded    on=storage-read.ok($o, _)     do= shown := "loaded " + $o.get-or("<none>")
+reducer saveFail  on=storage-write.err($e, _)   do= shown := "failed: " + $e
+reducer loadFail  on=storage-read.err($e, _)    do= shown := "failed: " + $e
+
+tile SaveBtn = button(text="Save") {id: "save"}
+tile LoadBtn = button(text="Load") {id: "load"}
+
+tile App = column(SaveBtn, LoadBtn, text("shown: " + shown)) {pad: "lg", gap: "md"}
+
+app DecoderType
+    caps   = [storage.read, storage.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
