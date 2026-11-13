@@ -80,6 +80,12 @@ export type SymbolTable = {
   fnLoops: ReadonlySet<string>;
   /** The program's own unions, by each tag they declare: `unionsByTag`. */
   unionsByTag: ReadonlyMap<string, readonly TypeExpr[]>;
+  /**
+   * Each number literal `checkExpr` meets, and each one `checkAgainst` reads against a declared
+   * type. A literal no declared type reads has the type it is written as, so once every definition
+   * is checked an `Int` one is held to the safe range there.
+   */
+  numberLiterals: { readonly met: Set<Expr>; readonly judged: Set<Expr> };
   app?: AppDef;
 };
 

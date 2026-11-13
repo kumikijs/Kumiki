@@ -1,6 +1,6 @@
 import { nearestName } from "@kumikijs/runtime/text-distance";
 import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
-import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
+import { type Expr, type FragmentShape, numberLiteral, type Pos, type TypeExpr } from "../ast.ts";
 import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
 import { fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
 import { showShapeOf } from "../show-shape.ts";
@@ -176,6 +176,11 @@ function shownValue(e: Expr): Expr | undefined {
 }
 
 export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  // A number literal, its sign included, is one leaf, held to its type once every definition is.
+  if (numberLiteral(e) !== null) {
+    sym.numberLiterals.met.add(e);
+    return;
+  }
   // Asked before the three spellings of `show` part company in the switch, so the exception is made once.
   const shown = shownValue(e);
   if (shown) refuseRenderedEffectId(shown, ".show", sym, errors, ctx);
