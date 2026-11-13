@@ -54,6 +54,8 @@ tuple       ::= '(' expr ',' expr (',' expr)* ')'  ; the value a Tuple types
 comment     ::= '#' until-eol                    ; single-line comment only
 ```
 
+**A number literal is an `Int` or a `Float` by how it is written.** An `int` is an `Int` and a `float` is a `Float`, whatever number JavaScript reads it as: `1.0` is a `Float`, and so is `0.99999999999999999`, which is read as `1`.
+
 **`-` is both an identifier character and subtraction, and longest munch decides.** `page-size`, `base-url`, `on-401` and `count-1` are one name each, which is why subtraction between a name and a literal is written `count - 1`.
 
 ::: details Every spacing of `count-1`, and what an unresolved one reports

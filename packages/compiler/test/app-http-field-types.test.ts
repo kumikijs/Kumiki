@@ -76,8 +76,8 @@ slot c : Cents = 5`,
     ).toEqual([]);
   });
 
-  it("timeout refuses a Float: 5.5 is not an Int, by choice", () => {
-    expect(locatedSummariesOf(app("", `timeout: 5.5`))).toEqual([
+  it.each(["5.5", "0.0"])("timeout refuses a Float: %s is not an Int, by choice", (literal) => {
+    expect(locatedSummariesOf(app("", `timeout: ${literal}`))).toEqual([
       "E0201 7:24 Expected Int but got Float",
     ]);
   });
@@ -87,7 +87,6 @@ slot c : Cents = 5`,
     "-1",
     "-0",
     "00",
-    "0.0",
     "2147483648",
   ])("timeout refuses the literal %s, quoted as written: a timer cannot hold it", (literal) => {
     expect(locatedSummariesOf(app("", `timeout: ${literal}`))).toEqual([
