@@ -57,7 +57,7 @@ export async function loadApp(
   return (await compileForLoad(source, capabilities, opts)).app;
 }
 
-async function compileForLoad(
+export async function compileForLoad(
   source: string,
   capabilities: string[],
   opts: LoadOptions,
@@ -161,7 +161,7 @@ export async function smokeFile(
   return smokeSource(readFileSync(path, "utf8"), capabilities, { ...opts, sourcePath: path });
 }
 
-function printWarnings(source: string, warnings: KumikiError[]): void {
+export function printWarnings(source: string, warnings: KumikiError[]): void {
   for (const line of diagnosticLines(source, warnings)) console.error(line);
 }
 

@@ -7,7 +7,7 @@ import {
   type ReplayEvent,
   replayEpisodes,
 } from "@kumikijs/runtime";
-import { ensureDom, loadApp } from "./smoke.ts";
+import { compileForLoad, ensureDom, printWarnings } from "./smoke.ts";
 import { messageOf } from "./text.ts";
 
 export type ReplayCmdOptions = {
@@ -141,7 +141,8 @@ export async function replayCmd(
 ): Promise<void> {
   await ensureDom();
   const source = readFileSync(kumikiPath, "utf8");
-  const app = await loadApp(source, capabilities, { sourcePath: kumikiPath });
+  const { app, warnings } = await compileForLoad(source, capabilities, { sourcePath: kumikiPath });
+  printWarnings(source, warnings);
 
   const raw = readFileSync(opts.fromLog, "utf8");
   let parsed: EpisodeLogEntry[];
