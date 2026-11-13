@@ -11,6 +11,8 @@ const COUNTER = app("01-counter");
 const RETRY = app("08-http-retry");
 const EVERY_EPISODE = feature("191-episode-log-keeps-every-episode");
 const EVERY_EPISODE_SCENARIO = EVERY_EPISODE.replace(/\.kumiki$/, ".scenario.json");
+const TRIGGER_ORDER = feature("283-episode-log-trigger-order");
+const TRIGGER_ORDER_SCENARIO = TRIGGER_ORDER.replace(/\.kumiki$/, ".scenario.json");
 
 describe("kumiki run --episode-log", () => {
   it("records an episode for every reducer the scenario fires", async () => {
@@ -151,6 +153,29 @@ describe("kumiki run --episode-log", () => {
     const refused = runCli(["run", EVERY_EPISODE, scenario, "--episode-log", missing]);
     expect(refused.code, refused.out).toBe(1);
     expect(refused.stderr).toContain(`could not write episode log ${missing}`);
+  });
+
+  // A's save is still waiting out its debounce when B is clicked, so B's episode is done first.
+  it("writes the episodes in the order their triggers began, the order replay runs", SPAWN, () => {
+    const logFile = join(tempDir(), "run.log.jsonl");
+    const r = runCli(["run", TRIGGER_ORDER, TRIGGER_ORDER_SCENARIO, "--episode-log", logFile]);
+    expect(r.code, r.out).toBe(0);
+    const targets = readFileSync(logFile, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => (JSON.parse(line) as { trigger: { target?: string } }).trigger.target);
+    expect(targets).toEqual(["ABtn", "BBtn"]);
+
+    const replayed = runCli([
+      "replay",
+      TRIGGER_ORDER,
+      "--from-log",
+      logFile,
+      "--mock",
+      "save: from-log",
+    ]);
+    expect(replayed.code, replayed.out).toBe(0);
+    expect(replayed.stdout).toContain('final slots: {"x":"b","saved":"a"}');
   });
 });
 

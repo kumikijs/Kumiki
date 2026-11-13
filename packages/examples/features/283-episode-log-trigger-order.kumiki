@@ -1,0 +1,53 @@
+# Feature (runtime.md, testing.md): the episode log lists episodes in the
+# order their triggers began, so a replay applies them in the order the run
+# did.
+#
+# Click A, then B, within 300ms. `pickA` writes x := "a" and emits `save`,
+# which its `debounce(300ms)` launches 300ms later. The answer, and the
+# `savedOk` it runs, belong to A's episode, so that episode stays open until
+# the answer lands. `pickB` writes x := "b" in an episode of its own, which is
+# done at once. B is done first, but it is not stored ahead of A: it waits
+# until A is done, and the log lists A, then B, the order the clicks came in.
+# The fixture next to this file was recorded from the scenario with
+# `kumiki run --episode-log`. Replaying it runs pickA, then pickB, and ends at
+# x = "b", as the run did.
+#
+# An episode replays whole. Replay hands `save` its recorded answer as soon as
+# `pickA` emits it, so `savedOk` runs before B's click, where in the run it
+# ran after it. `saved` keeps the x `savedOk` read: "b" in the run, "a" in the
+# replay. The scenario pins the run, and `replay-order` pins the replay.
+#
+# `packages/tests/src/episode-log-trigger-order.test.ts` records the scenario,
+# replays the log it wrote, and runs `replay-order` over that log and over the
+# fixture.
+
+slot x     : Text = ""
+slot saved : Text = ""
+
+effect save cap=storage.write
+            in=Text
+            out=Result(Unit, Text)
+            policy=debounce(300ms)
+            map-request={key: "x", value: $1}
+
+reducer pickA on=ui.click(ABtn)
+    do= x := "a"
+        emit save(x)
+reducer pickB    on=ui.click(BBtn) do= x := "b"
+reducer savedOk  on=save.ok(_, _)  do= saved := x
+reducer savedErr on=save.err(_, _) do= saved := "failed"
+
+tile ABtn = button(text="pick A")
+tile BBtn = button(text="pick B")
+tile App  = column(text("x=" + x), text("saved=" + saved), ABtn, BBtn) {pad: "md", gap: "sm"}
+
+app EpisodeLogTriggerOrder
+    caps   = [storage.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+test replay-order =
+    episode-test
+        load   = "283-episode-log-trigger-order.fixture.jsonl"
+        mocks  = {save: from-log}
+        expect = {slots-equal: {x: "b", saved: "a"}, no-panics: true, no-errors: true}

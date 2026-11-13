@@ -379,6 +379,8 @@ episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
 
 `slots-equal: from-log` は最終 slot をログが記録した値と比較する。レコードを書けば、比較する slot とその期待値をそれで名指す。
 
+ログの episode は、`kumiki replay` と同じく、ログに並んだ順 — trigger が始まった順 — に 1 つずつ丸ごと replay される（[runtime.md §10.5.3](./runtime.md#_10-5-3-replay)）。したがって、実行が後の trigger より後に受け取った effect の結果は、replay ではその trigger より先に `.ok` / `.err` reducer に届き、その reducer がその trigger の書いた値から計算する slot は、ログの記録とは異なる値で終わることがある。
+
 `no-panics: true` は replay した reducer が panic したときに、`no-errors: true` は effect の `err` がどの `.err` reducer にも届かないときに（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）テストを失敗させる。どちらも、そのキーが `true` のときにだけ報告される。ランナーはまずすべての episode が replay されたことを確かめ（[用途](#_8-6-2-use-cases)）、次にこの 2 つをこの順に、どちらも `slots-equal` より先に判定し、最初に失敗したものを報告する。panic した reducer は何も書かず何も emit せず、取りこぼされた `err` はどの reducer も走らせないので、そのどちらかが届くはずだった slot は元の値のままになる。先に比較すれば、slot の差分が原因の代わりにその症状を報告してしまう。
 
 ```
