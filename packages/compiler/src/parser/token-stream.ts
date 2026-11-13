@@ -179,8 +179,15 @@ export class TokenStream {
    */
   protected tryEatSignedNumberLit(): { value: number; raw: string } | undefined {
     if (this.matchOp("-") && this.matchTAt(1, "num")) {
-      this.next();
+      const sign = this.next();
       const t = this.eat("num");
+      // The literal grammar writes the sign into the literal; only an expression has unary minus.
+      if (t.pos.line !== sign.pos.line || t.pos.col !== sign.pos.col + 1) {
+        throw new ParseError(
+          `A negative literal's "-" must touch its digits: write -${t.raw}`,
+          sign.pos,
+        );
+      }
       return { value: -t.value, raw: `-${t.raw}` };
     }
     if (!this.matchT("num")) return undefined;

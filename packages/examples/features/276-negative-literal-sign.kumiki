@@ -1,0 +1,35 @@
+# Feature: where only a literal stands, a negative number is written `-1`.
+#
+# A refinement argument, a duration, a retry count or factor, a theme or
+# motion value and a property-test count each take a literal, and the literal
+# grammar writes the sign into it: `-1`, `-40.0`. Written `one-of(- 1, 0, 1)`,
+# with the `-` apart from its digits, it is a parse error at the `-`, and the
+# message gives the literal to write.
+#
+# An expression has unary minus, so `- 1` there is -1. That is why the `down`
+# reducer's `- 1` is a `Sign`, and `cold`'s `- 40.0` lands on the lower bound
+# of `Celsius` rather than past it.
+
+type Sign    = nominal Int where one-of(-1, 0, 1)
+type Celsius = nominal Float where between(-40.0, 60.0)
+
+slot sign : Sign    = 0
+slot temp : Celsius = 20.0
+
+reducer down on=ui.click(Down) do= sign := - 1
+reducer cold on=ui.click(Cold) do= temp := - 40.0
+
+tile Down = button(text="down") {id: "down"}
+tile Cold = button(text="cold") {id: "cold"}
+
+tile App
+    = column(
+        Down,
+        Cold,
+        text("sign: " + sign.show),
+        text("temp: " + temp.show))
+
+app NegativeLiteralSign
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

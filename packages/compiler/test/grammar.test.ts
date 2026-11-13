@@ -1,7 +1,9 @@
 import { lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { defined } from "./helpers/defined.ts";
+import { checkSource, codesOf, posOf } from "./helpers/diagnostics.ts";
 import { compileOrFail } from "./helpers/module.ts";
+import { withTest } from "./helpers/test-layer.ts";
 
 const APP = `
 tile App = column(text("hi"))
@@ -391,6 +393,58 @@ describe("a duration is a length of time", () => {
     clean(
       `effect e cap=http.get in=Unit out=Result(Text, Text) retry=exponential(3, 100ms, 2.0)${APP}`,
     );
+  });
+});
+
+describe("where only a literal stands, a negative number's `-` touches its digits", () => {
+  const EFFECT = "effect e cap=http.get in=Unit out=Result(Text, Text)";
+  const OPEN = "type C = nominal Float where between(-";
+  const spaced: [string, string, string][] = [
+    ["an Int refinement argument", `type Sign = nominal Int where one-of(- 1, 0, 1)${APP}`, "-1"],
+    [
+      "a Float refinement argument",
+      `type C = nominal Float where between(- 40.0, 60.0)${APP}`,
+      "-40.0",
+    ],
+    ["a theme value", `theme T = {spacing: {nudge: - 4}}${APP}`, "-4"],
+    [
+      "a motion value",
+      `motion M = {keyframes: {from: {translate-x: - 24}, to: {translate-x: 0}}}${APP}`,
+      "-24",
+    ],
+    ["a timer trigger", `slot n : Int = 0\nreducer tick on=timer(- 1s) do= n := n + 1${APP}`, "-1"],
+    ["a debounce policy", `${EFFECT} policy=debounce(- 1ms)${APP}`, "-1"],
+    ["a throttle policy", `${EFFECT} policy=throttle(- 1s)${APP}`, "-1"],
+    ["a retry count", `${EFFECT} retry=linear(- 1, 100ms)${APP}`, "-1"],
+    ["a retry backoff", `${EFFECT} retry=linear(3, - 100ms)${APP}`, "-100"],
+    ["a retry factor", `${EFFECT} retry=exponential(3, 100ms, - 2.0)${APP}`, "-2.0"],
+    [
+      "a property-test count",
+      withTest(`    property-test
+        for-all   = {n: Int}
+        given     = {slots: {count: n}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(inc).slots.count == n + 1
+        count     = - 3`),
+      "-3",
+    ],
+    [
+      "a refinement argument, on the next line in the column after the `-`",
+      `${OPEN}\n${" ".repeat(OPEN.length)}40.0, 60.0)${APP}`,
+      "-40.0",
+    ],
+  ];
+
+  it.each(
+    spaced,
+  )("refuses a `-` set apart from the digits of %s, at the `-`", (_, src, written) => {
+    const at = posOf(src, defined(/-\s+\d/.exec(src)?.[0], "a spaced sign"));
+    expect(outcome(src)).toEqual([
+      `THROW Parse error at ${at.line}:${at.col}: A negative literal's "-" must touch its digits: write ${written}`,
+    ]);
+  });
+
+  it("leaves `- 1` in an expression to unary minus", () => {
+    clean(`fn below() -> Int = - 1${APP}`);
   });
 });
 
