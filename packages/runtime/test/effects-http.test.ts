@@ -510,7 +510,7 @@ describe("httpFetch request body", () => {
   });
 
   it("fails a FileV that holds no file, without making a request", async () => {
-    // A file record restored from persistence through JSON has `_file: {}`.
+    // A `File` decoded from JSON, as one an older build stored, has `_file: {}`.
     const { calls } = stubFetch(() => new Response("ok"));
     const res = await httpFetch("POST", {
       url: "/up",

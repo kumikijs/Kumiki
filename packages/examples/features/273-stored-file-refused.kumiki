@@ -1,0 +1,55 @@
+# Feature (http.md): `storage.write` refuses a value that holds a picked
+# `File`, and stores nothing. Storage keeps text, and the file's bytes are not
+# text the write can take, so a stored `File` would keep its name, size and
+# type and lose the file: `file-url` of the one read back would be `""`, and a
+# `FileV` part holding it would fail its request. The write answers `.err`
+# instead, naming the key and the file:
+#
+#   storage.write: the value for "f" holds the File "a.txt", and localStorage
+#   would keep only its name, size and type, not the file; nothing was stored
+#
+# `session.write` answers the same, naming sessionStorage.
+#
+# A scenario cannot put a real file in the input, and its effect results are
+# scripted, so the scenario hands `pick` a file record through `{dispatch}` and
+# scripts the answer the write gives. packages/tests/src/stored-file-refused.test.ts
+# picks a real file, saves it through the real handler, and checks the message
+# and that Load then finds nothing under "f".
+
+slot picked : Option(File) = None
+slot shown  : Text         = "idle"
+
+effect save cap=storage.write
+            in=File
+            out=Result(Unit, Text)
+            map-request={key: "f", value: $1}
+
+effect load cap=storage.read
+            in=Unit
+            out=Result(Option(File), Text)
+            map-request={key: "f", decode: Decoder.Json(File)}
+
+reducer pick    on=ui.change(Picker) do= picked := $event.files.head
+reducer goSave  on=ui.click(SaveBtn) do=
+    match picked with
+      | Some(f) -> emit save(f)
+      | None    -> ()
+reducer goLoad  on=ui.click(LoadBtn) do= emit load()
+reducer saved   on=save.ok(_, _)     do= shown := "saved"
+reducer refused on=save.err($e, _)   do= shown := "not saved: " + $e
+reducer loaded  on=load.ok($o, _)    do=
+    match $o with
+      | Some(f) -> shown := "loaded " + f.name + " url=[" + file-url(f) + "]"
+      | None    -> shown := "nothing stored"
+reducer failed  on=load.err($e, _)   do= shown := "not loaded: " + $e
+
+tile Picker  = input(type="file") {id: "pick"}
+tile SaveBtn = button(text="Save") {id: "save"}
+tile LoadBtn = button(text="Load") {id: "load"}
+
+tile App = column(Picker, SaveBtn, LoadBtn, text("shown: " + shown)) {pad: "lg", gap: "md"}
+
+app StoredFileRefused
+    caps   = [storage.read, storage.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
