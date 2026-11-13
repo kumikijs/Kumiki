@@ -451,15 +451,25 @@ export function checkIndexStep(
     checkIndexIsPlace(step, { index, pos }, "assign", errors);
     return;
   }
-  // A record read through a literal key has its field's type (`inferType`); no other receiver
-  // with no places has a type to read, and none of them is reported yet.
-  if (!isSet(step.base)) return;
-  errors.push({
-    code: "E0232",
-    kind: "index-into-set",
-    message: `Cannot read through an index into "${typeToString(step.raw)}": a Set has members, not places — use .has`,
-    pos,
-  });
+  // A record read through a literal key has its field's type (`inferType`), and through a
+  // computed key a value of no type; no other receiver with no places has a value to read.
+  if (!readRefused(step.base)) return;
+  const into = `Cannot read through an index into "${typeToString(step.raw)}"`;
+  errors.push(
+    isSet(step.base)
+      ? {
+          code: "E0232",
+          kind: "index-into-set",
+          message: `${into}: a Set has members, not places — use .has`,
+          pos,
+        }
+      : {
+          code: "E0238",
+          kind: "unindexable-read",
+          message: `${into}: an index names a place only in a Map or a List`,
+          pos,
+        },
+  );
 }
 
 /** An index step a write goes through, on the left of `:=` or in a `bind=` target. */
@@ -470,8 +480,8 @@ export function checkIndexIsPlace(
   errors: KumikiError[],
 ): void {
   if (step.kind !== "no-place") return;
-  // A bound control reads its target before it writes it, and that read is E0232 on a Set.
-  if (verb === "bind" && isSet(step.base)) return;
+  // A bound control reads its target before it writes it, and that read is the one report.
+  if (verb === "bind" && readRefused(step.base)) return;
   errors.push({
     code: "E0602",
     kind: "unassignable-member",
@@ -482,6 +492,11 @@ export function checkIndexIsPlace(
 
 function isSet(base: TypeExpr): boolean {
   return base.kind === "TypeApp" && base.name === "Set";
+}
+
+/** Whether an index read into `base`, which has no places, is reported: one into a record is not. */
+function readRefused(base: TypeExpr): boolean {
+  return base.kind !== "TypeRecord";
 }
 
 function noPlaceMessage(

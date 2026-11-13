@@ -63,7 +63,9 @@ tile App = column(B)`);
     expect(lowered("tile App = column(input() {bind: rows[i].title})")).toContain(
       `bind: "rows", bindPath: [{ at: _live["i"] },"title"]`,
     );
-    expect(codesOf(program("tile App = column(input() {bind: i[0]})"))).toEqual(["E0602"]);
+    expect(codesOf(program(`tile App = column(input() {bind: draft.get["title"]})`))).toEqual([
+      "E0602",
+    ]);
   });
 
   it("checks clean on every control, from a slot index, a literal, and a for's key", () => {
@@ -83,61 +85,62 @@ tile App = column(B)`);
 });
 
 describe("what the checker asks of an index step in a bind target", () => {
-  it.each([
-    [
-      "an Int: E0602 at the step",
-      "i[0]",
-      `"Int": an index names a place only in a Map or a List`,
-      "1",
-    ],
-    [
-      "a record: E0602 naming the field step",
-      `draft.get["title"]`,
-      `"D": an index names a place only in a Map or a List — write the field step ".title"`,
-      `"x"`,
-    ],
-  ])("is what it asks of the step on the left of :=, for %s", (_label, target, why, value) => {
-    const message = `Cannot bind through an index into ${why}`;
+  it("is what it asks of the step on the left of :=, for a record: E0602 naming the field step", () => {
+    const target = `draft.get["title"]`;
+    const message = `Cannot bind through an index into "D": an index names a place only in a Map or a List — write the field step ".title"`;
     expect(pointedErrorsOf(program(`tile App = column(input(bind=${target}))`))).toEqual([
       { code: "E0602", message, text: `${target}))` },
     ]);
     expect(
       summariesOf(
-        program(`reducer r on=ui.click(B) do= ${target} := ${value}
+        program(`reducer r on=ui.click(B) do= ${target} := "x"
 tile App = column(B)`),
       ),
     ).toEqual([`E0602 ${message.replace("bind", "assign")}`]);
   });
 
   it("is reported on every control that binds", () => {
-    const message = `Cannot bind through an index into "Int": an index names a place only in a Map or a List`;
+    const message = `Cannot bind through an index into "D": an index names a place only in a Map or a List — write the field step ".title"`;
+    const target = `draft.get["title"]`;
     expect(
       pointedErrorsOf(
-        program(`tile App = column(textarea(bind=i[0]), select(bind=i[0], options=[]))`),
+        program(`tile App = column(textarea(bind=${target}), select(bind=${target}, options=[]))`),
       ),
     ).toEqual([
-      { code: "E0602", message, text: `i[0]), select(bind=i[0], options=[]))` },
-      { code: "E0602", message, text: `i[0], options=[]))` },
+      { code: "E0602", message, text: `${target}), select(bind=${target}, options=[]))` },
+      { code: "E0602", message, text: `${target}, options=[]))` },
     ]);
   });
 
   // The control shows its target before it writes one, and that read is the one report.
-  it("leaves a Set to the read's E0232, where the step on the left of := is E0602", () => {
-    expect(pointedErrorsOf(program(`tile App = column(input(bind=s["a"]))`))).toEqual([
-      {
-        code: "E0232",
-        message: `Cannot read through an index into "Set(Text)": a Set has members, not places — use .has`,
-        text: `"a"]))`,
-      },
-    ]);
+  it.each([
+    [
+      "a Set to E0232",
+      `s["a"]`,
+      "true",
+      `E0232 Cannot read through an index into "Set(Text)": a Set has members, not places — use .has`,
+      `E0602 Cannot assign through an index into "Set(Text)": a Set has members, not places — use .add / .remove / .toggle`,
+    ],
+    [
+      "an Int to E0238",
+      "i[0]",
+      "1",
+      `E0238 Cannot read through an index into "Int": an index names a place only in a Map or a List`,
+      `E0602 Cannot assign through an index into "Int": an index names a place only in a Map or a List`,
+    ],
+  ])("leaves %s, the read's code, where the step on the left of := is E0602", (_label, target, value, read, write) => {
+    const key = target.slice(target.lastIndexOf("[") + 1);
+    expect(
+      pointedErrorsOf(program(`tile App = column(input(bind=${target}))`)).map(
+        (e) => `${e.code} ${e.message} @ ${e.text}`,
+      ),
+    ).toEqual([`${read} @ ${key}))`]);
     expect(
       summariesOf(
-        program(`reducer r on=ui.click(B) do= s["a"] := true
+        program(`reducer r on=ui.click(B) do= ${target} := ${value}
 tile App = column(B)`),
       ),
-    ).toEqual([
-      `E0602 Cannot assign through an index into "Set(Text)": a Set has members, not places — use .add / .remove / .toggle`,
-    ]);
+    ).toEqual([write]);
   });
 
   it.each([

@@ -316,7 +316,7 @@ export function checkInputBindType(
 
 /**
  * Run after the field has been checked as a value, so what that read already
- * reported (E0103, E0127, E0108, E0213, an E0201 or E0232 at a key) is not reported again.
+ * reported (E0103, E0127, E0108, E0213, an E0201, E0232 or E0238 at a key) is not reported again.
  */
 export function checkErrorField(
   t: TileExpr & { kind: "TileCall" },
