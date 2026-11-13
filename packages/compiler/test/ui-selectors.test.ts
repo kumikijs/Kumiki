@@ -875,6 +875,25 @@ describe("selector id mismatch (E0212, strictSelectorId)", () => {
     expect(e?.message).toContain("can never match");
   });
 
+  // Every element fires click, so the set is named by what reads it: the button's
+  // renderer calls onClick, and the row's and the text's never do.
+  it.each([
+    "toolbar",
+    "label",
+  ])("names the elements a click subscription is wired onto, for an id on one it is not (%s)", (id) => {
+    const src = `
+      slot log : Text = ""
+      reducer hit on=ui.click(Toolbar#${id}) do= log := log + "hit;"
+      tile Toolbar = row(button(text="Save", id="save"), text("label", id="label")) {id: "toolbar"}
+      tile App = column(Toolbar)
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `;
+    expect(checkStrict(src).find((d) => d.code === "E0212")?.message).toBe(
+      `Reducer "hit" subscribes to ui.click(Toolbar#${id}) but every element of tile "Toolbar" ` +
+        `that hands "click" to a reducer has id "save" — this selector can never match`,
+    );
+  });
+
   // A video is in the key, focus and blur rows, so its id is one the subscription can match.
   it.each(["key", "focus", "blur"])("counts a video's id for ui.%s", (ev) => {
     const src = (id: string) => `
