@@ -187,8 +187,9 @@ describe("`$1` in an effect's own expressions has the effect's in= type", () => 
     expect(textAt(source, at)).toMatch(/^\$1 [*-]/);
   });
 
-  it("leaves a member of a union in= undecided", () => {
-    expect(codesOf(urlApp("Shape", `"/u/" + $1.idd`))).toEqual([]);
+  it("leaves a member of a union in= undecided, and reports a name no variant answers", () => {
+    expect(codesOf(urlApp("Shape", `"/u/" + $1.length.show`))).toEqual([]);
+    expect(codesOf(urlApp("Shape", `"/u/" + $1.idd`))).toEqual(["E0108"]);
     expect(codesOf(urlApp("Shape", `"/u/" + ($1 * 2).show`))).toEqual(["E0201"]);
   });
 

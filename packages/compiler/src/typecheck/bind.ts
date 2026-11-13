@@ -405,7 +405,7 @@ export function checkErrorField(
         if (member === "field") break;
         const base = unaliasType(raw, sym);
         if (step.field === "get" && base && unwrappedType(base) !== null) break;
-        // E0108 names a field the record lacks.
+        // E0108 names a field the record lacks, or one no variant of a union answers.
         if (member === "unknown") return;
         refuse(
           member === "member" && base

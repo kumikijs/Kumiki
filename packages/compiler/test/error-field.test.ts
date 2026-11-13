@@ -110,14 +110,9 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
       `error(field=…) cannot step through "._1": "Tuple(Text, Int)" has no fields. ${STEPS}`,
     ],
     [
-      "a misspelt step into a union",
-      `tile App = error(field=d.shape.nmae)`,
-      `error(field=…) cannot step through ".nmae": "Shape" has no fields. ${STEPS}`,
-    ],
-    [
-      "a variant's name as a step into a union",
-      `tile App = error(field=d.shape.Square)`,
-      `error(field=…) cannot step through ".Square": "Shape" has no fields. ${STEPS}`,
+      "a member as a step into a union",
+      `tile App = error(field=d.shape.length)`,
+      `error(field=…) cannot step through ".length": "Shape" has no fields. ${STEPS}`,
     ],
     [
       "a call",
@@ -222,6 +217,8 @@ test err-field =
 describe("a path another code reports is not E0230 as well", () => {
   it.each([
     ["a field the record lacks", `form.emial`, "E0108"],
+    ["a misspelt step into a union", `d.shape.nmae`, "E0108"],
+    ["a variant's name as a step into a union", `d.shape.Square`, "E0108"],
     ["a member named without its call", `form.email.contains`, "E0213"],
     ["a name that resolves to nothing", `nope`, "E0103"],
     ["a fn named without a call", `shout`, "E0127"],

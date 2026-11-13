@@ -1,7 +1,13 @@
 import { check, codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
-import { checkSource, codesOf, pointedErrorsOf, textAt } from "./helpers/diagnostics.ts";
+import {
+  checkSource,
+  codesOf,
+  pointedErrorsOf,
+  summariesOf,
+  textAt,
+} from "./helpers/diagnostics.ts";
 import { compileOrFail, loweredOf } from "./helpers/module.ts";
 import { withApp, withRoot } from "./helpers/programs.ts";
 
@@ -118,6 +124,78 @@ describe("a receiver the checker cannot decide stays silent", () => {
       ),
     );
     expect(errs).toEqual([]);
+  });
+});
+
+const UNION = `type U = A(Int) | Z\nslot u : U = Z`;
+const E0108_UNION = (written: string, field: string): string =>
+  `Type "${written}" has no member ".${field}" — a union has no fields; read a variant's payload with a match`;
+
+describe("a field step on a union that no variant answers", () => {
+  // Neither `A`, whose payload is a positional Int, nor `Z`, which has none, has a field `a`.
+  it.each([
+    `u.a := "x"`,
+    `u.a["k"] := "x"`,
+    `u.a[0] := "x"`,
+  ])("is E0108 at the field, and alone, in %s", (body) => {
+    const src = withBody(UNION, body);
+    expect(pointedErrorsOf(src)).toEqual([
+      { code: "E0108", message: E0108_UNION("U", "a"), text: body.slice(body.indexOf("a")) },
+    ]);
+  });
+
+  it("is E0108 on the read side too, and nothing after it is judged", () => {
+    expect(summariesOf(withBody(`${UNION}\nslot n : Int = 0`, `n := u.a`))).toEqual([
+      `E0108 ${E0108_UNION("U", "a")}`,
+    ]);
+    expect(codesOf(withRoot(`text(u.a.b.show + u.a[0])`, UNION))).toEqual(["E0108", "E0108"]);
+  });
+
+  // However the union is reached, the step names it as the program writes it.
+  it.each([
+    ["an alias", `${UNION}\ntype V = U\nslot v : V = Z`, `v.a`, "V"],
+    ["a record field", `${UNION}\ntype D = {u: U}\nslot d : D = {u: Z}`, `d.u.a`, "U"],
+    ["a List element", `${UNION}\nslot us : List(U) = []`, `us[0].a`, "U"],
+    ["an Option's payload", `${UNION}\nslot ou : Option(U) = None`, `ou.get.a`, "U"],
+    ["a union written inline", `slot w : A(Int) | Z = Z`, `w.a`, "A(Int) | Z"],
+    [
+      "a generic union",
+      `type Box(T) = Full(T) | Empty\nslot b : Box(Int) = Empty`,
+      `b.v`,
+      "Box(Int)",
+    ],
+  ])("is E0108 on %s", (_how, decls, access, written) => {
+    const field = access.slice(access.lastIndexOf(".") + 1);
+    expect(pointedErrorsOf(withRoot(`text(${access}.show)`, decls))).toEqual([
+      { code: "E0108", message: E0108_UNION(written, field), text: `${access}.show))` },
+    ]);
+  });
+
+  it("is E0108 at the target of a bound control, which reads it first", () => {
+    expect(codesOf(withRoot(`input(bind=u.a)`, UNION))).toEqual(["E0108"]);
+  });
+
+  // A member dispatches by name on the value, and a program's own union may name a variant
+  // `Ok` or `Some`, whose members read it by its tag.
+  it.each([
+    ["a member of a List or a Text", `text(u.length.show)`],
+    ["a member of a Result", `text(u.is-ok.show)`],
+    ["the member every value has", `text(u.show)`],
+  ])("says nothing about %s", (_what, child) => {
+    expect(checkSource(withRoot(child, UNION))).toEqual([]);
+  });
+
+  // The step is left undecided, as it was: it reads the variant, not the payload's field.
+  it("says nothing about a name a variant's record payload declares, on either side", () => {
+    const decls = `type P = A({x: Int}) | Z\nslot p : P = Z`;
+    expect(checkSource(withRoot(`text(p.x.show)`, decls))).toEqual([]);
+    expect(checkSource(withBody(decls, `p.x := 1`))).toEqual([]);
+  });
+
+  it("says nothing past a payload whose type name resolves to nothing", () => {
+    expect(codesOf(withRoot(`text(w.a.show)`, `type W = A(Mystery) | Z\nslot w : W = Z`))).toEqual([
+      "E0117",
+    ]);
   });
 });
 
