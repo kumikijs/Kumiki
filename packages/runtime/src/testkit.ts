@@ -254,7 +254,10 @@ export const _stdlibTest = {
         }
       }
     } catch (e) {
-      panic = e && (e as Error).message ? (e as Error).message : String(e);
+      // Only a panic is the test's outcome: anything else points at the compiler or the runtime,
+      // so it is a throw in the test's body and keeps its kind.
+      if (!isPanic(e)) throw e;
+      panic = e.message || "KumikiPanic";
     }
     return compareReducerExpect(name, { ...live }, residual, panic, expect, unhandledErr);
   },

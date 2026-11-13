@@ -1,4 +1,4 @@
-import { _stdlib, type TestResult } from "@kumikijs/runtime";
+import { _stdlib, KumikiPanic, type TestResult } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
 type ReducerTestInput = Parameters<typeof _stdlib.runReducerTest>[0];
@@ -312,6 +312,57 @@ describe("runReducerTestFlow (reducer-test effect mocks)", () => {
     });
     expect(r.pass).toBe(false);
     expect(r.diffAt).toContain("unhandled");
+  });
+
+  describe("a throw from a reducer it runs", () => {
+    /** The flow app, with the `.ok` reducer replaced by one that throws `thrown`. */
+    const throwing = (thrown: unknown): FlowApp => {
+      const app = makeFlowApp();
+      for (const r of app.reducers) {
+        if (r.name === "userLoaded")
+          r.apply = () => {
+            throw thrown;
+          };
+      }
+      return app;
+    };
+    const mocks: FlowInput["mocks"] = { loadUser: { outcome: "ok", value: { id: "u1" } } };
+    /** What `run` threw, so a value that is not an `Error` can be compared too. */
+    const thrownBy = (go: () => unknown): unknown => {
+      try {
+        go();
+      } catch (e) {
+        return e;
+      }
+      throw new Error("nothing was thrown");
+    };
+
+    it.each<[string, KumikiPanic, string]>([
+      ["a panic, as its message", new KumikiPanic("boom"), 'panic: "boom"'],
+      ["a panic with no message, as its kind", new KumikiPanic(""), 'panic: "KumikiPanic"'],
+    ])("reports %s, as the test's unexpected panic", (_, panic, actual) => {
+      expect(run(throwing(panic), { mocks, expect: expected({ users: {} }) })).toEqual({
+        name: "t",
+        pass: false,
+        expected: '{"users":{}}',
+        actual,
+        diffAt: "(unexpected panic)",
+      });
+    });
+
+    it.each<[string, unknown]>([
+      ["an error", new TypeError("x.map is not a function")],
+      ["a value", { a: 1 }],
+      ["a value with a message", { message: "m" }],
+    ])("lets %s that is not a panic out, as a throw in the test's body", (_, thrown) => {
+      expect(thrownBy(() => run(throwing(thrown), { mocks, expect: expected({}) }))).toBe(thrown);
+    });
+
+    it("so a test that expects a panic is not passed by a throw that is not one", () => {
+      const fault = new TypeError("x.map is not a function");
+      const expectsPanic: FlowInput["expect"] = { kind: "panic", message: "not a function" };
+      expect(thrownBy(() => run(throwing(fault), { mocks, expect: expectsPanic }))).toBe(fault);
+    });
   });
 });
 
