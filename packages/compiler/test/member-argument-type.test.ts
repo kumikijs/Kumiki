@@ -3,8 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 import { RECEIVER_PARAMS, readsShortCall } from "../src/stdlib-members.ts";
-import { codesOf, pointedErrorsOf, summariesOf } from "./helpers/diagnostics.ts";
-import { withApp } from "./helpers/programs.ts";
+import { codesOf, locatedOf, pointedErrorsOf, summariesOf } from "./helpers/diagnostics.ts";
+import { withApp, withButtonApp } from "./helpers/programs.ts";
 
 const app = (defs: string): string =>
   withApp(`${defs}\ntile Btn = button(text="go")\ntile App = column(Btn)`);
@@ -224,6 +224,71 @@ reducer go on=ui.click(Btn) do=
         text: "m.get-or(1)",
       },
     ]);
+  });
+});
+
+// A member argument the receiver types as an `Int` is an `Int` position, so a literal there past
+// the safe range is one E0217 at its sign, as it is as a slot's value or a Map literal's key.
+describe("an Int literal past the safe range as a member argument the receiver types", () => {
+  const INTS = `slot m   : Map(Int, Int) = {}
+slot mf  : Map(Int, Float) = {}
+slot s   : Set(Int) = []
+slot xs  : List(Int) = []
+slot xss : List(List(Int)) = []
+slot b   : Bool = false
+slot n   : Int = 0`;
+  const BIG = "-9007199254740993";
+  const reported = (stmt: string) =>
+    pointedErrorsOf(app(`${INTS}\nreducer go on=ui.click(Btn) do= ${stmt}`)).map(
+      ({ code, text }) => ({ code, text }),
+    );
+
+  it("reports the key of Map.insert at its sign, as a Map literal's key is", () => {
+    const src = withButtonApp(`slot m : Map(Int, Int) = {}
+reducer r on=ui.click(B) do= m := m.insert(${BIG}, 1)`);
+    expect(locatedOf(src).map(({ code, line, col }) => ({ code, line, col }))).toEqual([
+      { code: "E0217", line: 2, col: 44 },
+    ]);
+    expect(codesOf(app(`slot m : Map(Int, Int) = {${BIG}: 1}`))).toEqual(["E0217"]);
+  });
+
+  it.each([
+    ["Map.has", `b := m.has(${BIG})`],
+    ["Map.get", `n := m.get(${BIG}).get-or(0)`],
+    ["Map.get-or's key", `n := m.get-or(${BIG}, 0)`],
+    ["Map.get-or's default", `n := m.get-or(1, ${BIG})`],
+    ["Map.insert's key", `m := m.insert(${BIG}, 1)`],
+    ["Map.insert's value", `m := m.insert(1, ${BIG})`],
+    ["Map.remove", `m := m.remove(${BIG})`],
+    ["Map.update's key", `m := m.update(${BIG}, $1 + 1)`],
+    ["Map.merge, a literal's key", `m := m.merge({${BIG}: 1})`],
+    ["Map.merge, a literal's value", `m := m.merge({1: ${BIG}})`],
+    ["Set.has", `b := s.has(${BIG})`],
+    ["Set.add", `s := s.add(${BIG})`],
+    ["Set.remove", `s := s.remove(${BIG})`],
+    ["Set.toggle", `s := s.toggle(${BIG})`],
+    ["Set.union, a literal's member", `s := s.union([${BIG}])`],
+    ["List.push", `xs := xs.push(${BIG})`],
+    ["List.prepend", `xs := xs.prepend(${BIG})`],
+    ["List.contains", `b := xs.contains(${BIG})`],
+    ["List.get's index", `n := xs.get(${BIG}).get-or(0)`],
+    ["List.concat, a literal's item", `xs := xs.concat([${BIG}])`],
+    ["List.slice's start", `xs := xs.slice(${BIG}, 1)`],
+    ["List.slice's end", `xs := xs.slice(0, ${BIG})`],
+    ["List.slice's one argument", `xs := xs.slice(${BIG})`],
+    ["List.chunk's size", `xss := xs.chunk(${BIG})`],
+  ])("%s is one E0217, at the literal's sign", (_member, stmt) => {
+    expect(reported(stmt)).toEqual([
+      { code: "E0217", text: expect.stringMatching(/^-9007199254740993/) },
+    ]);
+  });
+
+  it("reports nothing where the parameter is a Float, which holds an approximation by nature", () => {
+    expect(reported(`mf := mf.insert(1, ${BIG}).update(2, ${BIG})`)).toEqual([]);
+  });
+
+  it("reports a key of another type as E0201, since the key is typed", () => {
+    expect(reported(`m := m.insert("k", 1)`)).toEqual([{ code: "E0201", text: '"k", 1)' }]);
   });
 });
 
