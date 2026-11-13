@@ -71,6 +71,11 @@ function fnCallJs(callee: string, args: Expr[], ctx: EvalCtx): string {
   return `${jsBinding(callee)}(${args.map((a) => jsOfExpr(a, ctx)).join(", ")})`;
 }
 
+/** A fragment as an arrow, its body parenthesized: a record or map literal would read as a block. */
+function fragmentArrowJs(params: readonly string[], body: string): string {
+  return `((${params.join(", ")}) => (${body}))`;
+}
+
 export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
   switch (e.kind) {
     case "Num":
@@ -498,7 +503,7 @@ export function methodCallJs(
       return `_s.mapOver(${recvJs}, ${argFnList(args[0]!)}${keyKindArg(keyKind)})`;
     case "flat-map":
       // Option(T).flat-map(f): Some(v) -> f(v) (which itself returns Option), None -> None.
-      return `_s.flatMapOption(${recvJs}, ((${p1}) => ${jsOfExpr(args[0]!, one)}))`;
+      return `_s.flatMapOption(${recvJs}, ${fragmentArrowJs([p1], jsOfExpr(args[0]!, one))})`;
     case "size":
       return `_s.mapSize(${recvJs})`;
     case "keys":
@@ -522,7 +527,7 @@ export function methodCallJs(
     case "sort-by":
       return `_s.listSortBy(${recvJs}, ${argFnList(args[0]!)})`;
     case "fold":
-      return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, (${p1}, ${p2}) => ${jsOfExpr(args[1]!, two)})`;
+      return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, ${fragmentArrowJs([p1, p2], jsOfExpr(args[1]!, two))})`;
     case "show":
       return showJs(recvJs, recv, ctx.gen);
     case "is-some":
@@ -584,7 +589,7 @@ export function methodCallJs(
       return `({ ...((${recvJs}) ?? {}), ...((${argRaw(args[0]!)}) ?? {}) })`;
     case "update":
       // Within expr, $1 is the current value.
-      return `_s.mapUpdate(${recvJs}, ${argRaw(args[0]!)}, ((${p1}) => (${jsOfExpr(args[1]!, one)})))`;
+      return `_s.mapUpdate(${recvJs}, ${argRaw(args[0]!)}, ${fragmentArrowJs([p1], jsOfExpr(args[1]!, one))})`;
     case "add":
       return `_s.setAdd(${recvJs}, ${argRaw(args[0]!)})`;
     case "union":
@@ -595,7 +600,7 @@ export function methodCallJs(
       return `_s.or(${recvJs}, ${argRaw(args[0]!)})`;
     case "map-err":
       // Within expr, $1 is the current Err payload.
-      return `_s.mapErr(${recvJs}, ((${p1}) => (${jsOfExpr(args[0]!, one)})))`;
+      return `_s.mapErr(${recvJs}, ${fragmentArrowJs([p1], jsOfExpr(args[0]!, one))})`;
     case "replace":
       // `replaceAll` reads a string replacement as a pattern (`$$`, `$&`) but inserts a replacer's
       // return as written. `to` is read once, before the scan: a thunk would re-read it per match.

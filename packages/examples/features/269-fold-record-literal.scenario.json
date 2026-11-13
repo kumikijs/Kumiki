@@ -1,0 +1,13 @@
+{
+  "steps": [
+    {
+      "label": "each fold step answers the record or Map literal its fragment writes, and the next step reads it as the accumulator",
+      "do": { "click": "#go" },
+      "expect": {
+        "noErrors": true,
+        "state": { "n": 6, "prev": 2, "fromMap": 6 },
+        "domIncludes": ["n: 6", "prev: 2", "from map: 6"]
+      }
+    }
+  ]
+}
