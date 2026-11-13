@@ -1,0 +1,56 @@
+# Feature (http.md): `Decoder.Json(T)` reads the body as a `T`, or the effect
+# fails. Each position is held to the type written there: a record has every
+# field it declares, of that field's type; a `List` is an array of its element
+# type; an `Option`, a `Result` or a union is one of its variants, with their
+# payloads; a `Map` is an object whose keys and values are of its types; a
+# nominal type is its base.
+#
+# The fixture beside this file answers `/api/user` with
+# `{"id": "7", "title": "not a user"}`. That is no `User`, so `loadUser.ok`
+# never runs and `$u.id + 1` cannot be "71": `.err` gets an `HttpError` whose
+# `message` names the first position that does not fit,
+# `decode failed: expected Int at .id`, with the response's own status and its
+# text in `body`. A response arrived, so `retry=` does not send it again.
+#
+# JSON has no time, so a `Time` position reads ISO 8601 text in
+# `Time.parse`'s grammar as the instant it names, and a JSON number as that many
+# milliseconds. `/api/booking` sends `at` as text; `.ok` receives the instant,
+# so `plus` and `to-ms` work on it. Text the grammar refuses, such as
+# `"1772877600000"`, fails the decode at that field.
+#
+# `smoke` makes both requests through the real HTTP path against
+# `284-decode-checks-shape.http.json`; packages/tests/src/http-decode-shape.test.ts
+# checks what `.ok` and `.err` receive there.
+
+type User    = {id: Int, name: Text}
+type Booking = {at: Time}
+
+slot user    : Text = "loading"
+slot booking : Text = "loading"
+
+effect loadUser cap=http.get
+                in=Unit
+                out=Result(User, HttpError)
+                retry=exponential(3, 50ms, 2.0)
+                map-request={url: "/api/user", decode: Decoder.Json(User)}
+
+effect loadBooking cap=http.get
+                   in=Unit
+                   out=Result(Booking, HttpError)
+                   map-request={url: "/api/booking", decode: Decoder.Json(Booking)}
+
+reducer boot on=app.start
+    do= emit loadUser()
+        emit loadBooking()
+
+reducer gotUser    on=loadUser.ok($u, _)     do= user := $u.name + " #" + ($u.id + 1).show
+reducer badUser    on=loadUser.err($e, _)    do= user := $e.status.show + " " + $e.message
+reducer gotBooking on=loadBooking.ok($b, _)  do= booking := "an hour later is " + $b.at.plus(Duration.h(1)).to-ms.show
+reducer badBooking on=loadBooking.err($e, _) do= booking := $e.message
+
+tile App = column(text("user: " + user), text("booking: " + booking)) {pad: "lg", gap: "md"}
+
+app DecodeChecksShape
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
