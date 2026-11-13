@@ -4,6 +4,7 @@ import { checkSource, codesOf, pointedErrorsOf } from "./helpers/diagnostics.ts"
 import { withButtonApp, withReducer } from "./helpers/programs.ts";
 
 const appCodes = (defs: string, opts?: { caps: string }) => codesOf(withButtonApp(defs, opts));
+const SAFE_RANGE = "-9007199254740991 through 9007199254740991";
 const reducerCodes = (defs: string, body: string) => codesOf(withReducer(defs, body));
 
 describe("the code ⇆ kind pairing of every diagnostic this adds", () => {
@@ -254,8 +255,7 @@ describe("Int literal precision (E0217)", () => {
     expect(pointedErrorsOf(withButtonApp(defs))).toEqual([
       {
         code: "E0217",
-        message:
-          "Int literal -9007199254740993 is not exactly representable and was rounded to -9007199254740992",
+        message: `Int literal -9007199254740993 is outside the safe range ${SAFE_RANGE} and was rounded to -9007199254740992`,
         text: expect.stringMatching(/^-9007199254740993/),
       },
     ]);
@@ -400,9 +400,28 @@ tile Due in=Id = text(due[$1].map(formatDate($1)).get-or(""))`,
 describe("diagnostic messages", () => {
   const firstMessage = (src: string) => checkSource(withButtonApp(src))[0]?.message;
 
-  it("names the literal as written and the value it became", () => {
-    expect(firstMessage(`slot n : Int = 9007199254740993`)).toBe(
-      "Int literal 9007199254740993 is not exactly representable and was rounded to 9007199254740992",
+  it.each([
+    ["9007199254740993", "9007199254740992"],
+    ["-9007199254740993", "-9007199254740992"],
+    ["9007199254740995", "9007199254740996"],
+    ["123456789012345678901234567890", "123456789012345677877719597056"],
+    ["9007199254740993.5", "9007199254740994"],
+  ])("names %s as written and every digit of the value it was rounded to", (literal, became) => {
+    expect(firstMessage(`slot n : Int = ${literal}`)).toBe(
+      `Int literal ${literal} is outside the safe range ${SAFE_RANGE} and was rounded to ${became}`,
+    );
+  });
+
+  // 2^53, its negation, 2^53 + 2, 2^60, and 2^53 written with a point: each is held exactly.
+  it.each([
+    "9007199254740992",
+    "-9007199254740992",
+    "9007199254740994",
+    "1152921504606846976",
+    "9007199254740992.0",
+  ])("says %s, which JavaScript holds exactly, is outside the safe range but not rounded", (literal) => {
+    expect(firstMessage(`slot n : Int = ${literal}`)).toBe(
+      `Int literal ${literal} is outside the safe range ${SAFE_RANGE}: it is held exactly, but an integer next to it is not`,
     );
   });
 
