@@ -752,7 +752,7 @@ effect navigate-back   cap=nav.back  in=Unit  out=Unit
 
 ### 2.6.2 Toast
 
-The banner the runtime renders carries `data-kumiki-toast` (the marker a test selects on) and `data-level`.
+The banner the runtime renders carries `data-kumiki-toast` (the marker a test selects on) and `data-level`. Its dismiss button carries `data-kumiki-toast-dismiss`, and the banners on screen at once sit in one element, `data-kumiki-toast-stack` ([Lifecycle §7.7](./lifecycle.md#_7-7-toasts)).
 
 ```kumiki fragment
 effect toast       cap=notification.show

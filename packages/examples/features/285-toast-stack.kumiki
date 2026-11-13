@@ -1,0 +1,24 @@
+# Feature: toasts shown together share one stack at the bottom-right of the
+# screen, and every toast can be dismissed.
+#
+# An `error` toast's default duration is 0: it stays until it is dismissed. Each
+# banner carries a dismiss button, named "Dismiss" and marked
+# `data-kumiki-toast-dismiss`, and Escape dismisses the toast whose button has
+# focus; Escape anywhere else is left to the page. The newest toast sits nearest
+# the corner, and when one leaves, the others close the gap.
+#
+# The scenario beside this file shows both toasts up at once, "Saved" going
+# after the 500ms it asks for, and "Save failed" going only when its dismiss
+# button is clicked.
+
+reducer failed on=ui.click(FailBtn) do= emit toast({kind: "error", text: "Save failed"})
+reducer saved  on=ui.click(SaveBtn) do= emit toast({kind: "success", text: "Saved", duration: Some(Duration.ms(500))})
+
+tile FailBtn = button(text="Fail", onClick=failed)
+tile SaveBtn = button(text="Save", onClick=saved)
+tile App     = column(FailBtn, SaveBtn)
+
+app ToastStack
+    caps   = [notification.show]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

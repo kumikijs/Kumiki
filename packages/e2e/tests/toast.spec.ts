@@ -1,12 +1,13 @@
 // The runtime's own tests fire the effect on a stub app and mount nothing, and
-// do no layout, so a banner that moved under the root or scrolled away with the
-// page would pass them. The rest of the banner's behaviour is the example's
-// `.browser.json`, which `fixtures.spec.ts` runs.
+// do no layout and no real focus, so a banner that moved under the root,
+// scrolled away with the page or was drawn over another, or a dismiss button
+// Tab cannot reach, would pass them. The rest of the banner's behaviour is the
+// example's `.browser.json`, which `fixtures.spec.ts` runs.
 
 import { readFileSync } from "node:fs";
 import { runOnPage } from "@kumikijs/e2e";
 import { feature } from "@kumikijs/examples";
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 const SOURCE = readFileSync(feature("288-toast-in-the-browser"), "utf8");
 
@@ -19,3 +20,52 @@ test("a toast stays in the viewport on a page taller than it", async ({ page }) 
   expect(await page.evaluate(() => document.body.scrollHeight > window.innerHeight)).toBe(true);
   await expect(page.locator("[data-kumiki-toast]")).toBeInViewport();
 });
+
+/** Where the banner of `level` is drawn, in viewport pixels. */
+async function box(page: Page, level: string) {
+  const found = await page.locator(`[data-kumiki-toast][data-level='${level}']`).boundingBox();
+  if (!found) throw new Error(`no ${level} toast is drawn`);
+  return found;
+}
+
+// A headless DOM computes no layout, so only here does "stacked" mean apart on screen.
+test("toasts shown together stack at the bottom-right, and close the gap one leaves", async ({
+  page,
+}) => {
+  const report = await runOnPage(page, SOURCE, {
+    steps: [{ do: { clickText: "Show error" } }, { do: { clickText: "Show info" } }],
+  });
+  expect(report.ok).toBe(true);
+  // The area `position: fixed` places against: the viewport less any scrollbar.
+  const view = await page.evaluate(() => ({
+    width: document.documentElement.clientWidth,
+    height: document.documentElement.clientHeight,
+  }));
+  const error = await box(page, "error");
+  const info = await box(page, "info");
+  // Apart, the newer one nearer the corner, and both against the right edge.
+  expect(error.y + error.height).toBeLessThanOrEqual(info.y);
+  expect(Math.abs(info.y + info.height - (view.height - 24))).toBeLessThanOrEqual(1);
+  for (const b of [error, info]) {
+    expect(Math.abs(b.x + b.width - (view.width - 24))).toBeLessThanOrEqual(1);
+  }
+
+  await page.locator("[data-kumiki-toast][data-level='info'] [data-kumiki-toast-dismiss]").click();
+  await expect(page.locator("[data-kumiki-toast]")).toHaveCount(1);
+  const moved = await box(page, "error");
+  expect(Math.abs(moved.y + moved.height - (info.y + info.height))).toBeLessThanOrEqual(1);
+});
+
+for (const key of ["Escape", "Enter"]) {
+  test(`a keyboard user reaches a toast's dismiss button with Tab and dismisses it with ${key}`, async ({
+    page,
+  }) => {
+    const report = await runOnPage(page, SOURCE, { steps: [{ do: { clickText: "Show error" } }] });
+    expect(report.ok).toBe(true);
+    // The click left focus on "Show error", and the stack follows the app in the tab order.
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("button", { name: "Dismiss" })).toBeFocused();
+    await page.keyboard.press(key);
+    await expect(page.locator("[data-kumiki-toast]")).toHaveCount(0);
+  });
+}

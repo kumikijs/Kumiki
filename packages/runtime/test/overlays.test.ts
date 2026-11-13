@@ -9,25 +9,28 @@ import { defined } from "./helpers/defined.ts";
 
 const caps: CapabilityRegistry = { has: () => false, provider: () => undefined };
 
-/** Fire the effect `install` adds, and return what it appended to `<body>`. */
-function appended(install: BuiltinInstaller, name: string, input: unknown): Element[] {
+/** Fire the effect `install` adds, and return every element it added to the document. */
+function added(install: BuiltinInstaller, name: string, input: unknown): Element[] {
   const app: AppShape = { slots: {}, caps: [], reducers: [], effects: {}, init: [] };
   install(app, { navigate: () => {}, back: () => {} });
-  const before = new Set(Array.from(document.body.children));
+  const all = (): Element[] => Array.from(document.body.querySelectorAll("*"));
+  const before = new Set(all());
   // Not awaited: a confirm's invoke settles when the dialog is answered. Both
   // effects append synchronously, before their first `await`.
   void defined(app.effects[name], `the installed ${name} effect`).invoke(input, caps);
-  return Array.from(document.body.children).filter((el) => !before.has(el));
+  return all().filter((el) => !before.has(el));
 }
 
 const PRODUCERS = [
   {
     selector: "[data-kumiki-toast]",
-    open: () => appended(installToast, "toast", { kind: "info", text: "Saved" }),
+    open: () => added(installToast, "toast", { kind: "info", text: "Saved" }),
+    shows: "Saved",
   },
   {
     selector: "[data-kumiki-confirm]",
-    open: () => appended(installConfirm, "confirm", { title: "Reset?", message: "Sure?" }),
+    open: () => added(installConfirm, "confirm", { title: "Reset?", message: "Sure?" }),
+    shows: "Reset?Sure?NoYes",
   },
 ];
 
@@ -41,12 +44,14 @@ describe("RUNTIME_OVERLAY_SELECTORS", () => {
   });
 
   for (const p of PRODUCERS) {
-    // The element appended, not something inside it: what a step reads is its
-    // whole text, a confirm's title and message as well as its buttons.
-    it(`${p.selector} matches what its effect appends to <body>`, () => {
-      const els = p.open();
-      expect(els).toHaveLength(1);
-      expect(els[0]?.matches(p.selector)).toBe(true);
+    // One element, and the one that holds everything its effect shows: what a
+    // step reads is its whole text, a confirm's title and message as well as
+    // its buttons. A toast's banner goes into the stack rather than straight
+    // into <body>, and the stack, which holds every toast, is not it.
+    it(`${p.selector} matches the element that holds what its effect shows`, () => {
+      const marked = p.open().filter((el) => el.matches(p.selector));
+      expect(marked).toHaveLength(1);
+      expect(marked[0]?.textContent).toBe(p.shows);
     });
   }
 });

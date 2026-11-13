@@ -333,7 +333,9 @@ reducer notifySave
 
 `kind` is one of `info` / `success` / `warn` / `error`, and reaches the DOM as `data-level` — the runtime attaches no appearance to it. If `duration` is unspecified, the default per kind applies (info 3s, success 3s, warn 5s, error 0 = stays until dismissed); `Some(Duration.ms(0))` asks for the same thing explicitly.
 
-The runtime has a built-in tile that manages a toast stack at the bottom-right of the screen.
+The runtime has a built-in tile that manages a toast stack at the bottom-right of the screen. Toasts shown at the same time are stacked, never drawn over one another: the newest sits nearest the corner, and when one leaves, the others close the gap.
+
+Every toast can be dismissed, whatever its duration: by its dismiss button, whose accessible name is "Dismiss", or by Escape while that button has focus. Escape pressed anywhere else is left to the page, so a toast never takes it from the app's own key handlers or from a dialog, and the press that dismisses a toast goes no further. When the toast that leaves, dismissed or timed out, held focus, focus moves to the toast that takes its place — the one below it, or the one above when it was the newest — rather than falling to the page.
 
 ---
 
