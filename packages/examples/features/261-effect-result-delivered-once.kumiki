@@ -1,0 +1,50 @@
+# Feature: a request delivers exactly one result (runtime.md §10.4.5).
+#
+# `loadNote` reads "note" from localStorage, a capability that fails with
+# `Text`. `loaded` counts the `.ok` results it is handed and `failed` the
+# `.err` ones, keeping `$e`, a `Text`, in `problem`.
+#
+# Once `loaded` has run, the request has its result. Something can still throw
+# while that result is being delivered, past the body of `loaded`: the dispatch
+# of what it emits, the render after it, a host's episode logger. That is not a
+# second result for the request. It is an error of the app, so `app.error`
+# fires with category "effect" and location `effect "loadNote"`, and `failed`
+# does not run. It used to run, and it was handed a `{message}` record where
+# `Text` is declared, so the page read `problem: [object Object]`.
+#
+# The scenario walks one `.ok` and one `.err`. An integration test in
+# `packages/tests` mounts this app with an episode logger that throws while
+# the render after `loaded` is recorded.
+
+slot note    : Text = "none"
+slot oks     : Int  = 0
+slot errs    : Int  = 0
+slot problem : Text = ""
+slot crash   : Text = ""
+
+effect loadNote cap=storage.read
+                in=Unit
+                out=Result(Option(Text), Text)
+                map-request={key: "note", decode: Decoder.Json(Text)}
+
+reducer load    on=ui.click(LoadBtn)    do= emit loadNote()
+reducer loaded  on=loadNote.ok($o, _)   do= note := $o.get-or("empty")
+                                           oks  := oks + 1
+reducer failed  on=loadNote.err($e, _)  do= errs    := errs + 1
+                                           problem := $e
+reducer onCrash on=app.error            do= crash := $event.category + " in " + $event.location
+
+tile LoadBtn = button(text="Load", onClick=load) {id: "load"}
+
+tile App = column(
+    LoadBtn,
+    text("note: " + note),
+    text("oks=" + oks.show + " errs=" + errs.show),
+    text("problem: " + problem),
+    text("app.error: " + crash)
+) {pad: "lg", gap: "md"}
+
+app EffectResultDeliveredOnce
+    caps   = [storage.read]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

@@ -413,7 +413,16 @@ export function mountCore(
     return { kind: "lifecycle", target: r.event.name };
   }
 
-  function applyReducer(r: ReducerSpec, payload: Record<string, unknown>): void {
+  /**
+   * Run `r` on `payload` inside an episode, opening one when none is open. A panic inside the
+   * body is reported by {@link applyReducerBody}. `escaped`, when given, takes what throws past
+   * the body, while that episode is still open; without it the throw goes on to the caller.
+   */
+  function applyReducer(
+    r: ReducerSpec,
+    payload: Record<string, unknown>,
+    escaped?: (e: unknown) => void,
+  ): void {
     if (disposed) return;
     const opened = episode && !episode.hasOpenEpisode();
     if (opened) {
@@ -422,6 +431,9 @@ export function mountCore(
     }
     try {
       applyReducerBody(r, payload);
+    } catch (e) {
+      if (!escaped) throw e;
+      escaped(e);
     } finally {
       if (opened) episode?.endTrigger();
     }
@@ -473,11 +485,19 @@ export function mountCore(
     token = "",
   ): void {
     const exitScope = episode?.recordEffectEnd(token, effect, outcome, value);
+    // What throws past a reducer's body here (the dispatch of what it emitted, the render after
+    // it) is not another result: the request already has its one. It is an error of the app,
+    // reported as a reducer panic is, and the effect's other reducers still run after it.
+    const location = `effect "${effect}"`;
+    const escaped = (e: unknown): void => {
+      reportPanic(location, e);
+      fireAppError(panicInfo(e, "effect"), location);
+    };
     let matched = 0;
     try {
       for (const r of app.reducers) {
         if (r.event.kind === "effect" && r.event.effect === effect && r.event.outcome === outcome) {
-          applyReducer(r, { $1: value, $2: key });
+          applyReducer(r, { $1: value, $2: key }, escaped);
           matched++;
         }
       }
@@ -495,7 +515,7 @@ export function mountCore(
           if (name) {
             const r = app.reducers.find((r) => r.name === name);
             if (r) {
-              applyReducer(r, { $1: value, $2: key });
+              applyReducer(r, { $1: value, $2: key }, escaped);
               matched++;
             }
           }
