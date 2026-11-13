@@ -139,12 +139,7 @@ export function makeEffectDispatcher(
     const token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
     const ctl = new AbortController();
     state.inflight.set(id, ctl);
-    let res: EffectResult;
-    try {
-      res = await runWithRetry(eff, input, caps, ctl.signal);
-    } catch (e) {
-      res = { kind: "err", value: { message: String(e) } };
-    }
+    const res = await runEffect(eff, input, caps, ctl.signal);
     // Released before its result is delivered, so a cancel the `.ok` / `.err` reducers emit finds
     // a request that is over. Under `latest` a newer request may hold the id by now.
     if (state.inflight.get(id) === ctl) {
@@ -331,28 +326,38 @@ export function standInValue(
   return outcome === "err" && eff?.errText ? eff.errText(value) : (value ?? null);
 }
 
-async function runWithRetry(
+/**
+ * The result one run of `eff` delivers: its invoke, attempted again as `eff.retry` says, with an
+ * invoke that throws read as the `{message}` err. The live dispatcher and the server pass both run
+ * an effect through here, so the two deliver the same result.
+ */
+export async function runEffect(
   eff: EffectSpec,
   input: unknown,
   caps: CapabilityRegistry,
   signal?: AbortSignal,
 ): Promise<EffectResult> {
-  const policy = eff.retry;
-  if (!policy) return eff.invoke(input, caps, signal);
-  let last: EffectResult = await eff.invoke(input, caps, signal);
-  for (let attempt = 1; attempt < policy.n; attempt++) {
-    if (last.kind !== "err" || last.final) return last;
-    if (signal?.aborted) return last;
-    const status = readStatus(last.value);
-    const retriable = status === null || status === 0 || status >= 500;
-    if (!retriable) return last;
-    const delay = policy.kind === "linear" ? policy.ms : policy.ms * policy.factor ** (attempt - 1);
-    // An abort during the wait has no attempt running to answer it, so the aborted err
-    // comes from here.
-    if (!(await sleep(delay, signal))) return { kind: "err", value: abortedErr(eff) };
-    last = await eff.invoke(input, caps, signal);
+  try {
+    const policy = eff.retry;
+    let last: EffectResult = await eff.invoke(input, caps, signal);
+    if (!policy) return last;
+    for (let attempt = 1; attempt < policy.n; attempt++) {
+      if (last.kind !== "err" || last.final) return last;
+      if (signal?.aborted) return last;
+      const status = readStatus(last.value);
+      const retriable = status === null || status === 0 || status >= 500;
+      if (!retriable) return last;
+      const delay =
+        policy.kind === "linear" ? policy.ms : policy.ms * policy.factor ** (attempt - 1);
+      // An abort during the wait has no attempt running to answer it, so the aborted err
+      // comes from here.
+      if (!(await sleep(delay, signal))) return { kind: "err", value: abortedErr(eff) };
+      last = await eff.invoke(input, caps, signal);
+    }
+    return last;
+  } catch (e) {
+    return { kind: "err", value: { message: String(e) } };
   }
-  return last;
 }
 
 /**

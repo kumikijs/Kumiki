@@ -4,7 +4,6 @@ import {
   type CapabilityProvider,
   type CapabilityRegistry,
   computeSlotDiffs,
-  type EffectResult,
   type EmitSpec,
   NONE,
   type ParsedRoute,
@@ -17,6 +16,7 @@ import {
   reportRefusedEmit,
   reportRejectedBatch,
   reportUnhandledEffectError,
+  runEffect,
   type SsrSnapshot,
   withEnvRecord,
   withRenderingApp,
@@ -177,16 +177,10 @@ async function dispatchEmit(
     return;
   }
   const token = logger.recordEffectStart(emit.effect, input);
-  let result: EffectResult;
-  try {
-    result = await Promise.resolve(effect.invoke(input, caps));
-  } catch (e) {
-    result = {
-      kind: "err",
-      value: e instanceof Error ? e.message : String(e),
-    };
-  }
+  const result = await runEffect(effect, input, caps);
   const exitScope = logger.recordEffectEnd(token, emit.effect, result.kind, result.value);
+  // What the live dispatcher hands the same reducers: `$2` is the emit's input.
+  const payload = { $1: result.value, $2: input };
   try {
     const dirty: string[] = [];
     let matched = 0;
@@ -199,7 +193,7 @@ async function dispatchEmit(
       ) {
         continue;
       }
-      const applied = applyReducerOnSsr(r, live, app.slots, result.value, logger, dirty);
+      const applied = applyReducerOnSsr(r, live, app.slots, payload, logger, dirty);
       if (applied) {
         matched++;
         followUps.push(...applied.emits);
@@ -219,7 +213,7 @@ async function dispatchEmit(
         if (name) {
           const r = app.reducers.find((x) => x.name === name);
           if (r) {
-            const applied = applyReducerOnSsr(r, live, app.slots, result.value, logger, dirty);
+            const applied = applyReducerOnSsr(r, live, app.slots, payload, logger, dirty);
             if (applied) {
               matched++;
               followUps.push(...applied.emits);
@@ -244,11 +238,11 @@ function applyReducerOnSsr(
   r: AppShape["reducers"][number],
   live: Record<string, unknown>,
   slotMetas: AppShape["slots"],
-  value: unknown,
+  payload: Record<string, unknown>,
   logger: EpisodeLogger,
   dirtyAcc: string[],
 ): { emits: EmitSpec[] } | null {
-  const outcome = withEnvRecord(() => r.apply(live, { $1: value, $2: undefined }));
+  const outcome = withEnvRecord(() => r.apply(live, payload));
   const envReads = outcome.env.reads;
   if (!outcome.ok) {
     // Route SSR panics through the same panicInfo pipeline as the live path so stack + Error.cause survive into the bootstrap episode.

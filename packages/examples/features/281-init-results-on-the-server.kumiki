@@ -1,0 +1,56 @@
+# Feature (runtime.md): the server pass delivers an `app.init` effect's result
+# as the browser does.
+#
+# Hydration does not run `app.init` again, so what `renderToString` computes
+# for it is what the hydrated page keeps. Its `.ok` / `.err` reducers are
+# handed the same two binds a mount hands them, after the same attempts:
+#
+#   - `$k`, the second bind, is the emit's input, here the key `"dark"`;
+#   - `retry=` retries a 5xx or a network error, so a 503 the first attempt
+#     meets is followed by a second attempt, which answers `hello`;
+#   - an invoke that throws, as a host provider may, fails with a `{message}`
+#     record, so `$e.message` reads the thrown error.
+#
+# The scenario drives a mount, whose `ping` answers `pong`. What the server
+# serves, and the page hydrated from it, is pinned beside a mount by an
+# integration test in `packages/tests`, with an `http.post` provider that
+# throws.
+
+slot themeAt : Text = "unset"
+slot quote   : Text = "none"
+slot pinged  : Text = "none"
+
+effect loadTheme cap=http.get
+                 in=Text
+                 out=Result(Text, HttpError)
+                 policy=latest-per-key($1)
+                 map-request={url: "/theme/" + $1, decode: Decoder.Text}
+
+effect loadQuote cap=http.get
+                 in=Unit
+                 out=Result(Text, HttpError)
+                 retry=linear(3, 10ms)
+                 map-request={url: "/quote", decode: Decoder.Text}
+
+effect ping cap=http.post
+            in=Unit
+            out=Result(Text, HttpError)
+            map-request={url: "/ping", decode: Decoder.Text}
+
+reducer themeOk  on=loadTheme.ok(_, $k)  do= themeAt := $k
+reducer themeErr on=loadTheme.err(_, $k) do= themeAt := $k
+reducer quoteOk  on=loadQuote.ok($q, _)  do= quote := $q
+reducer quoteErr on=loadQuote.err($e, _) do= quote := "failed " + $e.status.show
+reducer pingOk   on=ping.ok($v, _)       do= pinged := $v
+reducer pingErr  on=ping.err($e, _)      do= pinged := "err [" + $e.message + "]"
+
+tile App = column(
+             text("themeAt=" + themeAt),
+             text("quote=" + quote),
+             text("pinged=" + pinged))
+           {pad: "lg", gap: "sm"}
+
+app InitResultsOnTheServer
+    caps   = [http.get, http.post]
+    routes = {"/" -> App, "/404" -> App}
+    init   = [loadTheme("dark"), loadQuote(), ping()]
