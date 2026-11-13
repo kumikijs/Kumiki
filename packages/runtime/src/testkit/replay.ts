@@ -22,7 +22,11 @@ import type {
   EpisodeStepLite,
 } from "./episode-log.ts";
 
-export type SlotMetaLike = { value: unknown; refine?: (v: unknown) => boolean } & RefinementNaming;
+export type SlotMetaLike = {
+  value: unknown;
+  refine?: (v: unknown) => boolean;
+  volatile?: boolean;
+} & RefinementNaming;
 
 export type ReplayApp = {
   live: Record<string, unknown>;

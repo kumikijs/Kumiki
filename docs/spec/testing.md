@@ -451,7 +451,7 @@ episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
                  | 'no-errors' ':' bool
 ```
 
-`slots-equal: from-log` compares the final slots with the values the log recorded; a record names the slots to compare and their expected values instead.
+`slots-equal: from-log` compares the final slots with the values the log recorded; a record names the slots to compare and their expected values instead. A `volatile` slot is not written to the log ([Store Layer Syntax](./language.md#_1-4-1-syntax)), so `from-log` leaves it out, even where an older log recorded a write to it; every other slot is expected at the last value the log recorded for it, or at its initial value when the log never wrote it. A record compares every slot it names, `volatile` or not.
 
 `no-panics: true` fails the test when a replayed reducer panics, and `no-errors: true` when an effect's `err` reaches no `.err` reducer ([Standard Capabilities](./stdlib.md#_2-5-standard-capabilities)); each is reported only when its key is `true`. The runner first checks that every episode was replayed ([Use Cases](#_8-6-2-use-cases)), then judges these two in that order, both ahead of `slots-equal`, and reports the first that fails. A reducer that panicked writes nothing and emits nothing, and a dropped `err` runs no reducer, so the slots either would have reached keep their old values: compared first, a slot diff would report that symptom in place of its cause.
 
