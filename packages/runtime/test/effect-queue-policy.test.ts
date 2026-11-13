@@ -168,16 +168,19 @@ describe("policy=queue runs one at a time", () => {
     dispose();
   });
 
-  it("releases a queued launch that unmount cancelled", async () => {
-    const { app } = makeQueueApp();
+  // `a` is running and ignores its abort; `b` and `c` are queued behind it.
+  it("cancels at unmount the running launch and each queued one, before dispose returns", async () => {
+    const { app, log } = makeQueueApp();
     const logger = createEpisodeLogger();
     const { dispose } = mount(app, host, { episodeLogger: logger });
     dispatch(app, "go");
     await tick(5);
     dispose();
+    const kinds = (): string[] =>
+      logger.list().flatMap((e: Episode) => e.steps.map((st) => st.kind));
+    expect(kinds().filter((k) => k === "effect-cancel")).toHaveLength(3);
     await tick(120);
-    const steps = logger.list().flatMap((e: Episode) => e.steps.map((st) => st.kind));
-    expect(steps.filter((k) => k === "effect-cancel")).toHaveLength(2);
-    expect(steps.filter((k) => k === "effect-end")).toHaveLength(1);
+    expect(kinds().filter((k) => k === "effect-end")).toHaveLength(0);
+    expect(log).toEqual(["start a", "end a"]);
   });
 });
