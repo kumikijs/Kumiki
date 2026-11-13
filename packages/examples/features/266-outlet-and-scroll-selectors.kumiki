@@ -1,0 +1,66 @@
+# Feature (W0212): what a `ui.*` selector reaches through a
+# `route-outlet`, and on a `scroll`.
+#
+#   route-outlet  the route picks the tile an outlet shows at runtime, and
+#                 renders that tile on its own, so a subscription on the tile
+#                 holding the outlet is not lifted onto it. `ui.click(Shell)`
+#                 runs for Shell's own button and not for the button `Child`
+#                 puts in its outlet, which runs `ui.click(Child)`. Without
+#                 Shell's button, `ui.click(Shell)` would be W0212, and the
+#                 message says the routed tile is picked at runtime.
+#   scroll        Chromium puts an overflowing scroll that holds nothing
+#                 focusable in the tab order, and fires `focus`, `keydown` and
+#                 `blur` on its `<div>`. `ui.focus(Pane)` and `ui.blur(Pane)`
+#                 are lifted onto it. `Fits` holds content that fits, so it
+#                 takes no focus and `ui.focus(Fits)` never runs: whether a
+#                 scroll overflows is a property of the instance, as
+#                 `controls` is of a video. `ui.key` is not lifted: a key in a
+#                 control inside a scroll bubbles to its `<div>`, and the
+#                 control carries the subscription already, so `ui.key(List)`
+#                 runs once for a key in `#note`. `onKeyDown=` written on the
+#                 scroll hears a key on its `<div>`.
+
+slot note : Text = ""
+slot log  : Text = ""
+
+reducer shellClick on=ui.click(Shell) do= log := log + "s "
+reducer pressed    on=ui.click(Child) do= log := log + "c "
+reducer fitsFocus  on=ui.focus(Fits)  do= log := log + "ff "
+reducer paneFocus  on=ui.focus(Pane)  do= log := log + "pf "
+reducer paneBlur   on=ui.blur(Pane)   do= log := log + "pb "
+reducer paneKey    on=ui.key(_)       do= log := log + "pk "
+reducer typed      on=ui.key(List)    do= log := log + "t "
+
+tile Lines = column(
+    text("line 1"), text("line 2"), text("line 3"),
+    text("line 4"), text("line 5"), text("line 6"))
+
+tile Fits = scroll(text("this fits")) {id: "fits", h: 200}
+tile Pane = scroll(Lines, onKeyDown=paneKey) {id: "pane", h: 48}
+tile List = scroll(column(input(bind=note) {id: "note"}, Lines)) {id: "list", h: 48}
+
+tile Panes
+    = page(
+        heading("a scroll"),
+        Fits,
+        Pane,
+        List,
+        text("log: " + log))
+      {pad: "lg", gap: "md"}
+
+tile Child = column(button(text="press") {id: "press"})
+tile Empty = column(text("nothing routed"))
+
+tile Shell
+    sub-routes = { "/s/child" -> Child, "/s" -> Empty }
+    = column(
+        heading("a route-outlet"),
+        button(text="shell") {id: "shell"},
+        route-outlet(),
+        text("log: " + log))
+      {pad: "lg", gap: "md"}
+
+app OutletScrollSelectors
+    caps   = []
+    routes = {"/" -> Panes, "/s/*" -> Shell, "/404" -> Panes}
+    init   = []

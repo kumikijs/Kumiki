@@ -360,7 +360,7 @@ describe("W0212 gives the reason that holds when the element fires the event", (
         `Reducer "r" subscribes to ui.focus(D) but "focus" never reaches a listener in tile "D": ` +
           `the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires ` +
           `does not bubble to the <label> ` +
-          `(DOM-allowed: input, textarea, button, select, slider, editable, link, video; observed in body: check). ` +
+          `(DOM-allowed: input, textarea, button, select, slider, editable, link, video, scroll; observed in body: check). ` +
           `The handler is silently dropped.`,
       );
     });
@@ -473,6 +473,47 @@ describe("W0212 gives the reason that holds when the element fires the event", (
         app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
       `;
       expect(codesOf(src)).toEqual([]);
+    });
+  });
+
+  describe("on a scroll, reports ui.key alone, and says where it goes instead", () => {
+    const PANE = 'tile D = scroll(text("a long line"))';
+
+    it.each(["focus", "blur"])("says nothing about ui.%s, which fires on its own <div>", (ev) => {
+      const src = `
+        slot hits : Int = 0
+        reducer r on=ui.${ev}(D) do= hits := hits + 1
+        ${PANE}
+        tile App = column(D, text(hits.show))
+        app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+      `;
+      expect(codesOf(src)).toEqual([]);
+    });
+
+    it("says a control inside it takes ui.key, and how to hear a key on the scroll", () => {
+      expect(w0212("key", PANE)).toBe(
+        `Reducer "r" subscribes to ui.key(D) but "key" never reaches a listener in tile "D": ` +
+          `a scroll takes no "key" listener on its <div>, ` +
+          `since a control inside it takes the subscription instead — ` +
+          `write onKeyDown= on the scroll to hear a "key" on its <div> ` +
+          `(DOM-allowed: input, textarea, button, select, slider, editable, link, video, check, radio, switch; ` +
+          `observed in body: scroll, text). ` +
+          `The handler is silently dropped.`,
+      );
+    });
+
+    it("gives the summary's reason and the scroll's, one clause each, for a body holding both", () => {
+      expect(
+        w0212("key", 'tile D = row(scroll(text("a")), details(summary="Q", text("a")))'),
+      ).toContain(
+        `"key" never reaches a listener in tile "D": ` +
+          `a details takes no "key" listener on the <details> around its <summary>, ` +
+          `since a control in its panel takes the subscription instead — ` +
+          `write onKeyDown= on the details to hear a "key" on its <summary>; ` +
+          `a scroll takes no "key" listener on its <div>, ` +
+          `since a control inside it takes the subscription instead — ` +
+          `write onKeyDown= on the scroll to hear a "key" on its <div> (`,
+      );
     });
   });
 
@@ -739,7 +780,7 @@ describe("W0212 gives the reason that holds when the element fires the event", (
 
     describe("on a wrapped control, says focus / blur do not bubble to the wrapper", () => {
       const FOCUS_ONTO =
-        "Put it on button / editable / input / link / select / slider / textarea / video";
+        "Put it on button / editable / input / link / scroll / select / slider / textarea / video";
       const subscribe = (ev: string) =>
         `or subscribe with a reducer's on=ui.${ev}(<Tile>) on a tile that takes focus itself`;
 
@@ -831,6 +872,9 @@ describe("W0212 gives the reason that holds when the element fires the event", (
         ["onKeyDown on a check", "check(value=done, onKeyDown=r)"],
         ["onKeyDown on a details", 'details(summary="Q", text("a"), onKeyDown=r)'],
         ["onMouseEnter on a radio", 'radio(group="g", selected=done, onMouseEnter=r)'],
+        ["onKeyDown on a scroll", 'scroll(text("a"), onKeyDown=r)'],
+        ["onFocus on a scroll", 'scroll(text("a"), onFocus=r)'],
+        ["onBlur on a scroll", 'scroll(text("a")) {onBlur: r}'],
         [
           "onFocus on a user tile that may render an input",
           "Inner(onFocus=r)\ntile Inner = if done then check(value=done) else input(bind=note)",
@@ -852,6 +896,81 @@ describe("W0212 gives the reason that holds when the element fires the event", (
         expect(codesOf(src)).toEqual([]);
       });
     });
+  });
+});
+
+describe("W0212 on a tile that holds a route-outlet says the routed tile is picked at runtime", () => {
+  const routed = (ev: string, shell: string, tiles = "") => `
+slot done : Bool = false
+slot hits : Int = 0
+reducer r on=ui.${ev}(Shell) do= hits := hits + 1
+tile Child = column(button(text="press"))
+tile Home  = column(text("home"))
+${tiles}
+tile Shell
+    sub-routes = { "/s/child" -> Child, "/s" -> Home }
+    = ${shell}
+app A caps=[] routes={"/" -> Home, "/s/*" -> Shell, "/404" -> Home} init=[]
+`;
+  const w0212 = (ev: string, shell: string, tiles = "") => {
+    const found = checkSource(routed(ev, shell, tiles)).filter((e) => e.code === "W0212");
+    expect(found).toHaveLength(1);
+    return found[0]!.message;
+  };
+  const SHELL = 'column(text("shell"), route-outlet())';
+  const OUTLET = (ev: string) =>
+    `the tile its route-outlet shows is picked by the route at runtime and rendered on its own, ` +
+    `so ui.${ev}(Shell) is not lifted onto it — subscribe to that tile instead`;
+
+  it("says so for ui.click, beside what the rest of the body does with a click", () => {
+    expect(w0212("click", SHELL)).toBe(
+      `Reducer "r" subscribes to ui.click(Shell) but "click" never reaches a reducer in tile "Shell": ` +
+        `${OUTLET("click")}; a column / text fires "click", and its renderer never calls onClick ` +
+        `(DOM-allowed: button, check, switch, radio; observed in body: column, route-outlet, text). ` +
+        `The handler is silently dropped.`,
+    );
+  });
+
+  it("says so for ui.key, where nothing else in the body fires a key", () => {
+    expect(w0212("key", SHELL)).toBe(
+      `Reducer "r" subscribes to ui.key(Shell) but "key" never reaches a reducer in tile "Shell": ` +
+        `${OUTLET("key")} ` +
+        `(DOM-allowed: input, textarea, button, select, slider, editable, link, video, check, radio, switch; ` +
+        `observed in body: column, route-outlet, text). ` +
+        `The handler is silently dropped.`,
+    );
+  });
+
+  it.each([
+    "submit",
+    "change",
+    "input",
+    "focus",
+    "blur",
+  ])("says so for ui.%s, and not that no descendant fires it", (ev) => {
+    const message = w0212(ev, SHELL);
+    expect(message).toContain(`"${ev}" never reaches a reducer in tile "Shell": ${OUTLET(ev)} (`);
+    expect(message).not.toContain("has no descendant");
+  });
+
+  it("says so where the outlet is in a tile the body renders", () => {
+    const message = w0212("key", 'page(heading("shell"), Body)', "tile Body = box(route-outlet())");
+    expect(message).toContain(`"key" never reaches a reducer in tile "Shell": ${OUTLET("key")} (`);
+    expect(message).toContain("observed in body: box, heading, page, route-outlet)");
+  });
+
+  it("gives the outlet's reason and a label's, one clause each, for a body holding both", () => {
+    expect(w0212("focus", "column(check(value=done), route-outlet())")).toContain(
+      `"focus" never reaches a listener in tile "Shell": ${OUTLET("focus")}; ` +
+        `the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires ` +
+        `does not bubble to the <label> (`,
+    );
+  });
+
+  it("says nothing of a subscription on the routed tile itself", () => {
+    const src = routed("click", SHELL).replace("ui.click(Shell)", "ui.click(Child)");
+    expect(src).toContain("ui.click(Child)");
+    expect(codesOf(src)).toEqual([]);
   });
 });
 

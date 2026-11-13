@@ -160,19 +160,30 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
 }
 
-// A wrapped kind's focused element, and a kind whose renderer never calls the handler, do fire
-// the event; "no descendant fires it" would be untrue of them. No row records a kind that fires
-// unheard under key, focus or blur, so the two reasons never both apply.
+// The routed tile is lowered as its own route target, outside the tile that holds the outlet,
+// so no subscription on that tile reaches whatever the route puts there.
+const OUTLET = "route-outlet";
+
+// A wrapped kind's focused element and a kind whose renderer never calls the handler do fire the
+// event, and the tile a route-outlet shows may; "no descendant fires it" would be untrue of them.
+// No row records a kind that fires unheard under key, focus or blur, so those two reasons never
+// both apply.
 function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet<string>): string {
-  const unheard = firesUnheardClauses(ev, kinds);
-  if (unheard.length > 0) {
-    return `"${ev}" never reaches a reducer in tile "${tile}": ${unheard.join("; ")}`;
-  }
-  const unreached = wrappedUnreached(ev, kinds).map((g) => wrappedClause(ev, g));
-  if (unreached.length > 0) {
-    return `"${ev}" never reaches a listener in tile "${tile}": ${unreached.join("; ")}`;
-  }
-  return `tile "${tile}" has no descendant that fires "${ev}"`;
+  const outlet = kinds.has(OUTLET) ? [outletClause(ev, tile)] : [];
+  const rest = [...kinds].filter((k) => k !== OUTLET);
+  const unheard = firesUnheardClauses(ev, rest);
+  const unreached = wrappedUnreached(ev, rest).map((g) => wrappedClause(ev, g));
+  const clauses = [...outlet, ...unheard, ...unreached];
+  if (clauses.length === 0) return `tile "${tile}" has no descendant that fires "${ev}"`;
+  const missed = unreached.length > 0 ? "listener" : "reducer";
+  return `"${ev}" never reaches a ${missed} in tile "${tile}": ${clauses.join("; ")}`;
+}
+
+function outletClause(ev: UiEventKind, tile: string): string {
+  return (
+    `the tile its route-outlet shows is picked by the route at runtime and rendered on its own, ` +
+    `so ui.${ev}(${tile}) is not lifted onto it — subscribe to that tile instead`
+  );
 }
 
 function declaredRoutePatterns(
