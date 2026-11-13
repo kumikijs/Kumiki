@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
-import { check, lex, parse } from "@kumikijs/compiler";
 import { createKumikiHighlighter, type Highlight, overlayPad } from "./highlight";
-import { buildSrcdoc, capabilities, compileToJs, examples, PREVIEW_SANDBOX } from "./preview";
-import { type ModelContext, type PlaygroundApi, playgroundToolHost } from "./webmcp";
-
-type Diag = { code: string; kind: string; message: string; line: number; col: number };
+import { createPlayground, type Diagnostic } from "./playground";
+import { examples, PREVIEW_SANDBOX } from "./preview";
+import { type ModelContext, playgroundToolHost } from "./webmcp";
 
 const defaultExample = examples.find((e) => e.name.startsWith("01"));
 const DEFAULT_SOURCE =
@@ -13,55 +11,15 @@ const DEFAULT_SOURCE =
   'slot count : Int = 0\n\nreducer inc on=ui.click(IncBtn) do= count := count + 1\n\ntile IncBtn = button(text="+1", onClick=inc)\ntile App = column(heading("Count: " + count.show), IncBtn)\n\napp Playground\n    caps   = []\n    routes = {"/" -> App, "/404" -> App}\n    init   = []\n';
 
 const source = ref(DEFAULT_SOURCE);
-const diagnostics = shallowRef<Diag[]>([]);
+const diagnostics = shallowRef<Diagnostic[]>([]);
 const srcdoc = ref("");
 const selected = ref(defaultExample?.name ?? "");
 
-function diagnose(src: string): Diag[] {
-  try {
-    const program = parse(lex(src));
-    return check(program, { capabilities }).map((e) => ({
-      code: e.code,
-      kind: e.kind,
-      message: e.message,
-      line: e.pos.line,
-      col: e.pos.col,
-    }));
-  } catch (e) {
-    const pe = e as { message?: string; pos?: { line: number; col: number } };
-    return [
-      {
-        code: "E0000",
-        kind: "parse-error",
-        message: pe.message ?? String(e),
-        line: pe.pos?.line ?? 0,
-        col: pe.pos?.col ?? 0,
-      },
-    ];
-  }
-}
-
-function buildPreview(src: string): void {
-  const diags = diagnose(src);
-  diagnostics.value = diags;
-  if (diags.length > 0) {
-    srcdoc.value = "";
-    return;
-  }
-  const result = compileToJs(src);
-  if (result.kind === "fail") {
-    diagnostics.value = result.errors.map((e) => ({
-      code: e.code,
-      kind: e.kind,
-      message: e.message,
-      line: e.pos.line,
-      col: e.pos.col,
-    }));
-    srcdoc.value = "";
-    return;
-  }
-  srcdoc.value = buildSrcdoc(result.js);
-}
+const playground = createPlayground((view) => {
+  source.value = view.source;
+  diagnostics.value = view.diagnostics;
+  srcdoc.value = view.srcdoc;
+});
 
 let timer: ReturnType<typeof setTimeout> | undefined;
 watch(
@@ -71,24 +29,16 @@ watch(
       selected.value = "";
     }
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => buildPreview(src), 250);
+    timer = setTimeout(() => playground.preview(src), 250);
   },
   { immediate: false },
 );
 
-function loadExample(name: string): boolean {
-  const ex = examples.find((e) => e.name === name);
-  if (!ex) return false;
-  source.value = ex.source;
-  buildPreview(ex.source);
-  return true;
-}
-
 watch(selected, (name) => {
-  if (name) loadExample(name);
+  if (name) playground.loadExample(name);
 });
 
-const ok = computed(() => diagnostics.value.length === 0 && srcdoc.value.length > 0);
+const ok = computed(() => srcdoc.value.length > 0);
 
 const highlight = shallowRef<Highlight | null>(null);
 const backdropEl = ref<HTMLElement | null>(null);
@@ -104,28 +54,10 @@ function syncScroll(event: Event): void {
   backdrop.scrollLeft = ta.scrollLeft;
 }
 
-const webMcpApi: PlaygroundApi = {
-  compileSource(src) {
-    const diags = diagnose(src);
-    if (diags.length > 0) return { ok: false, diagnostics: diags };
-    const r = compileToJs(src);
-    return r.kind === "ok"
-      ? { ok: true, jsBytes: r.js.length }
-      : { ok: false, diagnostics: r.errors };
-  },
-  listExamples: () => examples.map((e) => e.name),
-  loadExample,
-  setSource(src) {
-    source.value = src;
-    buildPreview(src);
-    return diagnostics.value.length === 0 ? "ok" : JSON.stringify(diagnostics.value);
-  },
-};
-
 onMounted(() => {
-  buildPreview(source.value);
+  playground.preview(source.value);
   const mc = (navigator as unknown as { modelContext?: ModelContext }).modelContext;
-  playgroundToolHost.bind(mc, webMcpApi);
+  playgroundToolHost.bind(mc, playground);
   createKumikiHighlighter().then(
     (h) => {
       highlight.value = h;
@@ -133,7 +65,7 @@ onMounted(() => {
     (e) => console.warn("[playground] syntax highlight unavailable:", e),
   );
 });
-onBeforeUnmount(() => playgroundToolHost.release(webMcpApi));
+onBeforeUnmount(() => playgroundToolHost.release(playground));
 </script>
 
 <template>
@@ -159,14 +91,14 @@ onBeforeUnmount(() => playgroundToolHost.release(webMcpApi));
         ></textarea>
       </div>
       <div class="sp-preview">
-        <iframe v-if="ok" :srcdoc="srcdoc" title="preview" :sandbox="PREVIEW_SANDBOX"></iframe>
-        <ul v-else-if="diagnostics.length" class="sp-diags">
-          <li v-for="(d, i) in diagnostics" :key="i">
+        <ul v-if="diagnostics.length" class="sp-diags">
+          <li v-for="(d, i) in diagnostics" :key="i" :class="d.severity">
             <code>{{ d.code }}</code> {{ d.message }}
             <span class="sp-pos">({{ d.line }}:{{ d.col }})</span>
           </li>
         </ul>
-        <p v-else>…</p>
+        <iframe v-if="ok" :srcdoc="srcdoc" title="preview" :sandbox="PREVIEW_SANDBOX"></iframe>
+        <p v-else-if="!diagnostics.length">…</p>
       </div>
     </div>
   </div>
@@ -206,10 +138,12 @@ onBeforeUnmount(() => playgroundToolHost.release(webMcpApi));
 .sp-backdrop :deep(code) { display: block; font: inherit; line-height: inherit; }
 .sp-backdrop :deep(span) { color: var(--shiki-light); }
 .dark .sp-backdrop :deep(span) { color: var(--shiki-dark); }
-.sp-preview { background: #fff; overflow: auto; }
-.sp-preview iframe { width: 100%; height: 100%; min-height: 360px; border: 0; }
-.sp-diags { margin: 0; padding: 12px 12px 12px 28px; color: var(--vp-c-red-1); }
-.sp-diags code { color: var(--vp-c-red-1); }
+.sp-preview { display: flex; flex-direction: column; background: var(--vp-c-bg); overflow: auto; }
+.sp-preview iframe { flex: 1; width: 100%; min-height: 360px; border: 0; background: #fff; }
+.sp-diags { margin: 0; padding: 12px 12px 12px 28px; }
+.sp-diags + iframe { border-top: 1px solid var(--vp-c-divider); }
+.sp-diags .error, .sp-diags .error code { color: var(--vp-c-red-1); }
+.sp-diags .warning, .sp-diags .warning code { color: var(--vp-c-warning-1); }
 .sp-pos { color: var(--vp-c-text-2); }
 @media (max-width: 768px) { .sp-grid { grid-template-columns: 1fr; } }
 </style>

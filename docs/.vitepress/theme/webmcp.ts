@@ -23,6 +23,9 @@ export interface PlaygroundToolHost {
   release(api: PlaygroundApi): void;
 }
 
+const DIAGNOSTIC_SHAPE =
+  'Each diagnostic is {code, kind, message, line, col, severity}, as the @kumikijs/mcp server returns it; severity is "error" (the program does not compile) or "warning" (reported, but it still compiles and previews); codes per spec/errors.md.';
+
 export function createPlaygroundToolHost(): PlaygroundToolHost {
   let active: PlaygroundApi | null = null;
   let registered = false;
@@ -36,8 +39,7 @@ export function createPlaygroundToolHost(): PlaygroundToolHost {
   const tools: WebMcpTool[] = [
     {
       name: "kumiki_compile",
-      description:
-        "Compile the given Kumiki source. Returns ok plus generated JS size, or a list of diagnostics (codes per spec/errors.md).",
+      description: `Compile the given Kumiki source. Returns {ok: true, jsBytes, diagnostics} when it compiles (warnings do not stop it), or {ok: false, diagnostics} when it does not. ${DIAGNOSTIC_SHAPE}`,
       annotations: { readOnlyHint: true },
       inputSchema: {
         type: "object",
@@ -72,8 +74,7 @@ export function createPlaygroundToolHost(): PlaygroundToolHost {
     },
     {
       name: "kumiki_set_source",
-      description:
-        "Replace the playground editor's source with the given Kumiki code and preview it.",
+      description: `Replace the playground editor's source with the given Kumiki code and preview it. Answers "ok" when it previews with no diagnostics; "ok (<n> warnings)" and, on the next line, the warnings as a JSON list when it previews with warnings; or the diagnostics as a JSON list when it does not compile. ${DIAGNOSTIC_SHAPE}`,
       inputSchema: {
         type: "object",
         properties: { source: { type: "string" } },

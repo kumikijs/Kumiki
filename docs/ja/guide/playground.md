@@ -15,4 +15,6 @@
 | `kumiki_load_example` | 名前を指定して例をエディタに読み込む |
 | `kumiki_set_source` | エディタのソースを差し替えてプレビューする |
 
+各診断は `{code, kind, message, line, col, severity}` で、`@kumikijs/mcp` サーバーが返す形と同じ。診断が警告だけのプログラムもコンパイルは通る。playground はそれをプレビューして警告を並べ、`kumiki_compile` は `ok: true` を返す。
+
 ローカル CLI / エディタ統合用には、stdio で動く [`@kumikijs/mcp`](https://github.com/kumikijs/Kumiki/tree/main/packages/mcp) サーバーもある。
