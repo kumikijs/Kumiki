@@ -1,0 +1,22 @@
+{
+  "steps": [
+    {
+      "label": "the count starts at 0, beside the slot n",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Count: 0 / 5"],
+        "state": { "count": 0, "n": 5 }
+      }
+    },
+    {
+      "label": "+1 is the reducer both tests run",
+      "do": { "click": "#inc" },
+      "expect": { "noErrors": true, "domIncludes": ["Count: 1 / 5"], "state": { "count": 1 } }
+    },
+    {
+      "label": "-1 undoes it, the round trip the first test pins",
+      "do": { "click": "#dec" },
+      "expect": { "noErrors": true, "domIncludes": ["Count: 0 / 5"], "state": { "count": 0 } }
+    }
+  ]
+}

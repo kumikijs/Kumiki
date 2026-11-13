@@ -1,0 +1,46 @@
+# Feature (testing.md): a `for-all` name is the generated value wherever a
+# property-test reads it, in `given` as in `invariant`, and never the slot of
+# the same name. A name the `for-all` does not bind is read as usual.
+#
+#   for-all   = {n: Int where between(0, 50)}
+#   given     = {slots: {count: n}, …}         `n` is the generated value
+#   invariant = ….slots.count == n             `n` is the generated value
+#
+#   for-all   = {k: Int where between(0, 50)}
+#   given     = {slots: {count: n + k}, …}     `n` is the slot, `k` generated
+#
+# So `kumiki refs <file> slot.n` lists `App` and `inc-counts-past-the-slot`,
+# and not `inc-dec-roundtrips`, and
+#
+#   kumiki rename <file> slot.n limit
+#
+# rewrites the slot where those two read it and leaves `inc-dec-roundtrips` as
+# written. Both tests still pass: rewritten to `count: limit`, the round trip
+# would seed `count` with the slot's 5 and fail on every other generated `n`.
+
+slot count : Int = 0
+slot n     : Int = 5
+
+reducer inc on=ui.click(IncBtn) do= count := count + 1
+reducer dec on=ui.click(DecBtn) do= count := count - 1
+
+tile IncBtn = button(text="+1", id="inc", onClick=inc)
+tile DecBtn = button(text="-1", id="dec", onClick=dec)
+tile App = column(heading("Count: " + count.show + " / " + n.show), row(DecBtn, IncBtn))
+
+app ForAllShadowsASlot
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+test inc-dec-roundtrips =
+    property-test
+        for-all   = {n: Int where between(0, 50)}
+        given     = {slots: {count: n}, event: {type: ui.click, target: IncBtn}}
+        invariant = run-reducer(inc).run-reducer(dec).slots.count == n
+
+test inc-counts-past-the-slot =
+    property-test
+        for-all   = {k: Int where between(0, 50)}
+        given     = {slots: {count: n + k}, event: {type: ui.click, target: IncBtn}}
+        invariant = run-reducer(inc).slots.count == n + k + 1
