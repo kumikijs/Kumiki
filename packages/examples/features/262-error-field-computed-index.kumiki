@@ -1,0 +1,42 @@
+# Feature (forms.md): an index in `error(field=…)` may be computed, as it
+# may in `bind=`. `error(field=rows[i].email)` renders the failure of the
+# element `i` names, and the key is read again on every render, so moving
+# `i` moves each tile to the row it now names. Row 0 fails its email and
+# row 1 its age, so a message from the wrong row reads differently.
+#
+# Inside a `for` over a Map's keys, `error(field=people[k])` puts each
+# entry's message beside the field bound to it.
+
+type Contact = {email: Text where email, age: Int where between(18, 120)}
+
+slot rows   : List(Contact)      = [{email: "", age: 36}, {email: "ada@example.com", age: 0}]
+slot i      : Int                = 0
+slot people : Map(Text, Contact) = {"a": {email: "x", age: 40}, "b": {email: "b@example.com", age: 7}}
+
+tile NextRow = button(text="next row") {id: "next"}
+
+reducer nextRow
+    on=ui.click(NextRow)
+    do= i := (i + 1) % rows.length
+
+tile App = column(
+    text("[email]"),
+    input(bind=rows[i].email, type="email", id="email"),
+    error(field=rows[i].email),
+    text("[age]"),
+    input(bind=rows[i].age, type="number", id="age"),
+    error(field=rows[i].age),
+    text("[row]"),
+    error(field=rows[i]),
+    text("[end]"),
+    NextRow,
+    for k in people.keys column(
+        text("[" + k + "]"),
+        input(bind=people[k].email, type="email", id="person-" + k),
+        error(field=people[k])) {key: k},
+    text("[people end]"))
+
+app ErrorFieldComputedIndex
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

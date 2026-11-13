@@ -85,6 +85,31 @@ app ErrorFieldAbsent
     init   = []
 `;
 
+const COMPUTED = `
+type Contact = {email: Text where email, age: Int where between(0, 120)}
+
+slot rows : List(Contact)      = [{email: "nope", age: 36}, {email: "a@b.co", age: 999}]
+slot i    : Int                = 0
+slot book : Map(Text, Contact) = {"a": {email: "nope", age: 36}, "b": {email: "a@b.co", age: 999}}
+
+reducer next on=ui.click(Next) do= i := (i + 1) % rows.length
+
+tile Next = button(text="next")
+
+tile App = column(
+    Next,
+    input(bind=rows[i].age, type="number", id="age"),
+    error(field=rows[i], id="row"),
+    error(field=rows[i].email, id="row-email"),
+    error(field=rows[i].age, id="row-age"),
+    for k in book.keys error(field=book[k], id="book-" + k) {key: k})
+
+app ErrorFieldComputed
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
 function errorText(root: HTMLElement, id: string): string {
   const el = find(root, `#${id}`);
   expect(el.dataset.kumikiTile).toBe("error");
@@ -181,6 +206,32 @@ describe("error(field=…) at a literal index", () => {
     expect(app.live?.rows).toEqual([]);
     expect(errorText(root, "rows-1")).toBe("");
     expect(errorText(root, "rows-2-email")).toBe("");
+  });
+});
+
+describe("error(field=…) at a computed index", () => {
+  // Row 0 fails its email and row 1 its age, so a message from the wrong row reads differently.
+  it("says the failure of the element the index names, and follows the index", async () => {
+    const { app, root } = await mountSource(COMPUTED);
+    const shown = () => ["row", "row-email", "row-age"].map((id) => errorText(root, id));
+    expect(shown()).toEqual(["Invalid email format", "Invalid email format", ""]);
+    click(root, "next");
+    await tick(0);
+    expect(app.live?.i).toBe(1);
+    expect(shown()).toEqual(["Must be between 0 and 120", "", "Must be between 0 and 120"]);
+  });
+
+  it("puts each Map entry's own failure beside it in a for over the keys", async () => {
+    const { root } = await mountSource(COMPUTED);
+    expect(errorText(root, "book-a")).toBe("Invalid email format");
+    expect(errorText(root, "book-b")).toBe("Must be between 0 and 120");
+  });
+
+  it("names text a control bound through the same index cannot read", async () => {
+    const { root } = await mountSource(COMPUTED);
+    fill(root, "#age", "1.5");
+    expect(errorText(root, "row-age")).toBe("Must be a whole number");
+    expect(errorText(root, "row-email")).toBe("Invalid email format");
   });
 });
 
