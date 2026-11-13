@@ -452,7 +452,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
           const [p1, p2] = fragmentBindings(recvType, e, sym, ctx);
           const inner = innerScope(ctx);
           bindLocal(inner, "$1", p1);
-          if (shape === "value") {
+          if (shape === "value" || shape === "key") {
             inner.localBinds.delete("$2");
             inner.localTypes.delete("$2");
             inner.oneValueFragment = { method: e.method, hides: ctx.localBinds.has("$2") };
@@ -602,7 +602,7 @@ function checkFragmentFnArity(
   if (n > fragmentBinds(fragment)) {
     return report(`.${method} supplies at most ${fragmentBinds(fragment)}`);
   }
-  if (n === 2 && (shape === "value" || shape === null)) {
+  if (n === 2 && (shape === "value" || shape === "key" || shape === null)) {
     const on = receiver ? ` on "${typeToString(receiver)}"` : "";
     return report(
       `.${method}${on} supplies 1 — a second positional is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,

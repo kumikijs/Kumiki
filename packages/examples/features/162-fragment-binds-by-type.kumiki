@@ -9,9 +9,9 @@
 # fragment is handed one value, so `$2` there is E0103.
 #
 # A `fn` named as the fragment binds the same way as the call it stands for:
-# `nested.map(len)` is `nested.map(len($1))`. A Set is not one of the
-# receivers bound whole — its filter is handed each element as an
-# entry and keeps the elements the predicate keeps.
+# `nested.map(len)` is `nested.map(len($1))`. A Set's filter is handed each
+# element as an entry, and `$1` is the element — a `Text` in `words` below —
+# and it keeps the elements the predicate keeps.
 
 fn len(xs: List(Int)) -> Int = xs.length
 

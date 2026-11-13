@@ -281,7 +281,7 @@ A name written `count-1` is one name, not a subtraction: `-` continues an identi
 
 > `Reference to undefined name "count-1" — "-" continues an identifier, so this is one name. Write "count - 1" with spaces for subtraction.`
 
-A `filter` / `map` / `find` / `sort-by` fragment handed one value — an element that is not a pair, an `Option`'s value — binds `$1` alone ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), so a `$2` in it says why:
+A `filter` / `map` / `find` / `sort-by` fragment handed one value — an element that is not a pair, an `Option`'s value, a `Set`'s member — binds `$1` alone ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), so a `$2` in it says why:
 
 > `"$2" is not bound here — the .filter fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`
 
