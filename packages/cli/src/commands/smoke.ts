@@ -1,7 +1,7 @@
-import { resolve } from "node:path";
 import type { Command } from "commander";
 import { smokeCmd } from "../smoke.ts";
 import { capsFor } from "./_shared/caps.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage } from "./_shared/usage.ts";
 
 const USAGE = "Usage: kumiki smoke <input.kumiki>";
@@ -18,7 +18,7 @@ export function registerSmoke(program: Command): string {
     .allowExcessArguments(false)
     .action(async (input: string | undefined, opts: { diagnosticsAsIssues?: boolean }) => {
       if (!input) exitWithUsage(USAGE);
-      const inputPath = resolve(process.cwd(), input);
+      const inputPath = sourceFileArg(input);
       await smokeCmd(inputPath, capsFor(inputPath).capabilities, {
         diagnosticsAsIssues: opts.diagnosticsAsIssues ?? false,
       });

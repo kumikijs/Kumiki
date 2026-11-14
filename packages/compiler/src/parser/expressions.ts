@@ -6,16 +6,18 @@ import { TypeParser } from "./types.ts";
 /** Stays in step with the AST's spelling of the prefix operators. */
 type UnaryOp = Extract<Expr, { kind: "UnaryOp" }>["op"];
 
-// Being a whole value is what keeps these from naming a record field, so `{true: "on"}` is a Map.
-const VALUE_KEYWORDS: ReadonlyMap<string, (pos: Pos) => Expr> = new Map([
+// Being a whole expression is what keeps these from naming a record field, so `{true: "on"}` is a
+// Map. `null` is no value, but is read here so the checker reports it wherever it is written.
+const EXPRESSION_KEYWORDS: ReadonlyMap<string, (pos: Pos) => Expr> = new Map([
   ["true", (pos: Pos): Expr => ({ kind: "Bool", value: true, pos })],
   ["false", (pos: Pos): Expr => ({ kind: "Bool", value: false, pos })],
   ["now", (pos: Pos): Expr => ({ kind: "Call", callee: "now", args: [], pos })],
+  ["null", (pos: Pos): Expr => ({ kind: "Null", pos })],
 ]);
 
 function fieldNameOf(t: Token): string | undefined {
   if (t.kind === "ident") return t.value;
-  if (t.kind === "kw" && !VALUE_KEYWORDS.has(t.value)) return t.value;
+  if (t.kind === "kw" && !EXPRESSION_KEYWORDS.has(t.value)) return t.value;
   return undefined;
 }
 
@@ -45,16 +47,16 @@ export class ExpressionParser extends TypeParser {
   }
 
   protected parseLogicOr(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseLogicAnd();
-    let built = 0;
     while (this.matchOp("||") || (this.matchOp("|") && !this.looksLikeMatchArm())) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       const op = "|" as BinOp;
       this.next();
-      const rhs = this.parseLogicAnd();
+      const rhs = this.under(() => this.parseLogicAnd());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
 
@@ -88,54 +90,54 @@ export class ExpressionParser extends TypeParser {
   }
 
   protected parseLogicAnd(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseCmp();
-    let built = 0;
     while (this.matchOp("&&") || this.matchOp("&")) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       this.next();
-      const rhs = this.parseCmp();
+      const rhs = this.under(() => this.parseCmp());
       lhs = { kind: "BinOp", op: "&", lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
 
   protected parseCmp(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseAdd();
-    let built = 0;
     while (this.matchAnyOp(["==", "!=", "<", ">", "<=", ">="])) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       const op = this.eat("op").value as BinOp;
-      const rhs = this.parseAdd();
+      const rhs = this.under(() => this.parseAdd());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
 
   protected parseAdd(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseMul();
-    let built = 0;
     while (this.matchAnyOp(["+", "-"])) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       const op = this.eat("op").value as BinOp;
-      const rhs = this.parseMul();
+      const rhs = this.under(() => this.parseMul());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
 
   protected parseMul(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseUnary();
-    let built = 0;
     while (this.matchAnyOp(["*", "/", "%"])) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       const op = this.eat("op").value as BinOp;
-      const rhs = this.parseUnary();
+      const rhs = this.under(() => this.parseUnary());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
 
@@ -147,8 +149,15 @@ export class ExpressionParser extends TypeParser {
       else if (this.matchT("ident", "not")) prefixes.push({ op: "!", pos: this.next().pos });
       else break;
     }
-    this.widen(prefixes.length);
+    // The run's nodes sit over an operand read at this level, whose depth is known only once it
+    // is read: the run is charged alone first, then on top of the operand, both at the operand's
+    // first token.
+    const at = this.peek().pos;
+    this.charge(prefixes.length, at);
+    if (prefixes.length === 0) return this.parsePostfix();
+    const enclosing = this.measure();
     let e = this.parsePostfix();
+    this.charge(this.measured(enclosing) + prefixes.length, at);
     for (const prefix of prefixes.reverse()) {
       e = { kind: "UnaryOp", op: prefix.op, rhs: e, pos: prefix.pos };
     }
@@ -156,12 +165,11 @@ export class ExpressionParser extends TypeParser {
   }
 
   protected parsePostfix(): Expr {
+    const chain = this.startChain();
     let e = this.parsePrimary();
-    let built = 0;
     while (true) {
       if (this.matchOp(".")) {
-        built += 1;
-        this.widen(built);
+        this.chainStep(chain);
         const dotTok = this.next();
         const fldTok = this.peek();
         if (e.kind === "Num" && fldTok.pos.line !== dotTok.pos.line) {
@@ -217,8 +225,7 @@ export class ExpressionParser extends TypeParser {
           e = { kind: "FieldAccess", base: e, field: fld, pos: e.pos };
         }
       } else if (this.matchOp("[")) {
-        built += 1;
-        this.widen(built);
+        this.chainStep(chain);
         this.next();
         const idx = this.parseExpr();
         this.eat("op", "]");
@@ -227,6 +234,7 @@ export class ExpressionParser extends TypeParser {
         break;
       }
     }
+    this.endChain(chain);
     return e;
   }
 
@@ -240,10 +248,10 @@ export class ExpressionParser extends TypeParser {
       this.next();
       return { kind: "Str", value: t.value, pos: t.pos };
     }
-    const valueKeyword = t.kind === "kw" ? VALUE_KEYWORDS.get(t.value) : undefined;
-    if (valueKeyword) {
+    const expressionKeyword = t.kind === "kw" ? EXPRESSION_KEYWORDS.get(t.value) : undefined;
+    if (expressionKeyword) {
       this.next();
-      return valueKeyword(t.pos);
+      return expressionKeyword(t.pos);
     }
     if (t.kind === "kw" && t.value === "if") {
       return this.parseIfExpr();
@@ -260,8 +268,13 @@ export class ExpressionParser extends TypeParser {
         this.next();
         return { kind: "Unit", pos: t.pos };
       }
-      const inner = this.parseExpr();
+      const at = this.peek().pos;
+      const enclosing = this.measure();
+      const inner = this.group(() => this.parseExprNested());
+      const below = this.measured(enclosing);
       if (this.matchOp(",")) {
+        // A tuple is a node, with its first item under it as the others are.
+        this.charge(below + 1, at);
         this.next();
         const items: [Expr, Expr, ...Expr[]] = [inner, this.parseExpr()];
         while (this.matchOp(",")) {
@@ -515,7 +528,9 @@ export class ExpressionParser extends TypeParser {
         if (fieldName === undefined) {
           if (keyTok.kind === "kw") {
             throw new ParseError(
-              `\`${keyTok.value}\` is a value, not a record field name`,
+              keyTok.value === "null"
+                ? "`null` is not a record field name, and not a value — Kumiki has no null"
+                : `\`${keyTok.value}\` is a value, not a record field name`,
               keyTok.pos,
             );
           }

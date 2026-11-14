@@ -51,7 +51,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | Code | Kind | Layer | Feature |
 |---|---|---|---|
 | [E0000](./errors.md#e0000-parse-error) | `parse-error` | all | core |
-| [E0001](./errors.md#e0001-missing-404) | `missing-404` | app | routing |
+| [E0001](./errors.md#e0001-missing-404-404-is-redirect-404-in-sub-routes) | `missing-404` / `404-is-redirect` / `404-in-sub-routes` | app / tile | routing |
 | [E0002](./errors.md#e0002-duplicate-timer-name) | `duplicate-timer-name` | app | lifecycle |
 | [E0003](./errors.md#e0003-missing-app) | `missing-app` | app | core |
 | [E0004](./errors.md#e0004-duplicate-app) | `duplicate-app` | app | core |
@@ -75,7 +75,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0113](./errors.md#e0113-sub-routes-without-outlet) | `sub-routes-without-outlet` | tile | routing |
 | [E0114](./errors.md#e0114-sub-routes-without-wildcard-parent) | `sub-routes-without-wildcard-parent` | tile | routing |
 | [E0115](./errors.md#e0115-reserved-slot-name) | `reserved-slot-name` | slot | core |
-| [E0116](./errors.md#e0116-undef-call) | `undef-call` | fn | core |
+| [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier) | `undef-call` / `undef-variant` / `undef-qualifier` | fn | core |
 | [E0117](./errors.md#e0117-undef-type) | `undef-type` | type | core |
 | [E0118](./errors.md#e0118-undef-theme) | `undef-theme` | app | style |
 | [E0119](./errors.md#e0119-route-bind-out-of-scope) | `route-bind-out-of-scope` | reducer | routing |
@@ -114,6 +114,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0229](./errors.md#e0229-bind-target-not-slot) | `bind-target-not-slot` | tile | forms |
 | [E0231](./errors.md#e0231-reserved-type-name) | `reserved-type-name` | type | core |
 | [E0234](./errors.md#e0234-reserved-effect-name) | `reserved-effect-name` | effect | stdlib |
+| [E0235](./errors.md#e0235-null-value) | `null-value` | all | core |
 | [E0239](./errors.md#e0239-negative-theme-length) | `negative-theme-length` | app | style |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | core |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | stdlib |

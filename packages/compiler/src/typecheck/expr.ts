@@ -1,3 +1,4 @@
+import { nearestName } from "@kumikijs/runtime/text-distance";
 import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
 import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
@@ -7,6 +8,7 @@ import {
   type FragmentArgument,
   fragmentArgument,
   fragmentBinds,
+  readsShortCall,
   receiverParams,
   TYPE_ARGUMENT_OF,
 } from "../stdlib-members.ts";
@@ -23,10 +25,13 @@ import { arithmeticHint, checkCallee, endedScopeHint, reportRunReducerPosition }
 import {
   bindLocal,
   type Ctx,
+  checkArms,
+  endScope,
   innerScope,
   isBuiltinCall,
   type KumikiError,
   type SymbolTable,
+  severityOf,
   wildcardText,
 } from "./context.ts";
 import { currentFnName } from "./fn.ts";
@@ -74,7 +79,7 @@ export function checkIterationTarget(
   const before = errors.length;
   checkExpr(iter, sym, errors, ctx);
   const atTarget = (p: Pos) => p.line === iter.pos.line && p.col === iter.pos.col;
-  if (errors.slice(before).some((e) => e.severity !== "warning" && atTarget(e.pos))) return;
+  if (errors.slice(before).some((e) => severityOf(e) === "error" && atTarget(e.pos))) return;
   const written = inferType(iter, sym, ctx);
   const target = written && nonListTarget(written, sym);
   if (!target) return;
@@ -180,6 +185,17 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
     case "Bool":
     case "Unit":
       return;
+    case "Null":
+      // The one report about it: `inferType` leaves its type undecided, which fits wherever it
+      // lands. An expression around it that mismatches on its own still prints that type, as `?`.
+      errors.push({
+        code: "E0235",
+        kind: "null-value",
+        message:
+          "`null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one",
+        pos: e.pos,
+      });
+      return;
     case "Ref": {
       if (
         (e.name === "route" || e.name === "$route") &&
@@ -264,12 +280,12 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         });
         return;
       }
-      const ended = ctx.endedScopes?.get(e.name);
+      const ended = ctx.endedScopes.get(e.name);
       if (ended !== undefined) {
         errors.push({
           code: "E0103",
           kind: "undef-ref",
-          message: `Reference to undefined name "${e.name}"${endedScopeHint(e.name, ended)}`,
+          message: `Reference to undefined name "${e.name}"${endedScopeHint(e.name, ended, ctx)}`,
           pos: e.pos,
           endedScope: ended.kind,
         });
@@ -284,6 +300,18 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     }
     case "Variant":
+      // Codegen builds a variant from any spelling, so a tag no type declares is
+      // a record that equals nothing and reads `undefined` off every field.
+      if (!sym.constructorTags.has(e.name)) {
+        const report: KumikiError = {
+          code: "E0116",
+          kind: "undef-variant",
+          message: `Reference to undefined variant "${e.name}"${didYouMean(e.name, sym.constructorTags)}`,
+          pos: e.pos,
+        };
+        errors.push(report);
+        sym.undefinedVariants.set(report, e);
+      }
       for (const p of e.payload) checkExpr(p, sym, errors, ctx);
       return;
     case "BinOp": {
@@ -325,7 +353,20 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     }
     case "FieldAccess":
-      checkExpr(e.base, sym, errors, ctx);
+      // A bare `Q.member`'s `Q` is resolved as a qualifier (a tag, a type or a
+      // call namespace), not as the variant it parsed as: a type is no tag, and
+      // a misspelt one is reported once.
+      if (e.base.kind === "Variant" && e.base.payload.length === 0) {
+        if (!sym.qualifiers.has(e.base.name)) {
+          errors.push({
+            code: "E0116",
+            kind: "undef-qualifier",
+            message: `Reference to undefined qualifier "${e.base.name}" in "${e.base.name}.${e.field}"${didYouMean(e.base.name, sym.qualifiers)}`,
+            pos: e.base.pos,
+          });
+          return;
+        }
+      } else checkExpr(e.base, sym, errors, ctx);
       classifyFieldAccess(e, sym, errors, ctx);
       // The member, not a record's own field that happens to be named `show`.
       if (e.field === "show" && e.accessKind !== "field") noteShown(e.base, sym, ctx);
@@ -341,7 +382,10 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         reportRunReducerPosition(ctx, e.pos, errors);
         return;
       }
-      for (const a of e.args) checkExpr(a, sym, errors, ctx);
+      for (const a of e.args) {
+        if (e.callee === "Decoder.Json") checkTypeSpelling(a, sym, errors, ctx);
+        else checkExpr(a, sym, errors, ctx);
+      }
       checkCallee(e.callee, e.args, e.pos, sym, errors, ctx);
       for (const a of shownArgs(e)) noteShown(a, sym, ctx);
       return;
@@ -470,14 +514,13 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkExpr(e.scrutinee, sym, errors, ctx);
       const scrutType = matchedType(inferType(e.scrutinee, sym, ctx), e.arms, sym);
       let patternsFit = true;
-      for (const arm of e.arms) {
-        const inner = innerScope(ctx);
+      checkArms(e.arms, ctx, (arm, inner) => {
         checkPatternBindsAreDistinct(arm.pattern, errors);
         const before = errors.length;
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         if (errors.length > before) patternsFit = false;
         checkExpr(arm.body, sym, errors, inner);
-      }
+      });
       if (patternsFit) checkMatchCovers(e, scrutType, sym, errors);
       return;
     }
@@ -489,7 +532,9 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     case "LetIn": {
       checkExpr(e.value, sym, errors, ctx);
-      checkExpr(e.body, sym, errors, letInScope(e, sym, ctx));
+      const inner = letInScope(e, sym, ctx);
+      checkExpr(e.body, sym, errors, inner);
+      endScope("let-in", inner, ctx);
       return;
     }
     case "TokenRef":
@@ -516,6 +561,25 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       for (const a of e.args) checkExpr(a, sym, errors, ctx);
       return;
   }
+}
+
+function didYouMean(written: string, candidates: Iterable<string>): string {
+  const near = nearestName(written, candidates);
+  return near === null ? "" : ` — did you mean "${near}"?`;
+}
+
+// `Decoder.Json(T)` takes a type written in expression position, so its
+// capitalised names are a type's and not tags; codegen reads them back as one.
+function checkTypeSpelling(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  if (e.kind === "Variant") {
+    for (const p of e.payload) checkTypeSpelling(p, sym, errors, ctx);
+    return;
+  }
+  if (e.kind === "RecordLit") {
+    for (const f of e.fields) checkTypeSpelling(f.value, sym, errors, ctx);
+    return;
+  }
+  checkExpr(e, sym, errors, ctx);
 }
 
 function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { kind: "Ref" } {
@@ -730,6 +794,8 @@ export function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: C
 
 // A call given fewer arguments than the signature takes has none read against it: which argument
 // it meant as which is not decided (`m.get-or(d)` is the Option reading, whose argument is no key).
+// A call that can only drop trailing arguments, as `xs.slice(start)` does, still has the ones it
+// was given read.
 function memberArgType(
   recv: TypeExpr | null,
   member: string,
@@ -740,7 +806,8 @@ function memberArgType(
   const t = unaliasType(recv, sym);
   if (t?.kind !== "TypeApp") return null;
   const params = receiverParams(t.name, member);
-  if (params === undefined || argCount < params.length) return null;
+  if (params === undefined) return null;
+  if (argCount < params.length && !readsShortCall(t.name, member)) return null;
   const param = params[index] ?? null;
   switch (param) {
     case null:

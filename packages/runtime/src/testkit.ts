@@ -19,6 +19,7 @@ import {
   compareReducerExpect,
   type ReducerExpect,
   type TestResult,
+  unexpectedPanic,
 } from "./testkit/expect.ts";
 import {
   _hashStr,
@@ -68,6 +69,8 @@ function failureWay(e: unknown): string {
 }
 
 export const _stdlibTest = {
+  /** Whether a throw in the code under test is a panic, which is the test's outcome. */
+  isPanic,
   /** The wildcard map-key sentinel; codegen lowers a `<any-id>` map key to it. */
   WILD_KEY,
   /** The Set-literal wildcard count; codegen lowers the `<any-id>` members of a Set literal to it. */
@@ -298,20 +301,8 @@ export const _stdlibTest = {
       expectedSlots = expect.slotsEqual as Record<string, unknown>;
     }
 
-    if (expectedSlots) {
-      for (const [k, v] of Object.entries(expectedSlots)) {
-        if (!valueEqual(app.live[k], v)) {
-          return {
-            name,
-            pass: false,
-            expected: _jsonStr(expectedSlots),
-            actual: _jsonStr(app.live),
-            diffAt: `slots.${k}`,
-            leaf: { expected: v, actual: app.live[k] },
-          };
-        }
-      }
-    }
+    // A panic or a dropped err leaves the slots it would have written at their old values, so
+    // compared first those slots would be reported in its place.
     if (expect.noPanics && report.panics.length > 0) {
       return {
         name,
@@ -330,10 +321,32 @@ export const _stdlibTest = {
         diffAt: "errors",
       };
     }
+    if (expectedSlots) {
+      for (const [k, v] of Object.entries(expectedSlots)) {
+        if (!valueEqual(app.live[k], v)) {
+          return {
+            name,
+            pass: false,
+            expected: _jsonStr(expectedSlots),
+            actual: _jsonStr(app.live),
+            diffAt: `slots.${k}`,
+            leaf: { expected: v, actual: app.live[k] },
+          };
+        }
+      }
+    }
     return { name, pass: true };
   },
-  /** Structurally compare a rendered tile against the expected tile structure. */
-  runTileTest(input: { name: string; actual: unknown; expected: unknown }): TestResult {
+  /** A tile-test has no form that expects a panic, so a panic as its target renders is always unexpected. */
+  runTileTest(input: {
+    name: string;
+    actual: unknown;
+    panic: string | null;
+    expected: unknown;
+  }): TestResult {
+    if (input.panic !== null) {
+      return unexpectedPanic(input.name, serializeTileNode(input.expected), input.panic);
+    }
     const cmp = tileStructEqual(input.expected, input.actual);
     return {
       name: input.name,

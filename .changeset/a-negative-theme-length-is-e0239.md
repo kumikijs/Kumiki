@@ -27,8 +27,8 @@ to `base`. Now:
 
 ```
 $ kumiki check app.kumiki
-E0239 negative-theme-length at 2:22: theme "T": spacing "nudge" is -4, and padding and gap cannot be negative, so it has no effect — write a length of 0 or more (see docs/spec/style.md)
-E0239 negative-theme-length at 3:23: theme "T": breakpoint "md" is -500, and a minimum viewport width cannot be negative, so "md" is not a breakpoint at all — write a width of 0 or more (see docs/spec/style.md)
+error E0239 negative-theme-length at 2:22: theme "T": spacing "nudge" is -4, and padding and gap cannot be negative, so it has no effect — write a length of 0 or more (see docs/spec/style.md)
+error E0239 negative-theme-length at 3:23: theme "T": breakpoint "md" is -500, and a minimum viewport width cannot be negative, so "md" is not a breakpoint at all — write a width of 0 or more (see docs/spec/style.md)
 ```
 
 0 is in range: `flush: 0` is no padding, and `md: 0` applies at every width.
