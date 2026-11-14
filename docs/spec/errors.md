@@ -405,7 +405,7 @@ A tile declares `sub-routes` but renders no `route-outlet`, in its body or in an
 
 The outlet does not have to be written in the tile's own body. The runtime fills the first `route-outlet` in the tree the tile renders ([Routing §3.6.3](./routing.md#_3-6-3-matching-rules)), and code generation builds that tree from the body: it inlines each tile the body calls (`Outlet()`) or names (`Outlet`), the branches of `for` / `when` / `if` / `match`, and the positional arguments of a builtin that renders children, such as `column`, `card` or `modal`. So an outlet in a layout helper counts, however many tiles down, and so does a body that is the helper itself (`= Outlet`). A tile that declares `sub-routes` of its own counts too: its outlet, inlined into this tile, shows this tile's matched child; the nested tile's own `sub-routes` apply only where it is itself the route target. An outlet under a branch counts as it does when written directly in the body; when the branch does not render, the runtime reports the child it discarded.
 
-Only the tiles the body renders are followed. An outlet passed positionally to a builtin that renders no children does not count: `button`, `input`, `textarea`, `check`, `radio`, `switch`, `select`, `slider`, `spinner`, `progress`, `skeleton`, `toast`, `video`, `divider`, `error` and `route-outlet` drop their positional arguments, so `spinner(Outlet)` renders no outlet. Nor does an outlet written as a named argument, which nothing renders (`column(x=when(c, route-outlet()))`), or one that appears only in an `error-boundary` fallback, the tile's own or a rendered tile's: a fallback is not part of the body.
+Only the tiles the body renders are followed. An outlet passed positionally to a builtin that renders no children does not count: `button`, `input`, `textarea`, `check`, `radio`, `switch`, `select`, `slider`, `spinner`, `progress`, `skeleton`, `toast`, `video`, `divider`, `error` and `route-outlet` drop their positional arguments, so `spinner(Outlet)` renders no outlet. Nor does an outlet written as a named argument, which nothing renders (`column(x=when(c, route-outlet()))`, itself [E0201](#e0201-type-mismatch)), or one that appears only in an `error-boundary` fallback, the tile's own or a rendered tile's: a fallback is not part of the body.
 
 **Fix**: Add a `route-outlet()` where the child should appear — in the tile body, or in a tile it renders — or remove the `sub-routes` block.
 
@@ -636,7 +636,7 @@ The first is a value as a positional argument. The second is a value where a who
 
 Codegen drops a value in a positional argument, so `column(text("a"), 42)` rendered only the `text`, `column(text("a"), n)` with `n` a slot put a `null` into the child list, and `column(let x = 42 in Card(x))` mounted an empty root. A `let` hid a tile from the checker as well: `Card`'s argument was not compared with its `in=`, and a builtin under it was looked up as a `fn` (E0116). The diagnostic is at the value, and nothing inside the value is checked — a diagnostic in there, wrong or right (an undefined name), shows once the value is moved where it belongs.
 
-A value where a value belongs is not reported: a value builtin's content (`text(let x = 1 in x.show)`), a user tile's input (`Card(let x = "a" in {label: x})`), a named argument. A tile as a value builtin's content is [E0236](#e0236-tile-as-content). Where a `tile-expr` is the whole of a body — a tile body, or a `when` / `if` / `for` / `match` arm — a `let` is a parse error instead (`tile Foo = let x = 0 in …`, `when(c, let x = 1 in …)`), and so is any other value that is not a name or a call: a literal (`when(c, 42)`) or a member read (`when(c, total.show)`).
+A value where a value belongs is not reported: a value builtin's content (`text(let x = 1 in x.show)`), a user tile's input (`Card(let x = "a" in {label: x})`), a named argument. A tile as a value builtin's content is [E0236](#e0236-tile-as-content), and a `when` / `for` as any other named argument is [E0201](#e0201-type-mismatch). Where a `tile-expr` is the whole of a body — a tile body, or a `when` / `if` / `for` / `match` arm — a `let` is a parse error instead (`tile Foo = let x = 0 in …`, `when(c, let x = 1 in …)`), and so is any other value that is not a name or a call: a literal (`when(c, 42)`) or a member read (`when(c, total.show)`).
 
 **Fix**: Show the value with a tile — `column(text(n.show))`, `when(c, text(total.show))` — or write it where it is used — `column(Card({label: "a"}))` — or compute it in a `fn` and call that. Write a builtin tile's call where it is named — `column(divider())`.
 
@@ -676,6 +676,7 @@ A value does not have the type its position requires.
 > `Expected <declared> but got variant "<name>"`
 > `Expected <declared> but got {}, an empty Map, Set or record`
 > `Tile "<name>" expects a value of type <type> but got a tile`
+> `` Named argument "<name>" on tile "<tile>" is a prop, and a prop's value cannot be a tile — nothing renders it. Write the tile as a positional child of a container — `column(when(c, …))` — or pass a value — `<tile>(<name>=…)` ``
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
 > `link prefetch must be a reducer name`
@@ -683,6 +684,8 @@ A value does not have the type its position requires.
 > `timeout <n> is not a number of milliseconds from 1 to 2147483647; every request is aborted before it can answer`
 > `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md)`
 > `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is <type>`
+
+A named argument is a prop on every tile, a builtin or one the program defines, so it takes a value ([Language §1.7.1](./language.md#_1-7-1-syntax)). A `when` or a `for` has no value form, so one written there is a tile, and nothing renders it: `progress(value=1, max=when(busy, text("x")))` rendered a bar with no `max`, and `box(header=when(c, text("x")))` dropped the header. It is reported at the `when` / `for`, and nothing inside it is checked: it is moved whole, to a container's positional argument (`box(when(c, text("x")))`) or out for a value. A value `if` / `match` there is a value (`button(disabled=if busy then true else false)`), a builtin tile called there is [E0116](#e0116-undef-call-undef-variant-undef-qualifier), a tile as a value builtin's named content (`label(text=…)`, `image(src=…)`) is [E0236](#e0236-tile-as-content), a `when` / `for` as an `error`'s `field=` is [E0230](#e0230-error-field-not-path), which says what the field names instead, and a `when` / `for` written as an event handler is reported once, as a handler that `must be a reducer name` (below).
 
 An event handler binds a **reducer**, in either form — `f(onX=r)` and `f() {onX: r}`. It is the one argument position resolved in the reducer namespace, so what a bare identifier there means is decided by that and not by its shape.
 
@@ -1230,7 +1233,7 @@ Two places are not this code. Where a record field name goes — `{null = 1}`, `
 
 ### E0236 `tile-as-content`
 
-A tile is written as a value builtin's content. A value builtin shows a value as its content ([Language §1.7.1](./language.md#_1-7-1-syntax)) — read from the first positional argument on `text`, `heading`, `markdown` and `code`, from it or `text=` on `link`, `label` and `editable`, from `src=` on `image` and from `name=` on `icon` ([E0129](#e0129-unrendered-arg)) — so a tile written there is never rendered: `text(when(c, column(…)))` shows nothing. The mirror, a value where a tile belongs, is [E0128](#e0128-value-as-child).
+A tile is written as a value builtin's content. A value builtin shows a value as its content ([Language §1.7.1](./language.md#_1-7-1-syntax)) — read from the first positional argument on `text`, `heading`, `markdown` and `code`, from it or `text=` on `link`, `label` and `editable`, from `src=` on `image` and from `name=` on `icon` ([E0129](#e0129-unrendered-arg)) — so a tile written there is never rendered: `text(when(c, column(…)))` shows nothing. The mirror, a value where a tile belongs, is [E0128](#e0128-value-as-child). A `when` / `for` as any other named argument is [E0201](#e0201-type-mismatch).
 
 > ``A tile is not a value: <builtin> shows a value as its content, so this tile is never rendered. Write the tile as a child of a container — `column(when(c, …))` — or show a value — `<content>` ``
 
@@ -1543,7 +1546,7 @@ a11y checking is enabled via `check(program, { strictA11y: true })`.
 
 > `link must have inner text or aria-label`
 
-`aria-label` and `alt` count in either spelling, a named argument (`button(aria-label="Close")`) or the props block (`button() {aria-label: "Close"}`): a named argument is a prop wherever it is written ([Language §1.7.1](./language.md#_1-7-1-syntax)), and both put the attribute on the element. Where both are written, the props block's is the one read, as it is the one rendered. Each check reads whether one is written, not its value, so `""` and a value read from a slot count too. A value that is not a `Text` is not checked here yet: `button(aria-label=Mark)` writes the variant `Mark`, passes, and renders `aria-label="[object Object]"`. A `when` or `for` written as the argument (`button(aria-label=when(c, text("x")))`) is a tile, not prop data, and renders no attribute, so it does not count.
+`aria-label` and `alt` count in either spelling, a named argument (`button(aria-label="Close")`) or the props block (`button() {aria-label: "Close"}`): a named argument is a prop wherever it is written ([Language §1.7.1](./language.md#_1-7-1-syntax)), and both put the attribute on the element. Where both are written, the props block's is the one read, as it is the one rendered. Each check reads whether one is written, not its value, so `""` and a value read from a slot count too. A value that is not a `Text` is not checked here yet: `button(aria-label=Mark)` writes the variant `Mark`, passes, and renders `aria-label="[object Object]"`. A `when` or `for` written as the argument (`button(aria-label=when(c, text("x")))`) is a tile, not prop data, and renders no attribute, so it does not count; a prop cannot hold a tile, so it is [E0201](#e0201-type-mismatch) as well.
 
 **Fix**: Provide visible text, or an `aria-label` / `alt`. For general guidance on forms, see [Forms](./forms.md).
 

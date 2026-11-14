@@ -420,18 +420,6 @@ function checkTileInput(
     });
     return;
   }
-  for (const named of t.args) {
-    if (named.name === undefined || !isTileExpr(named.value)) continue;
-    errors.push({
-      code: "E0201",
-      kind: "type-mismatch",
-      message:
-        `Named argument "${named.name}" on tile "${t.name}" is a prop, and a prop's value ` +
-        `cannot be a tile — nothing renders it. Pass the tile as the positional argument of ` +
-        `a tile that declares "in=", or write it as a child`,
-      pos: named.value.pos,
-    });
-  }
   const arg = positional[0];
   if (!def.in || !arg) return;
   const value = arg.value;
@@ -690,6 +678,12 @@ function checkTileCall(
     if (arg.name === undefined && shownInPlaceOfPositional(t.name)) continue;
     // E0236 (`checkTileAsContent`), and moved whole too.
     if (arg === tileContent) continue;
+    // E0230 (`checkErrorField`), which says what an error's field names instead.
+    if (t.name === "error" && arg.name === "field" && isTileExpr(v)) continue;
+    if (arg.name !== undefined && isTileExpr(v)) {
+      errors.push(tileAsProp(t.name, arg.name, v.pos));
+      continue;
+    }
     const place: TilePlace | null =
       arg.name === undefined && positionalIsTile(t.name) ? { kind: "child", of: t.name } : null;
     if (isTileExpr(v)) {
@@ -719,6 +713,19 @@ function checkTileCall(
     }
   }
   checkErrorField(t, sym, errors, ctx);
+}
+
+// A named argument is a prop on every tile, and only a `when` or a `for` parses as a tile there.
+function tileAsProp(tile: string, name: string, pos: Pos): KumikiError {
+  return {
+    code: "E0201",
+    kind: "type-mismatch",
+    message:
+      `Named argument "${name}" on tile "${tile}" is a prop, and a prop's value cannot be a ` +
+      `tile — nothing renders it. Write the tile as a positional child of a container — ` +
+      `\`column(when(c, …))\` — or pass a value — \`${tile}(${name}=…)\``,
+    pos,
+  };
 }
 
 const PREFETCH_ARGS_TYPE = appType("Map", primType("Text"), primType("Text"));

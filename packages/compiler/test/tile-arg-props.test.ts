@@ -63,15 +63,6 @@ describe("a named argument reaches props", () => {
     expect(js.slice(js.indexOf("el: {"))).toContain(`"disabled": true`);
   });
 
-  it("does not lower a tile-valued argument as if it were prop data", () => {
-    // Outside an event handler, a named argument parses as a value, so only a `when` or a
-    // `for` puts a tile there.
-    const js = emit('box(header=when(n > 0, text("inner")), text("body"))', "slot n : Int = 1");
-    const route = js.slice(js.indexOf('pattern: "/"'), js.indexOf('pattern: "/404"'));
-    expect(route.split('kind: "text"').length - 1).toBe(1);
-    expect(propsOf(js)).not.toContain("header:");
-  });
-
   it("leaves an lvalue bind out of the props", () => {
     const js = propsOf(emit("input(bind=draft)", 'slot draft : Text = ""'));
     expect(js).not.toContain("bind:");
