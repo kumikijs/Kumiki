@@ -101,16 +101,18 @@ ${APP}
     expect(rendered.html).toContain("caught: get called on None");
   });
 
-  it("reads the slots in its body, not the bindings where it is written", async () => {
+  it("reads the slots in its body, not the bindings where it is written, as its capitalised twin does", async () => {
     // `leaf` is checked on its own, where `name` is the slot, so the loop's `name` must not reach it.
     const { root } = await mountSource(`slot leaf : Text = "hello"
 slot name : Text = "the slot"
 slot names : List(Text) = ["the loop"]
-tile leaf = text("name: " + name)
-tile App = column(for name in names column(leaf))
+tile leaf = text("leaf: " + name)
+tile Leaf = text("Leaf: " + name)
+tile App = column(for name in names column(leaf, Leaf))
 ${APP}
 `);
-    expect(root.textContent).toContain("name: the slot");
+    expect(root.textContent).toContain("leaf: the slot");
+    expect(root.textContent).toContain("Leaf: the slot");
     expect(root.textContent).not.toContain("the loop");
   });
 });
