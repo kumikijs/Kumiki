@@ -1323,17 +1323,21 @@ bind していないコントロールが選択状態を読む prop — `check` 
 
 ### E0239 `negative-theme-length`
 
-`theme` が、`spacing` トークンまたは `breakpoints` の幅として負の数値を書いている（[スタイル §4.2](./style.md#_4-2-design-tokens)）。その数値の位置（`-` から始まる）で、数値ごとに 1 件報告する。
+`theme` が、`spacing` トークン・`radius` トークン・`typography.size` トークン・`breakpoints` の幅のいずれかとして負の数値を書いている（[スタイル §4.2](./style.md#_4-2-design-tokens)）。その数値の位置（`-` から始まる）で、数値ごとに 1 件報告する。
 
 > `theme "<name>": spacing "<key>" is <n>, and padding and gap cannot be negative, so it has no effect — write a length of 0 or more (see docs/spec/style.md)`
 >
+> `theme "<name>": radius "<key>" is <n>, and a corner radius cannot be negative, so it has no effect — write a length of 0 or more (see docs/spec/style.md)`
+>
+> `theme "<name>": typography size "<key>" is <n>, and a font size cannot be negative, so it has no effect — write a size of 0 or more (see docs/spec/style.md)`
+>
 > `theme "<name>": breakpoint "<key>" is <n>, and a minimum viewport width cannot be negative, so "<key>" is not a breakpoint at all — write a width of 0 or more (see docs/spec/style.md)`
 
-どちらのセクションでも数値は px である。`nudge: -4` は `pad: "nudge"` に `padding: -4px` という宣言を与えるが、これは正しい CSS ではない：ブラウザはそれを捨て、タイルにはパディングが付かない。`gap` も同じように捨てられる。負のブレイクポイント幅はブレイクポイントではない（[スタイル §4.5](./style.md#_4-5-responsive)）。それでもそのキーでは既定値に取って代わるので、`md: -500` は `md` を動かすのではなく消し、`{base: …, md: …}` のマップは `md` の値に解決されることがなくなる。どちらも実行時のエラーではなく、ページが少しずれて見えるだけなので、`check` 以外にこれを名指すものは無い。
+これらのどのセクションでも数値は px である。`nudge: -4` は `pad: "nudge"` に `padding: -4px` という宣言を与えるが、これは正しい CSS ではない：ブラウザはそれを捨て、タイルにはパディングが付かない。`gap` も同じように捨てられ、`soft: -4` に対する `radius: "soft"` は角が四角いまま、`tiny: -4` に対する `size: "tiny"` は継承したフォントサイズのままになる。負のブレイクポイント幅はブレイクポイントではない（[スタイル §4.5](./style.md#_4-5-responsive)）。それでもそのキーでは既定値に取って代わるので、`md: -500` は `md` を動かすのではなく消し、`{base: …, md: …}` のマップは `md` の値に解決されることがなくなる。どちらも実行時のエラーではなく、ページが少しずれて見えるだけなので、`check` 以外にこれを名指すものは無い。
 
-検査するのは `spacing` または `breakpoints` の直下の数値だけである。それより深く入れ子になった数値はトークンでも幅でもない。この検査は文字列を読まないので、`nudge: "-4px"` と `md: "-500px"` は同じ誤りだが報告されない。アプリが名指しているかどうかにかかわらず、すべての `theme` を検査する。`app.theme` の slot は実行中にそのどれでも選べるからである（[スタイル §4.6](./style.md#_4-6-dark-mode)）。
+検査するのは `spacing`・`radius`・`typography.size`・`breakpoints` の直下の数値だけである。それより深く入れ子になった数値はトークンでも幅でもない。`typography` のそれ以外（`weight`、`line-height`）は長さを持たないので検査しない。この検査は文字列を読まないので、`nudge: "-4px"` と `md: "-500px"` は同じ誤りだが報告されない。アプリが名指しているかどうかにかかわらず、すべての `theme` を検査する。`app.theme` の slot は実行中にそのどれでも選べるからである（[スタイル §4.6](./style.md#_4-6-dark-mode)）。
 
-**修正**：長さや幅を 0 以上で書く（`nudge: 4`、`md: 500`）か、キーを省いて既定値を残す。外側へ引き寄せたいタイルは、負の長さを自身の `style` ブロックに書く（`style: {margin-top: -4}`）。そこではそれはトークンではなく、CSS プロパティそのものの値である。
+**修正**：長さ・サイズ・幅を 0 以上で書く（`nudge: 4`、`soft: 4`、`tiny: 11`、`md: 500`）か、キーを省いて既定値を残す。外側へ引き寄せたいタイルは、負の長さを自身の `style` ブロックに書く（`style: {margin-top: -4}`）。そこではそれはトークンではなく、CSS プロパティそのものの値である。
 
 ## E03xx — ケイパビリティと純粋性
 

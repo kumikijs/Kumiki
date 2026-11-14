@@ -1,23 +1,27 @@
-# Feature (style.md): a theme's spacing tokens and breakpoint widths are 0 or
-# more.
+# Feature (style.md): a theme's spacing tokens, radii, font sizes and
+# breakpoint widths are 0 or more.
 #
-# A number in either is px. `flush: 0` is a spacing token like any other, so
-# the card that uses it has no padding, and `nudge: 4` is four pixels of it.
-# `md: 500` moves the `md` breakpoint down from its 768px default, so the gap
-# below is "lg" from a 500px viewport up.
+# A number in any of them is px. `flush: 0` is a spacing token like any other,
+# so the card that uses it has no padding, and `nudge: 4` is four pixels of it.
+# `square: 0` is a radius that rounds nothing, and `fine: 11` is an 11px font
+# size. `md: 500` moves the `md` breakpoint down from its 768px default, so
+# the gap below is "lg" from a 500px viewport up.
 #
-# Written negative, either is E0239 at the number. A browser drops
-# `padding: -4px`, and a negative minimum width is no breakpoint at all, so
-# `md: -500` would leave the theme with no `md` rather than move it. A tile
-# meant to pull outward writes the negative length in its own `style` block,
-# as `margin-top: -4` does on the second card.
+# Written negative, any of them is E0239 at the number. A browser drops
+# `padding: -4px`, `border-radius: -4px` and `font-size: -4px`, and a negative
+# minimum width is no breakpoint at all, so `md: -500` would leave the theme
+# with no `md` rather than move it. A tile meant to pull outward writes the
+# negative length in its own `style` block, as `margin-top: -4` does on the
+# second card.
 
 theme Compact = {
     spacing:     {flush: 0, nudge: 4},
+    radius:      {square: 0},
+    typography:  {size: {fine: 11}},
     breakpoints: {md: 500}
 }
 
-tile Flush  = card(text("flush")) {pad: "flush", id: "flush"}
+tile Flush  = card(text("flush") {size: "fine"}) {pad: "flush", radius: "square", id: "flush"}
 tile Nudged = card(text("nudged")) {pad: "nudge", style: {margin-top: -4}, id: "nudged"}
 
 tile App = column(Flush, Nudged) {gap: {base: "sm", md: "lg"}, pad: "nudge"}
