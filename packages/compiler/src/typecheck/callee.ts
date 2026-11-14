@@ -235,15 +235,13 @@ const NO_VALUE_OUT = "and a name carries no value out of a loop";
 
 /** Where else the value a `let … in` binds can be bound so both reads see it, by what reads it. */
 function letInRebind(ctx: Ctx): string {
+  if (ctx.rootsShareNoExpression) return "";
   switch (ctx.kind) {
     case "reducer":
       return ', or bind it with a "let" statement where both reads see it';
     // A tile's body has no `let … in` around its arguments.
     case "tile":
       return ', or move both reads into a tile that declares "in=" and pass it the value';
-    // Each entry is an expression of its own, so no `let … in` encloses two of them.
-    case "app-init":
-      return "";
     default:
       return ', or bind it with one "let … in" around both reads';
   }

@@ -234,7 +234,8 @@ function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[])
         localBinders: new Map(),
         routeBind: "no-payload",
         endedScopes: new Map(),
-        nestedScopes: nestedScopes(written.value),
+        // No hint from this table would be read: `checkAgainst` reports no undefined name.
+        nestedScopes: new Map(),
         wildcardsReportedElsewhere: true,
       });
     }
@@ -270,6 +271,7 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     routeBind: "no-payload",
     endedScopes: new Map(),
     nestedScopes: nestedScopes(t.given, t.invariant, t.expect, t.mocks),
+    rootsShareNoExpression: true,
   };
   for (const f of t.forAll ?? []) bindLocal(base, f.name, f.type);
   const owned: Ctx = { ...base, wildcardsReportedElsewhere: true };
@@ -325,6 +327,8 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     }
   }
   if (t.testKind === "episode-test") {
+    // Checked in the order written, so a scope the `mocks` end is ended for the `expect`.
+    checkTestMockValues(t.mocks, sym, errors, base, true);
     for (const f of sectionsOf(t, "episode-test", "expect", errors)) {
       switch (f.section) {
         case "slots-equal":
@@ -341,7 +345,6 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
           assertNever(f.section);
       }
     }
-    checkTestMockValues(t.mocks, sym, errors, base, true);
   }
   // A tile-test's `expect` is a tile expression, checked by `checkTileExpr`.
 }

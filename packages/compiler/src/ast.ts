@@ -308,10 +308,10 @@ export type UiEventKind =
 
 export type Statement =
   | { kind: "SlotAssign"; lvalue: Lvalue; rhs: Expr; pos: Pos }
-  | { kind: "LetStmt"; name: string; rhs: Expr; pos: Pos }
+  | { kind: "LetStmt"; name: string; namePos: Pos; rhs: Expr; pos: Pos }
   | { kind: "Emit"; effect: string; args: Expr[]; effectPos?: Pos; pos: Pos }
   | { kind: "StopTimer"; name: string; pos: Pos }
-  | { kind: "ForStmt"; bind: string; iter: Expr; body: Statement[]; pos: Pos }
+  | { kind: "ForStmt"; bind: string; bindPos: Pos; iter: Expr; body: Statement[]; pos: Pos }
   | { kind: "IfStmt"; cond: Expr; consequent: Statement[]; alternate: Statement[]; pos: Pos }
   | {
       kind: "MatchStmt";
@@ -391,7 +391,7 @@ type ExprForm =
   | { kind: "Wildcard"; wild: "slot"; slot: string; slotPos: Pos; pos: Pos }
   | { kind: "MatchExpr"; scrutinee: Expr; arms: MatchArm[]; pos: Pos }
   | { kind: "IfExpr"; cond: Expr; consequent: Expr; alternate: Expr; pos: Pos }
-  | { kind: "LetIn"; name: string; value: Expr; body: Expr; pos: Pos }
+  | { kind: "LetIn"; name: string; namePos: Pos; value: Expr; body: Expr; pos: Pos }
   | { kind: "EmitExpr"; effect: string; args: Expr[]; effectPos?: Pos; pos: Pos }
   | { kind: "Variant"; name: string; payload: Expr[]; pos: Pos } // e.g., All, Some(x), Loaded(t)
   | { kind: "TokenRef"; group: string; path: string[]; pos: Pos };
@@ -428,7 +428,7 @@ export type RetryExpr =
 
 export type TileExpr =
   | { kind: "TileCall"; name: string; args: TileArg[]; props: TileProp[]; pos: Pos }
-  | { kind: "TileFor"; bind: string; iter: Expr; body: TileExpr; pos: Pos }
+  | { kind: "TileFor"; bind: string; bindPos: Pos; iter: Expr; body: TileExpr; pos: Pos }
   | { kind: "TileWhen"; cond: Expr; body: TileExpr; pos: Pos }
   | { kind: "TileIf"; cond: Expr; consequent: TileExpr; alternate: TileExpr; pos: Pos }
   | { kind: "TileMatch"; scrutinee: Expr; arms: TileMatchArm[]; pos: Pos };

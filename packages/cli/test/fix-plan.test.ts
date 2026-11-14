@@ -929,6 +929,14 @@ ${APP_A}`;
     ],
     ["a tile's `for`", inApp("column(Btn, text(idx.show), for idx in [1] text(idx.show))")],
     [
+      // A bare name in tile position is read as a tile call, and `Iten` is one edit from it.
+      "a tile's `for`, named alone in tile position",
+      inApp('column(Btn, when(flag, item), for item in ["a"] text(item))').replace(
+        "tile Btn",
+        'tile Iten = text("x")\ntile Btn',
+      ),
+    ],
+    [
       "a tile's `match` arm",
       inApp(
         'column(Btn, text(v.show), match Some(1) with | Some(v) -> text(v.show) | None -> text("none"))',

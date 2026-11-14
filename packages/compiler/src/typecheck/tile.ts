@@ -132,7 +132,8 @@ function readsUndeclaredInput(tile: TileDef, sym: SymbolTable): boolean {
     localBinders: new Map(),
     routeBind: "no-payload",
     endedScopes: new Map(),
-    nestedScopes: nestedScopes(tile.body),
+    // No hint from this table would be read: only the input reads are kept.
+    nestedScopes: new Map(),
     undeclaredInputReads: seen,
   };
   checkTileExpr(tile.body, sym, [], ctx, { kind: "body" });
@@ -268,10 +269,11 @@ type Occupant =
   | { readonly kind: "uncalled"; readonly name: string }
   | { readonly kind: "unknown"; readonly name: string };
 
-// `ended` is a value whose scope is over, read after it: its E0103 says which scope it was.
+// `out-of-scope` is a value read after the scope that declares it ends or before it begins: its
+// E0103 says which scope it is.
 type ValueName =
   | { readonly kind: "value" }
-  | { readonly kind: "ended"; readonly error: KumikiError };
+  | { readonly kind: "out-of-scope"; readonly error: KumikiError };
 
 // The parser reads every name in an arm or a body as a tile call, so a call of a name no tile has
 // is resolved as a value. In a container it reads a bare lower-cased name as an expression, so a
@@ -304,7 +306,9 @@ function valueNamed(name: string, pos: Pos, sym: SymbolTable, ctx: Ctx): ValueNa
   checkExpr({ kind: "Ref", name, pos }, sym, asName, scope);
   const undefinedName = asName.find((e) => e.code === "E0103");
   if (undefinedName === undefined) return { kind: "value" };
-  if (undefinedName.endedScope !== undefined) return { kind: "ended", error: undefinedName };
+  if (undefinedName.endedScope !== undefined || undefinedName.laterScope !== undefined) {
+    return { kind: "out-of-scope", error: undefinedName };
+  }
   const asCall: KumikiError[] = [];
   checkCallee(name, [], pos, sym, asCall, scope);
   return asCall.some((e) => e.code === "E0116") ? null : { kind: "value" };
@@ -316,7 +320,7 @@ function notATile(
   pos: Pos,
 ): KumikiError {
   if (found.kind === "unknown") return undefinedTile(found.name, pos);
-  if (found.kind === "ended") return found.error;
+  if (found.kind === "out-of-scope") return found.error;
   const rule =
     place.kind === "child"
       ? `${place.of} renders a positional argument only when it is a tile, so this one renders nothing`
@@ -522,7 +526,7 @@ function checkTileCall(
     const found = occupantOf(t, sym, ctx);
     if (found.kind !== "tile") errors.push(notATile(found, place, t.pos));
     // A value is reported whole, and an argument or a prop on it is moved with it.
-    if (found.kind === "value" || found.kind === "ended") return;
+    if (found.kind === "value" || found.kind === "out-of-scope") return;
   }
   const userTile = sym.tiles.get(t.name);
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);

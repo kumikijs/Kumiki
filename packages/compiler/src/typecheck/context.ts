@@ -31,7 +31,10 @@ export type KumikiError = {
    * `kumiki fix` reads it to skip the rename.
    */
   endedScope?: NestedScopeKind;
-  /** E0103 only: the kind of nested scope that declares the name and begins after this read. */
+  /**
+   * E0103 only: the kind of nested scope that declares the name and begins after this read;
+   * `kumiki fix` reads it to skip the rename.
+   */
   laterScope?: NestedScopeKind;
   /** E0218 only: the member whose append alone makes the target a List; `kumiki fix` reads it. */
   accessor?: "keys" | "to-list";
@@ -117,6 +120,11 @@ export type Ctx = {
   endedScopes: Map<string, EndedScope>;
   /** Built before the check: a read can come before the scope that declares its name. */
   nestedScopes: NestedScopes;
+  /**
+   * The expressions checked in this scope are separate entries, fields or sections, so no
+   * `let … in` can be written around reads in two of them.
+   */
+  rootsShareNoExpression?: true;
   /** The effect whose own expressions are checked, when it declares `in=Unit` and so binds no `$1`. */
   noInputEffect?: string;
   oneValueFragment?: { method: string; hides: boolean };

@@ -71,6 +71,7 @@ export function checkApp(
     routeBind: "unbound",
     endedScopes: new Map(),
     nestedScopes: nestedScopes(...app.init),
+    rootsShareNoExpression: true,
   };
   for (const e of app.init) {
     if (e.kind !== "Call") {
@@ -112,7 +113,7 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
     });
   }
   const fields = [http.baseUrl, http.headers, http.timeout, http.credentials];
-  const fieldCtx = pureScope([], ...fields);
+  const fieldCtx: Ctx = { ...pureScope([], ...fields), rootsShareNoExpression: true };
   for (const e of fields) {
     if (e !== undefined) checkExpr(e, sym, errors, fieldCtx);
   }
