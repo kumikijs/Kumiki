@@ -65,6 +65,51 @@ describe("text= beside a positional argument on label / link / editable", () => 
   });
 });
 
+describe("content written in the {…} block", () => {
+  it.each([
+    'label() {text: "Name"}',
+    'link(to="/x") {text: "Home"}',
+    'editable() {text: "draft"}',
+    'image(alt="a") {src: "a.png"}',
+    'icon() {name: "home"}',
+    'label(text="A") {text: "B"}',
+    'image(src="a.png", alt="a") {src: "b.png"}',
+  ])("%s is read as its content", (tile) => {
+    expect(codes(tile)).toEqual([]);
+  });
+
+  it.each([
+    ['label("B") {text: "A"}', "label"],
+    ['link("B", to="/x") {text: "A"}', "link"],
+    ['editable("B") {text: "A"}', "editable"],
+  ])("%s is E0129 at the block's text, which the positional argument shadows", (tile, b) => {
+    expect(diagnostics(tile)).toEqual([
+      `E0129 2:${at(tile, "text:")} ${b} renders its positional argument, so the block's \`text\` is never rendered — it is read only when no positional argument is written. Remove the block's \`text\` or the positional argument`,
+    ]);
+  });
+
+  it.each([
+    "text",
+    "heading",
+    "markdown",
+    "code",
+  ])("%s() {text: …} is E0129 at the block's text", (b) => {
+    const tile = `${b}() {text: "Hi"}`;
+    expect(diagnostics(tile)).toEqual([
+      `E0129 2:${at(tile, "text:")} content is positional: write \`${b}("…")\` — the block's \`text\` is a prop on ${b} and never renders (it is the label argument of button, link, label and editable)`,
+    ]);
+  });
+
+  it("is not reported on a text builtin that also writes its content positionally", () => {
+    expect(codes(`text(title) {text: "x"}`)).not.toContain("E0129");
+  });
+
+  it("gives the block's E0129 no shape, since `kumiki fix` rewrites a `text=` it does not have", () => {
+    expect(shapes(`label("B") {text: "A"}`)).toEqual([undefined]);
+    expect(shapes(`heading() {text: title}`)).toEqual([undefined]);
+  });
+});
+
 describe("a positional argument the builtin never reads", () => {
   it("says it is the positional shape", () => {
     expect(shapes(`text("A", "B")`)).toEqual(["positional"]);

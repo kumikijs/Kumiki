@@ -1,4 +1,4 @@
-import type { TileArg, TileExpr } from "./ast.ts";
+import type { TileArg, TileExpr, TileProp } from "./ast.ts";
 
 export const BUILTIN_TILES = new Set<string>([
   // Structural
@@ -207,9 +207,16 @@ export function contentReading(name: string): ContentReading | undefined {
 
 export const VALUE_ARG_BUILTINS: ReadonlySet<string> = new Set(Object.keys(VALUE_BUILTIN_CONTENT));
 
-export function contentArg(t: TileExpr & { kind: "TileCall" }): TileArg | undefined {
+/**
+ * Where `t` writes the content it renders: its positional argument where it reads one, else its
+ * named content argument, which is one argument with the `{…}` entry of its name, the entry read
+ * when a call writes both, as for every prop.
+ */
+export function contentArg(t: TileExpr & { kind: "TileCall" }): TileArg | TileProp | undefined {
   const reading = contentReading(t.name);
   if (!reading) return undefined;
   const positional = reading.positional ? t.args.find((a) => a.name === undefined) : undefined;
-  return positional ?? (reading.named ? t.args.find((a) => a.name === reading.named) : undefined);
+  if (positional || !reading.named) return positional;
+  const named = reading.named;
+  return t.props.find((p) => p.name === named) ?? t.args.find((a) => a.name === named);
 }

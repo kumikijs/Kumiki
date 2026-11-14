@@ -655,6 +655,8 @@ A value builtin is written with an argument as content that it never renders. Ea
 
 Each is reported at the dropped argument, and the diagnostic's `unrendered` field names which shape it is: `positional`, `text-prop` or `text-shadowed`, in the order above. `check`, `build` and `smoke` were all green on these: the argument parsed, type-checked and never reached the page. With a positional argument also written, `text=` on a text builtin is an ordinary prop and is not reported.
 
+`text=` and the block's `text` are one argument, so the last two shapes are reported in whichever spelling is written: `heading() {text: title}` and `label("B") {text: "A"}` are E0129 at the block entry, and the message says ``the block's `text` `` where it says `` `text=` `` above. Such a diagnostic has no `unrendered` field, since `kumiki fix` rewrites `text=` only; remove the entry, or move its value to where the builtin reads it. Where the builtin does read that argument, the block entry is its content (`label() {text: "A"}`, `image(alt="…") {src: url}`, [Language §1.7.1](./language.md#_1-7-1-syntax)), and nothing is reported.
+
 **Fix**: Write the content where the builtin reads it — `heading(title)`, `image(src=url, alt=…)` — and join values meant to show together (`text(a + " " + b)`). `kumiki fix` removes the `text=` of a text builtin that has no positional argument, making its value the content, and removes a `text=` that a positional argument shadows on `link` / `label` / `editable` — neither changes what renders. A dropped positional argument has no single repair and is left to you.
 
 ## E02xx — Types

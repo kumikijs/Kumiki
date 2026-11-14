@@ -86,7 +86,7 @@ export function checkA11y(
     }
   }
   if (t.name === "link") {
-    const hasText = contentArg(t) !== undefined || t.props.some((p) => p.name === "text");
+    const hasText = contentArg(t) !== undefined;
     if (!hasText && propOf(t, "aria-label", ctx) === undefined) {
       errors.push({
         code: "E0703",
