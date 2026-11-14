@@ -2,7 +2,7 @@
 # variants, variants with a payload, and records, served the way it mounts.
 #
 # An option is matched by the structural key of its value (a variant's tag
-# and payload, a record's JSON text, fields in the order written), not by
+# and payload, a record's JSON text with its fields in sorted order), not by
 # being the object the slot holds. The payload is part of the key, so
 # `Some(Backlog)` and `Some(InProgress)` are two options. The server and the
 # client use the same key: it is each `<option>`'s `value`, and the option
