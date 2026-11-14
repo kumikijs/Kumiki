@@ -1,0 +1,46 @@
+# Feature: a tile written as a container's child by its bare name is that tile,
+# whatever the name's case (spec/lifecycle.md).
+#
+# `badge` and `chart` are each a slot and the tile that shows it, and the page
+# writes the tiles bare — `row(badge, HideBtn)`, `column(…, chart, …)` — as it
+# would write `Badge` or `Chart`. So `tile.mount(badge)` fires when the badge
+# appears and `tile.unmount(badge)` when "hide" takes it away, and `chart`'s
+# `error-boundary` holds: `chart.get` panics while the slot is `None`, and
+# `ChartFallback` shows in its place until "load" fills it.
+
+slot badge     : Text        = "new"
+slot chart     : Option(Int) = None
+slot shown     : Bool        = true
+slot mounts    : Int         = 0
+slot unmounts  : Int         = 0
+
+reducer sawBadge  on=tile.mount(badge)   do= mounts := mounts + 1
+reducer lostBadge on=tile.unmount(badge) do= unmounts := unmounts + 1
+reducer doHide    on=ui.click(HideBtn)   do= shown := false
+reducer doLoad    on=ui.click(LoadBtn)   do= chart := Some(42)
+
+tile badge = text("badge: " + badge)
+
+tile ChartFallback
+    in=PanicInfo
+    = text("chart unavailable: " + $1.message) {color: "danger"}
+
+tile chart
+    error-boundary = ChartFallback
+    = text("chart: " + chart.get.show)
+
+tile HideBtn = button(text="hide", onClick=doHide)
+tile LoadBtn = button(text="load", onClick=doLoad)
+
+tile App = column(
+    heading("Lower-cased tile child"),
+    column(when(shown, row(badge, HideBtn) {gap: "sm"})),
+    chart,
+    LoadBtn,
+    text("badge mounted " + mounts.show + ", unmounted " + unmounts.show))
+  {pad: "lg", gap: "md"}
+
+app LowercaseTileChild
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
