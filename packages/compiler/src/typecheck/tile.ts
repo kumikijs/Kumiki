@@ -462,36 +462,45 @@ function checkContentArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiErro
     });
   });
   if (!reading.positional) return;
-  const named = t.args.find((a) => a.name === "text");
-  if (!named?.name) return;
-  if (reading.named === "text" && positional.length > 0) {
-    errors.push({
-      code: "E0129",
-      kind: "unrendered-arg",
-      message:
-        `${t.name} renders its positional argument, so \`text=\` is never rendered — it is ` +
-        `read only when no positional argument is written. Remove \`text=\` or the ` +
-        `positional argument`,
-      pos: named.namePos,
-      unrendered: "text-shadowed",
-    });
-    return;
+  const shadowed = reading.named === "text" && positional.length > 0;
+  const aProp = reading.named === undefined && positional.length === 0;
+  if (!shadowed && !aProp) return;
+  // `text=` and the block's `text` are one argument, each reported in the spelling written. Only
+  // `text=` names a shape, since `kumiki fix` rewrites that spelling alone.
+  const spellings = [
+    { said: "`text=`", pos: t.args.find((a) => a.name === "text")?.namePos, tagged: true },
+    { said: "the block's `text`", pos: t.props.find((p) => p.name === "text")?.pos, tagged: false },
+  ];
+  for (const { said, pos, tagged } of spellings) {
+    if (!pos) continue;
+    errors.push(
+      shadowed
+        ? {
+            code: "E0129",
+            kind: "unrendered-arg",
+            message:
+              `${t.name} renders its positional argument, so ${said} is never rendered — it is ` +
+              `read only when no positional argument is written. Remove ${said} or the ` +
+              `positional argument`,
+            pos,
+            ...(tagged ? { unrendered: "text-shadowed" as const } : {}),
+          }
+        : {
+            code: "E0129",
+            kind: "unrendered-arg",
+            message:
+              `content is positional: write \`${t.name}("…")\` — ${said} is a prop on ${t.name} ` +
+              `and never renders (it is the label argument of button, link, label and editable)`,
+            pos,
+            ...(tagged ? { unrendered: "text-prop" as const } : {}),
+          },
+    );
   }
-  if (reading.named !== undefined || positional.length > 0) return;
-  errors.push({
-    code: "E0129",
-    kind: "unrendered-arg",
-    message:
-      `content is positional: write \`${t.name}("…")\` — \`text=\` is a prop on ${t.name} ` +
-      `and never renders (it is the label argument of button, link, label and editable)`,
-    pos: named.namePos,
-    unrendered: "text-prop",
-  });
 }
 
 /**
- * The values a builtin renders as text, as its lowering reads them: its content, `button`'s `text=`,
- * `link`'s `{text: …}` prop when no content is written, and the value `editable` binds.
+ * The values a builtin renders as text, as its lowering reads them: its content in either spelling,
+ * `button`'s `text=`, and the value `editable` binds.
  */
 function renderedText(t: TileExpr & { kind: "TileCall" }, ctx: Ctx): Expr[] {
   const named = (name: string) => t.args.find((a) => a.name === name)?.value;
@@ -499,7 +508,6 @@ function renderedText(t: TileExpr & { kind: "TileCall" }, ctx: Ctx): Expr[] {
   const values = [
     content,
     t.name === "button" ? named("text") : undefined,
-    t.name === "link" && !content ? t.props.find((p) => p.name === "text")?.value : undefined,
     t.name === "editable" ? propOf(t, "bind", ctx)?.value : undefined,
   ];
   return values.filter((v): v is Expr => v !== undefined && !isTileExpr(v));

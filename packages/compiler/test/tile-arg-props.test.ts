@@ -305,6 +305,28 @@ describe("which argument a builtin takes as its content", () => {
     expect(js).not.toContain("_s.show(2)");
     expect(propsOf(js)).toContain("level: 2");
   });
+
+  it.each([
+    ["a label's text", 'label() {text: "Name"}', 'label(text="Name")'],
+    ["a link's text", 'link(to="/x") {text: "Home"}', 'link(text="Home", to="/x")'],
+    ["an editable's text", 'editable() {text: "draft"}', 'editable(text="draft")'],
+    ["an image's src", 'image(alt="a") {src: "a.png"}', 'image(src="a.png", alt="a")'],
+    ["an icon's name", 'icon() {name: "home"}', 'icon(name="home")'],
+  ])("lowers %s the same from the block as from its argument", (_, block, arg) => {
+    expect(emit(block)).toBe(emit(arg));
+  });
+
+  it.each([
+    ['label(text="Named") {text: "Block"}', '"Named"', '"Block"'],
+    ['link(to="/x", text="Named") {text: "Block"}', '"Named"', '"Block"'],
+    ['editable(text="Named") {text: "Block"}', '"Named"', '"Block"'],
+    ['image(alt="a", src="named.png") {src: "block.png"}', '"named.png"', '"block.png"'],
+    ['icon(name="home") {name: "plus"}', '"home"', '"plus"'],
+  ])("shows the block's content when %s writes both spellings", (tile, named, block) => {
+    const js = emit(tile);
+    expect(js).toContain(`_s.show(${block})`);
+    expect(js).not.toContain(`_s.show(${named})`);
+  });
 });
 
 describe("button(type=…) reaches the tile node", () => {

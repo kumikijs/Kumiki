@@ -1,5 +1,5 @@
 import { indexPlaceType, unaliasType } from "../assignable.ts";
-import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
+import type { Expr, TileArg, TileDef, TileExpr, TileProp, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
 import { bindTarget } from "../bind-target.ts";
 import { BUILTIN_TILES, contentArg } from "../builtins.ts";
@@ -472,8 +472,7 @@ function tileCallJs(
       case "link": {
         const to = shownProp("to") ?? showJs('""', undefined, gen);
         const textArg = contentArg(t);
-        const textProp = t.props.find((p) => p.name === "text");
-        const textExpr = textArg ? asExpr(textArg.value) : textProp ? textProp.value : undefined;
+        const textExpr = textArg ? asExpr(textArg.value) : undefined;
         const text = textExpr ? jsOfExpr(textExpr, ctx) : '""';
         const fields = [`kind: "link"`, `text: ${showJs(text, textExpr, gen)}`, `to: ${to}`];
         const prefetch = prop("prefetch");
@@ -632,8 +631,8 @@ function contentJs(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string {
   return arg ? argShownJs(arg, ctx) : showJs('""', undefined, ctx.gen);
 }
 
-/** A tile argument as the text it renders (`showJs`). */
-function argShownJs(arg: TileArg, ctx: EvalCtx): string {
+/** A tile argument, or a `{…}` entry, as the text it renders (`showJs`). */
+function argShownJs(arg: TileArg | TileProp, ctx: EvalCtx): string {
   const e = asExpr(arg.value);
   return showJs(jsOfExpr(e, ctx), e, ctx.gen);
 }

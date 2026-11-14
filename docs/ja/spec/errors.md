@@ -618,6 +618,8 @@ codegen は位置引数の値を捨てる。そのため `column(text("a"), 42)`
 
 どれも捨てられる引数の位置で報告し、診断の `unrendered` フィールドがどの形かを上の順に `positional`・`text-prop`・`text-shadowed` で示す。これらは `check`・`build`・`smoke` のすべてを通っていた：引数はパースされ、型検査され、ページには届かなかった。位置引数も書かれていれば、テキスト系 builtin の `text=` は普通の prop であり報告しない。
 
+`text=` とブロックの `text` は 1 つの引数なので、後の 2 つの形はどちらの書き方でも報告する：`heading() {text: title}` と `label("B") {text: "A"}` はブロックの項目の位置で E0129 になり、メッセージは上の `` `text=` `` の代わりに ``the block's `text` `` と言う。この診断には `unrendered` フィールドが無い。`kumiki fix` が書き換えるのは `text=` だけだからである。項目を消すか、その値を builtin が読む位置へ移す。builtin がその引数を読む場合は、ブロックの項目がその内容であり（`label() {text: "A"}`、`image(alt="…") {src: url}`、[言語 §1.7.1](./language.md#_1-7-1-構文)）、何も報告しない。
+
 **修正**：builtin が読む位置に内容を書く —— `heading(title)`、`image(src=url, alt=…)` —— 一緒に表示したい値はつなげる（`text(a + " " + b)`）。`kumiki fix` は位置引数の無いテキスト系 builtin の `text=` を取り除いてその値を内容にし、`link` / `label` / `editable` で位置引数に隠れた `text=` を取り除く —— どちらも描画を変えない。捨てられる位置引数には一意の修正が無いので手で直す。
 
 ## E02xx — 型
