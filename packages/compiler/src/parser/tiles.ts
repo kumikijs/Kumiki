@@ -1,5 +1,5 @@
 import type { Expr, TileArg, TileExpr, TileProp } from "../ast.ts";
-import { BUILTIN_TILES, positionalIsTile, VALUE_ARG_BUILTINS } from "../builtins.ts";
+import { BUILTIN_TILES, parsesPositionalAsTile } from "../builtins.ts";
 import { HANDLER_NAMES } from "../ui-lifts.ts";
 import { StatementParser } from "./statements.ts";
 import { ParseError } from "./token-stream.ts";
@@ -81,8 +81,8 @@ export class TileParser extends StatementParser {
     return { kind: "TileCall", name, args, props, pos: nameTok.pos };
   }
 
-  // On a builtin other than the value builtins, a capitalised handler parses as a tile call
-  // so that `onClick=Bump {}` parses; every other named argument is a value.
+  // Where a builtin's positional argument is a tile, a capitalised handler parses as a tile call
+  // too, so that `onClick=Bump {}` parses; every other named argument is a value.
   protected parseTileArg(callee: string): TileArg {
     const first = this.peek();
     if ((first.kind === "ident" || first.kind === "kw") && this.matchTAt(1, "op", "=")) {
@@ -91,15 +91,14 @@ export class TileParser extends StatementParser {
       const head = this.peek();
       const value =
         HANDLER_NAMES.has(first.value) &&
-        BUILTIN_TILES.has(callee) &&
-        !VALUE_ARG_BUILTINS.has(callee) &&
+        parsesPositionalAsTile(callee) &&
         head.kind === "ident" &&
         isCapitalised(head.value)
           ? this.parseTileCall()
           : this.parseArgValue(false);
       return { kind: "TileArg", name: first.value, namePos: first.pos, value };
     }
-    return { kind: "TileArg", value: this.parseArgValue(positionalIsTile(callee)) };
+    return { kind: "TileArg", value: this.parseArgValue(parsesPositionalAsTile(callee)) };
   }
 
   // `for` and `when` have no expression form, so they are tiles wherever they are written.

@@ -129,7 +129,7 @@ export function checkCallee(
   if (!fn) {
     // A builtin tile's name is spelled right: what is wrong is where it is written.
     const message = BUILTIN_TILES.has(callee)
-      ? `"${callee}" is a tile, and a tile renders only as a positional argument of a builtin other than the value builtins`
+      ? `"${callee}" is a tile, and a tile renders only as a positional argument of a container`
       : `Call to undefined function "${callee}"`;
     errors.push({ code: "E0116", kind: "undef-call", message, pos });
     return;
