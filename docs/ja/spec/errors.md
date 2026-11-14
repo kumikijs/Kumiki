@@ -145,7 +145,7 @@ tile が、直接またはほかの tile を経由して自分自身へ展開し
 
 > `Tile "<name>" expands into itself (<A> → <B> → <A>)`
 
-辺はコード生成がたどるものと同じである：本体が描画する tile 呼び出し——本体の先頭にあるもの、または位置引数を子として描画する builtin の位置引数にあるもの（`column(B)`）——とそうした位置に書かれた tile の名前（`column(leaf)`）、`for` / `when` / `if` / `match` の各分岐、そしてその tile 自身の `error-boundary`——boundary の本体は、それを宣言した tile が描画されるあらゆる位置、すなわち呼び出し箇所、ルートのターゲット、ほかの tile のフォールバックで `catch` の中へインライン展開される（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。したがって戻ってくる boundary はほかの子と同様に循環を閉じ、自分自身へ戻ってくるフォールバックの連鎖も同じである：`tile Oops in=PanicInfo error-boundary=Oops` は `Oops → Oops` として、その `error-boundary` 節で報告される。`sub-routes` は辺ではない：サブルートは `route-outlet` を通じてルーターが選択し、インライン展開されることはない。値の位置も辺ではない：値 builtin の内容（`text(leaf)`）とユーザー tile の入力（`Card(leaf)`）は値なので、そこに書かれた名前はその名前が指す値として読まれ——slot は tile と名前を共有してよい（[E0007](#e0007-duplicate-definition)）——何もインライン展開されない。`tile leaf = column(text(leaf))` は slot `leaf` を表示し、自分自身へは展開しない。位置引数を描画しない builtin（`button`、`spinner` など）も、そこに書かれたものを何もインライン展開しないので、`tile A = column(spinner(A))` は循環ではない。
+辺はコード生成がたどるものと同じである：本体が描画する tile 呼び出し——本体の先頭にあるもの、または位置引数を子として描画する builtin の位置引数にあるもの（`column(B)`）——とそうした位置に書かれた tile の名前（`column(leaf)`）、`for` / `when` / `if` / `match` の各分岐、そしてその tile 自身の `error-boundary`——boundary の本体は、それを宣言した tile が描画されるあらゆる位置、すなわち呼び出し箇所、ルートのターゲット、ほかの tile のフォールバックで `catch` の中へインライン展開される（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。したがって戻ってくる boundary はほかの子と同様に循環を閉じ、自分自身へ戻ってくるフォールバックの連鎖も同じである：`tile Oops in=PanicInfo error-boundary=Oops` は `Oops → Oops` として、その `error-boundary` 節で報告される。`sub-routes` は辺ではない：サブルートは `route-outlet` を通じてルーターが選択し、インライン展開されることはない。値の位置も辺ではない：値 builtin の内容（`text(leaf)`）とユーザー tile の入力（`Card(leaf)`）は値なので、そこに書かれた名前はその名前が指す値として読まれ——slot は tile と名前を共有してよい（[E0007](#e0007-duplicate-definition)）——何もインライン展開されない。`tile leaf = column(text(leaf))` は slot `leaf` を表示し、自分自身へは展開しない。位置引数を描画しない builtin（`button`、`spinner` など）も、そこに書かれたものを何もインライン展開しないので、`tile A = column(spinner(A))` は循環ではない：その引数は [E0129](#e0129-unrendered-arg) だけになる。
 
 **修正**：循環を断つ。繰り返しはコレクションに対する `for` に、描き分けは `when` / `match` に属し、いずれも tile が自分自身を含む必要はない。
 
@@ -368,7 +368,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 outlet は tile 自身の body に書かれている必要はない。ランタイムは tile が描画する木の中で最初に見つかった `route-outlet` を埋め（[ルーティング §3.6.3](./routing.md#_3-6-3-matching-rules)）、コード生成はその木を body から組み立てる：body が呼び出す（`Outlet()`）か名前で書く（`Outlet`）tile、`for` / `when` / `if` / `match` の各分岐、そして `column`・`card`・`modal` のように子を描画する builtin の位置引数をインライン展開する。したがってレイアウト用の補助 tile に置いた outlet は何段下であっても数え、body がその補助 tile そのもの（`= Outlet`）であっても数える。自身も `sub-routes` を宣言している tile も数える：この tile にインライン展開されたその outlet は、この tile にマッチした子を映す。入れ子の tile 自身の `sub-routes` が使われるのは、それ自体がルートのターゲットになっている場所だけである。分岐の中の outlet は、body に直接書いた場合と同じく数える。分岐が描画されないときは、捨てた子をランタイムが報告する。
 
-たどるのは body が描画する tile だけである。子を描画しない builtin に位置引数として渡した outlet は数えない。`button`・`input`・`textarea`・`check`・`radio`・`switch`・`select`・`slider`・`spinner`・`progress`・`skeleton`・`toast`・`video`・`error`・`route-outlet` は位置引数を捨てるので、`spinner(Outlet)` は outlet を描画しない。名前付き引数として書いた outlet も、何もそれを描画しないので数えない（`column(x=when(c, route-outlet()))`）。`error-boundary` のフォールバックにだけ現れる outlet も、その tile 自身のものでも描画する tile のものでも数えない：フォールバックは body の一部ではない。
+たどるのは body が描画する tile だけである。子を描画しない builtin に位置引数として渡した outlet は数えない。`button`・`input`・`textarea`・`check`・`radio`・`switch`・`select`・`slider`・`spinner`・`progress`・`skeleton`・`toast`・`video`・`divider`・`error`・`route-outlet` は位置引数を捨てるので、`spinner(Outlet)` は outlet を描画しない。名前付き引数として書いた outlet も、何もそれを描画しないので数えない（`column(x=when(c, route-outlet()))`）。`error-boundary` のフォールバックにだけ現れる outlet も、その tile 自身のものでも描画する tile のものでも数えない：フォールバックは body の一部ではない。
 
 **修正**：子を表示したい場所——tile の body か、それが描画する tile の中——に `route-outlet()` を 1 つ置く。要らないなら `sub-routes` を外す。
 
@@ -410,9 +410,9 @@ outlet は tile 自身の body に書かれている必要はない。ランタ�
 
 lowering が読む `_init` / `_event` は trial の中でしか束縛されないため、`given` や `expect` から生成されたモジュールは、どのテストも結果を出す前に `_init is not defined` で死ぬ。
 
-builtin tile の名前も候補に含まれない。tile は関数ではなく、その呼び出しが tile になるのは tile が描画される位置——値 builtin 以外の builtin の位置引数（[言語 §1.7.1](./language.md#_1-7-1-構文)）——だけである。同名の `fn` が無いところでそれ以外の位置——名前付き引数、user tile の入力、値 builtin の内容、任意の式——で呼ぶと E0116 になり、専用の文面を持つ。ここでも誤っているのは名前ではなく位置だからである：
+builtin tile の名前も候補に含まれない。tile は関数ではなく、その呼び出しが tile になるのは tile が描画される位置——コンテナの位置引数（[言語 §1.7.1](./language.md#_1-7-1-構文)）——だけである。位置引数を内容として読まないそれ以外の builtin では、何も描画しない tile であり [E0129](#e0129-unrendered-arg) になる。同名の `fn` が無いところでそれ以外の位置——名前付き引数、user tile の入力、値 builtin の内容、任意の式——で呼ぶと E0116 になり、専用の文面を持つ。ここでも誤っているのは名前ではなく位置だからである：
 
-> `"<name>" is a tile, and a tile renders only as a positional argument of a builtin other than the value builtins`
+> `"<name>" is a tile, and a tile renders only as a positional argument of a container`
 
 > `Call to undefined function "<name>"`
 
@@ -586,7 +586,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 tile が期待される位置に値が書かれている。tile を期待する位置は 2 種類ある（[言語 §1.7.1](./language.md#_1-7-1-構文)）：
 
-- 値 builtin でない builtin —— `text`・`heading`・`markdown`・`code`・`editable`・`label`・`link`・`image`・`icon` 以外 —— の位置引数。そうした builtin は位置引数を tile のときにだけ描画する：`tile-expr` か、プログラムが定義する tile の名前。コンテナ（`column`・`row`・`card` など）はそれを子として描画し、それ以外（`button`・`progress` など）は位置引数をまったく読まない。
+- 位置引数を子として描画する builtin —— コンテナ：`column`・`row`・`card` など（[言語 §1.7.1](./language.md#_1-7-1-構文) が列挙する）—— の位置引数。そうした builtin は位置引数を tile のときにだけ描画する：`tile-expr` か、プログラムが定義する tile の名前。値 builtin は位置引数を値として読み、それ以外の builtin（`button`・`progress` など）は位置引数を tile でも値でも描画しない：そこに書いたものは [E0129](#e0129-unrendered-arg) になる。
 - `tile-expr` 全体：`when` / `if` / `for` / `match` の腕、tile 本体、tile-test の `expect`。パーサはそこに書かれた名前を tile 呼び出しとして読むので、そこで名指した値 —— slot、`fn` 呼び出し、ループ変数、`match` の束縛 —— は存在しない tile の呼び出しになる。
 
 どちらの位置でも、tile でも値でもない名前は代わりに [E0105](#e0105-undef-tile) になる。変種タグはそこでは値として引かれないので、`when(c, Circle)` も E0105 になる。宣言したスコープが終わった後に読んだ名前 —— ループの後の `for` ループ変数、兄弟の腕での `match` の腕の束縛 —— は、ほかの場所と同じく、そのスコープを持つ [E0103](#e0103-undef-ref-undef-slot) になる。
@@ -595,7 +595,7 @@ tile が期待される位置に値が書かれている。tile を期待する�
 > ``A value is not a tile: <place> has to be a tile. Show the value with a tile — `text(…)` ``
 > `` `<name>` is a builtin tile named without its call: <builtin> renders a positional argument only when it is a tile, so this one renders nothing. Call it — `<name>()` ``
 
-1 つ目は位置引数にある値。2 つ目は `tile-expr` 全体の位置にある値で、`<place>` がその位置を名指す：``a `when` arm``、``an `if` arm``、``a `for` arm``、``a `match` arm``、`a tile's body`、`` a tile-test's `expect` ``。3 つ目は、組み込み tile の名前を呼び出さずに位置引数に書いたもの：`column(divider)` は `divider` を名指すだけで何も描画せず、`column(divider())` なら描画する。`Call it` は位置引数を子として描画する builtin の下でだけ添える：位置引数を描画しない builtin の下では呼び出しも何も描画しない（`button(text="x", divider())`）ので、メッセージは `renders nothing.` で終わる。腕や本体ではパーサが同じ名前を呼び出しとして読むので、`when(c, divider)` は divider を描画し、報告されない。コンテナの中では、スコープ内の値と同じ名前 —— `spinner` という名のループ変数など —— はその値であり、1 つ目の形になる。腕の中では builtin の呼び出しが勝つので、`for spinner in xs when(c, spinner)` は builtin を描画する。コンテナの中の、組み込み tile でない小文字の呼び出しは式なので、何を呼んでいても値である：`column(greting())` は 1 つ目の形になり、`when(c, greting())` は E0105 になる。
+1 つ目は位置引数にある値。2 つ目は `tile-expr` 全体の位置にある値で、`<place>` がその位置を名指す：``a `when` arm``、``an `if` arm``、``a `for` arm``、``a `match` arm``、`a tile's body`、`` a tile-test's `expect` ``。3 つ目は、組み込み tile の名前を呼び出さずに位置引数に書いたもの：`column(divider)` は `divider` を名指すだけで何も描画せず、`column(divider())` なら描画する。腕や本体ではパーサが同じ名前を呼び出しとして読むので、`when(c, divider)` は divider を描画し、報告されない。コンテナの中では、スコープ内の値と同じ名前 —— `spinner` という名のループ変数など —— はその値であり、1 つ目の形になる。腕の中では builtin の呼び出しが勝つので、`for spinner in xs when(c, spinner)` は builtin を描画する。コンテナの中の、組み込み tile でない小文字の呼び出しは式なので、何を呼んでいても値である：`column(greting())` は 1 つ目の形になり、`when(c, greting())` は E0105 になる。
 
 codegen は位置引数の値を捨てる。そのため `column(text("a"), 42)` は `text` だけを描画し、`n` が slot の `column(text("a"), n)` は子のリストに `null` を入れ、`column(let x = 42 in Card(x))` は空のルートをマウントしていた。`let` は tile を検査からも隠していた：`Card` の引数は `in=` と照合されず、その下に書いた builtin は `fn` として探された（E0116）。診断は値の位置に出し、値の中身は検査しない —— その中の診断は、誤ったものも正しいもの（未定義の名前）も、値を本来の位置に移したときに出る。
 
@@ -605,20 +605,24 @@ codegen は位置引数の値を捨てる。そのため `column(text("a"), 42)`
 
 ### E0129 `unrendered-arg`
 
-値 builtin に、決して描画されない引数が内容として書かれている。それぞれ内容を 1 か所から読む（[標準ライブラリ §2.3.2](./stdlib.md#_2-3-2-テキスト要素)）：`text`・`heading`・`code`・`markdown` は最初の位置引数から、`link`・`label`・`editable` は最初の位置引数から、それが無ければ `text=` から、`image`・`icon` は `src=`・`name=` から。内容としてそれ以外に書いたものはどこにも行かない：
+builtin に、決して描画されない引数が書かれている。値 builtin は内容を 1 か所から読む（[標準ライブラリ §2.3.2](./stdlib.md#_2-3-2-テキスト要素)）：`text`・`heading`・`code`・`markdown` は最初の位置引数から、`link`・`label`・`editable` は最初の位置引数から、それが無ければ `text=` から、`image`・`icon` は `src=`・`name=` から。それ以外の builtin は、位置引数を子として描画する —— [言語 §1.7.1](./language.md#_1-7-1-構文) が列挙するコンテナ —— か、位置引数をまったく描画しない。それ以外に書いたものはどこにも行かない：
 
-- builtin が読む分を超える位置引数。`text("A", "B")` は `A` を描画し、`B` は捨てられる。位置引数を読まない `image` と `icon` では、すべて捨てられる。
+- 値 builtin が読む分を超える位置引数。`text("A", "B")` は `A` を描画し、`B` は捨てられる。
+- 位置引数を描画しない builtin への位置引数（tile でも値でも）：`image`・`icon`、および値 builtin でもコンテナでもないすべての builtin —— `button`・`input`・`textarea`・`check`・`radio`・`select`・`slider`・`switch`・`video`・`toast`・`progress`・`spinner`・`skeleton`・`error`・`divider`・`route-outlet`。`button(Header, text="Go")` は `Go` と書かれたボタンを描画し、`Header` は描画しない。`progress(text("a"))` はバーを描画し、`a` は描画しない。
 - 位置引数の無い `text` / `heading` / `code` / `markdown` の `text=`。`text=` は `button`・`link`・`label`・`editable` のラベル引数であり、テキスト系 builtin では prop なので、`heading(text=title)` は空の見出しを描画する。
 - `link` / `label` / `editable` で位置引数と並べた `text=`。これらは位置引数が無いときだけ `text=` を読むので、`label(text="A", "B")` は `B` を描画し、`A` は捨てられる。
 
 > `` <builtin> renders its first positional argument only — positional argument <n> is never rendered. Join the values (`a + b`, `fmt(…)`) or give each its own <builtin> ``
-> `` <builtin> takes its <name> as `<name>=` — a positional argument is never rendered. Write `<builtin>(<name>=…)` ``
+> `` <builtin> renders no positional argument, so this one is never rendered. Write it as <args>, or show it beside the <builtin> ``
+> `` <builtin> renders no positional argument, so this one is never rendered. Show it beside the <builtin> ``
 > `` content is positional: write `<builtin>("…")` — `text=` is a prop on <builtin> and never renders (it is the label argument of button, link, label and editable) ``
 > `` <builtin> renders its positional argument, so `text=` is never rendered — it is read only when no positional argument is written. Remove `text=` or the positional argument ``
 
-どれも捨てられる引数の位置で報告し、診断の `unrendered` フィールドがどの形かを上の順に `positional`・`text-prop`・`text-shadowed` で示す。これらは `check`・`build`・`smoke` のすべてを通っていた：引数はパースされ、型検査され、ページには届かなかった。位置引数も書かれていれば、テキスト系 builtin の `text=` は普通の prop であり報告しない。
+位置引数を描画しない builtin では、`<args>` はその代わりに表示するものを 1 つの表から名指す：`image` と `video` は `src=`、`icon` は `name=`、`button` と `toast` は `text=`、`input` と `textarea` は `bind=`・`value=`・`placeholder=` のいずれか、`select` は `options=`・`bind=`・`value=`・`placeholder=` のいずれか、`check` は `label=`・`bind=`・`value=` のいずれか、`switch` は `bind=`・`value=` のいずれか、`radio` は `label=`・`bind=`・`selected=` のいずれか、`slider` は `bind=`・`value=` のいずれか、`progress` は `value=`・`max=` のいずれか、`error` は `field=`。`divider`・`spinner`・`skeleton`・`route-outlet` は引数から表示するものが無く、3 つ目の形になる。引数は丸ごと報告し、その中身 —— tile、`let`、綴り違いの名前 —— は検査しない。コンテナの中の値（[E0128](#e0128-value-as-child)）と同じく、その中の診断は引数を描画される位置に移したときに出る。
 
-**修正**：builtin が読む位置に内容を書く —— `heading(title)`、`image(src=url, alt=…)` —— 一緒に表示したい値はつなげる（`text(a + " " + b)`）。`kumiki fix` は位置引数の無いテキスト系 builtin の `text=` を取り除いてその値を内容にし、`link` / `label` / `editable` で位置引数に隠れた `text=` を取り除く —— どちらも描画を変えない。捨てられる位置引数には一意の修正が無いので手で直す。
+どれも捨てられる引数の位置で報告し、診断の `unrendered` フィールドがどの形かを示す：最初の 3 つの形は `positional`、続いて `text-prop`・`text-shadowed`。ほかに報告するものはない：引数はパースされビルドされるがページには届かないので、`smoke` もそれを通す。位置引数も書かれていれば、テキスト系 builtin の `text=` は普通の prop であり報告しない。
+
+**修正**：builtin が読む位置に内容を書く —— `heading(title)`、`image(src=url, alt=…)`、`button(text="Go")` —— 一緒に表示したい値はつなげる（`text(a + " " + b)`）。位置引数を描画しない builtin には、tile をコンテナの中でその隣に置く：`row(button(text="Go"), Header)`。`kumiki fix` は位置引数の無いテキスト系 builtin の `text=` を取り除いてその値を内容にし、`link` / `label` / `editable` で位置引数に隠れた `text=` を取り除く —— どちらも描画を変えない。捨てられる位置引数には一意の修正が無いので手で直す。
 
 ## E02xx — 型
 
@@ -645,7 +649,7 @@ codegen は位置引数の値を捨てる。そのため `column(text("a"), 42)`
 
 イベントハンドラが束縛するのは **reducer** であり、これは `f(onX=r)` と `f() {onX: r}` のどちらの形でも変わらない。reducer の名前空間で解決される唯一の引数位置であり、そこに書かれた裸の識別子の意味は形ではなくこの位置が決める。
 
-到着する形は一様でなく、それが値の形より先にハンドラであるかを問う理由である。小文字始まりの名前は参照として解析される。大文字始まりの名前は、値 builtin 以外の builtin での引数形式では *tile call* として（`box(text("x"), onClick=Card)`）、それ以外——props ブロック、`link` のような値 builtin、user tile——では variant タグとして解析される。3 つとも「担っている名前」として読むので、名前自体が大文字始まりの reducer も他と同じように束縛できる：形が記録しているのは大文字か小文字か、そしてその引数がどの tile に載っているかであって、どちらもこの位置で書き手が言い分けていることではない。引数形式は以前は形を先に見ていたため、その位置に書かれた tile 名はリスナのない要素にコンパイルされていた。
+到着する形は一様でなく、それが値の形より先にハンドラであるかを問う理由である。小文字始まりの名前は参照として解析される。大文字始まりの名前は、位置引数を内容として読まない builtin での引数形式では *tile call* として（`box(text("x"), onClick=Card)`、`image(src=…, onClick=Card)`）、それ以外——props ブロック、`link` のように位置引数から内容を読む値 builtin、user tile——では variant タグとして解析される。3 つとも「担っている名前」として読むので、名前自体が大文字始まりの reducer も他と同じように束縛できる：形が記録しているのは大文字か小文字か、そしてその引数がどの tile に載っているかであって、どちらもこの位置で書き手が言い分けていることではない。引数形式は以前は形を先に見ていたため、その位置に書かれた tile 名はリスナのない要素にコンパイルされていた。
 
 裸の名前・引数なしの呼び出し・空の brace 形式に、パーサは同一のノードを与える — `onClick=Bump` / `onClick=Bump()` / `onClick=Bump {}` は解析後に区別がつかない — ので、3 つとも reducer を名指す。見分ける材料が残っておらず、どれか 1 つだけを指す診断も出せない。
 
@@ -842,7 +846,7 @@ reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、その subscrip
 
 ### W0212 `ui-event-tile-mismatch`（warning）
 
-reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に、`<ev>` がその reducer に届く要素が一つも無い — 例: `tile Card = box(...)` に対する `ui.focus(Card)`。codegen は静かに handler を捨てるため reducer は死にコードになる。これを check 時の警告として浮上させ、ビルドは止めずにサイレント失敗を可視化する。検査は tile 配下（子 tile を含む）を walk するため、`TodoRow = row(check(...), …)` + `ui.click(TodoRow)` のような cascade パターンでは警告は出ない — codegen は focusable な子孫に handler を配線する。「子 tile を含む」は両側で効いている: 子孫を名前で参照する本体（`tile Row = box(Leaf)`）も、インラインの `box(input(...))` とまったく同じように walk され、codegen も同じ辺を辿って handler を持ち上げる（[§1.6.2](./language.md#_1-6-2-セレクタ)）。かつては検査だけが参照を辿り codegen は辿らなかったため、この警告が報告するはずのサイレントな取りこぼしが、警告なしで起きていた。辺は [E0005](#e0005-tile-cycle) が挙げるものと同じなので、位置引数を描画しない builtin の下に書かれた tile（`tile Row = row(spinner(Btn))`）は walk されない: codegen はそれを捨てるので、`Btn` は `Row` の木に無い。同じハンドラ prop を書いた呼び出し側（`RemoveBtn {onClick: remove}`）を経由して子孫に届く場合も codegen は同じ辺を辿り、その prop は持ち上げられた subscription と結合され、コンテナ側の reducer もその横で定義順に発火する（[§1.7.3](./language.md#_1-7-3-event-handler-props)）。
+reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に、`<ev>` がその reducer に届く要素が一つも無い — 例: `tile Card = box(...)` に対する `ui.focus(Card)`。codegen は静かに handler を捨てるため reducer は死にコードになる。これを check 時の警告として浮上させ、ビルドは止めずにサイレント失敗を可視化する。検査は tile 配下（子 tile を含む）を walk するため、`TodoRow = row(check(...), …)` + `ui.click(TodoRow)` のような cascade パターンでは警告は出ない — codegen は focusable な子孫に handler を配線する。「子 tile を含む」は両側で効いている: 子孫を名前で参照する本体（`tile Row = box(Leaf)`）も、インラインの `box(input(...))` とまったく同じように walk され、codegen も同じ辺を辿って handler を持ち上げる（[§1.6.2](./language.md#_1-6-2-セレクタ)）。かつては検査だけが参照を辿り codegen は辿らなかったため、この警告が報告するはずのサイレントな取りこぼしが、警告なしで起きていた。辺は [E0005](#e0005-tile-cycle) が挙げるものと同じなので、位置引数を描画しない builtin の下に書かれた tile（`tile Row = row(spinner(Btn))`）は walk されない: codegen はそれを捨てる（[E0129](#e0129-unrendered-arg)）ので、`Btn` は `Row` の木に無い。同じハンドラ prop を書いた呼び出し側（`RemoveBtn {onClick: remove}`）を経由して子孫に届く場合も codegen は同じ辺を辿り、その prop は持ち上げられた subscription と結合され、コンテナ側の reducer もその横で定義順に発火する（[§1.7.3](./language.md#_1-7-3-event-handler-props)）。
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but tile "<Tile>" has no descendant that fires "<ev>" (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 

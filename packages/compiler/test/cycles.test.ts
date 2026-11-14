@@ -142,9 +142,6 @@ ${TAIL}`).filter((e) => e.code === "E0005");
     ["content under if", `if true then text(leaf) else column(text("x"))`],
     ["content under for", `for i in [1] text(leaf)`],
     ["a user tile's input", `column(Card(leaf))`],
-    ["a button's positional argument", `column(button(leaf))`],
-    ["a spinner's positional argument", `column(spinner(leaf))`],
-    ["a call under a button", `column(button(row(leaf)))`],
   ];
   for (const [what, body] of valuePositions) {
     it(`does not follow a tile's name in ${what}`, () => {
@@ -170,15 +167,32 @@ ${TAIL}`;
     expect(err?.message).toBe(`Tile "Card" expands into itself (Card → leaf → Card)`);
   });
 
-  // A builtin that drops its positional argument renders no call written there either.
+  // A builtin that drops its positional argument renders nothing written there, name or call.
+  // E0129 reports that argument; the point here is that no E0005 joins it.
+  const droppedNames: [string, string][] = [
+    ["a button's positional argument", `column(button(leaf))`],
+    ["a spinner's positional argument", `column(spinner(leaf))`],
+    ["a call under a button", `column(button(row(leaf)))`],
+  ];
+  for (const [what, body] of droppedNames) {
+    it(`does not follow a tile's name in ${what}, which is E0129 alone`, () => {
+      expect(
+        codesOf(`slot leaf : Text = "hello"
+tile leaf = ${body}
+tile App = column(leaf)
+${TAIL}`),
+      ).toEqual(["E0129"]);
+    });
+  }
+
   const dropped: [string, string][] = [
     ["a spinner", `tile A = column(spinner(A))`],
     ["a button", `tile A = column(button(A))`],
     ["a container under a button", `tile A = column(button(row(A)))`],
   ];
   for (const [what, tileA] of dropped) {
-    it(`does not follow a call under ${what}`, () => {
-      expect(codesOf(`${tileA}\ntile App = column(A)\n${TAIL}`)).toEqual([]);
+    it(`does not follow a call under ${what}, which is E0129 alone`, () => {
+      expect(codesOf(`${tileA}\ntile App = column(A)\n${TAIL}`)).toEqual(["E0129"]);
     });
   }
 

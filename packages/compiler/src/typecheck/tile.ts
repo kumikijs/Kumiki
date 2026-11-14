@@ -10,10 +10,10 @@ import {
 } from "../ast.ts";
 import {
   BUILTIN_TILES,
-  CHILD_RENDERING_BUILTINS,
   contentArg,
   contentReading,
   positionalIsTile,
+  shownInPlaceOfPositional,
 } from "../builtins.ts";
 import {
   type RouteMapEntry,
@@ -318,14 +318,13 @@ function notATile(
     place.kind === "child"
       ? `${place.of} renders a positional argument only when it is a tile, so this one renders nothing`
       : `${placeName(place)} has to be a tile`;
-  // A `let` is a value only as a child: where a whole tile-expr stands, the parser refuses one.
-  // A call renders under a builtin that renders its positional arguments, and nothing elsewhere.
+  // A `let` is a value only as a child: where a whole tile-expr stands, the parser refuses one. A
+  // positional argument is a `child` place only under a container, so the call suggested here
+  // renders there.
   const message =
     found.kind === "uncalled"
-      ? `\`${found.name}\` is a builtin tile named without its call: ${rule}.` +
-        (place.kind === "child" && CHILD_RENDERING_BUILTINS.has(place.of)
-          ? ` Call it — \`${found.name}()\``
-          : "")
+      ? `\`${found.name}\` is a builtin tile named without its call: ${rule}. ` +
+        `Call it — \`${found.name}()\``
       : `A value is not a tile: ${rule}. Show the value with a tile — \`text(…)\`` +
         (place.kind === "child"
           ? " — or, for a `let`, write the value where it is used or compute it in a `fn`"
@@ -442,26 +441,44 @@ function checkTileInput(
   checkAgainst(value, def.in, sym, errors, ctx);
 }
 
-function checkContentArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+/** `a`, `a or b`, `a, b or c`: the items as a choice of one. */
+function alternatives(items: readonly string[]): string {
+  return items.length > 1 ? `${items.slice(0, -1).join(", ")} or ${items.at(-1)}` : items.join("");
+}
+
+function checkUnrenderedArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+  const positional = t.args.filter((a) => a.name === undefined);
+  const shown = shownInPlaceOfPositional(t.name);
+  if (shown) {
+    for (const a of positional) {
+      errors.push({
+        code: "E0129",
+        kind: "unrendered-arg",
+        message:
+          `${t.name} renders no positional argument, so this one is never rendered. ` +
+          (shown.length > 0
+            ? `Write it as ${alternatives(shown.map((n) => `\`${n}=\``))}, or show it beside the ${t.name}`
+            : `Show it beside the ${t.name}`),
+        pos: a.value.pos,
+        unrendered: "positional",
+      });
+    }
+    return;
+  }
   const reading = contentReading(t.name);
   if (!reading) return;
-  const positional = t.args.filter((a) => a.name === undefined);
-  const read = reading.positional ? 1 : 0;
-  positional.slice(read).forEach((a, i) => {
+  positional.slice(1).forEach((a, i) => {
     errors.push({
       code: "E0129",
       kind: "unrendered-arg",
-      message: reading.positional
-        ? `${t.name} renders its first positional argument only — positional argument ` +
-          `${i + read + 1} is never rendered. Join the values (\`a + b\`, \`fmt(…)\`) or give ` +
-          `each its own ${t.name}`
-        : `${t.name} takes its ${reading.named} as \`${reading.named}=\` — a positional ` +
-          `argument is never rendered. Write \`${t.name}(${reading.named}=…)\``,
+      message:
+        `${t.name} renders its first positional argument only — positional argument ` +
+        `${i + 2} is never rendered. Join the values (\`a + b\`, \`fmt(…)\`) or give ` +
+        `each its own ${t.name}`,
       pos: a.value.pos,
       unrendered: "positional",
     });
   });
-  if (!reading.positional) return;
   const named = t.args.find((a) => a.name === "text");
   if (!named?.name) return;
   if (reading.named === "text" && positional.length > 0) {
@@ -524,7 +541,7 @@ function checkTileCall(
   const userTile = sym.tiles.get(t.name);
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
   checkA11y(t, sym, errors, ctx);
-  checkContentArgs(t, errors);
+  checkUnrenderedArgs(t, errors);
   for (const value of renderedText(t, ctx)) {
     refuseRenderedEffectId(value, `${t.name}(...)`, sym, errors, ctx);
   }
@@ -578,6 +595,9 @@ function checkTileCall(
       checkHandlerBinding(t.name, arg.name, "arg", v, sym, errors);
       continue;
     }
+    // checkUnrenderedArgs reports this as E0129, tile or value; it is moved or removed whole, so
+    // nothing inside it is checked.
+    if (arg.name === undefined && shownInPlaceOfPositional(t.name)) continue;
     const place: TilePlace | null =
       arg.name === undefined && positionalIsTile(t.name) ? { kind: "child", of: t.name } : null;
     if (isTileExpr(v)) {

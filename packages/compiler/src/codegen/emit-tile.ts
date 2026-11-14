@@ -2,7 +2,7 @@ import { indexPlaceType, unaliasType } from "../assignable.ts";
 import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
 import { bindTarget } from "../bind-target.ts";
-import { BUILTIN_TILES, contentArg } from "../builtins.ts";
+import { BUILTIN_TILES, contentArg, positionalIsTile } from "../builtins.ts";
 import { errorField } from "../error-field.ts";
 import { TIME_INPUT_PATTERNS } from "../input-bind.ts";
 import type { ParseReading } from "../parse-reading.ts";
@@ -328,6 +328,10 @@ function tileCallJs(
 
   gen.usedTiles.add(name);
   const propsObj = propsFor(t, ctx, enclosingTiles, explicitHandlers(t, rootHandlers));
+  // Read off the set the checker reads, so what `check` accepts as a child is what renders.
+  const children = positionalIsTile(name)
+    ? `[${collectChildren(t.args, gen, ctx, enclosingTiles)}]`
+    : "[]";
   const prop = (propName: string): Expr | undefined => propValue(t, propName, ctx);
   const propJs = (propName: string): string | undefined => {
     const v = prop(propName);
@@ -360,17 +364,16 @@ function tileCallJs(
       case "overlay":
       case "region":
       case "scroll":
-      case "divider":
       case "fieldset":
       case "list-item":
       case "table":
       case "table-head":
       case "table-body":
       case "table-row":
-      case "panel": {
-        const children = collectChildren(t.args, gen, ctx, enclosingTiles);
-        return `({ kind: ${JSON.stringify(name)}, children: [${children}], props: ${propsObj} })`;
-      }
+      case "panel":
+        return `({ kind: ${JSON.stringify(name)}, children: ${children}, props: ${propsObj} })`;
+      case "divider":
+        return `({ kind: "divider", props: ${propsObj} })`;
       case "heading": {
         const text = contentJs(t, ctx);
         return `({ kind: "heading", text: ${text}, props: ${propsObj} })`;
@@ -461,10 +464,8 @@ function tileCallJs(
       }
       case "spinner":
         return `({ kind: "spinner", props: ${propsObj} })`;
-      case "form": {
-        const children = collectChildren(t.args, gen, ctx, enclosingTiles);
-        return `({ kind: "form", children: [${children}], props: ${propsObj} })`;
-      }
+      case "form":
+        return `({ kind: "form", children: ${children}, props: ${propsObj} })`;
       case "label": {
         const text = contentJs(t, ctx);
         return `({ kind: "label", text: ${text}, props: ${propsObj} })`;
@@ -524,14 +525,12 @@ function tileCallJs(
         return `({ ${fields.join(", ")} })`;
       }
       case "list": {
-        const children = collectChildren(t.args, gen, ctx, enclosingTiles);
         const orderedJs = propJs("ordered");
         const ord = orderedJs === undefined ? "false" : truthy(orderedJs);
-        return `({ kind: "list", ordered: ${ord}, children: [${children}], props: ${propsObj} })`;
+        return `({ kind: "list", ordered: ${ord}, children: ${children}, props: ${propsObj} })`;
       }
       case "table-cell": {
-        const children = collectChildren(t.args, gen, ctx, enclosingTiles);
-        const fields: string[] = [`kind: "table-cell"`, `children: [${children}]`];
+        const fields: string[] = [`kind: "table-cell"`, `children: ${children}`];
         field(fields, "colspan");
         field(fields, "rowspan");
         fields.push(`props: ${propsObj}`);
@@ -540,8 +539,7 @@ function tileCallJs(
       case "modal":
       case "drawer":
       case "popover": {
-        const children = collectChildren(t.args, gen, ctx, enclosingTiles);
-        const fields: string[] = [`kind: ${JSON.stringify(name)}`, `children: [${children}]`];
+        const fields: string[] = [`kind: ${JSON.stringify(name)}`, `children: ${children}`];
         const openJs = propJs("open");
         fields.push(`open: ${openJs === undefined ? "true" : truthy(openJs)}`);
         for (const key of ["title", "side", "placement"]) field(fields, key, key, show);
@@ -549,8 +547,7 @@ function tileCallJs(
         return `({ ${fields.join(", ")} })`;
       }
       case "tooltip": {
-        const children = collectChildren(t.args, gen, ctx, enclosingTiles);
-        const fields: string[] = [`kind: "tooltip"`, `children: [${children}]`];
+        const fields: string[] = [`kind: "tooltip"`, `children: ${children}`];
         field(fields, "text", "text", show);
         field(fields, "placement", "placement", show);
         fields.push(`props: ${propsObj}`);
@@ -593,12 +590,11 @@ function tileCallJs(
       case "route-outlet":
         return `({ kind: "route-outlet", children: [], props: ${propsObj} })`;
       case "details": {
-        const children = collectChildren(t.args, gen, ctx, enclosingTiles);
         const summary = shownProp("summary") ?? showJs('""', undefined, gen);
         const fields: string[] = [
           `kind: "details"`,
           `summary: ${summary}`,
-          `children: [${children}]`,
+          `children: ${children}`,
         ];
         field(fields, "open", "open", truthy);
         fields.push(`props: ${propsObj}`);
