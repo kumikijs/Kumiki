@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { codesOf, type Pointed, pointedErrorsOf } from "./helpers/diagnostics.ts";
 import { loadReducer } from "./helpers/module.ts";
-import { withButtonApp } from "./helpers/programs.ts";
+import { LOAD_EFFECT, withButtonApp } from "./helpers/programs.ts";
 
 const app = (defs: string, init = "", caps = ""): string => withButtonApp(defs, { caps, init });
 
-const LOAD = `fn label() -> Text = "x"
-effect load cap=storage.read in=Text out=Result(Text, Text) map-request={key: $1, decode: Decoder.Json(Text)}`;
+const LOAD = `fn label() -> Text = "x"\n${LOAD_EFFECT}`;
 
 const lines = (d: Pointed[]) => d.map((x) => `${x.code} ${x.message}`);
 
@@ -267,13 +266,7 @@ slot names : List(Text) = all()`),
 
   it("is E0120 in an app.init argument", () => {
     expect(
-      codesOf(
-        program(
-          `effect load cap=storage.read in=Text out=Result(Text, Text) map-request={key: $1, decode: Decoder.Json(Text)}`,
-          'load([1].map(here).head.get-or(""))',
-          "storage.read",
-        ),
-      ),
+      codesOf(program(LOAD_EFFECT, 'load([1].map(here).head.get-or(""))', "storage.read")),
     ).toEqual(["E0120"]);
   });
 
