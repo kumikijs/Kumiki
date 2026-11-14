@@ -2,7 +2,7 @@
 "@kumikijs/compiler": patch
 ---
 
-A positional argument on a builtin that renders none — `button`, `input`, `progress`, `divider`, … — is E0129 `unrendered-arg`, tile or value, and the message names what the builtin shows instead.
+A positional argument on a builtin that renders none — `button`, `input`, `progress`, `divider`, … — is E0129 `unrendered-arg`, tile or value, and the message names what the builtin shows instead, or says to show it beside the builtin.
 
 Only the containers (`column`, `row`, `card`, `form`, `modal`, `tooltip`, …) render their positional arguments. The checker counted every builtin that is not a value builtin as one, so a tile written on `button` or `progress` passed `check` and was dropped from the page:
 
@@ -22,6 +22,6 @@ tile P = column(button("Go", text="x"))
 # after:  E0129 button renders no positional argument, so this one is never rendered. Write it as `text=`, or show it beside the button
 ```
 
-`divider`, `spinner`, `skeleton` and `route-outlet` show nothing an argument gives them, and are told to show it beside the builtin. `image("a.png")` and `icon("home")` draw the same form, naming `src=` and `name=`, where they said ``image takes its src as `src=` …``; like the others, the argument is not checked inside, so `image(nope)` is E0129 alone where it was E0129 and E0103.
+`check` and `radio` name `label=` first, and `slider` names `value=` beside `bind=`. `divider`, `spinner`, `skeleton` and `route-outlet` show nothing an argument gives them, and are told to show it beside the builtin. `image("a.png")` and `icon("home")` draw the same form, naming `src=` and `name=`, where they said ``image takes its src as `src=` …``; like the others, the argument is not checked inside, so `image(nope)` is E0129 alone where it was E0129 and E0103, and a tile written there with a named argument or a props block (`image(icon(name="plus"), src=…)`) is E0129 where it was a parse error. A capitalised handler on `image` / `icon` is read as on `button`, so `onClick=Bump {}` parses there too.
 
-A container keeps E0128 and its `text(…)` advice for a value, and renders a tile as before. `divider` no longer lowers its positional arguments as children, which the runtime never rendered.
+A container keeps E0128 and its `text(…)` advice for a value, and renders a tile as before. A builtin tile called where a value belongs (E0116) now says a tile renders only as a positional argument of a container. `divider` no longer lowers its positional arguments as children, which the runtime never rendered.

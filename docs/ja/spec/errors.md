@@ -410,9 +410,9 @@ outlet は tile 自身の body に書かれている必要はない。ランタ�
 
 lowering が読む `_init` / `_event` は trial の中でしか束縛されないため、`given` や `expect` から生成されたモジュールは、どのテストも結果を出す前に `_init is not defined` で死ぬ。
 
-builtin tile の名前も候補に含まれない。tile は関数ではなく、その呼び出しが tile になるのは tile が描画される位置——値 builtin 以外の builtin の位置引数（[言語 §1.7.1](./language.md#_1-7-1-構文)）——だけである。同名の `fn` が無いところでそれ以外の位置——名前付き引数、user tile の入力、値 builtin の内容、任意の式——で呼ぶと E0116 になり、専用の文面を持つ。ここでも誤っているのは名前ではなく位置だからである：
+builtin tile の名前も候補に含まれない。tile は関数ではなく、その呼び出しが tile になるのは tile が描画される位置——コンテナの位置引数（[言語 §1.7.1](./language.md#_1-7-1-構文)）——だけである。位置引数を内容として読まないそれ以外の builtin では、何も描画しない tile であり [E0129](#e0129-unrendered-arg) になる。同名の `fn` が無いところでそれ以外の位置——名前付き引数、user tile の入力、値 builtin の内容、任意の式——で呼ぶと E0116 になり、専用の文面を持つ。ここでも誤っているのは名前ではなく位置だからである：
 
-> `"<name>" is a tile, and a tile renders only as a positional argument of a builtin other than the value builtins`
+> `"<name>" is a tile, and a tile renders only as a positional argument of a container`
 
 > `Call to undefined function "<name>"`
 
@@ -618,7 +618,7 @@ builtin に、決して描画されない引数が書かれている。値 built
 > `` content is positional: write `<builtin>("…")` — `text=` is a prop on <builtin> and never renders (it is the label argument of button, link, label and editable) ``
 > `` <builtin> renders its positional argument, so `text=` is never rendered — it is read only when no positional argument is written. Remove `text=` or the positional argument ``
 
-位置引数を描画しない builtin では、`<args>` はその代わりに表示するものを 1 つの表から名指す：`image` と `video` は `src=`、`icon` は `name=`、`button` と `toast` は `text=`、`input` と `textarea` は `bind=`・`value=`・`placeholder=` のいずれか、`select` は `options=`・`bind=`・`value=`・`placeholder=` のいずれか、`check` と `switch` は `bind=`・`value=` のいずれか、`radio` は `bind=`・`selected=` のいずれか、`slider` は `bind=`、`progress` は `value=`・`max=` のいずれか、`error` は `field=`。`divider`・`spinner`・`skeleton`・`route-outlet` は引数から表示するものが無く、3 つ目の形になる。引数は丸ごと報告し、その中身 —— tile、`let`、綴り違いの名前 —— は検査しない。コンテナの中の値（[E0128](#e0128-value-as-child)）と同じく、その中の診断は引数を描画される位置に移したときに出る。
+位置引数を描画しない builtin では、`<args>` はその代わりに表示するものを 1 つの表から名指す：`image` と `video` は `src=`、`icon` は `name=`、`button` と `toast` は `text=`、`input` と `textarea` は `bind=`・`value=`・`placeholder=` のいずれか、`select` は `options=`・`bind=`・`value=`・`placeholder=` のいずれか、`check` は `label=`・`bind=`・`value=` のいずれか、`switch` は `bind=`・`value=` のいずれか、`radio` は `label=`・`bind=`・`selected=` のいずれか、`slider` は `bind=`・`value=` のいずれか、`progress` は `value=`・`max=` のいずれか、`error` は `field=`。`divider`・`spinner`・`skeleton`・`route-outlet` は引数から表示するものが無く、3 つ目の形になる。引数は丸ごと報告し、その中身 —— tile、`let`、綴り違いの名前 —— は検査しない。コンテナの中の値（[E0128](#e0128-value-as-child)）と同じく、その中の診断は引数を描画される位置に移したときに出る。
 
 どれも捨てられる引数の位置で報告し、診断の `unrendered` フィールドがどの形かを示す：最初の 3 つの形は `positional`、続いて `text-prop`・`text-shadowed`。ほかに報告するものはない：引数はパースされビルドされるがページには届かないので、`smoke` もそれを通す。位置引数も書かれていれば、テキスト系 builtin の `text=` は普通の prop であり報告しない。
 
@@ -649,7 +649,7 @@ builtin に、決して描画されない引数が書かれている。値 built
 
 イベントハンドラが束縛するのは **reducer** であり、これは `f(onX=r)` と `f() {onX: r}` のどちらの形でも変わらない。reducer の名前空間で解決される唯一の引数位置であり、そこに書かれた裸の識別子の意味は形ではなくこの位置が決める。
 
-到着する形は一様でなく、それが値の形より先にハンドラであるかを問う理由である。小文字始まりの名前は参照として解析される。大文字始まりの名前は、値 builtin 以外の builtin での引数形式では *tile call* として（`box(text("x"), onClick=Card)`）、それ以外——props ブロック、`link` のような値 builtin、user tile——では variant タグとして解析される。3 つとも「担っている名前」として読むので、名前自体が大文字始まりの reducer も他と同じように束縛できる：形が記録しているのは大文字か小文字か、そしてその引数がどの tile に載っているかであって、どちらもこの位置で書き手が言い分けていることではない。引数形式は以前は形を先に見ていたため、その位置に書かれた tile 名はリスナのない要素にコンパイルされていた。
+到着する形は一様でなく、それが値の形より先にハンドラであるかを問う理由である。小文字始まりの名前は参照として解析される。大文字始まりの名前は、位置引数を内容として読まない builtin での引数形式では *tile call* として（`box(text("x"), onClick=Card)`、`image(src=…, onClick=Card)`）、それ以外——props ブロック、`link` のように位置引数から内容を読む値 builtin、user tile——では variant タグとして解析される。3 つとも「担っている名前」として読むので、名前自体が大文字始まりの reducer も他と同じように束縛できる：形が記録しているのは大文字か小文字か、そしてその引数がどの tile に載っているかであって、どちらもこの位置で書き手が言い分けていることではない。引数形式は以前は形を先に見ていたため、その位置に書かれた tile 名はリスナのない要素にコンパイルされていた。
 
 裸の名前・引数なしの呼び出し・空の brace 形式に、パーサは同一のノードを与える — `onClick=Bump` / `onClick=Bump()` / `onClick=Bump {}` は解析後に区別がつかない — ので、3 つとも reducer を名指す。見分ける材料が残っておらず、どれか 1 つだけを指す診断も出せない。
 
