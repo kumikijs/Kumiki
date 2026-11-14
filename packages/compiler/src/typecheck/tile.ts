@@ -422,6 +422,8 @@ function checkTileInput(
   }
   for (const named of t.args) {
     if (named.name === undefined || !isTileExpr(named.value)) continue;
+    // A handler's call form carrying props or arguments is the handler check's to report.
+    if (HANDLER_NAMES.has(named.name)) continue;
     errors.push({
       code: "E0201",
       kind: "type-mismatch",

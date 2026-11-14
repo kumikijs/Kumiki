@@ -81,24 +81,34 @@ export class TileParser extends StatementParser {
     return { kind: "TileCall", name, args, props, pos: nameTok.pos };
   }
 
-  // Where a builtin's positional argument is a tile, a capitalised handler parses as a tile call
-  // too, so that `onClick=Bump {}` parses; every other named argument is a value.
+  // Every named argument is a value but a handler, which takes the call form so that
+  // `onClick=Bump {}` parses on every tile.
   protected parseTileArg(callee: string): TileArg {
     const first = this.peek();
     if ((first.kind === "ident" || first.kind === "kw") && this.matchTAt(1, "op", "=")) {
       this.next();
       this.eat("op", "=");
-      const head = this.peek();
-      const value =
-        HANDLER_NAMES.has(first.value) &&
-        parsesPositionalAsTile(callee) &&
-        head.kind === "ident" &&
-        isCapitalised(head.value)
-          ? this.parseTileCall()
-          : this.parseArgValue(false);
+      const value = HANDLER_NAMES.has(first.value)
+        ? this.parseHandlerArg(callee)
+        : this.parseArgValue(false);
       return { kind: "TileArg", name: first.value, namePos: first.pos, value };
     }
     return { kind: "TileArg", value: this.parseArgValue(parsesPositionalAsTile(callee)) };
+  }
+
+  // A capitalised handler is a tile call on a builtin whose positional argument parses as a tile,
+  // and a variant tag on any other tile, where the call it is written as is that tag when it
+  // carries nothing: `Bump`, `Bump()` and `Bump {}` are one node on every tile.
+  protected parseHandlerArg(callee: string): Expr | TileExpr {
+    const head = this.peek();
+    if (head.kind !== "ident" || !isCapitalised(head.value)) return this.parseArgValue(false);
+    if (parsesPositionalAsTile(callee)) return this.parseTileCall();
+    if (!this.matchTAt(1, "op", "(") && !this.matchTAt(1, "op", "{")) {
+      return this.parseArgValue(false);
+    }
+    const call = this.parseTileCall();
+    if (call.kind !== "TileCall" || call.args.length > 0 || call.props.length > 0) return call;
+    return { kind: "Variant", name: call.name, payload: [], pos: call.pos };
   }
 
   // `for` and `when` have no expression form, so they are tiles wherever they are written.
