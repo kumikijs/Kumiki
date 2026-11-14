@@ -200,13 +200,21 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
     });
   }
   checkTileTestInput(t, sym, errors);
-  checkTileExpr(t.expect as TileExpr, sym, errors, {
-    kind: "tile",
-    localBinds: new Set(),
-    localTypes: new Map(),
-    localBinders: new Map(),
-    routeBind: "no-payload",
-  });
+  checkTileExpr(
+    t.expect as TileExpr,
+    sym,
+    errors,
+    {
+      kind: "tile",
+      localBinds: new Set(),
+      localTypes: new Map(),
+      localBinders: new Map(),
+      routeBind: "no-payload",
+      endedScopes: new Map(),
+      expectedTree: true,
+    },
+    { kind: "expect" },
+  );
 }
 
 function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
@@ -223,6 +231,7 @@ function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[])
         localTypes: new Map(),
         localBinders: new Map(),
         routeBind: "no-payload",
+        endedScopes: new Map(),
         wildcardsReportedElsewhere: true,
       });
     }
@@ -256,6 +265,7 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     localTypes: new Map(),
     localBinders: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
   };
   for (const f of t.forAll ?? []) bindLocal(base, f.name, f.type);
   const owned: Ctx = { ...base, wildcardsReportedElsewhere: true };
@@ -409,6 +419,13 @@ function checkTestEvent(event: Expr, sym: SymbolTable, errors: KumikiError[], ct
     });
   }
   for (const f of payload) checkExpr(f.value, sym, errors, ctx);
+  // `type` and `target` are a trigger and a tile's name, not expressions, but a `null` there is
+  // still the expression E0235 reports.
+  for (const f of recordFieldsOf(event)) {
+    if ((f.name === "type" || f.name === "target") && f.value.kind === "Null") {
+      checkExpr(f.value, sym, errors, ctx);
+    }
+  }
 }
 
 /** `[persist(x), other]` — the effects a reducer-test expects to have been emitted. */
@@ -424,7 +441,10 @@ function checkTestEffects(list: Expr, sym: SymbolTable, errors: KumikiError[], c
   }
   for (const item of list.items) {
     const name = item.kind === "Call" ? item.callee : item.kind === "Ref" ? item.name : undefined;
-    if (name === undefined) continue;
+    if (name === undefined) {
+      if (item.kind === "Null") checkExpr(item, sym, errors, ctx);
+      continue;
+    }
     const input = effectInput(name, sym);
     if (!input) {
       errors.push({

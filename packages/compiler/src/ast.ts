@@ -227,6 +227,23 @@ export function isTileExpr(v: Expr | TileExpr): v is TileExpr {
   return TILE_EXPR_KINDS.has((v as TileExpr).kind);
 }
 
+export type WrittenProp = { value: Expr; namePos: Pos };
+
+// A named argument and a `{…}` entry of the same name are one prop, and every reader asks here so
+// none reads one spelling only. The block wins when a call writes both; a tile-test's expected tree
+// passes no block because a snapshot does not compare it. A tile written as an argument is a child.
+export function writtenProp(
+  t: TileExpr & { kind: "TileCall" },
+  name: string,
+  block: readonly TileProp[] = t.props,
+): WrittenProp | undefined {
+  const prop = block.find((p) => p.name === name);
+  if (prop) return { value: prop.value, namePos: prop.pos };
+  const arg = t.args.find((a) => a.name === name);
+  if (arg?.name === undefined || isTileExpr(arg.value)) return undefined;
+  return { value: arg.value, namePos: arg.namePos };
+}
+
 export function assertNever(node: never): void {
   void node;
 }
@@ -342,6 +359,8 @@ type ExprForm =
   | { kind: "Str"; value: string; pos: Pos }
   | { kind: "Bool"; value: boolean; pos: Pos }
   | { kind: "Unit"; pos: Pos }
+  // Kumiki has no null: parsed only so the checker can report E0235 where it is written.
+  | { kind: "Null"; pos: Pos }
   | { kind: "TupleLit"; items: [Expr, Expr, ...Expr[]]; pos: Pos }
   | { kind: "Ref"; name: string; pos: Pos }
   | { kind: "BinOp"; op: BinOp; lhs: Expr; rhs: Expr; pos: Pos }

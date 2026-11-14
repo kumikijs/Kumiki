@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { compile } from "@kumikijs/compiler";
@@ -33,7 +33,11 @@ export async function buildAndLoad(kumikiPath: string, rootId: string): Promise<
   writeFileSync(file, patched);
 
   const url = `${pathToFileURL(file).href}?t=${Date.now()}_${Math.random()}`;
+  // A bundle that fails to load stays in test-tmp, so the file its stack trace names can be opened.
   await import(/* @vite-ignore */ url);
+  // The bundle imports nothing, so nothing reads the file once it has loaded. `force` absorbs
+  // only ENOENT; the retries absorb a lock another process holds for a moment (EBUSY, EPERM).
+  rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
 
   const app = (globalThis as unknown as { __kumikiApp?: AppShape }).__kumikiApp;
   if (!app) throw new Error("Generated bundle did not expose __kumikiApp");
