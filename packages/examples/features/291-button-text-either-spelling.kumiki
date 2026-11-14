@@ -1,0 +1,24 @@
+# Feature: a button's `text` is one prop, however it is written.
+#
+# `button(text="Save")` and `button() {text: "Save"}` render the same label, as
+# `toast` and every other prop a builtin reads take either spelling. When a call
+# writes both, the block's value is the label. Each step clicks a button by its
+# label, so the step finds it only if that label reached the page.
+
+slot named : Int = 0
+slot block : Int = 0
+slot both  : Int = 0
+
+tile Named = button(text="Save named")
+tile Block = button() {text: "Save block"}
+tile Both  = button(text="Hidden label") {text: "Save both"}
+tile App   = column(Named, Block, Both, text("saved " + named.show + " " + block.show + " " + both.show))
+
+reducer saveNamed on=ui.click(Named) do= named := named + 1
+reducer saveBlock on=ui.click(Block) do= block := block + 1
+reducer saveBoth  on=ui.click(Both)  do= both := both + 1
+
+app ButtonTextEitherSpelling
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

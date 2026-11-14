@@ -380,8 +380,7 @@ function tileCallJs(
         return `({ kind: "text", text: ${text}, props: ${propsObj} })`;
       }
       case "button": {
-        const textArg = t.args.find((a) => a.name === "text");
-        const textJs = textArg ? argShownJs(textArg, ctx) : showJs('""', undefined, gen);
+        const textJs = shownProp("text") ?? showJs('""', undefined, gen);
         const fields = [`kind: "button"`, `text: ${textJs}`];
         field(fields, "type");
         fields.push(`props: ${propsObj}`);
