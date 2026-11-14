@@ -63,11 +63,6 @@ import {
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
-import {
-  collectRenderedBuiltinKinds,
-  collectTileBuiltinKinds,
-  collectTileRootKinds,
-} from "./tile-collect.ts";
 import { checkA11y, checkBuiltinProp, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
 
@@ -241,7 +236,7 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
   }
   // The runtime fills the first outlet anywhere in the tree the tile renders, so an outlet in
   // a layout helper counts, and one a builtin drops does not.
-  if (!collectRenderedBuiltinKinds(tile.name, sym).has("route-outlet")) {
+  if (!sym.renderedKindsIn(tile.name).has("route-outlet")) {
     errors.push({
       code: "E0113",
       kind: "sub-routes-without-outlet",
@@ -755,7 +750,7 @@ function notCalled(
     return because;
   }
   if (!sym.tiles.has(tileName)) return null;
-  const kinds = collectTileBuiltinKinds(tileName, sym);
+  const kinds = sym.builtinKindsIn(tileName);
   if (kinds.size === 0 || [...kinds].some((k) => reach.allowed.has(k))) return null;
   const observed = `(observed in body: ${[...kinds].sort().join(", ")})`;
   const clauses = unheard(kinds);
@@ -779,7 +774,7 @@ function notReceived(
     return missed === undefined ? null : wrappedClause(ev, missed);
   }
   if (!sym.tiles.has(tileName)) return null;
-  const kinds = collectTileRootKinds(tileName, sym);
+  const kinds = sym.rootKindsIn(tileName);
   if (kinds.size === 0 || [...kinds].some((k) => wrapperNeverReceives(ev, [k]).length === 0)) {
     return null;
   }

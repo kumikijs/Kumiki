@@ -29,7 +29,7 @@ import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "
 import { inferType, prim } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
-import { bindsRoute, namedByHandler, subscribedKinds, subscriptionIds } from "./tile-collect.ts";
+import { bindsRoute, namedByHandler, subscriptionIds } from "./tile-collect.ts";
 
 /** The scope a reducer's statements are checked in. */
 type ReducerCtx = Ctx & {
@@ -136,7 +136,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     const { ev, selector } = r.on;
     const allowed = UI_EVENT_TILE_KINDS[ev];
     if (allowed != null) {
-      const descendants = subscribedKinds(selector.tile, sym);
+      const descendants = sym.subscribedKindsIn(selector.tile);
       const hasMatch = [...descendants].some((k) => allowed.has(k));
       if (descendants.size > 0 && !hasMatch) {
         const reason = uiEventMismatchReason(ev, selector.tile, descendants);

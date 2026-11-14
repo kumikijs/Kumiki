@@ -824,6 +824,17 @@ describe("W0212 gives the reason that holds when the element fires the event", (
         );
       });
 
+      it("leaves out the fallback of a tile at the root, which renders without the handler", () => {
+        expect(
+          w0213(
+            "tile Fallback in=PanicInfo = input(bind=note)\n" +
+              "tile Safe error-boundary = Fallback = check(value=done)\n" +
+              "tile Inner = Safe()\n" +
+              "tile D = column(Inner(onFocus=r))",
+          ),
+        ).toContain("(observed at its root: check). ");
+      });
+
       it.each([
         ["onFocus on an input", "input(bind=note, onFocus=r)"],
         ["onClick on a check", "check(value=done, onClick=r)"],

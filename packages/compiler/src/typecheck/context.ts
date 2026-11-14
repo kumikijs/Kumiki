@@ -71,6 +71,14 @@ export type SymbolTable = {
   themes: Set<string>;
   iconDomain: Set<string>;
   elementIds: Set<string>;
+  /** The kinds a handler written at the tile's call site can land on (W0213). */
+  builtinKindsIn: (tileName: string) => ReadonlySet<string>;
+  /** Of those, the kinds at the tile's root, which a call-site handler is merged onto (W0213). */
+  rootKindsIn: (tileName: string) => ReadonlySet<string>;
+  /** The kinds a subscription on the tile is wired onto (W0212). */
+  subscribedKindsIn: (tileName: string) => ReadonlySet<string>;
+  /** The kinds the tile renders, a positional argument only where its builtin renders it (E0113). */
+  renderedKindsIn: (tileName: string) => ReadonlySet<string>;
   // The program's own tags come first, so a did-you-mean tie goes to one of them.
   constructorTags: ReadonlySet<string>;
   qualifiers: ReadonlySet<string>;

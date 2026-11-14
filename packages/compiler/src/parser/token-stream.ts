@@ -9,7 +9,8 @@ export class ParseError extends Error {
   }
 }
 
-const MAX_NESTING_DEPTH = 256;
+// The typechecker holds a tile tree to this bound too, once its user tiles are inlined (E0237).
+export const MAX_NESTING_DEPTH = 256;
 
 /** A chain the parser is reading with a loop; see `TokenStream.startChain`. */
 export interface Chain {
