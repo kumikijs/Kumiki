@@ -30,6 +30,10 @@ export const reservedTypeNameMessage = (name: string, meaning = "the standard li
 export const reservedEffectNameMessage = (name: string): string =>
   `Effect "${name}" collides with the built-in effect ${name}; emits of it never run this effect`;
 
+/** E0235's message, for a `null` written where an expression goes. */
+export const nullValueMessage =
+  "`null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one";
+
 /** Each diagnostic as `"<code> <message>"`. */
 export const summariesOf = (src: string): string[] =>
   checkSource(src).map((e) => `${e.code} ${e.message}`);

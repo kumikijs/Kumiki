@@ -137,10 +137,13 @@ describe("a reconcile fallback is reported with its evidence", () => {
     );
   });
 
-  it("names the authored tile and the bind so a report points back at the source", () => {
+  it.each([
+    ["the authored tile", "Panel", "Panel"],
+    ["the outermost tile of a node that is the whole tree of several", ["Page", "Panel"], "Page"],
+  ])("names %s and the bind so a report points back at the source", (_case, marker, tile) => {
     const seen = rerenderReport(true, false, (extra) => ({
       kind: "column",
-      props: { _tile: "Panel" },
+      props: { _tile: marker },
       children: [
         { kind: "input", bind: "note", value: "" },
         ...(extra ? [{ kind: "text" as const, text: "hint" }] : []),
@@ -149,7 +152,7 @@ describe("a reconcile fallback is reported with its evidence", () => {
 
     expect(seen.find((x) => x.kind === "reconcile-fallback")).toMatchObject({
       tileKind: "column",
-      tile: "Panel",
+      tile,
       id: "column",
     });
   });

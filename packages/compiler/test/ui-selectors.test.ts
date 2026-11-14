@@ -309,6 +309,24 @@ tile App = column(Card)`);
     expect(warned).toEqual(["onFallback"]);
   });
 
+  it("walks the fallback of a lower-cased tile written as a bare child, which renders in its place", () => {
+    // `column(leaf)` reads `leaf` as a name, and codegen lowers it as the call `leaf()`, boundary and all.
+    const src = withApp(`
+slot leaf : Text = "hello"
+slot n : Option(Int) = None
+slot hits : Int = 0
+reducer onCard on=ui.click(Card) do= hits := hits + 1
+reducer onLeaf on=ui.click(leaf) do= hits := hits + 1
+tile Oops in=PanicInfo = button(text="retry")
+tile leaf error-boundary=Oops = text("w " + n.get.show)
+tile Card = column(text("card"), leaf)
+tile App = column(Card)`);
+    const warned = checkSource(src)
+      .filter((e) => e.code === "W0212")
+      .map((e) => /Reducer "([^"]+)"/.exec(e.message)?.[1]);
+    expect(warned).toEqual(["onLeaf"]);
+  });
+
   it.each([
     [
       "a fallback that names itself",
@@ -1269,6 +1287,38 @@ tile App = column(Card)`);
       expect(checkStrict(src).find((d) => d.code === "E0212")?.message).toContain(
         '"again" | "save"',
       );
+    });
+
+    it("takes the fallback of a lower-cased tile written as a bare child", () => {
+      const src = withApp(`
+slot leaf : Text = "hello"
+slot n : Option(Int) = None
+slot log : Text = ""
+tile Oops in=PanicInfo = button(text="retry", id="again")
+tile leaf error-boundary=Oops = text("w " + n.get.show)
+tile Card = column(button(text="save", id="save"), leaf)
+reducer cardAgain on=ui.click(Card#again) do= log := log + "x"
+reducer cardBad   on=ui.click(Card#zz)    do= log := log + "x"
+tile App = column(Card)`);
+      expect(flagged(src)).toEqual(["cardBad"]);
+      expect(checkStrict(src).find((d) => d.code === "E0212")?.message).toContain(
+        '"again" | "save"',
+      );
+    });
+
+    it("keeps the own id of the fallback of a lower-cased tile written as a bare child", () => {
+      // `Last` is also called with another id, so only its place as `leaf`'s fallback keeps its own.
+      const src = withApp(`
+slot leaf : Text = "hello"
+slot n : Option(Int) = None
+slot log : Text = ""
+tile Last = button(text="retry", id="again")
+tile leaf error-boundary=Last = text("w " + n.get.show)
+reducer lastOwn    on=ui.click(Last#again) do= log := log + "x"
+reducer lastCalled on=ui.click(Last#x)     do= log := log + "x"
+reducer lastBad    on=ui.click(Last#zz)    do= log := log + "x"
+tile App = column(leaf, Last(id="x"))`);
+      expect(flagged(src)).toEqual(["lastBad"]);
     });
 
     // `Last` is also called with another id, so only its place along a chain keeps its own.
