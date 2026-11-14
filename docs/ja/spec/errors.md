@@ -1179,6 +1179,18 @@ dispatcher は各リクエストをその key で実行し、同じ key で別�
 
 **修正**：別の型の値を key にする — リクエストを識別する入力のフィールド（`latest-per-key($1.id)`）、Float の `.show`、File の `{name: $1.name, size: $1.size}`、あるいはそのようなフィールドのレコード（`latest-per-key({user: $1.user, page: $1.page})`）。
 
+### E0235 `null-value`
+
+式の位置に `null` が書かれている。`null` は予約語（[言語 §1.2.2](./language.md#_1-2-2-予約語)）であって値ではない。Kumiki に null は無い（[§1.9.1](./language.md#_1-9-1-禁止事項)）。値が無いことがある値は `Option(T)` であり、値の無さは `None` で表す。
+
+> `` `null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one ``
+
+パーサは式の位置ならどこでも `null` を読み、チェッカがその位置で修正方法とともに報告できるようにする：slot の初期値、レコードリテラルのフィールド、リストの要素、Map のキーや値、引数、オペランド（`x == null`）、分岐、reducer の書き込み、テストの `given` や `expect`。報告は `null` の位置に 1 つだけ出る。式は型を持たないので、それが置かれた位置が独自の不一致を報告することはない。それ自体で不一致になる周囲の式は、その欠けた型を `?` と表示する：レコード型に対する `{"a": null}` は E0201 `Expected {a: Option(Int)} but got Map(Text, ?)` になる。`{null: 1}` は Map なので（[言語 §1.9](./language.md#_1-9-式言語)）、このエラーはそのキーで報告される。
+
+このコードにならない場所が 2 つある。レコードのフィールド名の位置 — `{null = 1}`、`{a, null}`、`{a: 1, null: 2}` — では、`true` と同じく `null` の位置で構文エラーになる。値ビルトインでないビルトインの位置引数（`column(null)`）では [E0128](#e0128-value-as-child) になり、値の中身は検査されない。
+
+**修正**：型を `Option(T)` と宣言し、値が無いところには `None`、あるところには `Some(x)` を書く — `slot picked : Option(TodoId) = None`。値があるかどうかは `== null` ではなく、`.is-none` / `.is-some`、`.get-or(d)`、あるいは `match` で問う。
+
 ### E0236 `tile-as-content`
 
 値 builtin の内容に tile が書かれている。値 builtin は値を内容として表示する（[言語 §1.7.1](./language.md#_1-7-1-構文)）—— `text`・`heading`・`markdown`・`code` は最初の位置引数から、`link`・`label`・`editable` はそれか `text=` から、`image` は `src=` から、`icon` は `name=` から読む（[E0129](#e0129-unrendered-arg)）—— ので、そこに書いた tile は決して描画されない：`text(when(c, column(…)))` は何も表示しない。逆向き、tile の位置にある値は [E0128](#e0128-value-as-child) である。
