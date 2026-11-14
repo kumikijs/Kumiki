@@ -1,3 +1,4 @@
+import { isPositiveInt } from "@kumikijs/runtime/positive-int";
 import type {
   Def,
   DuplicateName,
@@ -20,7 +21,6 @@ import type {
   TypeDef,
   TypeExpr,
 } from "../ast.ts";
-import { isPositiveInt } from "../positive-int.ts";
 import { AppParser } from "./app.ts";
 import { ParseError } from "./token-stream.ts";
 

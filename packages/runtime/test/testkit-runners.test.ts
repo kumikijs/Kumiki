@@ -340,14 +340,57 @@ describe("runPropertyTest", () => {
     }
   });
 
-  it("passes, reporting the case count, when the invariant always holds", () => {
+  it.each([
+    { written: "no count", input: {}, runs: 100 },
+    { written: "count: undefined", input: { count: undefined }, runs: 100 },
+    { written: "count: 1", input: { count: 1 }, runs: 1 },
+    { written: "count: 10000", input: { count: 10_000 }, runs: 10_000 },
+  ])("runs $runs cases for $written", ({ input, runs }) => {
+    let calls = 0;
     const r = _stdlib.runPropertyTest({
-      name: "always",
+      name: "counted",
       vars: { n: { t: "Int", min: 0, max: 10 } },
-      trial: (b) => (b.n as number) >= 0,
+      trial: () => {
+        calls += 1;
+        return true;
+      },
+      ...input,
     });
-    expect(r.pass).toBe(true);
-    expect(r.cases).toBe(100);
+    expect([r.pass, r.cases, calls]).toEqual([true, runs, runs]);
+  });
+
+  // The invariant fails on every input, so a count that ran a case would report a
+  // counterexample and one that ran none would report a pass.
+  it.each([
+    { count: 0, shown: "0" },
+    { count: 0.5, shown: "0.5" },
+    { count: -3, shown: "-3" },
+    { count: -0, shown: "-0" },
+    { count: Number.NaN, shown: "NaN" },
+    { count: Number.POSITIVE_INFINITY, shown: "Infinity" },
+    { count: "5", shown: '"5"' },
+    { count: 5n, shown: "5n" },
+    { count: null, shown: "null" },
+  ])("fails a count of $shown without running a case, naming the count", ({ count, shown }) => {
+    let calls = 0;
+    const r = _stdlib.runPropertyTest({
+      name: "bad-count",
+      vars: { n: { t: "Int", min: 0, max: 10 } },
+      trial: () => {
+        calls += 1;
+        return false;
+      },
+      count: count as number,
+    });
+    expect(r).toEqual({
+      name: "bad-count",
+      pass: false,
+      expected: "count is a whole number, 1 or more",
+      actual: `count = ${shown}`,
+      diffAt: "(count)",
+      cases: 0,
+    });
+    expect(calls).toBe(0);
   });
 
   it("fails with a counterexample when the invariant is violated", () => {

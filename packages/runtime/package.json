@@ -33,6 +33,10 @@
       "types": "./dist/text-distance.d.ts",
       "default": "./src/text-distance.ts"
     },
+    "./positive-int": {
+      "types": "./dist/positive-int.d.ts",
+      "default": "./src/positive-int.ts"
+    },
     "./bundle": "./dist/index.js",
     "./bundle.min": "./dist/bundle.min.js",
     "./modules/*": "./dist/modules/*"
@@ -51,6 +55,10 @@
       "./text-distance": {
         "types": "./dist/text-distance.d.ts",
         "import": "./dist/text-distance.js"
+      },
+      "./positive-int": {
+        "types": "./dist/positive-int.d.ts",
+        "import": "./dist/positive-int.js"
       },
       "./bundle": "./dist/index.js",
       "./bundle.min": "./dist/bundle.min.js",
