@@ -1,0 +1,28 @@
+{
+  "steps": [
+    {
+      "label": "the label written as text= renders, and a click by that label lands",
+      "do": { "clickText": "Save named" },
+      "expect": { "noErrors": true, "state": { "named": 1, "block": 0, "both": 0 } }
+    },
+    {
+      "label": "the label written in the props block renders the same way",
+      "do": { "clickText": "Save block" },
+      "expect": {
+        "noErrors": true,
+        "state": { "named": 1, "block": 1, "both": 0 },
+        "domIncludes": ["saved 1 1 0"]
+      }
+    },
+    {
+      "label": "with both written, the block's value is the label and the argument's is not shown",
+      "do": { "clickText": "Save both" },
+      "expect": {
+        "noErrors": true,
+        "state": { "both": 1 },
+        "domIncludes": ["saved 1 1 1"],
+        "domExcludes": ["Hidden label"]
+      }
+    }
+  ]
+}

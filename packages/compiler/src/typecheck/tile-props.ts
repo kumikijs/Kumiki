@@ -65,7 +65,7 @@ export function checkA11y(
     }
   }
   if (t.name === "button") {
-    const hasText = t.args.some((a) => a.name === "text");
+    const hasText = propOf(t, "text", ctx) !== undefined;
     if (!hasText && propOf(t, "aria-label", ctx) === undefined) {
       errors.push({
         code: "E0701",

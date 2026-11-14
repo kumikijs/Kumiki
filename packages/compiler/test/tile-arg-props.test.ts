@@ -135,19 +135,31 @@ describe("a prop a kind lifts into its node reads either spelling", () => {
       "column(for t in ts Row {key: t})",
       "column(for t in ts Row(key=t))",
     ],
+    ["a button's text", 'button() {text: "Go"}', 'button(text="Go")'],
+    ["a button's text from a slot", "button() {text: label}", "button(text=label)"],
   ])("lowers %s the same from either spelling", (_, block, arg) => {
     const defs = `slot xs : List(Text) = []
 slot ts : List(Tuple(Int, Text)) = []
 tile Row = text("r")
 slot n : Int = 0
+slot label : Text = "Go"
 reducer load on=route.enter("/") do= n := 1`;
     expect(emit(arg, defs)).toBe(emit(block, defs));
   });
 
-  it("lowers the value the block writes when both spellings are written", () => {
-    const js = emit('list(text("a"), ordered=false) {ordered: true}');
-    expect(fieldsOf(js, "list")).toContain("ordered: !!(true)");
-    expect(fieldsOf(js, "list")).not.toContain("false");
+  it.each([
+    ["list", 'list(text("a"), ordered=false) {ordered: true}', "ordered: !!(true)", "false"],
+    ["button", 'button(text="Named") {text: "Block"}', '"Block"', '"Named"'],
+  ])("lowers the value the block writes when both spellings are written on %s", (kind, tile, read, dropped) => {
+    expect(fieldsOf(emit(tile), kind)).toContain(read);
+    expect(fieldsOf(emit(tile), kind)).not.toContain(dropped);
+  });
+
+  it.each([
+    'button(text="Go")',
+    'button() {text: "Go"}',
+  ])("counts the text of %s as the button's name under strictA11y", (tile) => {
+    expect(codesOf(withRoot(tile, ""), { strictA11y: true })).toEqual([]);
   });
 
   it("reads no block in a tile-test's expected tree, which compares arguments only", () => {

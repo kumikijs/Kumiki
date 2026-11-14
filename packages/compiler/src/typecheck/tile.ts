@@ -490,15 +490,14 @@ function checkContentArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiErro
 }
 
 /**
- * The values a builtin renders as text, as its lowering reads them: its content, `button`'s `text=`,
+ * The values a builtin renders as text, as its lowering reads them: its content, `button`'s `text`,
  * `link`'s `{text: …}` prop when no content is written, and the value `editable` binds.
  */
 function renderedText(t: TileExpr & { kind: "TileCall" }, ctx: Ctx): Expr[] {
-  const named = (name: string) => t.args.find((a) => a.name === name)?.value;
   const content = contentArg(t)?.value;
   const values = [
     content,
-    t.name === "button" ? named("text") : undefined,
+    t.name === "button" ? propOf(t, "text", ctx)?.value : undefined,
     t.name === "link" && !content ? t.props.find((p) => p.name === "text")?.value : undefined,
     t.name === "editable" ? propOf(t, "bind", ctx)?.value : undefined,
   ];

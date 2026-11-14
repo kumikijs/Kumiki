@@ -69,6 +69,7 @@ describe("what a builtin renders as text", () => {
   it.each([
     ...calls,
     ["button", "button(text=handle)"],
+    ["button", "button() {text: handle}"],
     ["link", 'link(to="/") {text: handle}'],
     ["editable", "editable(bind=handle)"],
     ["editable", "editable() {bind: handle}"],
