@@ -1,4 +1,5 @@
-import type { TileArg, TileExpr } from "./ast.ts";
+import type { Expr, TileArg, TileExpr } from "./ast.ts";
+import { isTileExpr } from "./ast.ts";
 
 export const BUILTIN_TILES = new Set<string>([
   // Structural
@@ -64,6 +65,20 @@ export const BUILTIN_TILES = new Set<string>([
 
 export function positionalIsTile(name: string): boolean {
   return BUILTIN_TILES.has(name) && !VALUE_ARG_BUILTINS.has(name);
+}
+
+// A tile's name at a child position is that tile, whatever else shares the name; the checker and
+// the reference graph read it through here so they agree with codegen.
+export function tileNamedAt<D>(
+  callee: string,
+  arg: TileArg,
+  tileNamed: (name: string) => D | undefined,
+): { readonly ref: Expr & { kind: "Ref" }; readonly def: D } | undefined {
+  const v = arg.value;
+  if (arg.name !== undefined || !positionalIsTile(callee)) return undefined;
+  if (isTileExpr(v) || v.kind !== "Ref") return undefined;
+  const def = tileNamed(v.name);
+  return def === undefined ? undefined : { ref: v, def };
 }
 
 /** The builtins codegen renders a positional tile argument of, as a child; the rest drop it. */

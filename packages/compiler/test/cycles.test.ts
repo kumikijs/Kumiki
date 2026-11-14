@@ -119,11 +119,10 @@ ${TAIL}`;
   });
 
   it("follows a loop between lowercase tiles with no slot of their names", () => {
-    // Each lowercase child is E0103 as well, with no slot of its name to read.
     const loop = checkSource(`tile a = column(b)
 tile b = column(a)
 tile App = column(a)
-${TAIL}`).filter((e) => e.code === "E0005");
+${TAIL}`);
     expect(loop.map((e) => [e.message, `${e.pos.line}:${e.pos.col}`])).toEqual([
       [`Tile "a" expands into itself (a → b → a)`, "1:17"],
     ]);

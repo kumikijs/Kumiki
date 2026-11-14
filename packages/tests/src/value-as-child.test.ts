@@ -30,6 +30,19 @@ describe("a value as a child is refused before it can render nothing", () => {
   });
 });
 
+describe("the name of a tile as a child mounts the tile", () => {
+  it.each([
+    ["with no other definition of the name", ""],
+    ["beside a fn of the same name", `fn leaf() -> Text = "fn"\n`],
+    ["beside a slot of the same name", `slot leaf : Text = "slot"\n`],
+  ])("%s", async (_, extra) => {
+    const { root } = mountApp(
+      await loadSource(`${extra}tile leaf = text("tile")\n${program("column(leaf)")}`),
+    );
+    expect(root.textContent).toBe("tile");
+  });
+});
+
 describe("a value as an arm or a tile body is refused before it is built", () => {
   it.each([
     "column(when(n > 0, n))",

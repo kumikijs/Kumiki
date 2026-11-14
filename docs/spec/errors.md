@@ -938,6 +938,7 @@ An application passes a different number of arguments than the thing it applies 
 | `b(...)` on a built-in call | the arguments a call to it must supply | `Function "<name>" expects [at least ]<n> argument(s) but got <m>` |
 | `emit E(...)` | one argument, or none when `in=Unit` — for a standard effect, the `in=` [Standard Library §2.6](./stdlib.md#_2-6-standard-effects) gives it | `Effect "<name>" expects <n> argument(s) but got <m>` |
 | `T(...)` on a user tile | one argument when it declares `in=`, else none | `Tile "<name>" expects <n> argument(s) but got <m>` |
+| a user tile's name as a child (`column(t)`, [Language §1.7.1](./language.md#_1-7-1-syntax)) | the same, and the child passes none | `Tile "<name>" expects 1 argument(s) but got 0` |
 | `V(...)` on a union variant | that variant's payload list | `Variant "<name>" carries <n> payload(s) but got <m>` |
 | `x.m(...)` on a stdlib method | the arguments its lowering reads | `Method ".<m>" expects <n> argument(s) but got <m>` |
 | `x.m(f)` with a `fn` name as the fragment ([E0127](#e0127-fn-as-value)) | the positionals the fragment binds, at least one | `Function "<name>" expects <n> argument(s) but .<m> supplies at most <k>` (or `needs at least 1`, `supplies exactly 2 — the accumulator and the element` on `.fold`, `on "<T>" supplies 1 — …` over a receiver that is not a key/value pair) |

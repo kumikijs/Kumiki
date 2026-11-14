@@ -901,6 +901,7 @@ Chromium では、`controls` があれば Tab は `<video>` に止まり、`focu
 | 組み込み呼び出しへの `b(...)` | 呼び出し側が渡すべき引数の数 | `Function "<name>" expects [at least ]<n> argument(s) but got <m>` |
 | `emit E(...)` | 引数 1 つ、`in=Unit` なら 0 —— 標準 effect では [標準ライブラリ §2.6](./stdlib.md#_2-6-標準-effect) が与える `in=` | `Effect "<name>" expects <n> argument(s) but got <m>` |
 | user tile への `T(...)` | `in=` を宣言していれば 1 つ、無ければ 0 | `Tile "<name>" expects <n> argument(s) but got <m>` |
+| 子として書いた user tile の名前（`column(t)`、[言語 §1.7.1](./language.md#_1-7-1-構文)） | 同上。子は何も渡さない | `Tile "<name>" expects 1 argument(s) but got 0` |
 | union variant の `V(...)` | その variant の payload 列 | `Variant "<name>" carries <n> payload(s) but got <m>` |
 | 標準ライブラリのメソッドへの `x.m(...)` | lowering が読む引数の数 | `Method ".<m>" expects <n> argument(s) but got <m>` |
 | 式断片に `fn` 名を渡す `x.m(f)`（[E0127](#e0127-fn-as-value)） | 式断片が束縛する positional の数、ただし 1 つ以上 | `Function "<name>" expects <n> argument(s) but .<m> supplies at most <k>`（または `needs at least 1`、`.fold` では `supplies exactly 2 — the accumulator and the element`、キーと値の対ではないレシーバの上では `on "<T>" supplies 1 — …`） |

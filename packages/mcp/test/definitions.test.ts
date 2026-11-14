@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CASCADE_HELP, lockDef } from "@kumikijs/cli";
+import { feature } from "@kumikijs/examples";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   COUNTER,
@@ -198,5 +199,46 @@ describe("ownership locks", () => {
     expect(res.body).toMatch(/lock violation: slot\.todosX is locked by agent:a/);
     expect(readFileSync(file, "utf8")).toBe(source);
     expect(existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
+  });
+});
+
+describe("a tile's name written as a child, beside a slot of the same name", () => {
+  // `badge` is a slot and a tile: `Shelf` writes it as a child, where it is the tile, and `Notes`
+  // reads it where a value belongs, where it is the slot.
+  const workdir = useWorkdir();
+  let file: string;
+  beforeEach(() => {
+    file = join(workdir.path, "app.kumiki");
+    copyFileSync(feature("290-tile-name-as-child"), file);
+  });
+  const lineOf = (start: string): number =>
+    readFileSync(file, "utf8")
+      .split("\n")
+      .findIndex((line) => line.startsWith(start)) + 1;
+
+  it("is a reference to the tile for kumiki_refs and kumiki_remove", async () => {
+    const shelf = `tile.Shelf @ line ${lineOf("tile Shelf ")}`;
+    const notes = `tile.Notes @ line ${lineOf("tile Notes ")}`;
+    await withClient(async (client) => {
+      expect(await callTool(client, "kumiki_refs", { path: file, name: "tile.badge" })).toBe(shelf);
+      expect(await callTool(client, "kumiki_refs", { path: file, name: "slot.badge" })).toBe(notes);
+      const out = await callTool(client, "kumiki_remove", {
+        path: file,
+        name: "slot.badge",
+        cascade: true,
+      });
+      expect(out).toContain("removed slot.badge");
+      expect(out).toContain("tile.Notes");
+      expect(out).not.toContain("tile.Shelf");
+    });
+  });
+
+  it("is renamed with the tile by kumiki_rename, and the slot's read is not", async () => {
+    await withClient(async (client) => {
+      await callTool(client, "kumiki_rename", { path: file, name: "tile.badge", newName: "twig" });
+      const out = readFileSync(file, "utf8");
+      expect(out).toContain("tile Shelf = column(plain, twig, stamp)");
+      expect(out).toContain(`text("slot: " + badge)`);
+    });
   });
 });
