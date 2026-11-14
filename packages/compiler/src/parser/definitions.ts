@@ -14,6 +14,7 @@ import type {
   Statement,
   TestDef,
   ThemeDef,
+  ThemeLeaf,
   ThemeValue,
   TileDef,
   Token,
@@ -23,6 +24,9 @@ import type {
 import { isPositiveInt } from "../positive-int.ts";
 import { AppParser } from "./app.ts";
 import { ParseError } from "./token-stream.ts";
+
+/** What reading a `theme` or `motion` body collects beside the record itself. */
+type ThemeRecordReading = { duplicates: DuplicateName[]; leaves: ThemeLeaf[] };
 
 export class Parser extends AppParser {
   parseProgram(): Program {
@@ -45,10 +49,10 @@ export class Parser extends AppParser {
     const start = this.eat("ident", "theme");
     const name = this.eat("ident").value;
     this.eat("op", "=");
-    const duplicateKeys: DuplicateName[] = [];
-    const body = this.parseThemeRecord(duplicateKeys);
-    const def: ThemeDef = { kind: "ThemeDef", name, body, pos: start.pos };
-    if (duplicateKeys.length > 0) def.duplicateKeys = duplicateKeys;
+    const record: ThemeRecordReading = { duplicates: [], leaves: [] };
+    const body = this.parseThemeRecord(record, []);
+    const def: ThemeDef = { kind: "ThemeDef", name, body, leaves: record.leaves, pos: start.pos };
+    if (record.duplicates.length > 0) def.duplicateKeys = record.duplicates;
     return def;
   }
 
@@ -56,58 +60,70 @@ export class Parser extends AppParser {
     const start = this.eat("ident", "motion");
     const name = this.eat("ident").value;
     this.eat("op", "=");
-    const duplicateKeys: DuplicateName[] = [];
-    const body = this.parseThemeRecord(duplicateKeys);
+    const record: ThemeRecordReading = { duplicates: [], leaves: [] };
+    const body = this.parseThemeRecord(record, []);
     const def: MotionDef = { kind: "MotionDef", name, body, pos: start.pos };
-    if (duplicateKeys.length > 0) def.duplicateKeys = duplicateKeys;
+    if (record.duplicates.length > 0) def.duplicateKeys = record.duplicates;
     return def;
   }
 
-  private parseThemeRecord(duplicates: DuplicateName[]): {
-    [k: string]: ThemeValue;
-  } {
-    return this.descend(() => this.parseThemeRecordNested(duplicates));
+  private parseThemeRecord(
+    record: ThemeRecordReading,
+    path: readonly string[],
+  ): { [k: string]: ThemeValue } {
+    return this.descend(() => this.parseThemeRecordNested(record, path));
   }
 
-  private parseThemeRecordNested(duplicates: DuplicateName[]): {
-    [k: string]: ThemeValue;
-  } {
+  private parseThemeRecordNested(
+    record: ThemeRecordReading,
+    path: readonly string[],
+  ): { [k: string]: ThemeValue } {
     this.eat("op", "{");
     const out: { [k: string]: ThemeValue } = Object.create(null);
     if (!this.matchOp("}")) {
-      this.parseThemeEntry(out, duplicates);
+      this.parseThemeEntry(out, record, path);
       while (this.matchOp(",")) {
         this.next();
         if (this.matchOp("}")) break;
-        this.parseThemeEntry(out, duplicates);
+        this.parseThemeEntry(out, record, path);
       }
     }
     this.eat("op", "}");
     return out;
   }
 
-  private parseThemeEntry(out: { [k: string]: ThemeValue }, duplicates: DuplicateName[]): void {
+  private parseThemeEntry(
+    out: { [k: string]: ThemeValue },
+    record: ThemeRecordReading,
+    path: readonly string[],
+  ): void {
     const keyTok = this.peek();
     if (keyTok.kind !== "ident" && keyTok.kind !== "kw" && keyTok.kind !== "str") {
       throw new ParseError(`Expected theme key`, keyTok.pos);
     }
     this.next();
     const key = keyTok.value as string;
-    if (Object.hasOwn(out, key)) duplicates.push({ name: key, pos: keyTok.pos });
+    if (Object.hasOwn(out, key)) record.duplicates.push({ name: key, pos: keyTok.pos });
     this.eat("op", ":");
+    const at = [...path, key];
     const v = this.peek();
     if (v.kind === "op" && v.value === "{") {
-      out[key] = this.parseThemeRecord(duplicates);
-    } else if (v.kind === "str") {
+      out[key] = this.parseThemeRecord(record, at);
+      return;
+    }
+    let value: string | number;
+    if (v.kind === "str") {
       this.next();
-      out[key] = v.value;
+      value = v.value;
     } else {
       const n = this.tryEatSignedNumber();
       if (n === undefined) {
         throw new ParseError(`Theme values must be string, number, or nested record`, v.pos);
       }
-      out[key] = n;
+      value = n;
     }
+    out[key] = value;
+    record.leaves.push({ path: at, value, pos: v.pos });
   }
 
   private parseDef(): Def {

@@ -115,6 +115,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0231](./errors.md#e0231-reserved-type-name) | `reserved-type-name` | type | コア |
 | [E0234](./errors.md#e0234-reserved-effect-name) | `reserved-effect-name` | effect | 標準ライブラリ |
 | [E0235](./errors.md#e0235-null-value) | `null-value` | all | コア |
+| [E0239](./errors.md#e0239-negative-theme-length) | `negative-theme-length` | app | スタイル |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | フォーム |
