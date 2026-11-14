@@ -1,5 +1,5 @@
 import type { Expr, TileArg, TileExpr, TileProp } from "../ast.ts";
-import { BUILTIN_TILES, positionalIsTile, VALUE_ARG_BUILTINS } from "../builtins.ts";
+import { BUILTIN_TILES, parsesPositionalAsTile } from "../builtins.ts";
 import { HANDLER_NAMES } from "../ui-lifts.ts";
 import { StatementParser } from "./statements.ts";
 import { ParseError } from "./token-stream.ts";
@@ -93,16 +93,16 @@ export class TileParser extends StatementParser {
         : this.parseArgValue(false);
       return { kind: "TileArg", name: first.value, namePos: first.pos, value };
     }
-    return { kind: "TileArg", value: this.parseArgValue(positionalIsTile(callee)) };
+    return { kind: "TileArg", value: this.parseArgValue(parsesPositionalAsTile(callee)) };
   }
 
-  // A capitalised handler is a tile call on a builtin other than the value builtins, and a
-  // variant tag on any other tile, where the call it is written as is that tag when it carries
-  // nothing: `Bump`, `Bump()` and `Bump {}` are one node on every tile.
+  // A capitalised handler is a tile call on a builtin whose positional argument parses as a tile,
+  // and a variant tag on any other tile, where the call it is written as is that tag when it
+  // carries nothing: `Bump`, `Bump()` and `Bump {}` are one node on every tile.
   protected parseHandlerArg(callee: string): Expr | TileExpr {
     const head = this.peek();
     if (head.kind !== "ident" || !isCapitalised(head.value)) return this.parseArgValue(false);
-    if (BUILTIN_TILES.has(callee) && !VALUE_ARG_BUILTINS.has(callee)) return this.parseTileCall();
+    if (parsesPositionalAsTile(callee)) return this.parseTileCall();
     if (!this.matchTAt(1, "op", "(") && !this.matchTAt(1, "op", "{")) {
       return this.parseArgValue(false);
     }

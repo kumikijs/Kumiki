@@ -325,7 +325,8 @@ function notATile(
       ? `${place.of} renders a positional argument only when it is a tile, so this one renders nothing`
       : `${placeName(place)} has to be a tile`;
   // A `let` is a value only as a child: where a whole tile-expr stands, the parser refuses one. A
-  // builtin's name is a child only of a builtin that renders one, so its call renders there.
+  // positional argument is a `child` place only under a container, so the call suggested here
+  // renders there.
   const message =
     found.kind === "uncalled"
       ? `\`${found.name}\` is a builtin tile named without its call: ${rule}. ` +
@@ -686,8 +687,8 @@ function checkTileCall(
       checkHandlerBinding(t.name, arg.name, "arg", v, sym, errors);
       continue;
     }
-    // E0129 (`checkUnrenderedArgs`), tile or value, and moved or removed whole, so nothing inside
-    // it is checked.
+    // checkUnrenderedArgs reports this as E0129, tile or value; it is moved or removed whole, so
+    // nothing inside it is checked.
     if (arg.name === undefined && shownInPlaceOfPositional(t.name)) continue;
     // E0236 (`checkTileAsContent`), and moved whole too.
     if (arg === tileContent) continue;
