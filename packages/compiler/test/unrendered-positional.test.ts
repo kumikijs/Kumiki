@@ -1,10 +1,15 @@
+import { BUILTIN_TILES } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { shownInPlaceOfPositional } from "../src/builtins.ts";
 import { checkSource } from "./helpers/diagnostics.ts";
 
 const program = (home: string) => `tile Header = text("header")
 tile Card in={label: Text} = text($1.label)
 tile Home = ${home}
 slot n : Int = 0
+type Mode = A | B
+slot m : Mode = A
+slot xs : List(Int) = [1]
 app R
     caps   = []
     routes = {"/" -> Home, "/404" -> Home}
@@ -56,10 +61,10 @@ app M
     ["input", shows("input", "`bind=`, `value=` or `placeholder=`"), ""],
     ["textarea", shows("textarea", "`bind=`, `value=` or `placeholder=`"), ""],
     ["select", shows("select", "`options=`, `bind=`, `value=` or `placeholder=`"), ""],
-    ["check", shows("check", "`bind=` or `value=`"), ""],
+    ["check", shows("check", "`label=`, `bind=` or `value=`"), ""],
     ["switch", shows("switch", "`bind=` or `value=`"), ""],
-    ["radio", shows("radio", "`bind=` or `selected=`"), ""],
-    ["slider", shows("slider", "`bind=`"), ""],
+    ["radio", shows("radio", "`label=`, `bind=` or `selected=`"), ""],
+    ["slider", shows("slider", "`bind=` or `value=`"), ""],
     ["error", shows("error", "`field=`"), ", field=n"],
     ["divider", showsNothing("divider"), ""],
     ["spinner", showsNothing("spinner"), ""],
@@ -78,12 +83,48 @@ app M
     expect(diagnostics(home)).toEqual([`E0129 ${at(home, '"a"')} ${message}`]);
   });
 
+  it.each([
+    ["image", "nope", `src="a.png"`, shows("image", "`src=`")],
+    ["image", `row(text("a"), gap=2)`, `src="a.png"`, shows("image", "`src=`")],
+    ["icon", "Header", `name="home"`, shows("icon", "`name=`")],
+    ["icon", `icon(name="plus")`, `name="home"`, shows("icon", "`name=`")],
+  ])("%s(%s, …) is E0129 alone", (builtin, arg, named, message) => {
+    const home = `column(${builtin}(${arg}, ${named}))`;
+    expect(diagnostics(home)).toEqual([`E0129 ${at(home, `${arg}, `)} ${message}`]);
+  });
+
+  // These parse only where a positional argument is read as a tile, so a parse error there
+  // would hide every other diagnostic in the file.
+  it.each([
+    [`button(icon(name="plus"), text="Add")`, `icon(`, shows("button", "`text=`")],
+    [
+      `progress(row(text("a"), gap="md"), value=1)`,
+      "row(",
+      shows("progress", "`value=` or `max=`"),
+    ],
+    [`button(Header {pad: "md"}, text="Go")`, "Header", shows("button", "`text=`")],
+    [
+      `spinner(if n > 0 then card(text("a")) {pad: "md"} else text("b"))`,
+      "if ",
+      showsNothing("spinner"),
+    ],
+  ])("%s is E0129, not a parse error", (call, arg, message) => {
+    const home = `column(${call}, text("end"))`;
+    expect(diagnostics(home)).toEqual([`E0129 ${at(home, arg)} ${message}`]);
+  });
+
   // Under a `let` a tile call reads as a `fn` call and would be reported wrongly, so a diagnostic
   // inside the argument waits until it is moved.
   it.each([
     ["a tile the program defines", "Header"],
     ["a user tile's call", `Card({label: "a"})`],
     ["a when", "when(n > 0, Header)"],
+    ["an if", `if n > 0 then Header else text("b")`],
+    ["a match", `match m with | A -> Header | B -> text("b")`],
+    ["a for", "for x in xs Header"],
+    ["a builtin's call with a named argument", `icon(name="plus")`],
+    ["a container's call with a named argument", `row(text("a"), gap=2)`],
+    ["a tile with a props block", `Header {pad: "md"}`],
     ["a slot", "n"],
     ["a member read", "n.show"],
     ["a literal", "42"],
@@ -110,6 +151,61 @@ app M
     expect(
       checkSource(program(`column(button(Header, text="Go"))`)).map((e) => e.unrendered),
     ).toEqual(["positional"]);
+  });
+
+  // What each builtin needs beside the named argument for the call to check clean.
+  const needs: Record<string, string> = { error: ", field=n", radio: ", value=m" };
+  const written: Record<string, string> = {
+    text: `"Go"`,
+    src: `"a.png"`,
+    name: `"home"`,
+    label: `"Remember me"`,
+    placeholder: `"Name"`,
+    options: `[{label: "A", value: "a"}]`,
+    selected: "true",
+    max: "2",
+    field: "n",
+  };
+  // `bind=` and `value=` take the type of what the builtin edits.
+  const typed: Record<string, Record<string, string>> = {
+    bind: {
+      input: "s",
+      textarea: "s",
+      select: "s",
+      check: "agreed",
+      switch: "agreed",
+      radio: "m",
+      slider: "f",
+    },
+    value: {
+      input: `"a"`,
+      textarea: `"a"`,
+      select: `"a"`,
+      check: "true",
+      switch: "true",
+      slider: "1",
+      progress: "1",
+    },
+  };
+  const suggested = [...BUILTIN_TILES].flatMap((builtin) =>
+    (shownInPlaceOfPositional(builtin) ?? []).map((arg) => [builtin, arg] as const),
+  );
+  it.each(suggested)("%s checks clean written with the suggested %s=", (builtin, arg) => {
+    const value = typed[arg]?.[builtin] ?? written[arg];
+    expect(value, `a value for ${builtin}(${arg}=…)`).toBeDefined();
+    const src = `slot s : Text = ""
+slot agreed : Bool = false
+slot f : Float = 0
+slot n : Text = ""
+type Mode = A | B
+slot m : Mode = A
+tile Home = column(${builtin}(${arg}=${value}${arg === "field" ? "" : (needs[builtin] ?? "")}))
+app R
+    caps   = []
+    routes = {"/" -> Home, "/404" -> Home}
+    init   = []
+`;
+    expect(located(src)).toEqual([]);
   });
 
   it("is not reported for the arguments the builtin reads", () => {
