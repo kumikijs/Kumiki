@@ -1306,6 +1306,39 @@ tile App = column(Card)`);
       );
     });
 
+    it("takes the fallback of a tile named like a builtin, written as a bare child", () => {
+      // The bare name is the program's tile, as the build renders it, not the builtin `spinner`.
+      const src = withApp(`
+slot spinner : Text = "x"
+slot n : Option(Int) = None
+slot log : Text = ""
+tile Oops in=PanicInfo = button(text="retry", id="again")
+tile spinner error-boundary=Oops = row(button(text="in", id="inner"), text("w " + n.get.show))
+tile Card = column(button(text="save", id="save"), spinner)
+reducer cardAgain on=ui.click(Card#again) do= log := log + "x"
+reducer cardInner on=ui.click(Card#inner) do= log := log + "x"
+reducer cardBad   on=ui.click(Card#zz)    do= log := log + "x"
+tile App = column(Card)`);
+      expect(flagged(src)).toEqual(["cardBad"]);
+      expect(checkStrict(src).find((d) => d.code === "E0212")?.message).toContain(
+        '"again" | "inner" | "save"',
+      );
+    });
+
+    it("leaves out the fallback of a tile named like a builtin where a call renders the builtin", () => {
+      // `spinner()` is the builtin, so `Oops` renders nowhere and keeps its own id.
+      const src = withApp(`
+slot n : Option(Int) = None
+slot log : Text = ""
+tile Oops in=PanicInfo = button(text="retry", id="again")
+tile spinner error-boundary=Oops = text("w " + n.get.show)
+tile Wait = spinner()
+reducer oopsOwn on=ui.click(Oops#again) do= log := log + "x"
+reducer oopsBad on=ui.click(Oops#zz)    do= log := log + "x"
+tile App = column(Wait(id="x"))`);
+      expect(flagged(src)).toEqual(["oopsBad"]);
+    });
+
     it("keeps the own id of the fallback of a lower-cased tile written as a bare child", () => {
       // `Last` is also called with another id, so only its place as `leaf`'s fallback keeps its own.
       const src = withApp(`
