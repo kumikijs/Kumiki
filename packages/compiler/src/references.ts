@@ -434,9 +434,9 @@ class Walker {
       this.tileExpr(v, locals);
       return;
     }
-    const tile = tileNamedAt(callee, a, (name) => this.index.tile.has(name));
+    const tile = tileNamedAt(callee, a, (name) => (this.index.tile.has(name) ? name : undefined));
     if (tile) {
-      this.add("tile", tile.name, tile.pos);
+      this.add("tile", tile.def, tile.ref.pos);
       return;
     }
     this.expr(v, locals);

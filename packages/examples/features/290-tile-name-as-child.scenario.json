@@ -1,0 +1,25 @@
+{
+  "steps": [
+    {
+      "label": "each bare child renders its tile, and each value position reads the slot or the fn",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "plain tile",
+          "badge tile",
+          "stamp tile",
+          "slot: the badge slot",
+          "fn: the stamp fn"
+        ]
+      }
+    },
+    {
+      "label": "under a loop variable of the slot's name, the bare child reads the slot, as its capitalised twin does",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["caption reads the name slot", "Caption reads the name slot"],
+        "domExcludes": ["the loop variable"]
+      }
+    }
+  ]
+}

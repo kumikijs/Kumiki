@@ -98,33 +98,6 @@ describe("what renders in a child position is not reported", () => {
   });
 });
 
-describe("the name of a tile in a child position is the tile", () => {
-  it("with no other definition of the name", () => {
-    expect(diagnostics("column(lower)")).toEqual([]);
-  });
-
-  it("beside a fn of the same name, which a value position still reads", () => {
-    const src = `fn lower() -> Text = "f"\n${program("column(lower, text(lower))")}`;
-    expect(checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col}`)).toEqual([
-      "E0127 3:32",
-    ]);
-  });
-
-  it.each([
-    ["alone", ""],
-    ["beside a slot of the same name", "slot needs : Int = 0\n"],
-  ])("is E0213 for a tile that declares `in=`, %s", (_, extra) => {
-    const src = `${extra}tile needs in=Int = text($1.show)\n${program("column(needs, Card)")}`;
-    const at = extra === "" ? 3 : 4;
-    expect(
-      checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`),
-    ).toEqual([
-      `E0213 ${at}:20 Tile "needs" expects 1 argument(s) but got 0`,
-      `E0213 ${at}:27 Tile "Card" expects 1 argument(s) but got 0`,
-    ]);
-  });
-});
-
 describe("a value where a value belongs is still a value", () => {
   it.each([
     ["the content of a text builtin", `column(text(let x = 1 in x.show))`],
@@ -306,16 +279,68 @@ describe("a name read after the scope that declared it ended", () => {
   });
 });
 
-describe("a tile's name", () => {
-  it("is a value in a container when a slot has it", () => {
+describe("a tile's name written where a tile belongs", () => {
+  const LEAF = `tile leaf = text("leaf")\ntile Leaf = text("Leaf")\n`;
+  const NEEDS = `tile needs in=Int = text($1.show)\ntile Needs in=Int = text($1.show)\n`;
+  // Each error with its position and message; `extra` follows the app, so `home` stays on line 1.
+  const found = (home: string, extra: string) =>
+    checkSource(`${armProgram(home)}${extra}`).map(
+      (e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`,
+    );
+  const at = (home: string, text: string) => `1:${13 + home.indexOf(text)}`;
+  const calledWithNothing = (name: string) => `Tile "${name}" expects 1 argument(s) but got 0`;
+  const E0127_LEAF = `"leaf" is a fn, and a fn is not a value — write the call: leaf()`;
+
+  it.each([
+    ["with no other definition of the name", "column(leaf)", LEAF],
+    ["beside a slot of the same name", "column(leaf)", `${LEAF}slot leaf : Text = "s"\n`],
+    ["under a loop variable of the same name", "column(for leaf in xs column(leaf))", LEAF],
+    [
+      "capitalised, as an arm under a loop variable of the same name",
+      "column(for Item in xs Item)",
+      "",
+    ],
+  ])("is the tile %s", (_, home, extra) => {
+    expect(found(home, extra)).toEqual([]);
+  });
+
+  it("is the tile beside a fn of the same name, which a value position still reads", () => {
+    const home = "column(leaf, text(leaf))";
+    expect(found(home, `${LEAF}fn leaf() -> Text = "f"\n`)).toEqual([
+      `E0127 ${at(home, "leaf))")} ${E0127_LEAF}`,
+    ]);
+  });
+
+  it.each([
+    ["alone", "column(needs, Needs)", NEEDS],
+    ["beside a slot of the same name", "column(needs, Needs)", `${NEEDS}slot needs : Int = 0\n`],
+  ])("is E0213 for a tile that declares `in=`, as its capitalised twin is: %s", (_, home, extra) => {
+    expect(found(home, extra)).toEqual([
+      `E0213 ${at(home, "needs,")} ${calledWithNothing("needs")}`,
+      `E0213 ${at(home, "Needs)")} ${calledWithNothing("Needs")}`,
+    ]);
+  });
+
+  it("is E0213 under a loop variable of the same name, which the child does not read", () => {
+    const home = "column(for needs in xs column(needs))";
+    expect(found(home, NEEDS)).toEqual([
+      `E0213 ${at(home, "needs))")} ${calledWithNothing("needs")}`,
+    ]);
+  });
+
+  it.each([
+    ["button", `column(button(leaf, text="go"))`, `column(button(Leaf, text="go"))`],
+    ["progress", "column(progress(leaf, value=1))", "column(progress(Leaf, value=1))"],
+  ])("checks clean under %s, which drops its positional argument, as its capitalised twin does", (_, lower, upper) => {
+    expect(found(lower, LEAF)).toEqual([]);
+    expect(found(upper, LEAF)).toEqual([]);
+  });
+
+  it("is a value when only a slot has the name", () => {
     const src = `${armProgram("column(Big)")}slot Big : Int = 1\n`;
     expect(pointedErrorsOf(src)).toEqual([
       { code: "E0128", message: message("column"), text: "Big)" },
     ]);
-  });
-
-  it("stays the tile when a loop variable shadows it, as codegen renders it", () => {
-    expect(codesOf(armProgram("column(for Item in xs Item)"))).toEqual([]);
   });
 });
 

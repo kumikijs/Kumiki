@@ -67,16 +67,18 @@ export function positionalIsTile(name: string): boolean {
   return BUILTIN_TILES.has(name) && !VALUE_ARG_BUILTINS.has(name);
 }
 
-// Codegen renders such a name as the tile; the checker and the reference graph must agree.
-export function tileNamedAt(
+// A tile's name at a child position is that tile, whatever else shares the name; the checker and
+// the reference graph read it through here so they agree with codegen.
+export function tileNamedAt<D>(
   callee: string,
   arg: TileArg,
-  isTile: (name: string) => boolean,
-): (Expr & { kind: "Ref" }) | undefined {
+  tileNamed: (name: string) => D | undefined,
+): { readonly ref: Expr & { kind: "Ref" }; readonly def: D } | undefined {
   const v = arg.value;
   if (arg.name !== undefined || !positionalIsTile(callee)) return undefined;
   if (isTileExpr(v) || v.kind !== "Ref") return undefined;
-  return isTile(v.name) ? v : undefined;
+  const def = tileNamed(v.name);
+  return def === undefined ? undefined : { ref: v, def };
 }
 
 /** The builtins codegen renders a positional tile argument of, as a child; the rest drop it. */

@@ -9,9 +9,9 @@ import {
   renameDef,
   viewDef,
 } from "@kumikijs/cli";
-import { app } from "@kumikijs/examples";
+import { app, feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
-import { APP_A, seed, seedCopy } from "./helpers/files.ts";
+import { APP_A, renamed, seed, seedCopy } from "./helpers/files.ts";
 
 const COUNTER = app("01-counter");
 const TODOMVC = app("02-todomvc");
@@ -66,44 +66,47 @@ ${APP_A}`;
     expect(out).toContain('button(text="label"');
   });
 
-  const SHARED = (body: string): string => `slot leaf : Text = "hello"
-tile leaf = column(text("tile"))
-tile App = ${body}
-${APP_A}`;
+  // `badge` is a slot and a tile, `stamp` a fn and a tile: `Shelf` writes them as children, where
+  // they are the tiles, and `Notes` reads them where a value belongs.
+  const SHARED = feature("290-tile-name-as-child");
+  // The line `qname` is defined on, in the example.
+  const lineOf = (qname: string): number => {
+    const [layer, name] = qname.split(".");
+    const lines = readFileSync(SHARED, "utf8").split("\n");
+    return lines.findIndex((line) => line.startsWith(`${layer} ${name} `)) + 1;
+  };
   const sites = (f: string, qname: string): string[] =>
     findReferences(load(f), qname).map((r) => `${r.qname}:${r.line}`);
 
-  it("lists a tile's name written as a child under the tile, not the slot", () => {
-    const f = seed(SHARED("column(leaf)"));
-    expect(sites(f, "tile.leaf")).toEqual(["tile.App:3"]);
-    expect(sites(f, "slot.leaf")).toEqual([]);
+  it.each([
+    ["tile.badge", "tile.Shelf"],
+    ["slot.badge", "tile.Notes"],
+    ["tile.stamp", "tile.Shelf"],
+    ["fn.stamp", "tile.Notes"],
+  ])("lists %s where the program resolves its name to it", (qname, site) => {
+    expect(sites(seedCopy(SHARED), qname)).toEqual([`${site}:${lineOf(site)}`]);
   });
 
   it("renames the tile at the child and leaves the slot's read alone", () => {
-    const f = seed(SHARED("column(leaf, text(leaf))"));
-    renameDef(f, "tile.leaf", "twig");
-    const out = readFileSync(f, "utf8");
-    expect(out).toContain(`tile twig = column(text("tile"))`);
-    expect(out).toContain("tile App = column(twig, text(leaf))");
+    const out = renamed(seedCopy(SHARED), "tile.badge", "twig");
+    expect(out).toContain(`tile twig   = text("badge tile")`);
+    expect(out).toContain("tile Shelf = column(plain, twig, stamp)");
+    expect(out).toContain(`text("slot: " + badge)`);
   });
 
   it("renames the slot at the read and leaves the child alone", () => {
-    const f = seed(SHARED("column(leaf, text(leaf))"));
-    renameDef(f, "slot.leaf", "greeting");
-    const out = readFileSync(f, "utf8");
-    expect(out).toContain(`slot greeting : Text = "hello"`);
-    expect(out).toContain("tile App = column(leaf, text(greeting))");
+    const out = renamed(seedCopy(SHARED), "slot.badge", "greeting");
+    expect(out).toContain(`slot greeting : Text       = "the badge slot"`);
+    expect(out).toContain("tile Shelf = column(plain, badge, stamp)");
+    expect(out).toContain(`text("slot: " + greeting)`);
   });
 
-  it("cascades a removal through the definition the child names", () => {
-    const fromSlot = seed(SHARED("column(leaf)"));
-    expect(removeDef(fromSlot, "slot.leaf", true).removed).toEqual(["slot.leaf"]);
-    const fromTile = seed(SHARED("column(leaf)"));
-    expect(removeDef(fromTile, "tile.leaf", true).removed).toEqual([
-      "tile.leaf",
-      "app.A",
-      "tile.App",
-    ]);
+  it.each([
+    ["slot.badge", ["slot.badge", "tile.Notes", "tile.App", "app.TileNameAsChild"]],
+    ["tile.badge", ["tile.badge", "tile.Shelf", "tile.App", "app.TileNameAsChild"]],
+  ])("cascades the removal of %s through the definitions that resolve to it", (qname, removed) => {
+    const out = removeDef(seedCopy(SHARED), qname, true).removed;
+    expect([...out].sort()).toEqual([...removed].sort());
   });
 
   it("does not count a definition as a reference to itself", () => {

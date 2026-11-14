@@ -1,0 +1,32 @@
+# Feature: a tile's name written as a child is that tile, whatever else shares
+# the name (spec/language.md).
+#
+# `plain` is a tile alone, `badge` a slot and a tile, and `stamp` a fn and a
+# tile. `Shelf` writes each name bare as a child, where it is the tile, and
+# `Notes` reads `badge` and calls `stamp()` where a value belongs, where they
+# are the slot and the fn. `caption` reads the slot `name` in its body; written
+# as a child under a loop variable also called `name`, it reads the slot, as
+# its capitalised twin `Caption` does.
+
+slot badge : Text       = "the badge slot"
+slot name  : Text       = "the name slot"
+slot names : List(Text) = ["the loop variable"]
+
+fn stamp() -> Text = "the stamp fn"
+
+tile plain   = text("plain tile")
+tile badge   = text("badge tile")
+tile stamp   = text("stamp tile")
+tile caption = text("caption reads " + name)
+tile Caption = text("Caption reads " + name)
+
+tile Shelf = column(plain, badge, stamp)
+tile Notes = column(text("slot: " + badge), text("fn: " + stamp()))
+tile Loop  = column(for name in names column(caption, Caption))
+
+tile App = column(heading("A tile's name as a child"), Shelf, Notes, Loop) {pad: "lg", gap: "md"}
+
+app TileNameAsChild
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
