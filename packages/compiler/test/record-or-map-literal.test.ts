@@ -1,7 +1,7 @@
 import type { Expr } from "@kumikijs/compiler";
 import { lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource } from "./helpers/diagnostics.ts";
+import { checkSource, nullValueMessage } from "./helpers/diagnostics.ts";
 import { withApp } from "./helpers/programs.ts";
 
 function parsed(literal: string): Expr {
@@ -90,6 +90,32 @@ describe("a value keyword where a record field name goes", () => {
   ])("is refused as the first key of %s", (literal, keyword) => {
     expect(() => parsed(literal)).toThrow(
       `Parse error at 1:17: \`${keyword}\` is a value, not a record field name`,
+    );
+  });
+});
+
+describe("`null` as a key", () => {
+  it("makes the literal a Map whose key is `null`", () => {
+    expect(parsed("{null: 1}")).toMatchObject({
+      kind: "MapLit",
+      entries: [{ key: { kind: "Null" }, value: { kind: "Num", value: 1 } }],
+    });
+  });
+
+  it("is E0235 at the key, and the Map is checked as any other", () => {
+    expect(diagnostics("slot m : Map(Int, Int) = {null: 1}")).toEqual([
+      `E0235 1:27 ${nullValueMessage}`,
+    ]);
+  });
+
+  it.each([
+    ["{null}", 17],
+    ["{null = 1}", 17],
+    ["{a: 1, null: 2}", 23],
+    ["{a, null}", 20],
+  ])("is refused where a record field name goes in %s", (literal, col) => {
+    expect(() => parsed(literal)).toThrow(
+      `Parse error at 1:${col}: \`null\` is not a record field name, and not a value — Kumiki has no null`,
     );
   });
 });

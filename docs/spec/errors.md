@@ -335,6 +335,8 @@ A tile reference, or the target of a route definition, refers to an undefined ti
 > `Route "<path>" targets undefined tile "<name>"`
 > `Tile-test target "<name>" is a built-in tile — a tile-test can only name a tile the program defines`
 
+Where a tile is expected — a container's child, a `when` / `if` / `for` / `match` arm, a tile's body, a tile-test's `expect` — a name that names a value (a slot, a `fn`, a loop variable, a `match` binding) is [E0128](#e0128-value-as-child), whose fix is to show the value. E0105 there is a name that is neither a tile nor a value, such as a misspelt tile (`when(c, Hedaer)`), and is the one `kumiki fix` proposes a close name for.
+
 The positional arguments of a call to an undefined tile are not checked. Whether one is a tile or a value depends on the tile it is passed to ([Language §1.7.1](./language.md#_1-7-1-syntax)), and an undefined name decides neither, so a misspelt `colum(text("a"), heading("b"))` is this one diagnostic; the arguments are checked once the name resolves.
 
 A **`tile-test` target** is held to more than existing: it must be a tile the program defines. Everywhere else a built-in is a tile like any other, but the generated test applies its target through `App._tilesById`, which is built from the user tiles alone — so `tile-test text` was the one naming that could not work whatever it was given. It passed `check`, and the module died with `App._tilesById.text is not a function`; nothing catches that, so every other test in the file lost its result with it.
@@ -619,15 +621,24 @@ Past the count, the name is checked as the call it stands for, in the scope the 
 
 ### E0128 `value-as-child`
 
-A value is written as a positional argument of a builtin that is not a value builtin — a builtin other than `text`, `heading`, `markdown`, `code`, `editable`, `label`, `link`, `image` and `icon`. Such a builtin renders a positional argument only when it is a tile: a `tile-expr` ([Language §1.7.1](./language.md#_1-7-1-syntax)) or the name of a tile the program defines. Containers (`column`, `row`, `card`, …) render it as a child; the others (`button`, `progress`, …) read no positional argument at all.
+A value is written where a tile is expected. Two kinds of place expect one ([Language §1.7.1](./language.md#_1-7-1-syntax)):
+
+- A positional argument of a builtin that is not a value builtin — a builtin other than `text`, `heading`, `markdown`, `code`, `editable`, `label`, `link`, `image` and `icon`. Such a builtin renders a positional argument only when it is a tile: a `tile-expr` or the name of a tile the program defines. Containers (`column`, `row`, `card`, …) render it as a child; the others (`button`, `progress`, …) read no positional argument at all.
+- A whole `tile-expr`: a `when` / `if` / `for` / `match` arm, a tile's body, and a tile-test's `expect`. The parser reads a name written there as a tile call, so a value named there — a slot, a `fn` call, a loop variable, a `match` binding — is a call of a tile that does not exist.
+
+In either place, a name that is neither a tile nor a value is [E0105](#e0105-undef-tile) instead. A variant tag is not looked up as a value there, so `when(c, Circle)` is E0105 as well. A name read after the scope that declared it ended — a `for` loop's variable after the loop, a `match` arm's binding in a sibling arm — is [E0103](#e0103-undef-ref-undef-slot), carrying that scope, as it is anywhere else.
 
 > ``A value is not a tile: <builtin> renders a positional argument only when it is a tile, so this one renders nothing. Show the value with a tile — `text(…)` — or, for a `let`, write the value where it is used or compute it in a `fn` ``
+> ``A value is not a tile: <place> has to be a tile. Show the value with a tile — `text(…)` ``
+> `` `<name>` is a builtin tile named without its call: <builtin> renders a positional argument only when it is a tile, so this one renders nothing. Call it — `<name>()` ``
 
-Codegen drops a value in that position, so `column(text("a"), 42)` rendered only the `text`, `column(text("a"), n)` with `n` a slot put a `null` into the child list, and `column(let x = 42 in Card(x))` mounted an empty root. A `let` hid a tile from the checker as well: `Card`'s argument was not compared with its `in=`, and a builtin under it was looked up as a `fn` (E0116). The diagnostic is at the value, and nothing inside the value is checked — a diagnostic in there, wrong or right (an undefined name), shows once the value is moved where it belongs.
+The first is a value as a positional argument. The second is a value where a whole `tile-expr` stands, and `<place>` names it: ``a `when` arm``, ``an `if` arm``, ``a `for` arm``, ``a `match` arm``, `a tile's body` or `` a tile-test's `expect` ``. The third is a builtin tile's name written as a positional argument without its call: `column(divider)` names `divider` and renders nothing, where `column(divider())` renders it. Its `Call it` is given only under a builtin that renders its positional arguments as children: under one that renders none, a call renders nothing either (`button(text="x", divider())`), so the message ends at `renders nothing.` In an arm or a body the parser reads the same name as the call, so `when(c, divider)` renders a divider and is not reported. In a container, a name that a value in scope has too — a loop variable called `spinner` — is that value, and draws the first form; in an arm the builtin's call wins, so `for spinner in xs when(c, spinner)` renders the builtin. A lower-cased call in a container that is not a builtin tile's is an expression, so it is a value whatever it calls: `column(greting())` draws the first form, where `when(c, greting())` is E0105.
 
-A value where a value belongs is not reported: a value builtin's content (`text(let x = 1 in x.show)`), a user tile's input (`Card(let x = "a" in {label: x})`), a named argument. Where a `tile-expr` is the whole of a body — a tile body, or a `when` / `if` / `for` / `match` arm — a `let` is a parse error instead (`tile Foo = let x = 0 in …`, `when(c, let x = 1 in …)`).
+Codegen drops a value in a positional argument, so `column(text("a"), 42)` rendered only the `text`, `column(text("a"), n)` with `n` a slot put a `null` into the child list, and `column(let x = 42 in Card(x))` mounted an empty root. A `let` hid a tile from the checker as well: `Card`'s argument was not compared with its `in=`, and a builtin under it was looked up as a `fn` (E0116). The diagnostic is at the value, and nothing inside the value is checked — a diagnostic in there, wrong or right (an undefined name), shows once the value is moved where it belongs.
 
-**Fix**: Show the value with a tile — `column(text(n.show))` — or write it where it is used — `column(Card({label: "a"}))` — or compute it in a `fn` and call that.
+A value where a value belongs is not reported: a value builtin's content (`text(let x = 1 in x.show)`), a user tile's input (`Card(let x = "a" in {label: x})`), a named argument. Where a `tile-expr` is the whole of a body — a tile body, or a `when` / `if` / `for` / `match` arm — a `let` is a parse error instead (`tile Foo = let x = 0 in …`, `when(c, let x = 1 in …)`), and so is any other value that is not a name or a call: a literal (`when(c, 42)`) or a member read (`when(c, total.show)`).
+
+**Fix**: Show the value with a tile — `column(text(n.show))`, `when(c, text(total.show))` — or write it where it is used — `column(Card({label: "a"}))` — or compute it in a `fn` and call that. Write a builtin tile's call where it is named — `column(divider())`.
 
 ### E0129 `unrendered-arg`
 
@@ -1200,6 +1211,18 @@ A `Set`'s key is its `==`, which itself depends on how the Set was built ([Langu
 The message says `it is` when the key's type is one of them, and `it holds` when it holds one in a record field, a variant payload, a container element or a `Map`'s value, through any alias, generic or `nominal`: `type Spot = {lat: Float, lng: Float}` keyed by `$1` is reported, and so are a `List(Set(Text))` and a `Box(Box(Float))` for a `type Box(A) = {v: A}`. A `Map`'s own keys are stored the same way, so `==` on two Maps agrees with their key, and a `Map(Float, Text)` is not reported. A key whose type the checker cannot decide is not reported, and neither is an `Int`, though one can hold a non-finite number (`n % 0`, an overflowing `pow`, a `.round` of a non-finite Float) and is then keyed as a Float is.
 
 **Fix**: Key on a value of another type — a field of the input that identifies the request (`latest-per-key($1.id)`), a Float's `.show`, a File's `{name: $1.name, size: $1.size}`, or a record of such fields (`latest-per-key({user: $1.user, page: $1.page})`).
+
+### E0235 `null-value`
+
+`null` is written where an expression goes. It is a reserved word ([Language §1.2.2](./language.md#_1-2-2-reserved-words)) and no value: Kumiki has no null ([§1.9.1](./language.md#_1-9-1-prohibitions)). A value that may be absent is an `Option(T)`, and `None` is its absence.
+
+> `` `null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one ``
+
+The parser reads `null` wherever an expression goes, so that the checker can report it there with the fix: a slot's initial value, a field of a record literal, an item of a list, a Map key or value, an argument, an operand (`x == null`), a branch, a reducer write, a test's `given` or `expect`. The report is at the `null`, and it is the only one about it: the expression has no type, so the position it lands in reports no mismatch of its own. An expression around it that is a mismatch on its own still prints that missing type as `?`: `{"a": null}` against a record type is E0201 `Expected {a: Option(Int)} but got Map(Text, ?)`. `{null: 1}` is a Map ([Language §1.9](./language.md#_1-9-expression-language)), so this is reported at its key.
+
+Two places are not this code. Where a record field name goes — `{null = 1}`, `{a, null}`, `{a: 1, null: 2}` — `null` is a parse error at the `null`, as `true` is there. As a positional argument of a builtin that is not a value builtin (`column(null)`), it is [E0128](#e0128-value-as-child), which checks nothing inside the value.
+
+**Fix**: Declare the type `Option(T)` and write `None` where there is no value and `Some(x)` where there is one — `slot picked : Option(TodoId) = None`. Ask whether there is one with `.is-none` / `.is-some`, `.get-or(d)` or a `match`, not with `== null`.
 
 ### E0237 `tile-depth`
 

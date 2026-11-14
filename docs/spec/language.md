@@ -89,14 +89,14 @@ A line is terminated by `\n` or `\r\n`; a lone `\r` is whitespace inside a line.
 ### 1.2.2 Reserved Words
 
 ```
-type  slot  effect  reducer  tile  fn  app
+type  slot  effect  reducer  tile  fn  app  test
 nominal  where  when  for  in  let  if  then  else  match  with
 on  do  emit  cap  out  policy  retry
 true  false
 fresh  self  now  null
 ```
 
-`null` is reserved but **prohibited in programs** (type error).
+`null` is reserved but **prohibited in programs**: written where an expression goes it is [E0235](./errors.md#e0235-null-value), and it names no record field ([§1.9](#_1-9-expression-language)). A value that may be absent is an `Option`, and `None` is its absence.
 
 ### 1.2.3 Design Decisions
 
@@ -723,7 +723,7 @@ pattern      ::= identifier
 - `{ … }` is the **props block**: `key: value` pairs only — style/layout/ARIA props and event-handler bindings (`{pad: "lg", gap: "md"}`, `{todoId: $1}`, `{onClick: r}`). It contains **no tile calls and no children**. Writing a tile call inside `{ … }` (e.g. `link(to="/x") {text("Home")}`) is a parse error.
 - A named argument and a `{ … }` entry of the same name are **one prop**, however it is written: `modal(text("x"), open=false)` and `modal(text("x")) {open: false}` render alike. That holds on every builtin and for every prop it reads — the ones a kind takes for itself (a `modal`'s `open`, a `select`'s `options` and `bind`, a `list`'s `ordered`, a `button`'s `type`, a `link`'s `prefetch`, …) as much as the common props of [Standard Library §2.3.10](./stdlib.md#_2-3-10-common-specification-of-props) — and `kumiki check` reads the prop the way it renders. When a call writes both, the block's value is the one read. A builtin's content is not a prop: it is read from `( … )`, as the next item says. In a tile-test's `expect` tree the block is not compared at all, so `kumiki check` reads that tree's props from its named arguments alone ([Testing §8.4](./testing.md#_8-4-tile-snapshot-tests)).
 - A tile's **label/content** is passed in `( … )`: it is the first **positional** value-arg for the text builtins (`text("Home")`, `heading("Hi")`, `code("…")`) — a named argument is a prop wherever it is written, so `heading(level=2, title)` says `title` and `level` stays a prop — and a **named** arg for `button` (`button(text="Save")`). `link` and `label` take either: their first positional argument (`link("Home", to="/x")`, `label("Name")`), or `text=` when none is written (`link(to="/x", text="Home")`) — so, as for `editable`, `text=` beside a positional argument is never read. (`link` additionally accepts the older `{text: "…"}` prop form, which most existing examples use; all compile to the same node.) An argument written as content that the builtin never reads — a second positional argument, `text=` on a text builtin with no positional one, or `text=` beside a positional one on `link` / `label` / `editable` — is [E0129](./errors.md#e0129-unrendered-arg): `text=` is the label argument of `button` / `link` / `label` / `editable`, and a prop on the text builtins.
-- A positional argument of a builtin other than the value builtins (`text`, `heading`, `markdown`, `code`, `editable`, `label`, `link`, `image`, `icon`) renders only when it is a tile — a `tile-expr` or the name of a defined tile. A value there — `column(text("a"), 42)`, a slot, `column(let x = 42 in Card(x))` — renders nothing and is [E0128](./errors.md#e0128-value-as-child): show it with a tile (`text(n.show)`), write it where it is used, or compute it in a `fn`. Where a value belongs (a value builtin's content, a user tile's input, a named argument) a `let` is a value, and is checked like one. A tile body and a `when` / `if` / `for` / `match` arm are a `tile-expr` themselves, so a `let` there is a parse error.
+- A positional argument of a builtin other than the value builtins (`text`, `heading`, `markdown`, `code`, `editable`, `label`, `link`, `image`, `icon`) renders only when it is a tile — a `tile-expr` or the name of a defined tile. A value there — `column(text("a"), 42)`, a slot, `column(let x = 42 in Card(x))` — renders nothing and is [E0128](./errors.md#e0128-value-as-child): show it with a tile (`text(n.show)`), write it where it is used, or compute it in a `fn`. Where a value belongs (a value builtin's content, a user tile's input, a named argument) a `let` is a value, and is checked like one. A tile body and a `when` / `if` / `for` / `match` arm are a `tile-expr` themselves, so a `let` there is a parse error, and a name there is read as a tile call: a value named there — `when(c, total)`, `if c then greeting() else Header`, `for x in xs x` — is E0128 as well. The name of a builtin tile is a value in a container, so `column(divider)` renders nothing and is E0128 (write `divider()`), while in an arm or a body it is read as the call (`when(c, divider)`).
 
 **Semantics of `when(cond, tile)`**:
 - `cond` is true → render `tile`
@@ -930,7 +930,7 @@ expr        ::= literal
 call        ::= qname '(' (expr (',' expr)*)? ')'
 record-lit  ::= '{' (field-init (',' field-init)*)? '}'
 field-init  ::= field-name ('=' | ':') expr | field-name
-field-name  ::= identifier | reserved-word     ; §1.2.2, except true / false / now
+field-name  ::= identifier | reserved-word     ; §1.2.2, except true / false / now / null
 collection-lit ::= '[' (expr (',' expr)*)? ']'
                  | '{' (entry (',' entry)*)? '}'
 entry       ::= expr ':' expr
@@ -947,7 +947,7 @@ binop       ::= '+' | '-' | '*' | '/' | '%'
 unop        ::= '-' | '!'
 ```
 
-**A `{ … }` literal is a record when its first key is a field name, and a Map otherwise.** A field name is an identifier or any reserved word except the three that are a value on their own — `true`, `false`, `now` — so `{type: ui.click, target: Go}` and `{for: "name"}` are records. Those three are keys. `{true: "on", false: "off"}` is a `Map(Bool, Text)`, the same Map `{(true): "on", false: "off"}` writes, and `{now: "start"}` is a `Map(Time, Text)`. Any other first key — a string, a number, `Some(1)`, a name in parentheses `(k)` — makes the literal a Map as well. The first key decides for the whole literal: `{a: 1, true: 2}` is a parse error at `true`, which is a value, not a record field name. `{true}` and `{true = 1}` are the same parse error: a Map key is followed by `:`, so a `true` followed by `,`, `=` or `}` stands where a field name goes.
+**A `{ … }` literal is a record when its first key is a field name, and a Map otherwise.** A field name is an identifier or any reserved word except the four that are an expression on their own — the values `true`, `false` and `now`, and `null`, which is no value at all — so `{type: ui.click, target: Go}` and `{for: "name"}` are records. Those four are keys. `{true: "on", false: "off"}` is a `Map(Bool, Text)`, the same Map `{(true): "on", false: "off"}` writes, and `{now: "start"}` is a `Map(Time, Text)`. `{null: 1}` is a Map too, and its key is [E0235](./errors.md#e0235-null-value). Any other first key — a string, a number, `Some(1)`, a name in parentheses `(k)` — makes the literal a Map as well. The first key decides for the whole literal: `{a: 1, true: 2}` is a parse error at `true`, which is a value, not a record field name. `{true}` and `{true = 1}` are the same parse error: a Map key is followed by `:`, so a `true` followed by `,`, `=` or `}` stands where a field name goes. A `null` in any of these places is a parse error too, and its message says `null` is not a value either.
 
 An `if` and a `match` evaluate to one of their branches, so **every branch has to fit where the expression lands**. `p := match ou with | Some(id) -> id | None -> p` is [E0201](./errors.md#e0201-type-mismatch) at the `Some` arm when `ou` is an `Option(UserId)` and `p` a `PostId` — each arm is read with the types its pattern binds, exactly as `p := ou.get-or(p)` is. Where nothing declares a type (a `let`, an operand), the expression has its branches' common type. When the branches disagree, that is the base they share, with the nominal dropped: a `UserId` branch beside a `PostId` branch gives `Text`. The expression has no type, and nothing is reported against it, only when the branches share no base or one branch's type cannot be decided.
 
@@ -961,7 +961,7 @@ A `match` statement in a reducer body ([§1.6.1](#_1-6-1-syntax)) and a `match` 
 
 - **Lambda expressions prohibited**
 - **`try/catch` prohibited**
-- **`null` / `undefined` prohibited**
+- **`null` / `undefined` prohibited** — `null` is [E0235](./errors.md#e0235-null-value); a value that may be absent is an `Option`
 - **`while` loops prohibited**
 - **Assignment expressions prohibited** (`:=` is a statement and cannot be used within an expression)
 - **Literal patterns prohibited.** A `match` pattern is a union variant, `Variant(binds)`, a tuple, a binding name, or `_` — **only**. Patterns matching against a literal value (`match s with | "Overdue" -> … | "Today" -> …`, or numeric/bool literals) are **not supported** and fail to parse. `match` is for destructuring a *union/variant*, not for branching on a `Text`/`Int`/`Bool` value. To branch on a value, use `if/else` (or chained `if`), or model the cases as a union type and match on that:

@@ -48,14 +48,18 @@ function childEnv(env: Record<string, string> = {}): NodeJS.ProcessEnv {
   return { ...inherited, ...env };
 }
 
-/** Spawn the CLI with `args` and wait for it to exit, in the environment `childEnv` describes. */
+/**
+ * Spawn the CLI with `args` and wait for it to exit, in the environment `childEnv` describes and in
+ * `cwd` (this process's working directory by default).
+ */
 export function runCli(
   args: readonly string[],
-  options: { input?: string; env?: Record<string, string> } = {},
+  options: { input?: string; env?: Record<string, string>; cwd?: string } = {},
 ): CliResult {
   const res = spawnSync(process.execPath, [...CLI_ARGV, ...args], {
     encoding: "utf8",
     input: options.input,
+    cwd: options.cwd,
     timeout: CHILD_TIMEOUT_MS,
     env: childEnv(options.env),
   });
