@@ -178,7 +178,14 @@ export class StatementParser extends ExpressionParser {
       this.eat("kw", "in");
       const iter = this.parseExpr();
       const body = this.parseStatementBody();
-      return { kind: "ForStmt", bind: bindTok.value, iter, body, pos: start.pos };
+      return {
+        kind: "ForStmt",
+        bind: bindTok.value,
+        bindPos: bindTok.pos,
+        iter,
+        body,
+        pos: start.pos,
+      };
     }
     if (this.matchKw("if")) {
       const start = this.next();
@@ -202,10 +209,10 @@ export class StatementParser extends ExpressionParser {
     }
     if (this.matchKw("let")) {
       const start = this.next();
-      const name = this.eat("ident").value;
+      const nameTok = this.eat("ident");
       this.eat("op", "=");
       const rhs = this.parseExpr();
-      return { kind: "LetStmt", name, rhs, pos: start.pos };
+      return { kind: "LetStmt", name: nameTok.value, namePos: nameTok.pos, rhs, pos: start.pos };
     }
     if (this.matchKw("emit")) {
       const start = this.next();

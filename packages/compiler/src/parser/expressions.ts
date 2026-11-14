@@ -414,12 +414,19 @@ export class ExpressionParser extends TypeParser {
 
   protected parseLetIn(): Expr {
     const start = this.eat("kw", "let");
-    const name = this.eat("ident").value;
+    const nameTok = this.eat("ident");
     this.eat("op", "=");
     const value = this.parseExpr();
     this.eat("kw", "in");
     const body = this.parseExpr();
-    return { kind: "LetIn", name, value, body, pos: start.pos };
+    return {
+      kind: "LetIn",
+      name: nameTok.value,
+      namePos: nameTok.pos,
+      value,
+      body,
+      pos: start.pos,
+    };
   }
 
   protected parseMatchExpr(): Expr {

@@ -16,10 +16,12 @@ import {
   type EndedScope,
   isBuiltinCall,
   type KumikiError,
+  type NestedScopeKind,
   type SymbolTable,
 } from "./context.ts";
 import { refuseRenderedEffectId } from "./expr.ts";
 import { freshResultType, prim } from "./infer.ts";
+import type { ScopedDeclaration } from "./nested-scopes.ts";
 
 export function checkCallee(
   callee: string,
@@ -204,18 +206,26 @@ export function arithmeticHint(name: string, sym: SymbolTable, ctx: Ctx): string
   return ` — "-" continues an identifier, so this is one name. Write "${head} - ${tail}" with spaces for subtraction.`;
 }
 
+/** Where a name of each kind of scope is declared, as a hint says it. */
+const DECLARED: Record<NestedScopeKind, string> = {
+  if: 'in an "if" branch',
+  for: 'in a "for" loop',
+  match: "in a match arm",
+  "let-in": 'by a "let … in"',
+  "for-expr": `in a tile's "for"`,
+  "match-expr": 'in an arm of a "match" expression',
+};
+
 // A `let n = 0` before the statement would not do: the body's own `n` only shadows it.
 const BRANCH_WORDS = {
   if: {
     part: "branch",
-    ended: 'an "if" branch',
     sibling: 'the other branch of this "if"',
     declare: (name: string) =>
       `declare it once before the "if" with an "if" expression (let ${name} = if c then … else …)`,
   },
   match: {
     part: "arm",
-    ended: "a match arm",
     sibling: "another arm of this match",
     declare: () => 'declare it once before the "match" with a match expression',
   },
@@ -225,44 +235,70 @@ const NO_VALUE_OUT = "and a name carries no value out of a loop";
 
 /** Where else the value a `let … in` binds can be bound so both reads see it, by what reads it. */
 function letInRebind(ctx: Ctx): string {
+  if (ctx.rootsShareNoExpression) return "";
   switch (ctx.kind) {
     case "reducer":
       return ', or bind it with a "let" statement where both reads see it';
     // A tile's body has no `let … in` around its arguments.
     case "tile":
       return ', or move both reads into a tile that declares "in=" and pass it the value';
-    // Each entry is an expression of its own, so no `let … in` encloses two of them.
-    case "app-init":
-      return "";
     default:
       return ', or bind it with one "let … in" around both reads';
   }
 }
 
 function endedScopeWords(name: string, ended: EndedScope, ctx: Ctx): string {
+  const where = DECLARED[ended.kind];
   switch (ended.kind) {
     case "for":
-      return `in a "for" loop, ${NO_VALUE_OUT}: move the read into the loop's body, or write the value to a slot there`;
+      return `${where}, ${NO_VALUE_OUT}: move the read into the loop's body, or write the value to a slot there`;
     case "for-expr":
-      return `in a tile's "for", ${NO_VALUE_OUT}: move the read into the loop's body`;
+      return `${where}, ${NO_VALUE_OUT}: move the read into the loop's body`;
     case "let-in":
-      return `by a "let … in", whose body ended before this read: move the read into that body${letInRebind(ctx)}`;
+      return `${where}, whose body ended before this read: move the read into that body${letInRebind(ctx)}`;
     case "match-expr":
       return ended.sibling
         ? 'in another arm of this "match" expression: move the read into the arm that declares it'
-        : 'in an arm of a "match" expression, which ended before this read: move the read into that arm';
+        : `${where}, which ended before this read: move the read into that arm`;
     default: {
       const w = BRANCH_WORDS[ended.kind];
-      const where = ended.sibling ? w.sibling : `${w.ended}, which ended before this read`;
-      const into = ended.sibling ? `the ${w.part} that declares it` : `that ${w.part}`;
-      return `in ${where}: ${w.declare(name)}, or move the read into ${into}`;
+      if (ended.sibling) {
+        return `in ${w.sibling}: ${w.declare(name)}, or move the read into the ${w.part} that declares it`;
+      }
+      return `${where}, which ended before this read: ${w.declare(name)}, or move the read into that ${w.part}`;
     }
   }
 }
 
+/** The read is ahead of the value it names: a name declared again before it would read another. */
+function laterScopeRepair(kind: NestedScopeKind, ctx: Ctx): string {
+  switch (kind) {
+    case "for":
+      return "move the read into the loop's body, after the declaration";
+    case "if":
+      return "move the read into that branch, after the declaration";
+    case "match":
+      return "move the read into that arm, after the declaration";
+    case "let-in":
+      return `move the read into its body${letInRebind(ctx)}`;
+    case "for-expr":
+      return "move the read into the loop's body";
+    case "match-expr":
+      return "move the read into that arm";
+  }
+}
+
+const SEE = " (see docs/spec/language.md)";
+
 /** Unlike `arithmeticHint`, kept when a close name is in scope: that the name ended is known. */
 export function endedScopeHint(name: string, ended: EndedScope, ctx: Ctx): string {
-  return ` — it was declared ${endedScopeWords(name, ended, ctx)} (see docs/spec/language.md)`;
+  return ` — it was declared ${endedScopeWords(name, ended, ctx)}${SEE}`;
+}
+
+/** Like `endedScopeHint`, for a read before the scope that declares the name. */
+export function laterScopeHint({ kind, at }: ScopedDeclaration, ctx: Ctx): string {
+  const where = `later, at ${at.line}:${at.col}, ${DECLARED[kind]}`;
+  return ` — it is declared ${where}: ${laterScopeRepair(kind, ctx)}${SEE}`;
 }
 
 function hasCloseName(name: string, sym: SymbolTable, ctx: Ctx): boolean {

@@ -44,6 +44,25 @@ describe("kumiki_fix", () => {
     expect(readFileSync(file, "utf8")).toBe(original);
   });
 
+  it("proposes no rename for a read before the scope that declares the name", async () => {
+    // `idx` is one edit from the slot `id`; renamed, the first `text` would read the slot.
+    const file = join(workdir.path, "before-scope.kumiki");
+    const source = [
+      "slot id : Int = 0",
+      "slot xs : List(Int) = [1, 2]",
+      "tile App = column(text(idx.show), for idx in xs text(idx.show))",
+      'app M caps=[] routes={"/" -> App, "/404" -> App} init=[]',
+      "",
+    ].join("\n");
+    writeFileSync(file, source);
+    const res = await callOnce("kumiki_fix", { path: file });
+    expect(res.body.split("\n")).toEqual([
+      "(no auto-patches available)",
+      expect.stringMatching(/^error E0103 undef-ref at 3:24: Reference to undefined name "idx" — /),
+    ]);
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
   it.each([
     {
       name: "a warning-only file",
