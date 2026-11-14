@@ -56,4 +56,12 @@ describe("a container shows its positional tile", () => {
   it("a button shows its text=", async () => {
     expect(await shown(`column(button(text="Go"))`)).toBe("Go");
   });
+
+  // E0129 names `label=` on these, the one argument that shows a text beside the box.
+  it.each([
+    `check(label="Remember me")`,
+    `radio(label="Remember me", value=1)`,
+  ])("%s shows its label=", async (call) => {
+    expect(await shown(`column(${call})`)).toBe("Remember me");
+  });
 });

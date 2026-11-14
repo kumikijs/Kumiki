@@ -63,9 +63,11 @@ export const BUILTIN_TILES = new Set<string>([
 ]);
 
 /**
- * The builtins codegen renders a positional tile argument of, as a child; the rest drop it. Every
- * builtin is one of three kinds by what it does with a positional argument: a container (here), a
- * value builtin (`VALUE_BUILTIN_CONTENT`), or one that renders none (`SHOWN_IN_PLACE_OF_POSITIONAL`).
+ * The builtins codegen renders a positional tile argument of, as a child. Every builtin is one of
+ * three kinds by what it does with a positional argument: a container (here); a value builtin that
+ * reads it as its content (`VALUE_BUILTIN_CONTENT`); or one that renders none, which is either
+ * listed in `SHOWN_IN_PLACE_OF_POSITIONAL` or a value builtin that reads its content from a named
+ * argument (`image` / `icon`, also from `VALUE_BUILTIN_CONTENT`).
  */
 export const CHILD_RENDERING_BUILTINS: ReadonlySet<string> = new Set([
   "page",
@@ -96,22 +98,30 @@ export const CHILD_RENDERING_BUILTINS: ReadonlySet<string> = new Set([
 ]);
 
 // Codegen lowers a builtin's positional arguments into its children exactly when this holds, so
-// what the checker accepts there is what renders.
+// what the checker accepts there as a child is what renders.
 export function positionalIsTile(name: string): boolean {
   return CHILD_RENDERING_BUILTINS.has(name);
 }
 
-// The named arguments each builtin's lowering reads what it renders from, in place of a positional.
+// The parser reads a positional argument as a tile, and a capitalised handler as a tile call, on
+// every builtin that does not read that argument as its value content: a container renders it, and
+// the checker refuses it whole on the rest (E0129), so it has to parse whatever tile it holds.
+export function parsesPositionalAsTile(name: string): boolean {
+  return positionalIsTile(name) || shownInPlaceOfPositional(name) !== undefined;
+}
+
+// The named arguments that render in place of a positional argument, on each builtin that renders
+// none.
 const SHOWN_IN_PLACE_OF_POSITIONAL = {
   divider: [],
   video: ["src"],
   button: ["text"],
   input: ["bind", "value", "placeholder"],
   textarea: ["bind", "value", "placeholder"],
-  check: ["bind", "value"],
-  radio: ["bind", "selected"],
+  check: ["label", "bind", "value"],
+  radio: ["label", "bind", "selected"],
   select: ["options", "bind", "value", "placeholder"],
-  slider: ["bind"],
+  slider: ["bind", "value"],
   switch: ["bind", "value"],
   error: ["field"],
   toast: ["text"],
