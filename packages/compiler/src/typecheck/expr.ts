@@ -185,6 +185,17 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
     case "Bool":
     case "Unit":
       return;
+    case "Null":
+      // The one report about it: `inferType` leaves its type undecided, which fits wherever it
+      // lands. An expression around it that mismatches on its own still prints that type, as `?`.
+      errors.push({
+        code: "E0235",
+        kind: "null-value",
+        message:
+          "`null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one",
+        pos: e.pos,
+      });
+      return;
     case "Ref": {
       if (
         (e.name === "route" || e.name === "$route") &&
