@@ -46,7 +46,9 @@ the slot `name`, as `check` read it, not the loop's binding.
 child, such as `ui.click(Card)` over `column(text("card"), leaf)`, reaches the
 elements of `leaf`'s fallback, so it is no longer reported as W0212 when only
 the fallback fires the event, and under `strictSelectorId` the fallback's ids
-count for E0212.
+count for E0212. This holds for a tile named like a builtin too
+(`column(spinner)` beside `tile spinner`), which the build renders as the
+program's tile there, while a call such as `spinner()` stays the builtin.
 
 Of the repository's examples, only `68-name-uniqueness` writes a tile this way
 (`entry` in `App`); its tree now carries the `entry` marker, and renders as
