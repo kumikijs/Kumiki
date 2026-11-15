@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -18,6 +19,15 @@ export type ReducerShape = {
     payload: Record<string, unknown>,
   ) => { slots: Record<string, unknown> };
 };
+
+/** What `node --check` reports about `file` on a stack of `stackKb` KB: "" when it parses, its error line otherwise. */
+export function parseErrorOn(stackKb: number, file: string): string {
+  const run = spawnSync(process.execPath, [`--stack-size=${stackKb}`, "--check", file], {
+    encoding: "utf8",
+  });
+  if (run.status === 0) return "";
+  return run.stderr.split("\n").find((l) => /Error/.test(l)) ?? `exit ${run.status}`;
+}
 
 /** Writes `content` to `name` in a fresh directory under `root` and returns its path. */
 export function writeTmpFile(root: string, prefix: string, name: string, content: string): string {

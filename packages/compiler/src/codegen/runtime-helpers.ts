@@ -30,6 +30,12 @@ function _named(node, name) {
   const tile = inner === undefined ? name : [name].concat(inner);
   return { ...node, props: { ...(node.props || {}), _tile: tile } };
 }
+// A \`for\` whose nodes read its key renders through this, so a nest of them adds one
+// call and one function to the module a level, as deep as the parser lets them nest.
+function _loop(loop, xs, render) {
+  const keys = _s.loopKeys(xs, loop);
+  return xs.map((x, i) => render(x, keys[i]));
+}
 function _wk(node, key) {
   if (node === null || node === undefined) return node;
   if (key === undefined || key === null || key === "") {

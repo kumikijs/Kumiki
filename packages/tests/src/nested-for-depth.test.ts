@@ -6,6 +6,9 @@ import { loadApp, loadSource } from "./helpers/load.ts";
 
 const DEPTH = 28;
 
+// The most `for`s `Page` may nest: one more is past the parser's 256 levels.
+const DEEPEST = 250;
+
 const program = (tiles: string): string => `
 slot xs : List(Int) = [1]
 ${tiles}
@@ -27,10 +30,11 @@ const forChain = (depth: number): string =>
     ].join("\n"),
   );
 
-describe(`a nest of ${DEPTH} fors`, () => {
+describe("a nest of fors", () => {
   it.each([
-    ["in one tile", nestedFors(DEPTH)],
-    ["across a chain of for-bodied tiles", forChain(DEPTH)],
+    [`${DEPTH} deep in one tile`, nestedFors(DEPTH)],
+    [`${DEPTH} deep across a chain of for-bodied tiles`, forChain(DEPTH)],
+    [`${DEEPEST} deep in one tile, as deep as the parser allows`, nestedFors(DEEPEST)],
   ])("passes smoke %s", async (_, src) => {
     const app = await loadSource(src);
     const report = await withRoot((root) => smoke(app, root, { settleMs: 20 }));

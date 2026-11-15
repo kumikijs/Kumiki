@@ -140,12 +140,11 @@ export function tileExprJs(
       const inner = childCtx(ctx);
       const bind = declareBind(inner, t.bind);
       const { name, id } = loopName(t, gen);
-      const keys = `__fk${id}`;
-      const index = `__fi${id}`;
-      const impl = `${keys}[${index}]`;
+      const impl = `__fk${id}`;
       const body = tileExprJs(t.body, gen, inner, enclosingTiles, impl, rootHandlers);
-      const list = body.includes(impl)
-        ? `((__xs) => { const ${keys} = _s.loopKeys(__xs, ${JSON.stringify(name)}); return __xs.map((${bind}, ${index}) => (${body})); })((${iter}) || [])`
+      // `__fk1` also starts `__fk10`, so the key is looked for as a whole name.
+      const list = new RegExp(`\\b${impl}\\b`).test(body)
+        ? `_loop(${JSON.stringify(name)}, (${iter}) || [], (${bind}, ${impl}) => (${body}))`
         : `((${iter}) || []).map((${bind}) => (${body}))`;
       return implicitKeyExpr ? `_wk(${list}, ${implicitKeyExpr})` : list;
     }
