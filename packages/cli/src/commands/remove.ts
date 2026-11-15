@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { CASCADE_HELP, describeEdit, removeDef } from "../mutate.ts";
+import { WARN_SKIPPED } from "./_shared/op-log.ts";
 import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
@@ -18,7 +19,7 @@ export function registerRemove(program: Command): string {
         if (!file || !qname) exitWithUsage(USAGE);
         const path = sourceFileArg(file);
         printOrExit(() => {
-          const result = removeDef(path, qname, Boolean(options.cascade));
+          const result = removeDef(path, qname, Boolean(options.cascade), WARN_SKIPPED);
           return describeEdit({ op: "remove", qname, ...result });
         });
       },

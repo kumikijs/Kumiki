@@ -76,11 +76,11 @@ describe("a value written as a child", () => {
     expect(diagnostics(home)).toEqual([E0128(home, "let", "card")]);
   });
 
-  it("is reported in any builtin that is not a value builtin", () => {
+  it("is reported in any builtin that renders its children", () => {
     const row = `row(text("a"), let x = 1 in Card({label: x.show}))`;
     expect(diagnostics(row)).toEqual([E0128(row, "let", "row")]);
-    const button = `column(button(42, text="go"))`;
-    expect(diagnostics(button)).toEqual([E0128(button, "42", "button")]);
+    const card = `column(card(text("a"), 42))`;
+    expect(diagnostics(card)).toEqual([E0128(card, "42", "card")]);
   });
 
   it("does not stop the rest of the check", () => {
@@ -162,10 +162,9 @@ const armErrors = (home: string) => pointedErrorsOf(armProgram(home));
 const placed = (place: string) =>
   `A value is not a tile: ${place} has to be a tile. Show the value with a tile — \`text(…)\``;
 
-const uncalled = (name: string, builtin: string, { call = true } = {}) =>
+const uncalled = (name: string, builtin: string) =>
   `\`${name}\` is a builtin tile named without its call: ${builtin} renders a positional ` +
-  `argument only when it is a tile, so this one renders nothing.` +
-  (call ? ` Call it — \`${name}()\`` : "");
+  `argument only when it is a tile, so this one renders nothing. Call it — \`${name}()\``;
 
 describe("a value written as an arm or a tile body", () => {
   it.each([
@@ -304,10 +303,15 @@ describe("a builtin tile named without its call", () => {
     expect(armErrors(home)).toEqual([{ code: "E0128", message: uncalled(name, builtin), text }]);
   });
 
-  it("is not told to call it under a builtin that renders no positional argument", () => {
-    // `button(text="x", divider())` checks clean and renders no divider either.
+  it("is E0129 under a builtin that renders no positional argument, where a call renders nothing either", () => {
     expect(armErrors(`column(button(text="x", divider))`)).toEqual([
-      { code: "E0128", message: uncalled("divider", "button", { call: false }), text: "divider))" },
+      {
+        code: "E0129",
+        message:
+          "button renders no positional argument, so this one is never rendered. " +
+          "Write it as `text=`, or show it beside the button",
+        text: "divider))",
+      },
     ]);
   });
 

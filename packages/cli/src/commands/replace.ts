@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { describeEdit, replaceDef } from "../mutate.ts";
 import { bodyFileOption, resolveBody } from "./_shared/body-input.ts";
+import { WARN_SKIPPED } from "./_shared/op-log.ts";
 import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
@@ -29,7 +30,7 @@ export function registerReplace(program: Command): string {
         const body = resolveBody({ positional: rest, bodyFile: options.bodyFile, usage: USAGE });
         const path = sourceFileArg(file);
         printOrExit(() => {
-          const result = replaceDef(path, qname, body);
+          const result = replaceDef(path, qname, body, WARN_SKIPPED);
           return describeEdit({ op: "replace", qname, ...result });
         });
       },

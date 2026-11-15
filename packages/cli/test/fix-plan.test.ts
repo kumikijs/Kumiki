@@ -134,6 +134,19 @@ ${APP_A}`);
     expect(check(parse(lex(patched))).map((e) => e.code)).toEqual(["E0129"]);
   });
 
+  it("leaves a positional argument on a builtin that renders none, and the text= beside it, as written (E0129)", () => {
+    const source = `tile Header = text("header")
+tile App = column(button(Header, text="Go"))
+${APP_A}`;
+    const file = seed(source);
+    const store = load(file);
+    const { patches, skipped } = planFixesExplained(store, check(store.program));
+    expect(patches).toEqual([]);
+    expect(skipped.map((sk) => sk.reason)).toEqual(["e0129-dropped-argument-has-no-single-repair"]);
+    expect(applyFixPlan(file, undefined).applied).toBe(0);
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
   it("tells the E0129 shapes apart by the diagnostic's field, not its message", () => {
     const store = storeOf(`slot title : Text = "Hi"
 tile App = column(heading(level=2, text=title), text("A", "B"), label(text="X", "Y"))
