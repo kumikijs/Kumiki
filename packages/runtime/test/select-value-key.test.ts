@@ -91,3 +91,53 @@ describe("a select holds a record option whatever order its fields are written i
     expect(values(served)).toEqual(values(clientElement(node) as HTMLSelectElement));
   });
 });
+
+// A Set is held as an object keyed by its members and a Map as one keyed by its keys, so a Set
+// or a Map that holds the text "_tag" has a `_tag` field without being a variant.
+describe("a Set or a Map holding the text _tag is keyed as itself, not as a variant", () => {
+  const set = (...members: string[]) => Object.fromEntries(members.map((m) => [m, true]));
+
+  it.each<[string, unknown, unknown, boolean]>([
+    ["two Sets holding _tag", set("_tag"), set("_tag", "a"), false],
+    ["a Set holding _tag, built in another order", set("a", "_tag"), set("_tag", "a"), true],
+    [
+      "two Maps from _tag to one text, one with another entry",
+      { _tag: "S" },
+      { _tag: "S", a: "x" },
+      false,
+    ],
+    ["two Maps from _tag to a number", { _tag: 1, a: 2 }, { _tag: 1, a: 3 }, false],
+    ["a Map from _tag to a text that names no variant", { _tag: '{"a":"b"}' }, { a: "b" }, false],
+    [
+      "two Maps from _tag and _1, with no _0",
+      { _tag: "S", _1: "x" },
+      { _tag: "S", _1: "y" },
+      false,
+    ],
+  ])("%s", (_, a, b, equal) => {
+    expect(eq(a, b)).toBe(equal);
+    expect(valueKey(a) === valueKey(b)).toBe(equal);
+  });
+
+  it.each<[string[], string]>([
+    [["_tag"], '{"_tag":true}'],
+    [["a", "_tag"], '{"_tag":true,"a":true}'],
+  ])("keys the Set %j by its JSON text, as any other Set", (members, key) => {
+    expect(valueKey(set(...members))).toBe(key);
+  });
+
+  it("holds the slot's Set among options that each hold _tag", () => {
+    const node: TileNode = {
+      kind: "select",
+      value: set("_tag", "a"),
+      options: [
+        { label: "one", value: set("_tag") },
+        { label: "two", value: set("_tag", "a") },
+      ],
+    };
+    const sel = clientElement(node) as HTMLSelectElement;
+    expect(Array.from(sel.options, (o) => o.selected)).toEqual([false, true]);
+    const served = serverElement(node) as HTMLSelectElement;
+    expect(Array.from(served.options, (o) => o.hasAttribute("selected"))).toEqual([false, true]);
+  });
+});

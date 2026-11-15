@@ -224,6 +224,7 @@ app App ... theme = themeName    # ← slot 名を渡す
 
 `select(value=v, options=[...])` は option の選択状態を **構造的キー**で判定する:
 - variant は `_tag` + payload を再帰的にシリアライズしてキー化する。`Some(Backlog)` と `Some(InProgress)` は別キーになる（フラットな `_tag` 比較だと両者が `"Some"` で衝突するため、payload まで含めることが必須）
+- 値を variant としてキー化するのは、`_tag` フィールドが variant の名前を持ち、payload `_0`・`_1`・… 以外のフィールドを持たないときに限る。テキスト `"_tag"` を持つ `Set` や、それをキーに持つ `Map` も `_tag` フィールドを持つが、`==` が区別する 2 つはやはり別キーになる：Set `["_tag"]` と `["_tag", "a"]` は 2 つの option である
 - `Option(Status)` のような「variant でラップした variant」を option 値にできる
 - それ以外の値（`Text`・数値・レコード・`List`）は JSON テキストでキー化する。したがって `Text` の `m` のキーは引用符を含めた `"m"` になる。このテキストは、`Map` のキーを保存するテキストと同じく、どの深さのレコードもフィールドをソートした順に並べる（[stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)）。variant の payload の中のレコードも同じようにキー化する
 - `==` が等しいとする 2 つの値は、レコードのフィールドがどの順に書かれていても同じキーを持つ。`{h=3, w=2}` を持つ slot は `{w=2, h=3}` と書かれた option を選択し、`Some({h=3, w=2})` を持つ slot は `Some({w=2, h=3})` と書かれた option を選択する。`==` が区別する 2 つの値は別のキーを持つ。ただし次の 2 つは例外である：非有限の `Float`（`NaN`・`Infinity`・`-Infinity`）は JSON テキストが `null` になる。`File` は、名前・サイズ・型が同じ 2 つの File が 1 つのキーになるが、`==` は File とそれ自身の間でしか成り立たない
