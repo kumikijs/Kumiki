@@ -1,6 +1,12 @@
 import { VALUE_ARG_BUILTINS } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import {
+  checkSource,
+  codesOf,
+  locatedSummariesOf,
+  pointedErrorsOf,
+  tileAsContentMessage,
+} from "./helpers/diagnostics.ts";
 
 const program = (home: string, more = "") => `tile Header = text("header")
 tile Card in={label: Text} = text($1.label)
@@ -19,20 +25,22 @@ ${more}app R
     init   = []
 `;
 
-const located = (src: string) =>
-  checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
-
-const diagnostics = (home: string, more?: string) => located(program(home, more));
-
 const codes = (home: string, more?: string) => codesOf(program(home, more));
 
-// `tile Home = ` is 12 columns wide on line 4.
-const at = (home: string, tile: string) => `4:${13 + home.indexOf(tile)}`;
+/**
+ * The errors of `home`, each with the source text it points at cut to the length of the tile
+ * expected at that place, so a position is read rather than counted.
+ */
+const reported = (home: string, starts: readonly string[], more?: string) =>
+  pointedErrorsOf(program(home, more)).map((e, i) => ({
+    code: e.code,
+    message: e.message,
+    at: e.text.slice(0, starts[i]?.length),
+  }));
 
-const message = (builtin: string, shown: string) =>
-  `A tile is not a value: ${builtin} shows a value as its content, so this tile is never ` +
-  `rendered. Write the tile as a child of a container — \`column(when(c, …))\` — or show a ` +
-  `value — \`${shown}\``;
+/** E0236 at each of `starts`, as `builtin` words it. */
+const tilesAt = (starts: readonly string[], builtin = "text", shown = "text(x.show)") =>
+  starts.map((at) => ({ code: "E0236", message: tileAsContentMessage(builtin, shown), at }));
 
 const builtins: readonly (readonly [string, string, (x: string) => string, string])[] = [
   ["text", "text", (x) => `text(${x})`, "text(x.show)"],
@@ -63,6 +71,7 @@ const tiles: readonly (readonly [string, string, readonly string[]])[] = [
     `match shape with | Circle -> Header | Square -> text("a")`,
     ["Header", `text("a")`],
   ],
+  ["the body of a let", "let x = 1 in Header", ["Header"]],
 ];
 
 it("is E0236 at a when as text's content", () => {
@@ -72,7 +81,9 @@ app M
     routes = {"/" -> App, "/404" -> App}
     init   = []
 `;
-  expect(located(src)).toEqual([`E0236 1:24 ${message("text", "text(x.show)")}`]);
+  expect(locatedSummariesOf(src)).toEqual([
+    `E0236 1:24 ${tileAsContentMessage("text", "text(x.show)")}`,
+  ]);
 });
 
 it("covers every value builtin", () => {
@@ -81,26 +92,36 @@ it("covers every value builtin", () => {
 
 describe.each(builtins)("a tile as the content of %s", (_, builtin, write, shown) => {
   it.each(tiles)("is E0236 at %s", (_, tile, starts) => {
-    const home = write(tile);
-    expect(diagnostics(home)).toEqual(
-      starts.map((start) => `E0236 ${at(home, start)} ${message(builtin, shown)}`),
-    );
+    expect(reported(write(tile), starts)).toEqual(tilesAt(starts, builtin, shown));
   });
 });
 
 describe("a tile in the content", () => {
-  it("is reported at the tile arm of an if whose other arm is a value", () => {
-    const home = `text(if c then "a" else Header)`;
-    expect(diagnostics(home)).toEqual([
-      `E0236 ${at(home, "Header")} ${message("text", "text(x.show)")}`,
-    ]);
+  it.each([
+    ["the tile arm of an if whose other arm is a value", `text(if c then "a" else Header)`],
+    [
+      "an arm of a nested if and match",
+      `text(match pick with | Some(v) -> if c then v.show else Header | None -> "none")`,
+    ],
+    ["the body of a let in an arm of an if", `text(if c then let x = 1 in Header else "b")`],
+    ["the body of a let in the body of a let", "text(let x = 1 in let y = 2 in Header)"],
+  ])("is reported at %s", (_, home) => {
+    expect(reported(home, ["Header"])).toEqual(tilesAt(["Header"]));
   });
 
-  it("is reported in an arm of a nested if and match", () => {
-    const home = `text(match pick with | Some(v) -> if c then v.show else Header | None -> "none")`;
-    expect(diagnostics(home)).toEqual([
-      `E0236 ${at(home, "Header")} ${message("text", "text(x.show)")}`,
-    ]);
+  it("is reported once at a builtin's call as the body of a let", () => {
+    const home = `text(let x = 1 in column(text("a")))`;
+    expect(reported(home, ["column"])).toEqual(tilesAt(["column"]));
+  });
+
+  it("is reported at link's {text: …}, which link renders when no content is written", () => {
+    const home = `link(to="/") {text: Header}`;
+    expect(reported(home, ["Header"])).toEqual(tilesAt(["Header"], "link", "link {text: x.show}"));
+  });
+
+  it("is a builtin's call where a value, but no fn, has the builtin's name", () => {
+    const home = `text(code("x"))`;
+    expect(reported(home, ["code"], `slot code : Text = ""\n`)).toEqual(tilesAt(["code"]));
   });
 
   it("beside a second positional argument leaves that one to E0129", () => {
@@ -112,10 +133,10 @@ describe("a tile in the content", () => {
     ["inside a builtin's call", "text(column(nope))", "column"],
     ["inside a tile's call", "text(Card(42))", "Card"],
     ["beside the tile, in the if", `text(if nope then Header else nope)`, "Header"],
+    ["the match's scrutinee", `text(match nope with | Circle -> Header | Square -> "b")`, "Header"],
+    ["the let's value", "text(let x = nope in Header)", "Header"],
   ])("checks nothing else in the content: %s", (_, home, tile) => {
-    expect(diagnostics(home)).toEqual([
-      `E0236 ${at(home, tile)} ${message("text", "text(x.show)")}`,
-    ]);
+    expect(reported(home, [tile])).toEqual(tilesAt([tile]));
   });
 });
 
@@ -123,14 +144,17 @@ describe("a value as the content is not reported", () => {
   it.each([
     ["a value match", `text(match shape with | Circle -> "a" | Square -> "b")`],
     ["a value if", `text(if c then "a" else "b")`],
+    ["a value let", "text(let x = 1 in x.show)"],
     ["a join", `text("a" + n.show)`],
     ["a builtin call", `text(fmt("{0}", n))`],
     ["a link's label", `link("Home", to="/")`],
+    ["a link's {text: …}", `link(to="/") {text: "Home"}`],
     ["a label's text", `label("x")`],
     ["an editable with no content", "editable(bind=s)"],
     ["a variant", "text(Circle)"],
     ["a when as a container's child", `column(when(c, text("x")))`],
     ["a loop variable named like a tile", "column(for lower in xs text(lower))"],
+    ["a let variable named like a tile", `text(let lower = "a" in lower)`],
     [
       "a match binding named like a tile",
       "text(match pick with | Some(lower) -> lower | None -> 0)",
@@ -163,9 +187,25 @@ describe("a value as the content is not reported", () => {
       "an effect's in=",
       `effect save cap=storage.write in=Header | Footer out=Result(Unit, Text) map-request={key: "k", value: "v"}\n`,
     ],
+    [
+      "a property-test's for-all",
+      `test t =
+    property-test
+        for-all   = {p: Header | Footer}
+        given     = {slots: {n: 0}}
+        invariant = true
+`,
+    ],
   ])("is a union's tag where %s declares the tile's name as one", (_, union) => {
     expect(codes("text(Header)", union)).toEqual([]);
     expect(codes(`text(if c then Header else "b")`, union)).toEqual([]);
+  });
+
+  it.each([
+    ["HttpBody", "Empty"],
+    ["Option", "Some"],
+  ])("is %s's tag where a tile has the tag's name", (_, tag) => {
+    expect(codes(`text(${tag})`, `tile ${tag} = text("t")\n`)).toEqual([]);
   });
 
   it("is a name for a builtin tile's name, which is no call", () => {
@@ -180,5 +220,7 @@ app M
     routes = {"/" -> A, "/404" -> A}
     init   = []
 `;
-  expect(located(src)).toContain(`E0236 1:22 ${message("text", "text(x.show)")}`);
+  expect(locatedSummariesOf(src)).toEqual([
+    `E0236 1:22 ${tileAsContentMessage("text", "text(x.show)")}`,
+  ]);
 });

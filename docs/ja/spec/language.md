@@ -718,7 +718,7 @@ pattern      ::= identifier
 - 例: `text(match m with | A -> "a" | B -> "b")` ← 値 match
 - 例: `button(text="Save", disabled=if busy then true else false)`、`Row(if wide then 2 else 1)` ← 値 if
 - 例: `column(match xs with | Loaded(ys) -> ... | None -> spinner())` ← tile match
-- 値 builtin の内容は値であり、そこに書いた tile は決して描画されない：`when` / `for`、tile の呼び出しや名前（`text(column(…))`、`text(Header)`）、値の `if` / `match` の腕にある tile（`text(if c then Header else "b")`）は [E0236](./errors.md#e0236-tile-as-content) である。tile はコンテナの子として書く —— `column(when(c, …))` —— か、値を表示する —— `text(x.show)`
+- 値 builtin の内容は値であり、そこに書いた tile は決して描画されない：`when` / `for`、tile の呼び出し、プログラムが定義する tile の名前（`text(column(…))`、`text(Header)`）は、内容そのものでも、値の `if` / `match` の腕（`text(if c then Header else "b")`）や `let … in` の本体でも [E0236](./errors.md#e0236-tile-as-content) である。tile はコンテナの子として書く —— `column(when(c, …))` —— か、値を表示する —— `text(x.show)`。
 
 ### 1.7.2 不変条件
 
