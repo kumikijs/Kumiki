@@ -256,6 +256,7 @@ A name reference like `users` in the source text is recorded within the graph st
 - Name → hash resolution is done at compile time / op application time
 - Even with the same name, a different dependency yields a different hash
 - Renaming is only a `(rename, name-old, name-new)` op. The hash is invariant
+- A name written where a tile belongs (`column(leaf)`) refers to the tile of that name even when a slot or a `fn` shares it, and where a value belongs (`text(leaf)`) to the value ([Language §1.7.1](./language.md#_1-7-1-syntax)), so `refs`, `rename` and `remove --cascade` follow the definition the checker and the build resolve there
 
 ### 9.5.3 Names at Display Time
 
