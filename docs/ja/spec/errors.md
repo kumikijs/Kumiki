@@ -1336,7 +1336,7 @@ bind していないコントロールが選択状態を読む prop — `check` 
 
 > `Record field "_tag" is reserved: the runtime marks a variant with a field of that name, so a record that has one is read as a variant. Name the field something else — "tag"`
 
-実行時、バリアントは `_tag` フィールドにその名前を持つレコードであり — `Some(1)` は `{_tag: "Some", _0: 1}` — ランタイムはこのフィールドでバリアントとレコードを見分ける。そのため、このフィールドを持つように書かれたレコードはバリアントとして読まれる。`select` はバリアントを `_tag` とペイロードでキー付けし（[runtime.md §10.3.8](./runtime.md#_10-3-8-value-matching-of-select)）、レコードにはペイロードが無いので、選択肢 `{_tag="a", n=1}` と `{_tag="a", n=2}` は 1 つの選択肢になる：2 つ目を選ぶと、束縛した slot には 1 つ目が書き込まれる。
+実行時、バリアントは `_tag` フィールドにその名前を持つレコードであり — `Some(1)` は `{_tag: "Some", _0: 1}` — ランタイムはこのフィールドでバリアントとレコードを見分ける。そのため、このフィールドを持つように書かれたレコードはバリアントとして読まれる。`show` はバリアントをそのタグとして描画し（[stdlib.md §2.2.7](./stdlib.md#_2-2-7-int-float)）、`Text` との `+` と tile のテキストも同じなので、`{_tag="a", n=1}.show` は `a` になってしまう。`{tag="a", n=1}.show` は `{tag: "a", n: 1}` である。
 
 拒否されるのは `_tag` という名前だけである。`tag`・`_tags`・`_Tag`・`_0` はそれぞれ別の名前であり、キーがテキスト `"_tag"` の Map はフィールドを名付けていない。
 

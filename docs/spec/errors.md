@@ -1373,7 +1373,7 @@ A record field is named `_tag`, in a record type or a record literal: `type R = 
 
 > `Record field "_tag" is reserved: the runtime marks a variant with a field of that name, so a record that has one is read as a variant. Name the field something else — "tag"`
 
-At run time a variant is a record whose `_tag` field holds its name — `Some(1)` is `{_tag: "Some", _0: 1}` — and that field is how the runtime tells a variant from a record, so a record written with one is read as a variant. A `select` keys a variant by its `_tag` and its payload ([runtime.md §10.3.8](./runtime.md#_10-3-8-value-matching-of-select)), and a record has no payload, so the options `{_tag="a", n=1}` and `{_tag="a", n=2}` would be one option: choosing the second would write the first into the bound slot.
+At run time a variant is a record whose `_tag` field holds its name — `Some(1)` is `{_tag: "Some", _0: 1}` — and that field is how the runtime tells a variant from a record, so a record written with one is read as a variant. `show` renders a variant as its tag ([stdlib.md §2.2.7](./stdlib.md#_2-2-7-int-float)), and so do `+` with a `Text` and a tile's text, so `{_tag="a", n=1}.show` would be `a`, where `{tag="a", n=1}.show` is `{tag: "a", n: 1}`.
 
 Only the name `_tag` is refused. `tag`, `_tags`, `_Tag` and `_0` are names of their own, and a Map whose key is the text `"_tag"` names no field.
 

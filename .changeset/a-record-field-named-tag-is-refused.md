@@ -11,29 +11,26 @@ record field of that name, so the record ran as a variant:
 ```kumiki
 type R = {_tag: Text, n: Int}
 
-slot pick : R = {_tag="a", n=2}
+slot r : R = {_tag="a", n=1}
 
-fn picks() -> List({label: Text, value: R})
-   = [{label: "one", value: {_tag="a", n=1}},
-      {label: "two", value: {_tag="a", n=2}}]
+tile App = text("r is " + r.show)
 
-tile App = column(
-             select(bind=pick, options=picks()) {id: "pick"},
-             text("n: " + pick.n.show))
+app Shown
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
 ```
 
-Before, `kumiki check` printed `ok`. A `select` keys a variant by its `_tag`
-and its payload, so the two options were one: after choosing "one", choosing
-"two" left `n: 1` on the page.
+Before, `kumiki check` printed `ok`, and the page read `r is a`: `show`
+renders a variant as its tag, where the record `{tag="a", n=1}` shows as
+`{tag: "a", n: 1}`.
 
 After:
 
 ```
 $ kumiki check app.kumiki
 error E0240 reserved-field-name at 1:11: Record field "_tag" is reserved: the runtime marks a variant with a field of that name, so a record that has one is read as a variant. Name the field something else — "tag"
-error E0240 reserved-field-name at 3:18: …
-error E0240 reserved-field-name at 6:30: …
-error E0240 reserved-field-name at 7:30: …
+error E0240 reserved-field-name at 3:15: …
 ```
 
 It is reported at each field so named, in a record type wherever one is
