@@ -39,32 +39,45 @@ export type TileKinds = {
   readonly rendered: (tileName: string) => ReadonlySet<string>;
 };
 
+// A node of the walks below is a program tile's name, or a builtin's behind this prefix, which no
+// name can start with: a builtin and a program tile may share a name, and render differently.
+const BUILTIN_NODE = "builtin ";
+
 // Each answer is kept, so a tile is walked once however many positions ask about it. The walks
 // keep their own stack: they run before E0237 refuses a tree too deep to inline, so they also
 // walk the trees it will refuse.
 export function tileKinds(tiles: ReadonlyMap<string, TileDef>): TileKinds {
-  const own = (name: string): readonly string[] => (BUILTIN_TILES.has(name) ? [name] : []);
-  const bodyOf = (name: string): TileDef | undefined =>
-    BUILTIN_TILES.has(name) ? undefined : tiles.get(name);
-  const expansion = (name: string): readonly TileEdge[] => {
-    const def = bodyOf(name);
-    return def ? expansionTargets(def.body) : [];
+  const own = (node: string): readonly string[] =>
+    node.startsWith(BUILTIN_NODE) ? [node.slice(BUILTIN_NODE.length)] : [];
+  const expansion = (node: string): readonly TileEdge[] => {
+    const def = node.startsWith(BUILTIN_NODE) ? undefined : tiles.get(node);
+    if (!def) return [];
+    return expansionTargets(def.body).map((edge) =>
+      rendersBuiltin(edge) ? { ...edge, to: BUILTIN_NODE + edge.to } : edge,
+    );
   };
+  // A position that asks about a tile by a builtin's name calls it, so it asks about the builtin.
+  const asked =
+    (walk: (node: string) => ReadonlySet<string>) =>
+    (tileName: string): ReadonlySet<string> =>
+      walk(BUILTIN_TILES.has(tileName) ? BUILTIN_NODE + tileName : tileName);
+  // A handler at a call site lands on what the tile renders, bar the fallbacks of tiles in it.
+  const rendered = asked(reachedFrom(expansion, own));
   return {
-    handled: reachedFrom(expansion, own),
-    root: reachedFrom((name) => expansion(name).filter((edge) => edge.root), own),
-    // A call also leads to its callee's `error-boundary` fallbacks, which render in its place.
-    subscribed: reachedFrom(
-      (name) =>
-        expansion(name).flatMap((edge) => {
-          const callee = edge.call ? tiles.get(edge.to) : undefined;
-          return callee ? [edge, ...fallbackChain(callee, tiles)] : [edge];
-        }),
-      own,
-    ),
-    rendered: reachedFrom(
-      (name) => expansion(name).filter((edge) => edge.call !== undefined || tiles.has(edge.to)),
-      own,
+    handled: rendered,
+    rendered,
+    root: asked(reachedFrom((node) => expansion(node).filter((edge) => edge.root), own)),
+    // A tile placed in the body also leads to its `error-boundary` fallbacks, which render in its
+    // place: a bare child that names the tile is lowered as its call, so it is placed as a call is.
+    subscribed: asked(
+      reachedFrom(
+        (node) =>
+          expansion(node).flatMap((edge) => {
+            const callee = tiles.get(edge.to);
+            return callee ? [edge, ...fallbackChain(callee, tiles)] : [edge];
+          }),
+        own,
+      ),
     ),
   };
 }
@@ -88,18 +101,29 @@ function addElement(into: Map<string, RenderedElement>, el: RenderedElement): vo
   into.set(JSON.stringify([el.kind, el.id]), el);
 }
 
+// A call of a builtin's name renders the builtin, before a program tile of that name, while a
+// bare child renders only a program tile (`collectChildren`), however it is named.
+function rendersBuiltin(edge: TileEdge): edge is TileEdge & Required<Pick<TileEdge, "call">> {
+  return edge.call !== undefined && BUILTIN_TILES.has(edge.to);
+}
+
+/** The program tile `edge` places, with its boundary: none where it renders a builtin. */
+function placedTile(edge: TileEdge, tiles: ReadonlyMap<string, TileDef>): TileDef | undefined {
+  return rendersBuiltin(edge) ? undefined : tiles.get(edge.to);
+}
+
 // The edges codegen lowers a tile by: its body's expansion, plus the error-boundary fallbacks of
-// each tile called in it, which render in that call's place. The tile's own fallback replaces its
-// tree and renders outside it, so it is not included.
+// each tile placed in it, which render in that tile's place. A bare child that names the tile is
+// lowered as its call, so it is placed with its boundary as a call is. The tile's own fallback
+// replaces its tree and renders outside it, so it is not included.
 function renderedTree(tileName: string, sym: SymbolTable): RenderedTree {
   const callees = (name: string): string[] => {
     const def = sym.tiles.get(name);
     if (!def) return [];
     return expansionTargets(def.body).flatMap((edge) => {
-      const callee = sym.tiles.get(edge.to);
+      const callee = placedTile(edge, sym.tiles);
       if (!callee) return [];
-      const placed = edge.call ? fallbackChain(callee, sym.tiles) : [];
-      return [callee.name, ...placed.map((fb) => fb.to)];
+      return [callee.name, ...fallbackChain(callee, sym.tiles).map((fb) => fb.to)];
     });
   };
   return bottomUp(tileName, callees, NOTHING_RENDERED, (name, treeOf) => {
@@ -109,8 +133,8 @@ function renderedTree(tileName: string, sym: SymbolTable): RenderedTree {
     const inner = new Map<string, RenderedElement>();
     for (const edge of expansionTargets(def.body)) {
       const here = edge.root ? root : inner;
-      if (BUILTIN_TILES.has(edge.to)) {
-        const id = edge.call ? writtenProp(edge.call, "id")?.value : undefined;
+      if (rendersBuiltin(edge)) {
+        const id = writtenProp(edge.call, "id")?.value;
         addElement(here, { kind: edge.to, id: id?.kind === "Str" ? id.value : null });
         continue;
       }
@@ -122,9 +146,7 @@ function renderedTree(tileName: string, sym: SymbolTable): RenderedTree {
         addElement(here, decided === undefined ? el : { kind: el.kind, id: decided });
       }
       for (const el of sub.inner.values()) addElement(inner, el);
-      // Only a call is lowered with its callee's boundary; an identifier
-      // argument standing in for the tile inlines the body alone.
-      for (const fb of edge.call ? fallbackChain(callee, sym.tiles) : []) {
+      for (const fb of fallbackChain(callee, sym.tiles)) {
         const fallback = treeOf(fb.to);
         for (const el of fallback.root.values()) addElement(here, el);
         for (const el of fallback.inner.values()) addElement(inner, el);
@@ -217,11 +239,12 @@ function usesByTile(sym: SymbolTable): Map<string, Use[]> {
   };
   for (const def of sym.tiles.values()) {
     for (const edge of expansionTargets(def.body)) {
+      const callee = placedTile(edge, sym.tiles);
+      if (!callee) continue;
       const id = edge.call ? callSiteId(edge.call) : undefined;
-      add(edge.to, { by: def.name, root: edge.root, id });
-      // A call's fallbacks render in its place, outside the props the call writes.
-      const callee = edge.call ? sym.tiles.get(edge.to) : undefined;
-      for (const fb of callee ? fallbackChain(callee, sym.tiles) : []) {
+      add(callee.name, { by: def.name, root: edge.root, id });
+      // A call's fallbacks, and a bare child's, render in its place, outside the props a call writes.
+      for (const fb of fallbackChain(callee, sym.tiles)) {
         add(fb.to, { by: def.name, root: edge.root, id: undefined });
       }
     }
