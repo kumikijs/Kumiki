@@ -279,15 +279,20 @@ type ValueName =
 type NotATile = Exclude<Occupant, { readonly kind: "tile" }>;
 
 // The parser reads every name in an arm or a body as a tile call, so a call of a name no tile has
-// is resolved as a value. In a container it reads a bare lower-cased name as an expression, and a
-// program's tile of that name is taken before this (`tileNamedAt`), so a `Ref` here is a value or
-// nothing; a value of the same name wins over a builtin.
+// is resolved as a value, and so is a builtin's name written alone. In a container it reads a bare
+// lower-cased name as an expression, and a program's tile of that name is taken before this
+// (`tileNamedAt`), so a `Ref` here is a value or nothing; in both places a value of the same name
+// wins over a builtin.
 function occupantOf(v: TileExpr, sym: SymbolTable, ctx: Ctx): Occupant;
 function occupantOf(v: Expr, sym: SymbolTable, ctx: Ctx): NotATile;
 function occupantOf(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): Occupant {
   if (isTileExpr(v)) {
-    if (v.kind !== "TileCall" || namesTile(v.name, sym)) return { kind: "tile" };
-    return valueNamed(v.name, v.pos, sym, ctx) ?? { kind: "unknown", name: v.name };
+    if (v.kind !== "TileCall" || sym.tiles.has(v.name)) return { kind: "tile" };
+    const builtin = BUILTIN_TILES.has(v.name);
+    if (builtin && v.bare === undefined) return { kind: "tile" };
+    const value = valueNamed(v.name, v.pos, sym, ctx);
+    if (value) return value;
+    return builtin ? { kind: "tile" } : { kind: "unknown", name: v.name };
   }
   if (v.kind !== "Ref") return { kind: "value" };
   const value = valueNamed(v.name, v.pos, sym, ctx);
