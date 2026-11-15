@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import type { KumikiError } from "@kumikijs/compiler";
 import { check, lex, parse } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
+import { touchedLockViolation } from "../mutate/commit.ts";
 import { runTestsSource, testFile } from "../smoke.ts";
 import { load } from "../store.ts";
 import { messageOf } from "../text.ts";
@@ -227,6 +228,17 @@ export async function runFixFromTest(
     return stamp({ ok: true, status: "proposed", patch, ...fixedCount });
   }
   const patched = patch.apply(curSource);
+  // Before the gate, as for a compile fix: a patch the lock refuses is never run.
+  const locked = touchedLockViolation(path, curSource, patched);
+  if (locked !== undefined) {
+    return stamp({
+      ok: false,
+      status: "test-blocked",
+      patch,
+      blocked: { reason: "locked", message: locked },
+      ...fixedCount,
+    });
+  }
   const gate = await gateTestPatch(patched, testName, before, path, capabilities);
   if (gate.blocked !== undefined) {
     return stamp({
@@ -237,7 +249,7 @@ export async function runFixFromTest(
       ...fixedCount,
     });
   }
-  // Written by the compile tier's writer, so the ownership lock refuses it as it does a repair.
+  // Written by the compile tier's writer, which asks the lock again as it stands at the write.
   const unwritten = writeFix(path, curSource, patched);
   if (unwritten !== undefined && "blocked" in unwritten) {
     return stamp({

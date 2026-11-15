@@ -31,8 +31,9 @@ function validate(
   return locked === undefined ? { ok: true } : { ok: false, message: locked };
 }
 
-// Every write of a source asks this — the mutators through `validate`, and `fix` before it
-// writes a repair — so a definition is held to its lock whichever way the write reached it.
+// Every edit of a source asks this under the write lock, just before it writes — the mutators
+// through `validate`, `fix` in `writeFix` — so a definition is held to its lock whichever way the
+// edit reached it. A write that puts the file back as it was before a failed op asks nothing.
 export function touchedLockViolation(
   path: string,
   before: string,

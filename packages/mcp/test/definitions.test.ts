@@ -209,12 +209,16 @@ describe("ownership locks", () => {
     message: `lock violation: ${qname} is locked by agent:a (pattern "reducer.*"). Set KUMIKI_AUTHOR=agent:a to edit.`,
   });
 
-  /** A copy of `fixture` with `reducer.*` locked by agent:a, and the copy's source. */
-  const lockedCopy = (fixture: string, name: string): { file: string; source: string } => {
+  /** A copy of `fixture` with `pattern` locked by agent:a, run as `agent`, and the copy's source. */
+  const lockedCopy = (
+    fixture: string,
+    name: string,
+    { pattern = "reducer.*", agent = "agent:b" } = {},
+  ): { file: string; source: string } => {
     const file = join(workdir.path, name);
     copyFileSync(fixture, file);
-    lockDef(file, "agent:a", "reducer.*");
-    process.env.KUMIKI_AUTHOR = "agent:b";
+    lockDef(file, "agent:a", pattern);
+    process.env.KUMIKI_AUTHOR = agent;
     return { file, source: readFileSync(file, "utf8") };
   };
 
@@ -267,6 +271,70 @@ describe("ownership locks", () => {
     const parsed = JSON.parse(res.body) as { status: string; blocked?: unknown };
     expect(parsed.status).toBe("test-blocked");
     expect(parsed.blocked).toEqual(lockedBy("reducer.greet"));
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
+  // A lock refuses only what another agent holds: these are written as with no lock at all.
+  const NOT_REFUSED: [string, { pattern: string; agent: string }][] = [
+    ["for the lock's owner", { pattern: "reducer.*", agent: "agent:a" }],
+    ["under a lock on no definition the repair changes", { pattern: "slot.*", agent: "agent:b" }],
+  ];
+
+  it.each(NOT_REFUSED)("kumiki_fix with apply writes the repair %s", async (_, {
+    pattern,
+    agent,
+  }) => {
+    const { file, source } = lockedCopy(FIX_COUNTER_TYPO, "typo.kumiki", { pattern, agent });
+    const res = await callOnce("kumiki_fix", { path: file, apply: true });
+    expect(res.isError).toBe(false);
+    const parsed = JSON.parse(res.body) as { applied: number; blocked?: unknown };
+    expect(parsed).toMatchObject({ applied: 1 });
+    expect(parsed.blocked).toBeUndefined();
+    expect(readFileSync(file, "utf8")).toBe(source.replace("conut", "count"));
+  });
+
+  it.each(NOT_REFUSED)(
+    "kumiki_auto_patch with apply writes the behavioural patch %s",
+    {
+      timeout: 30000,
+    },
+    async (_, { pattern, agent }) => {
+      const { file, source } = lockedCopy(FIX_FAILING_SINGLE, "failing.kumiki", { pattern, agent });
+      const res = await callOnce("kumiki_auto_patch", {
+        path: file,
+        testName: "greet-should-say-planet",
+        apply: true,
+      });
+      expect(res.isError).toBe(false);
+      expect(JSON.parse(res.body)).toMatchObject({ ok: true, status: "applied" });
+      expect(readFileSync(file, "utf8")).toBe(source.replace(':= "world"', ':= "planet"'));
+    },
+  );
+
+  it("kumiki_fix proposes the same repairs under a lock on everything, on a dry run", async () => {
+    const file = join(workdir.path, "typo.kumiki");
+    copyFileSync(FIX_COUNTER_TYPO, file);
+    const unlocked = await callOnce("kumiki_fix", { path: file });
+    lockDef(file, "agent:a", "*");
+    process.env.KUMIKI_AUTHOR = "agent:b";
+    const locked = await callOnce("kumiki_fix", { path: file });
+    expect(unlocked.body).toContain('replace "conut" with "count"');
+    expect(locked).toEqual(unlocked);
+  });
+
+  it("kumiki_auto_patch proposes the patch under a lock on everything, on a dry run", {
+    timeout: 30000,
+  }, async () => {
+    const { file, source } = lockedCopy(FIX_FAILING_SINGLE, "failing.kumiki", { pattern: "*" });
+    const res = await callOnce("kumiki_auto_patch", {
+      path: file,
+      testName: "greet-should-say-planet",
+    });
+    expect(JSON.parse(res.body)).toMatchObject({
+      ok: true,
+      status: "proposed",
+      patch: { description: expect.stringContaining('replace "world" with "planet"') },
+    });
     expect(readFileSync(file, "utf8")).toBe(source);
   });
 });

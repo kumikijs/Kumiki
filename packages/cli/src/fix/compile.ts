@@ -18,7 +18,7 @@ import {
 import { touchedLockViolation } from "../mutate/commit.ts";
 import { listDefs, load, type Store } from "../store.ts";
 import { messageOf } from "../text.ts";
-import { atomicWriteFileSync } from "../write-lock.ts";
+import { atomicWriteFileSync, withWriteLock } from "../write-lock.ts";
 import {
   type AutoPatch,
   type CompilePatch,
@@ -474,6 +474,15 @@ export function applyFixPlan(
   if (applied === 0) {
     return { ...nothingWritten(plan, before), remaining: plan.errors };
   }
+  // Before the gate: a repair the lock refuses is refused whatever the gate would say, unchecked.
+  const locked = touchedLockViolation(path, before, after);
+  if (locked !== undefined) {
+    return {
+      ...nothingWritten(plan, before),
+      remaining: plan.errors,
+      blocked: { reason: "locked", message: locked },
+    };
+  }
   const gate = gateComposed(plan.errors, after, capabilities);
   if (gate.blocked !== undefined) {
     return {
@@ -504,16 +513,28 @@ type WriteRefusal =
   | { blocked: Extract<NonNullable<FixApplyResult["blocked"]>, { reason: "locked" }> }
   | { writeError: string };
 
-/** The one place `fix` writes a source, so every repair is held to the ownership lock. */
+/**
+ * The one place `fix` writes a source. Under the write lock, as the mutators write, so the file
+ * and the ownership lock are read as they are now, not as they were when the repair was planned
+ * on `before`: a file another writer changed since is left as it is, and every repair is held to
+ * the lock.
+ */
 export function writeFix(path: string, before: string, after: string): WriteRefusal | undefined {
-  const locked = touchedLockViolation(path, before, after);
-  if (locked !== undefined) return { blocked: { reason: "locked", message: locked } };
   try {
-    atomicWriteFileSync(path, after);
+    return withWriteLock(path, (): WriteRefusal | undefined => {
+      if (readFileSync(path, "utf8") !== before) {
+        return {
+          writeError: `${path} changed since the repair was planned; nothing was written. Run fix again.`,
+        };
+      }
+      const locked = touchedLockViolation(path, before, after);
+      if (locked !== undefined) return { blocked: { reason: "locked", message: locked } };
+      atomicWriteFileSync(path, after);
+      return undefined;
+    });
   } catch (e) {
     return { writeError: messageOf(e) };
   }
-  return undefined;
 }
 
 export type GateVerdict =
