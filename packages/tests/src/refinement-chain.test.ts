@@ -1,7 +1,7 @@
 import type { AppShape } from "@kumikijs/runtime";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { click, mountApp } from "./helpers/dom.ts";
-import { loadSource } from "./helpers/load.ts";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { click, withMounted } from "./helpers/dom.ts";
+import { loadFactory, writeSource } from "./helpers/load.ts";
 import { withApp } from "./helpers/source.ts";
 
 const DEFINITIONS = 40;
@@ -39,15 +39,22 @@ slot x : T${DEFINITIONS - 1} = 7
 reducer writeFirst  on=ui.click(FirstBtn)  do= x := -1
 reducer writeMiddle on=ui.click(MiddleBtn) do= x := 51
 reducer writeLast   on=ui.click(LastBtn)   do= x := 8
+reducer writeEvery  on=ui.click(EveryBtn)  do= x := 2000
 reducer writeOk     on=ui.click(OkBtn)     do= x := 9
 
 tile FirstBtn  = button(text="first", onClick=writeFirst)
 tile MiddleBtn = button(text="middle", onClick=writeMiddle)
 tile LastBtn   = button(text="last", onClick=writeLast)
+tile EveryBtn  = button(text="every", onClick=writeEvery)
 tile OkBtn     = button(text="ok", onClick=writeOk)
-tile App = column(FirstBtn, MiddleBtn, LastBtn, OkBtn)`);
+tile App = column(FirstBtn, MiddleBtn, LastBtn, EveryBtn, OkBtn)`);
 
+let createApp: () => AppShape;
 let errors: string[];
+
+beforeAll(async () => {
+  createApp = await loadFactory(writeSource("refinement-chain", SOURCE));
+}, 60_000);
 
 beforeEach(() => {
   errors = [];
@@ -58,39 +65,33 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
-  document.body.replaceChildren();
 });
-
-async function mounted(): Promise<{ app: AppShape; root: HTMLElement }> {
-  const app = await loadSource(SOURCE);
-  return { app, root: mountApp(app).root };
-}
 
 describe("a slot typed by the top of a chain of forty definitions of 250 `where`s", () => {
   it.each([
-    ["first", -1, FIRST],
-    ["middle", 51, MIDDLE],
-    ["last", 8, LAST],
-  ])(
-    "refuses a write failing the %s definition's predicate, and names it",
-    async (button, value, predicate) => {
-      const { app, root } = await mounted();
-
+    ["the first definition's predicate", "first", -1, FIRST],
+    ["the middle definition's predicate", "middle", 51, MIDDLE],
+    ["the last definition's predicate", "last", 8, LAST],
+    // It is named by the first it fails from the base outward.
+    ["every predicate", "every", 2000, FIRST],
+  ])("refuses a write failing %s, and names the first it fails", async (_, button, value, predicate) => {
+    const app = createApp();
+    await withMounted(app, async (root) => {
       click(root, button);
 
       expect(app.live?.x).toBe(7);
       expect(errors).toHaveLength(1);
       expect(errors[0]).toContain(`slot "x" cannot hold ${value} (${predicate})`);
-    },
-    30_000,
-  );
+    });
+  });
 
   it("commits a write every predicate accepts", async () => {
-    const { app, root } = await mounted();
+    const app = createApp();
+    await withMounted(app, async (root) => {
+      click(root, "ok");
 
-    click(root, "ok");
-
-    expect(app.live?.x).toBe(9);
-    expect(errors).toEqual([]);
-  }, 30_000);
+      expect(app.live?.x).toBe(9);
+      expect(errors).toEqual([]);
+    });
+  });
 });

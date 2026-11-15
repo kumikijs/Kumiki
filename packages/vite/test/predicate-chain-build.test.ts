@@ -3,6 +3,8 @@
 // shape a bundler takes.
 
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { kumiki } from "../src/index.ts";
 import { buildInto, project } from "./helpers/plugin.ts";
@@ -27,14 +29,19 @@ app Chain caps=[] routes={"/" -> App, "/404" -> App} init=[]
 }
 
 describe("a slot whose type carries ten thousand predicates", () => {
-  it("builds", async () => {
+  it("builds, and the built check refuses what the predicates refuse", async () => {
     const root = project({
       where: TMP,
       source: chainOfPredicates(),
       main: `import App from "./app.kumiki";\nexport default App;\n`,
     });
-    const out = await buildInto(root, join(root, "dist"), [kumiki()]);
-    // Once in the slot's check and once among its named parts.
-    expect(out.split("v >= 0 && v <= 999").length - 1).toBe(2 * 40 * 250);
+    await buildInto(root, join(root, "dist"), [kumiki()]);
+    const built: { default: AppShape } = await import(
+      pathToFileURL(join(root, "dist", "out.js")).href
+    );
+    const x = built.default.slots.x;
+    expect(x?.refine?.(7)).toBe(true);
+    expect(x?.refine?.(1000)).toBe(false);
+    expect(x?.refineAll).toHaveLength(40 * 250);
   }, 60_000);
 });

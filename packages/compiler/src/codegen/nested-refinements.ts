@@ -118,7 +118,11 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     }
   };
 
-  /** A named type or applied program generic: one helper per key, shared by every occurrence. */
+  /**
+   * A named type or applied program generic reached as a position: one helper per key, shared by
+   * every occurrence, that walks the links of its chain. A name a chain passed through already has
+   * its link, so its helper adds none.
+   */
   const named = (
     t: TypeExpr & { kind: "TypeRef" | "TypeApp" },
     generics: readonly string[],
@@ -131,7 +135,8 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     const inner = entering(t, generics);
     const name = `_rq${next++}`;
     helpers.set(key, name);
-    const fn = chainJs(body, inner);
+    const link = links.get(key);
+    const fn = link === undefined ? chainJs(body, inner, key) : checkOf(link);
     if (fn === undefined) {
       throw new Error(`nested refinement lowering: "${t.name}" carries a refinement with no walk`);
     }
@@ -152,37 +157,90 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     return inner;
   };
 
-  // One check for the whole chain: a helper per step would be a frame per step at runtime as
-  // well as here, and nothing bounds how long a chain is.
-  const chainJs = (t: TypeExpr, generics: readonly string[]): string | undefined => {
-    const outermostFirst: Refinement[] = [];
-    const entered = new Set<string>();
+  /** One level of a chain's checks: the type the chain ends at first, then predicates base outward. */
+  const ownJs = (outermostFirst: readonly Refinement[], end: string | undefined) => {
+    const steps: string[] = [];
+    if (end) steps.push(`if ((f = ${named$(end)}(v, o))) return f;`);
+    for (const r of [...outermostFirst].reverse()) {
+      const body = refinementBodyJs(r);
+      if (body) steps.push(`if (!(${body})) return ${FAIL(r)};`);
+    }
+    return fnOf(steps);
+  };
+
+  // A link per level of a chain with checks of its own, pointing at the link below: chains that
+  // share a tail share its links, and one loop walks a chain however long it is, where a call per
+  // name would be a frame per name at runtime.
+  type Link = { readonly name: string; readonly chained: boolean };
+  const links = new Map<string, Link>();
+  let walkerDeclared = false;
+
+  const checkOf = (link: Link): string => {
+    if (!link.chained) return `${link.name}.own`;
+    if (!walkerDeclared) {
+      walkerDeclared = true;
+      decls.push(WALK_LINKS);
+    }
+    return `(v, o) => _rqLinks(${link.name}, v, o)`;
+  };
+
+  type Level = { readonly key: string | null; readonly outermostFirst: Refinement[] };
+
+  /** `t`'s chain, followed from `key` when `t` is the body of that name. */
+  const chainJs = (
+    t: TypeExpr,
+    generics: readonly string[],
+    key: string | null = null,
+  ): string | undefined => {
+    let level: Level = { key, outermostFirst: [] };
+    const levels = [level];
+    const entered = new Set<string>(key === null ? [] : [key]);
     let inner = generics;
+    let below: Link | undefined;
+    let endsAtName = false;
     let cur = t;
     for (;;) {
       if (cur.kind === "TypeNominal" || cur.kind === "TypeRefinement") {
-        if (cur.refinement) outermostFirst.push(cur.refinement);
+        if (cur.refinement) level.outermostFirst.push(cur.refinement);
         cur = cur.inner;
         continue;
       }
       if (cur.kind !== "TypeRef" && cur.kind !== "TypeApp") break;
       const body = expandNamed(cur, env);
       if (!body) break;
-      const key = typeKey(cur);
-      if (helpers.has(key) || entered.has(key)) break;
-      entered.add(key);
+      const at = typeKey(cur);
+      below = links.get(at);
+      endsAtName = below !== undefined || helpers.has(at) || entered.has(at);
+      if (endsAtName) break;
+      entered.add(at);
       inner = entering(cur, inner);
+      level = { key: at, outermostFirst: [] };
+      levels.push(level);
       cur = body;
     }
-    const end = explain(cur, inner);
-    if (outermostFirst.length === 0) return end;
-    const steps: string[] = [];
-    if (end) steps.push(`if ((f = ${named$(end)}(v, o))) return f;`);
-    for (const r of outermostFirst.reverse()) {
-      const body = refinementBodyJs(r);
-      if (body) steps.push(`if (!(${body})) return ${FAIL(r)};`);
+    const end = below === undefined ? explain(cur, inner) : undefined;
+    // A single level needs no link when nothing can stack calls on it: a position's own type is
+    // reached by no other chain, and a name whose chain ends at a type of its own calls no other
+    // chain's check.
+    if (levels.length === 1 && below === undefined && (key === null || !endsAtName)) {
+      return level.outermostFirst.length === 0 ? end : ownJs(level.outermostFirst, end);
     }
-    return fnOf(steps);
+    const owns = levels.map((l, i) =>
+      ownJs(l.outermostFirst, i === levels.length - 1 ? end : undefined),
+    );
+    // Emitted from the base outward, so the link below is declared before the one that names it.
+    let link = below;
+    for (let i = levels.length - 1; i >= 0; i -= 1) {
+      const own = owns[i];
+      if (own !== undefined) {
+        const name = `_rq${next++}`;
+        decls.push(`const ${name} = { own: ${own}${link ? `, below: ${link.name}` : ""} };`);
+        link = { name, chained: link !== undefined };
+      }
+      const at = levels[i]?.key ?? null;
+      if (at !== null && link !== undefined) links.set(at, link);
+    }
+    return link === undefined ? undefined : checkOf(link);
   };
 
   const keyJs = (k: TypeExpr | undefined, js: string): string => {
@@ -297,6 +355,17 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     },
   };
 }
+
+/** Walks a chain's links from the base outward, each link's own checks in turn. */
+const WALK_LINKS = [
+  "const _rqLinks = (l, v, o) => {",
+  "const own = [];",
+  "for (let at = l; at !== undefined; at = at.below) own.push(at.own);",
+  "let f;",
+  "for (let i = own.length - 1; i >= 0; i -= 1) if ((f = own[i](v, o))) return f;",
+  "return undefined;",
+  "};",
+].join(" ");
 
 /** A statement-bodied explain function, or `undefined` when it has no steps. */
 function fnOf(steps: string[]): string | undefined {

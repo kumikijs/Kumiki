@@ -56,7 +56,7 @@ export function scanPositions(t: TypeExpr, env: TypeEnv): PositionScan {
     carries: xs.some((w) => w.carries),
     back: Math.min(Number.POSITIVE_INFINITY, ...xs.map((w) => w.back)),
   });
-  const followChain = (
+  const scanChain = (
     x: TypeExpr,
     visiting: ReadonlyMap<string, number>,
     generics: readonly string[],
@@ -130,7 +130,7 @@ export function scanPositions(t: TypeExpr, env: TypeEnv): PositionScan {
     visiting: ReadonlyMap<string, number>,
     generics: readonly string[],
   ): Walked => {
-    const { end, entered, refinedAfter } = followChain(x, visiting, generics);
+    const { end, entered, refinedAfter } = scanChain(x, visiting, generics);
     for (const [i, { key, depth }] of entered.entries()) {
       const carries = end.carries || refinedAfter > i;
       if (carries || end.back >= depth) done.set(key, carries);

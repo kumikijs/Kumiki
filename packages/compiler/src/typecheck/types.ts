@@ -16,7 +16,7 @@ import {
   type TypeDef,
   type TypeExpr,
 } from "../ast.ts";
-import { aliasTarget } from "../def-graph.ts";
+import { aliasTarget, forwardedParams } from "../def-graph.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions, typeKey } from "../refinement-positions.ts";
 import {
   type RefinementProblem,
@@ -441,13 +441,14 @@ export function reachesBrokenDefinition(t: TypeExpr, sym: SymbolTable): boolean 
 /** Whether following alias targets from a definition comes back round, each one walked once. */
 function aliasCycleFinder(sym: SymbolTable): (def: TypeDef) => boolean {
   const typeOf = (name: string): TypeDef | undefined => sym.types.get(name);
+  const forwarded = forwardedParams(typeOf, "through");
   const settled = new Set<string>();
   return (start) => {
     const path = new Set<string>();
     for (let d = typeOf(start.name); d !== undefined && !settled.has(d.name); ) {
       if (path.has(d.name)) return true;
       path.add(d.name);
-      const edge = aliasTarget(d, typeOf);
+      const edge = aliasTarget(d, typeOf, forwarded);
       d = edge ? typeOf(edge.to) : undefined;
     }
     for (const name of path) settled.add(name);

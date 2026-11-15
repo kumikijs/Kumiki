@@ -20,7 +20,10 @@ export function unaliasType(t: TypeExpr | null, env: TypeEnv): TypeExpr | null {
   return followChain(t, newWalk(env), null);
 }
 
-/** Every refinement a type carries, base outward: the order a failed predicate is named in. */
+/**
+ * The refinements on a type's own chain (not its positions), base outward: the order a failed
+ * predicate is named in.
+ */
 export function refinementsOf(t: TypeExpr, env: TypeEnv): Refinement[] {
   const outermostFirst: Refinement[] = [];
   followChain(t, newWalk(env), outermostFirst);
@@ -37,30 +40,22 @@ type Walk = {
 
 type Forwarded = Readonly<Record<NominalReading, (def: TypeDef) => number | null>>;
 
-// An answer read from a table holds as long as the table: a check and a build each make one.
 type TableFacts = {
   readonly forwarded: Forwarded;
   // Each name's normal form: a chain is followed once, not once per `where` judged over it.
   readonly normal: Map<string, TypeExpr | null>;
 };
 
-const factsByTable = new WeakMap<TypeEnv["types"], TableFacts>();
-
-function factsOf(env: TypeEnv): TableFacts {
-  let facts = factsByTable.get(env.types);
-  if (!facts) {
-    const lookup = (name: string) => env.types.get(name);
-    facts = {
-      forwarded: {
-        through: forwardedParams(lookup, "through"),
-        stop: forwardedParams(lookup, "stop"),
-      },
-      normal: new Map(),
-    };
-    factsByTable.set(env.types, facts);
-  }
-  return facts;
-}
+const factsOf = perTable((env): TableFacts => {
+  const lookup = (name: string) => env.types.get(name);
+  return {
+    forwarded: {
+      through: forwardedParams(lookup, "through"),
+      stop: forwardedParams(lookup, "stop"),
+    },
+    normal: new Map(),
+  };
+});
 
 function newWalk(env: TypeEnv): Walk {
   return { env, origins: new WeakMap(), facts: factsOf(env) };
@@ -208,7 +203,7 @@ function nominalDecl(
   outer: ReadonlySet<string>,
   walk: Walk,
 ): { readonly name: string; readonly over: TypeExpr } | null {
-  // A loop for the reason `followChain` is one.
+  // A loop: nothing bounds how many definitions a chain passes through.
   const guard = new Guard(outer);
   let cur = t;
   for (;;) {
