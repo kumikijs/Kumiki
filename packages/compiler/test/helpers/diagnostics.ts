@@ -22,13 +22,17 @@ export const errorCodesOf = (src: string): string[] => errorsOf(src).map((e) => 
 export const locatedSummariesOf = (src: string): string[] =>
   checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
-/** E0231's message for a program's own definition of the standard library's `name`. */
-export const reservedTypeNameMessage = (name: string): string =>
-  `Type "${name}" collides with the standard library's ${name}; uses of it never see this type`;
+/** E0231's message for a program's own definition of `name`, which already means `meaning`. */
+export const reservedTypeNameMessage = (name: string, meaning = "the standard library's"): string =>
+  `Type "${name}" collides with ${meaning} ${name}; uses of it never see this type`;
 
 /** E0234's message for a program's own `effect` under the standard effect `name`. */
 export const reservedEffectNameMessage = (name: string): string =>
   `Effect "${name}" collides with the built-in effect ${name}; emits of it never run this effect`;
+
+/** E0235's message, for a `null` written where an expression goes. */
+export const nullValueMessage =
+  "`null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one";
 
 /** Each diagnostic as `"<code> <message>"`. */
 export const summariesOf = (src: string): string[] =>

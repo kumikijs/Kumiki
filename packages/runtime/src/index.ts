@@ -158,6 +158,8 @@ export {
   type EpisodeStatus,
   type EpisodeStep,
   type EpisodeTrigger,
+  isUnhandledPanic,
+  type PanicStep,
   type SlotDiff,
 } from "./episode.ts";
 export { RUNTIME_OVERLAY_SELECTORS } from "./overlays.ts";
