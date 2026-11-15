@@ -2,26 +2,59 @@ import {
   addDef,
   CASCADE_HELP,
   describeEdit,
+  describeSkipped,
   editDef,
   findReferences,
   LAYERS,
   listDefs,
   load,
+  type OpLogOptions,
   removeDef,
   renameDef,
   replaceDef,
   requireSourceFile,
+  type SkippedOpLogLine,
   viewDef,
   viewHistory,
   viewWithDeps,
 } from "@kumikijs/cli";
 import { z } from "zod";
 import { absPath } from "../input.ts";
-import { json, text } from "../wire.ts";
+import { errText, json, text } from "../wire.ts";
 import type { RegisterTool } from "./registrar.ts";
 
 function notFound(name: string): Error {
   return new Error(`Definition "${name}" not found`);
+}
+
+const SKIPPED_LINE_NOTE =
+  ' When the op log\'s last line is torn and skipped, a second text item follows the answer, or the error: `warnings:` followed by a JSON list, `[{"kind": "malformed-jsonl", "message"}]`, whose message names the log and the line.';
+
+// A client does not read the server's stderr, so a torn op-log line the read skipped follows the
+// answer, or the error, as a second item. The first item is the same either way, so a client reading
+// the op-id off it reads it whether or not a line was skipped.
+function opLogAnswer<T>(run: (options: OpLogOptions) => T, answer: (value: T) => string) {
+  const skipped: SkippedOpLogLine[] = [];
+  let value: T;
+  try {
+    value = run({ onSkipped: (line) => skipped.push(line) });
+  } catch (e) {
+    if (skipped.length === 0) throw e;
+    const error = errText(e);
+    return { ...error, content: [...error.content, ...skippedItem(skipped)] };
+  }
+  const result = text(answer(value));
+  return { content: [...result.content, ...skippedItem(skipped)] };
+}
+
+/** Labelled as `withWarnings` labels a compile's warnings, for a client that joins the items. */
+function skippedItem(skipped: readonly SkippedOpLogLine[]) {
+  if (skipped.length === 0) return [];
+  const warnings = skipped.map((line) => ({
+    kind: "malformed-jsonl",
+    message: describeSkipped(line),
+  }));
+  return text(`warnings:\n${json(warnings)}`).content;
 }
 
 export function registerDefinitionTools(tool: RegisterTool): void {
@@ -82,7 +115,7 @@ export function registerDefinitionTools(tool: RegisterTool): void {
     "kumiki_add",
     {
       title: "Add a definition",
-      description: "Append a new definition to a .kumiki file. Returns the new op-id.",
+      description: `Append a new definition to a .kumiki file. Returns the new op-id.${SKIPPED_LINE_NOTE}`,
       inputSchema: {
         path: z.string(),
         layer: z.enum(LAYERS),
@@ -94,10 +127,11 @@ export function registerDefinitionTools(tool: RegisterTool): void {
           ),
       },
     },
-    async ({ path, layer, name, body }) => {
-      const opId = addDef(absPath(path), layer, name, body);
-      return text(describeEdit({ op: "add", qname: `${layer}.${name}`, opId }));
-    },
+    async ({ path, layer, name, body }) =>
+      opLogAnswer(
+        (options) => addDef(absPath(path), layer, name, body, options),
+        (opId) => describeEdit({ op: "add", qname: `${layer}.${name}`, opId }),
+      ),
   );
 
   tool(
@@ -105,13 +139,15 @@ export function registerDefinitionTools(tool: RegisterTool): void {
     {
       title: "Replace a definition",
       description:
-        "Replace the body of an existing definition. A body that does not start with a tile's clauses or a type's parameters keeps the ones the definition has; one that starts with `=` drops them. Returns the new op-id, and a `dropped` line for each clause or parameter the definition no longer has.",
+        "Replace the body of an existing definition. A body that does not start with a tile's clauses or a type's parameters keeps the ones the definition has; one that starts with `=` drops them. Returns the new op-id, and a `dropped` line for each clause or parameter the definition no longer has." +
+        SKIPPED_LINE_NOTE,
       inputSchema: { path: z.string(), name: z.string(), body: z.string() },
     },
-    async ({ path, name, body }) => {
-      const result = replaceDef(absPath(path), name, body);
-      return text(describeEdit({ op: "replace", qname: name, ...result }));
-    },
+    async ({ path, name, body }) =>
+      opLogAnswer(
+        (options) => replaceDef(absPath(path), name, body, options),
+        (result) => describeEdit({ op: "replace", qname: name, ...result }),
+      ),
   );
 
   tool(
@@ -122,26 +158,29 @@ export function registerDefinitionTools(tool: RegisterTool): void {
         `Remove a definition. Set cascade=true to ${CASCADE_HELP}. ` +
         "Without it, removing a definition that something references is refused. " +
         "Returns the new op-id on a `removed <name>` line, followed by one `cascaded <name>` " +
-        "line for each further definition the cascade took.",
+        "line for each further definition the cascade took." +
+        SKIPPED_LINE_NOTE,
       inputSchema: { path: z.string(), name: z.string(), cascade: z.boolean().optional() },
     },
-    async ({ path, name, cascade }) => {
-      const result = removeDef(absPath(path), name, cascade ?? false);
-      return text(describeEdit({ op: "remove", qname: name, ...result }));
-    },
+    async ({ path, name, cascade }) =>
+      opLogAnswer(
+        (options) => removeDef(absPath(path), name, cascade ?? false, options),
+        (result) => describeEdit({ op: "remove", qname: name, ...result }),
+      ),
   );
 
   tool(
     "kumiki_rename",
     {
       title: "Rename a definition",
-      description: "Rename a definition and update all references. Returns the new op-id.",
+      description: `Rename a definition and update all references. Returns the new op-id.${SKIPPED_LINE_NOTE}`,
       inputSchema: { path: z.string(), name: z.string(), newName: z.string() },
     },
-    async ({ path, name, newName }) => {
-      const opId = renameDef(absPath(path), name, newName);
-      return text(describeEdit({ op: "rename", qname: name, newName, opId }));
-    },
+    async ({ path, name, newName }) =>
+      opLogAnswer(
+        (options) => renameDef(absPath(path), name, newName, options),
+        (opId) => describeEdit({ op: "rename", qname: name, newName, opId }),
+      ),
   );
 
   tool(
@@ -149,7 +188,8 @@ export function registerDefinitionTools(tool: RegisterTool): void {
     {
       title: "Edit part of a definition",
       description:
-        "Apply a partial patch to a definition body (e.g. inside a reducer's do=). Patch shape: {find,replace} for a single textual swap, or {body:<line>: \"replace 'a' -> 'b'\"} for per-line edits. Returns the new op-id.",
+        "Apply a partial patch to a definition body (e.g. inside a reducer's do=). Patch shape: {find,replace} for a single textual swap, or {body:<line>: \"replace 'a' -> 'b'\"} for per-line edits. Returns the new op-id." +
+        SKIPPED_LINE_NOTE,
       inputSchema: {
         path: z.string(),
         name: z.string().describe("Qualified name, e.g. reducer.addTodo"),
@@ -161,10 +201,11 @@ export function registerDefinitionTools(tool: RegisterTool): void {
           .describe("Patch object (see description)"),
       },
     },
-    async ({ path, name, patch }) => {
-      const opId = editDef(absPath(path), name, patch);
-      return text(describeEdit({ op: "edit", qname: name, opId }));
-    },
+    async ({ path, name, patch }) =>
+      opLogAnswer(
+        (options) => editDef(absPath(path), name, patch, options),
+        (opId) => describeEdit({ op: "edit", qname: name, opId }),
+      ),
   );
 
   tool(
@@ -172,13 +213,14 @@ export function registerDefinitionTools(tool: RegisterTool): void {
     {
       title: "Show edit history",
       description:
-        "Return the op-log entries that touched this definition, in chronological order. Each entry has op-id, op kind, ts, author, parent-ops, depends-on, and (for add/replace) the body or patch.",
+        "Return the op-log entries that touched this definition, in chronological order. Each entry has op-id, op kind, ts, author, parent-ops, depends-on, and (for add/replace) the body or patch." +
+        SKIPPED_LINE_NOTE,
       inputSchema: { path: z.string(), name: z.string() },
     },
-    async ({ path, name }) => {
-      const log = viewHistory(requireSourceFile(path), name);
-      if (log.length === 0) return text(`(no history for ${name})`);
-      return text(json(log));
-    },
+    async ({ path, name }) =>
+      opLogAnswer(
+        (options) => viewHistory(requireSourceFile(path), name, options),
+        (log) => (log.length === 0 ? `(no history for ${name})` : json(log)),
+      ),
   );
 }
