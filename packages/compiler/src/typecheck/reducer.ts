@@ -136,7 +136,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     const { ev, selector } = r.on;
     const allowed = UI_EVENT_TILE_KINDS[ev];
     if (allowed != null) {
-      const descendants = sym.subscribedKindsIn(selector.tile);
+      const descendants = sym.tileKinds.subscribed(selector.tile);
       const hasMatch = [...descendants].some((k) => allowed.has(k));
       if (descendants.size > 0 && !hasMatch) {
         const reason = uiEventMismatchReason(ev, selector.tile, descendants);

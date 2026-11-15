@@ -508,6 +508,45 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
         }
       }
     });
+
+    // A loop shares one answer, and the tiles it leads to keep their own: asked about first or
+    // after, a tile downstream never takes on what only the tiles above it render.
+    it.each([
+      [
+        "a loop that leads into a second loop",
+        'tile A = row(B)\ntile B = column(A, C)\ntile C = box(D)\ntile D = stack(C, text("d"))',
+        ["E0005", "E0005"],
+      ],
+      [
+        "a loop that leads out of any loop",
+        'tile A = row(B)\ntile B = column(A, C)\ntile C = box(D)\ntile D = stack(text("d"))',
+        ["E0005"],
+      ],
+      [
+        "two paths that meet again, with no loop",
+        'tile A = row(B, C)\ntile B = column(D)\ntile C = box(D)\ntile D = stack(text("d"))',
+        [],
+      ],
+    ])("the tiles of %s, whichever is asked about first", (_, tiles, loops) => {
+      for (const order of [
+        ["A", "C"],
+        ["C", "A"],
+      ]) {
+        const calls = order.map((t) => `${t}() {onClick: bump}`).join(", ");
+        const found = diags(tiles, calls);
+        expect(
+          found.map((e) => e.code),
+          calls,
+        ).toEqual(["W0213", "W0213", ...loops]);
+        const observed = Object.fromEntries(
+          order.map((t, i) => [t, found[i]?.message.match(/observed in body: [^)]*/)?.[0]]),
+        );
+        expect(observed, calls).toEqual({
+          A: "observed in body: box, column, row, stack, text",
+          C: "observed in body: box, stack, text",
+        });
+      }
+    });
   });
 });
 

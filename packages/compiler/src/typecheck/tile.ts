@@ -236,7 +236,7 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
   }
   // The runtime fills the first outlet anywhere in the tree the tile renders, so an outlet in
   // a layout helper counts, and one a builtin drops does not.
-  if (!sym.renderedKindsIn(tile.name).has("route-outlet")) {
+  if (!sym.tileKinds.rendered(tile.name).has("route-outlet")) {
     errors.push({
       code: "E0113",
       kind: "sub-routes-without-outlet",
@@ -750,7 +750,7 @@ function notCalled(
     return because;
   }
   if (!sym.tiles.has(tileName)) return null;
-  const kinds = sym.builtinKindsIn(tileName);
+  const kinds = sym.tileKinds.handled(tileName);
   if (kinds.size === 0 || [...kinds].some((k) => reach.allowed.has(k))) return null;
   const observed = `(observed in body: ${[...kinds].sort().join(", ")})`;
   const clauses = unheard(kinds);
@@ -774,7 +774,7 @@ function notReceived(
     return missed === undefined ? null : wrappedClause(ev, missed);
   }
   if (!sym.tiles.has(tileName)) return null;
-  const kinds = sym.rootKindsIn(tileName);
+  const kinds = sym.tileKinds.root(tileName);
   if (kinds.size === 0 || [...kinds].some((k) => wrapperNeverReceives(ev, [k]).length === 0)) {
     return null;
   }

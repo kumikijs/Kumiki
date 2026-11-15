@@ -7,65 +7,66 @@ import {
   type TileExpr,
   writtenProp,
 } from "../ast.ts";
-import { BUILTIN_TILES, CHILD_RENDERING_BUILTINS } from "../builtins.ts";
-import { boundaryTarget, expansionTargets, type GraphEdge, reachedFrom } from "../def-graph.ts";
+import { BUILTIN_TILES } from "../builtins.ts";
+import {
+  boundaryTarget,
+  expansionTargets,
+  type GraphEdge,
+  reachedFrom,
+  type TileEdge,
+} from "../def-graph.ts";
 import { HANDLER_NAMES, handlerReducerName, UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
 import type { SymbolTable } from "./context.ts";
 
-/**
- * The kinds a handler written at the tile's call site can land on (W0213). A nested tile's
- * `error-boundary` fallback is rendered without that call site's handlers, so it is left out.
- */
-export function collectTileBuiltinKinds(
-  tiles: ReadonlyMap<string, TileDef>,
-): (tileName: string) => ReadonlySet<string> {
-  return renderedKinds(tiles, false);
-}
+/** For each question a check asks of a tile, the builtin kinds it renders: each follows its own edges. */
+export type TileKinds = {
+  /**
+   * The kinds a handler written at the tile's call site can land on (W0213). A nested tile's
+   * `error-boundary` fallback is rendered without that call site's handlers, so it is left out.
+   */
+  readonly handled: (tileName: string) => ReadonlySet<string>;
+  /**
+   * Of those, the kinds a handler written at the tile's call site is merged onto: its root's. A
+   * tile called at the root lends its own root, and a nested tile's fallback is left out as above.
+   */
+  readonly root: (tileName: string) => ReadonlySet<string>;
+  /** The kinds a subscription on the tile is wired onto (W0212), a nested tile's fallback included. */
+  readonly subscribed: (tileName: string) => ReadonlySet<string>;
+  /**
+   * The kinds the tile renders: the tiles codegen inlines into its tree (E0113). A bare name
+   * counts only where it names a tile, since codegen reads any other as a value.
+   */
+  readonly rendered: (tileName: string) => ReadonlySet<string>;
+};
 
-/**
- * Of those, the kinds a handler written at the tile's call site is merged onto: its root's. A
- * tile called at the root lends its own root, and a nested tile's fallback is left out as above.
- */
-export function collectTileRootKinds(
-  tiles: ReadonlyMap<string, TileDef>,
-): (tileName: string) => ReadonlySet<string> {
-  return reachedFrom(
-    (name) => {
-      const def = BUILTIN_TILES.has(name) ? undefined : tiles.get(name);
-      return def ? expansionTargets(def.body).filter((edge) => edge.root) : [];
-    },
-    (name) => (BUILTIN_TILES.has(name) ? [name] : []),
-  );
-}
-
-/** The kinds a subscription on the tile is wired onto (W0212), a nested tile's fallback included. */
-export function subscribedKinds(
-  tiles: ReadonlyMap<string, TileDef>,
-): (tileName: string) => ReadonlySet<string> {
-  return renderedKinds(tiles, true);
-}
-
-// Answers are kept, so a tile is walked once however many positions ask about it, and the walk is
-// iterative because nothing bounds how long a program may chain tiles. With `fallbacks`, a call
-// also leads to its callee's `error-boundary` fallbacks, which render in that call's place.
-function renderedKinds(
-  tiles: ReadonlyMap<string, TileDef>,
-  fallbacks: boolean,
-): (tileName: string) => ReadonlySet<string> {
-  return reachedFrom(
-    (name) => {
-      if (BUILTIN_TILES.has(name)) return [];
-      const def = tiles.get(name);
-      if (!def) return [];
-      const edges = expansionTargets(def.body);
-      if (!fallbacks) return edges;
-      return edges.flatMap((edge) => {
-        const callee = edge.call ? tiles.get(edge.to) : undefined;
-        return callee ? [edge, ...fallbackChain(callee, tiles)] : [edge];
-      });
-    },
-    (name) => (BUILTIN_TILES.has(name) ? [name] : []),
-  );
+// Each answer is kept, so a tile is walked once however many positions ask about it. The walks
+// keep their own stack: they run before E0237 refuses a tree too deep to inline, so they also
+// walk the trees it will refuse.
+export function tileKinds(tiles: ReadonlyMap<string, TileDef>): TileKinds {
+  const own = (name: string): readonly string[] => (BUILTIN_TILES.has(name) ? [name] : []);
+  const bodyOf = (name: string): TileDef | undefined =>
+    BUILTIN_TILES.has(name) ? undefined : tiles.get(name);
+  const expansion = (name: string): readonly TileEdge[] => {
+    const def = bodyOf(name);
+    return def ? expansionTargets(def.body) : [];
+  };
+  return {
+    handled: reachedFrom(expansion, own),
+    root: reachedFrom((name) => expansion(name).filter((edge) => edge.root), own),
+    // A call also leads to its callee's `error-boundary` fallbacks, which render in its place.
+    subscribed: reachedFrom(
+      (name) =>
+        expansion(name).flatMap((edge) => {
+          const callee = edge.call ? tiles.get(edge.to) : undefined;
+          return callee ? [edge, ...fallbackChain(callee, tiles)] : [edge];
+        }),
+      own,
+    ),
+    rendered: reachedFrom(
+      (name) => expansion(name).filter((edge) => edge.call !== undefined || tiles.has(edge.to)),
+      own,
+    ),
+  };
 }
 
 /** `id` is `null` when there is no literal to read: computed, absent, or unknown at a call site. */
@@ -135,9 +136,9 @@ function renderedTree(tileName: string, sym: SymbolTable): RenderedTree {
 
 /**
  * The value of `root`, built from the values of the nodes `next` leads it to, each worked out
- * before the node that reads it. The walk keeps its own stack, since nothing bounds how long a
- * program may chain tiles. A node read while it is still being worked out, on a loop back to it,
- * reads `onLoop`.
+ * before the node that reads it. The walk keeps its own stack: it runs before E0237 refuses a tree
+ * too deep to inline, so it also walks the trees E0237 will refuse. A node read while it is still
+ * being worked out, on a loop back to it, reads `onLoop`.
  */
 function bottomUp<T>(
   root: string,
@@ -174,7 +175,7 @@ function bottomUp<T>(
  * The fallbacks that can render in the tile's place: its `error-boundary`, that fallback's own,
  * and so on, since each is placed with its boundary like any other tile. The chain ends at a
  * tile already on it, which E0005 reports after the selector checks run. It is followed in a
- * loop, since nothing bounds how long a program may chain fallbacks.
+ * loop, since it runs before E0237 refuses a chain of fallbacks too deep to inline.
  */
 function fallbackChain(def: TileDef, tiles: ReadonlyMap<string, TileDef>): GraphEdge[] {
   const chain: GraphEdge[] = [];
@@ -264,53 +265,6 @@ function imposedIds(
     if (out.size === 0) out.add(undefined);
     return out;
   });
-}
-
-/**
- * The builtin kinds a tile renders: the tiles codegen inlines into its tree (E0113). Unlike
- * `collectTileBuiltinKinds`, a positional argument counts only where its builtin renders it.
- */
-export function collectRenderedBuiltinKinds(
-  tiles: ReadonlyMap<string, TileDef>,
-): (tileName: string) => ReadonlySet<string> {
-  return reachedFrom(
-    (name) => {
-      const def = BUILTIN_TILES.has(name) ? undefined : tiles.get(name);
-      return def ? renderedTiles(def.body, tiles) : [];
-    },
-    (name) => (BUILTIN_TILES.has(name) ? [name] : []),
-  );
-}
-
-function renderedTiles(
-  t: TileExpr,
-  tiles: ReadonlyMap<string, TileDef>,
-  out: GraphEdge[] = [],
-): GraphEdge[] {
-  switch (t.kind) {
-    case "TileFor":
-    case "TileWhen":
-      return renderedTiles(t.body, tiles, out);
-    case "TileIf":
-      renderedTiles(t.consequent, tiles, out);
-      return renderedTiles(t.alternate, tiles, out);
-    case "TileMatch":
-      for (const arm of t.arms) renderedTiles(arm.body, tiles, out);
-      return out;
-    case "TileCall":
-      out.push({ to: t.name, pos: t.pos });
-      if (!CHILD_RENDERING_BUILTINS.has(t.name)) return out;
-      for (const arg of t.args) {
-        if (arg.name !== undefined) continue;
-        const v = arg.value;
-        if (isTileExpr(v)) renderedTiles(v, tiles, out);
-        else if (v.kind === "Ref" && tiles.has(v.name)) out.push({ to: v.name, pos: v.pos });
-      }
-      return out;
-    default:
-      assertNever(t);
-      return out;
-  }
 }
 
 type TileIdCollection =

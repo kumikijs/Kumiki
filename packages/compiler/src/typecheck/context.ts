@@ -15,6 +15,7 @@ import {
   writtenProp,
 } from "../ast.ts";
 import { callsBuiltin } from "../builtin-calls.ts";
+import type { TileKinds } from "./tile-collect.ts";
 
 export type Severity = "error" | "warning";
 
@@ -59,7 +60,7 @@ export type SymbolTable = {
   types: Map<string, TypeDef>;
   slots: Map<string, SlotDef>;
   reducers: Map<string, ReducerDef>;
-  tiles: Map<string, TileDef>;
+  tiles: ReadonlyMap<string, TileDef>;
   fns: Map<string, FnDef>;
   effects: Map<string, EffectDef>;
   /** Names declared by `timer(d, name=N)` triggers — the `stop-timer` namespace. */
@@ -71,14 +72,8 @@ export type SymbolTable = {
   themes: Set<string>;
   iconDomain: Set<string>;
   elementIds: Set<string>;
-  /** The kinds a handler written at the tile's call site can land on (W0213). */
-  builtinKindsIn: (tileName: string) => ReadonlySet<string>;
-  /** Of those, the kinds at the tile's root, which a call-site handler is merged onto (W0213). */
-  rootKindsIn: (tileName: string) => ReadonlySet<string>;
-  /** The kinds a subscription on the tile is wired onto (W0212). */
-  subscribedKindsIn: (tileName: string) => ReadonlySet<string>;
-  /** The kinds the tile renders, a positional argument only where its builtin renders it (E0113). */
-  renderedKindsIn: (tileName: string) => ReadonlySet<string>;
+  /** The builtin kinds each tile renders, along the edges each check follows. */
+  tileKinds: TileKinds;
   // The program's own tags come first, so a did-you-mean tie goes to one of them.
   constructorTags: ReadonlySet<string>;
   qualifiers: ReadonlySet<string>;

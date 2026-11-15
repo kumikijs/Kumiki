@@ -1,16 +1,20 @@
 import type { Expr, Pos, TileDef, TileExpr, TypeDef, TypeExpr } from "./ast.ts";
-import { isTileExpr } from "./ast.ts";
+import { isTileExpr, writtenProp } from "./ast.ts";
 import { CHILD_RENDERING_BUILTINS } from "./builtins.ts";
 
 /** An edge to another definition, positioned at the identifier that names it. */
 export type GraphEdge = { readonly to: string; readonly pos: Pos };
 
-/** `level` counts from the root of the tile holding the edge (1); the target's body hangs below it. */
+/**
+ * `level` counts from the root of the tile holding the edge (1); the target's body hangs below it.
+ * For a call to a user tile it is the call's level plus the wrappers code generation puts around
+ * the inlined body.
+ */
 export type PlacedEdge = GraphEdge & { readonly level: number };
 
 /** A tile as written, before any tile it names is inlined. */
 export type TileExpansion = {
-  /** The level of its deepest node — how deep it nests on its own. */
+  /** How deep it nests on its own: the parser's count of its body, expressions included. */
   readonly depth: number;
   /** The tiles it expands into, each placed at the level of its call. */
   readonly edges: readonly PlacedEdge[];
@@ -34,15 +38,25 @@ export type TileEdge = PlacedEdge & {
 
 export function expansionTargets(body: TileExpr): readonly TileEdge[] {
   const edges: TileEdge[] = [];
-  walkTileBody(body, 1, edges, true);
+  walkTileBody(body, 1, edges, true, false);
   return edges;
+}
+
+/**
+ * A tree as written, before any tile it names is inlined: a tile's body, or a tile-test's expected
+ * tree. `depth` is the parser's count of it, which puts every node at least as deep as the edges'
+ * levels do.
+ */
+export function treeExpansion(body: TileExpr, depth: number): TileExpansion {
+  const edges: TileEdge[] = [];
+  walkTileBody(body, 1, edges, true, false);
+  return { depth, edges };
 }
 
 // An `error-boundary` is a level of its own: codegen wraps every call of the tile in its `try`, so
 // the tile's body and the fallback's both hang beneath it.
 export function tileExpansion(def: TileDef): TileExpansion {
-  const edges: TileEdge[] = [];
-  const depth = walkTileBody(def.body, 1, edges, true);
+  const { depth, edges } = treeExpansion(def.body, def.depth);
   const boundary = boundaryTarget(def);
   if (!boundary) return { depth, edges };
   return {
@@ -170,49 +184,61 @@ export function aliasTarget(
   return null;
 }
 
-function walkTileBody(t: TileExpr, level: number, out: TileEdge[], root: boolean): number {
+// `keyed` is whether a `for` gives the tree here its key: code generation keys what a `for` renders,
+// through any `when` / `if` / `match` between them, and a call nested in a builtin is not keyed.
+function walkTileBody(
+  t: TileExpr,
+  level: number,
+  out: TileEdge[],
+  root: boolean,
+  keyed: boolean,
+): void {
   switch (t.kind) {
     case "TileFor":
+      walkTileBody(t.body, level + 1, out, root, true);
+      return;
     case "TileWhen":
-      return walkTileBody(t.body, level + 1, out, root);
+      walkTileBody(t.body, level + 1, out, root, keyed);
+      return;
     case "TileIf":
-      return Math.max(
-        walkTileBody(t.consequent, level + 1, out, root),
-        walkTileBody(t.alternate, level + 1, out, root),
-      );
-    case "TileMatch": {
-      let deepest = level;
-      for (const arm of t.arms) {
-        deepest = Math.max(deepest, walkTileBody(arm.body, level + 1, out, root));
-      }
-      return deepest;
-    }
+      walkTileBody(t.consequent, level + 1, out, root, keyed);
+      walkTileBody(t.alternate, level + 1, out, root, keyed);
+      return;
+    case "TileMatch":
+      for (const arm of t.arms) walkTileBody(arm.body, level + 1, out, root, keyed);
+      return;
     case "TileCall": {
-      out.push({ to: t.name, pos: t.pos, level, root, call: t });
+      out.push({ to: t.name, pos: t.pos, level: level + wrappers(t, keyed), root, call: t });
       // Codegen renders the positional arguments of these builtins alone, as children; every
       // other call reads them as values (`text(leaf)`, `Card(leaf)`) or drops them
       // (`button(leaf)`), so nothing written there is inlined.
-      if (!CHILD_RENDERING_BUILTINS.has(t.name)) return level;
-      let deepest = level;
+      if (!CHILD_RENDERING_BUILTINS.has(t.name)) return;
       for (const a of t.args) {
         const v = a.value;
         if (a.name !== undefined) continue;
-        if (isTileExpr(v)) deepest = Math.max(deepest, walkTileBody(v, level + 1, out, false));
+        if (isTileExpr(v)) walkTileBody(v, level + 1, out, false, false);
         else if ((v as Expr).kind === "Ref") {
-          // Not counted in this body's own depth, since the name may be a value; its edge
-          // counts it if it names a tile.
           const ref = v as Expr & { kind: "Ref" };
           out.push({ to: ref.name, pos: ref.pos, level: level + 1, root: false });
         }
       }
-      return deepest;
+      return;
     }
     default: {
       const exhaustive: never = t;
       void exhaustive;
-      return level;
+      return;
     }
   }
+}
+
+// A user tile's inlined body is wrapped once more for each of these: an argument binds it in a
+// function of its own, and a key wraps the result (`_wk`). Only an edge to a user tile is measured;
+// a builtin's own arguments and key are in the parser's count of the tile that writes it.
+function wrappers(call: TileExpr & { kind: "TileCall" }, keyed: boolean): number {
+  const argument = call.args.some((a) => a.name === undefined) ? 1 : 0;
+  const key = keyed || writtenProp(call, "key") !== undefined ? 1 : 0;
+  return argument + key;
 }
 
 /**
@@ -381,7 +407,9 @@ export function reachedFrom<T>(
         if (member === frame.node) break;
       }
     }
-    return answers.get(root) ?? new Set();
+    const answer = answers.get(root);
+    if (answer) return answer;
+    throw new Error(`reachedFrom: "${root}" was entered but never answered`);
   };
 }
 

@@ -115,12 +115,12 @@ A construct that contains itself — a parenthesised expression, a list, a recor
 ::: details How the inlined tile tree is counted
 The parser sees one definition at a time. The module code generation emits nests as deep as the tile tree with every user tile's body inlined at its call, and nothing else bounds how deep that goes: a chain of definitions, none of them deep, adds up to a module a JavaScript engine refuses to load. So the same bound holds for that tree, counted in tile levels:
 
-- each call is a level — a builtin's and a user tile's alike, and a tile named by a bare identifier (`column(sidebar)`) counts as a call to it;
-- each `for`, `when`, `if` and `match` is a level;
-- a user tile's body hangs one level below its call;
+- a tile's own body counts as the parser counts it against the limit on one definition, above: its calls and its `for`, `when`, `if` and `match`, and the expressions written in it too;
+- a tile named by a bare identifier (`column(sidebar)`) counts as a call to it;
+- a user tile's body hangs one level below its call, and one more for each wrapper code generation puts around it: one when the call passes an argument, and one when it is keyed, by a `{key: …}` it writes or by the `for` that renders it (through any `when` / `if` / `match` between them, though not from inside a builtin's children);
 - an `error-boundary` is a level of its own: it wraps every call of the tile that declares it, with that tile's body and the fallback's body both beneath it.
 
-Siblings do not add up — a tree is as deep as its deepest path — and neither do the expressions in it, which the parser already bounds within each definition. A chain `tile T0 = column(T1)`, `tile T1 = column(T2)`, … is two levels a link, so 128 links reach the limit. A `sub-routes` child is not inlined (the router renders it through `route-outlet`), so it does not count toward its parent's tree.
+Siblings do not add up — a tree is as deep as its deepest path. A chain `tile T0 = column(T1)`, `tile T1 = column(T2)`, … is two levels a link, so with `text("leaf")` at its end 127 links fit; a chain of keyed calls passing an argument is three levels a link, and one a `for` renders, passing an argument, four. A `tile-test`'s expected tree is inlined where the test is compiled, so it is held to the same bound. A `sub-routes` child is not inlined (the router renders it through `route-outlet`), so it does not count toward its parent's tree.
 :::
 
 ---
