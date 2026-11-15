@@ -11,32 +11,123 @@ export class ParseError extends Error {
 
 const MAX_NESTING_DEPTH = 256;
 
+/** A chain the parser is reading with a loop; see `TokenStream.startChain`. */
+export interface Chain {
+  /**
+   * The measurement around the chain, with the steps so far folded in; `endChain` hands it back.
+   */
+  enclosing: number;
+  /** How many levels under the chain's own level its operands and the steps so far reach. */
+  below: number;
+}
+
 export class TokenStream {
   protected i = 0;
+  /** How many nested parses deep the parser is, which the budget keeps off the stack's end. */
   protected depth = 0;
+  /** The level of the tree being built that the node read next sits at. */
+  protected level = 0;
+  /** The deepest level a node of the part being measured sits at. */
+  protected reached = 0;
 
   constructor(protected tokens: Token[]) {}
 
   /** The one place the budget is refused, so every caller reports alike. */
-  protected refuseDepth(): never {
+  protected refuseDepth(at: Pos): never {
     throw new ParseError(
       `Nesting is deeper than ${MAX_NESTING_DEPTH} levels — extract part of this into a definition of its own`,
-      this.peek().pos,
+      at,
     );
   }
 
+  /** Reads a node nested in the one being built: one parse deeper and one level deeper. */
   protected descend<T>(parseNested: () => T): T {
-    if (this.depth >= MAX_NESTING_DEPTH) this.refuseDepth();
+    if (this.depth >= MAX_NESTING_DEPTH || this.level >= MAX_NESTING_DEPTH) {
+      this.refuseDepth(this.peek().pos);
+    }
     this.depth += 1;
+    this.level += 1;
+    if (this.level > this.reached) this.reached = this.level;
     try {
       return parseNested();
+    } finally {
+      this.depth -= 1;
+      this.level -= 1;
+    }
+  }
+
+  /**
+   * Reads what a pair of parentheses holds: one parse deeper, at the same level, since parentheses
+   * build no node.
+   */
+  protected group<T>(parseInner: () => T): T {
+    if (this.depth >= MAX_NESTING_DEPTH) this.refuseDepth(this.peek().pos);
+    this.depth += 1;
+    try {
+      return parseInner();
     } finally {
       this.depth -= 1;
     }
   }
 
-  protected widen(built: number): void {
-    if (this.depth + built >= MAX_NESTING_DEPTH) this.refuseDepth();
+  /**
+   * Reads an operand of a node the caller's loop builds over it: one level deeper, no parse deeper.
+   * The loop's step has just charged that level, so the budget and `reached` already hold it.
+   */
+  protected under<T>(parseOperand: () => T): T {
+    this.level += 1;
+    try {
+      return parseOperand();
+    } finally {
+      this.level -= 1;
+    }
+  }
+
+  /**
+   * Starts measuring the part read from here; returns the enclosing measurement for `measured` to
+   * fold back in.
+   */
+  protected measure(): number {
+    const enclosing = this.reached;
+    this.reached = this.level;
+    return enclosing;
+  }
+
+  /**
+   * Ends the measurement `measure` started at this level: how many levels under it the part
+   * reached, with `enclosing` folded back in.
+   */
+  protected measured(enclosing: number): number {
+    const below = this.reached - this.level;
+    if (enclosing > this.reached) this.reached = enclosing;
+    return below;
+  }
+
+  /**
+   * Accounts for a node the caller builds `below` levels under the current one without recursing.
+   */
+  protected charge(below: number, at: Pos): void {
+    if (this.level + below >= MAX_NESTING_DEPTH) this.refuseDepth(at);
+    if (this.level + below > this.reached) this.reached = this.level + below;
+  }
+
+  /**
+   * Starts a chain the caller reads with a loop. A loop costs the parser no stack, but each step's
+   * node sits over every operand read before it, and everything downstream walks those nodes by
+   * recursion.
+   */
+  protected startChain(): Chain {
+    return { enclosing: this.measure(), below: 0 };
+  }
+
+  protected chainStep(chain: Chain): void {
+    chain.below = Math.max(chain.below, this.measured(chain.enclosing)) + 1;
+    this.charge(chain.below, this.peek().pos);
+    chain.enclosing = this.measure();
+  }
+
+  protected endChain(chain: Chain): void {
+    this.measured(chain.enclosing);
   }
 
   protected peek(offset = 0): Token {
