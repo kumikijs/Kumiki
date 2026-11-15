@@ -53,6 +53,7 @@ export {
   renameDef,
   replaceDef,
   type SkippedOpLogLine,
+  UnreadableLockFileError,
   unlockDef,
   viewHash,
   viewHistory,
