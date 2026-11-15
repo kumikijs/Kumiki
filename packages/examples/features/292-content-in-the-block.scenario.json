@@ -1,0 +1,21 @@
+{
+  "steps": [
+    {
+      "label": "each label and the editable show the text their block wrote",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "label from the block",
+          "editable from the block",
+          "label from the block, over text="
+        ],
+        "domExcludes": ["hidden label", "hidden link"]
+      }
+    },
+    {
+      "label": "the link's text is the block's, so a click by it lands on the page it links to",
+      "do": { "clickText": "about, from the block" },
+      "expect": { "noErrors": true, "domIncludes": ["about page"] }
+    }
+  ]
+}

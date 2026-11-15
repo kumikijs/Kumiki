@@ -622,6 +622,8 @@ builtin に、決して描画されない引数が書かれている。値 built
 
 どれも捨てられる引数の位置で報告し、診断の `unrendered` フィールドがどの形かを示す：最初の 3 つの形は `positional`、続いて `text-prop`・`text-shadowed`。ほかに報告するものはない：引数はパースされビルドされるがページには届かないので、`smoke` もそれを通す。位置引数も書かれていれば、テキスト系 builtin の `text=` は普通の prop であり報告しない。
 
+`text=` とブロックの `text` は 1 つの引数なので、後の 2 つの形はどちらの書き方でも報告する：`heading() {text: title}` と `label("B") {text: "A"}` はブロックの項目の位置で E0129 になり、メッセージは上の `` `text=` `` の代わりに ``the block's `text` `` と言う。この診断には `unrendered` フィールドが無い。`kumiki fix` が書き換えるのは `text=` だけだからである。項目を消すか、その値を builtin が読む位置へ移す。builtin がその引数を読む場合は、ブロックの項目がその内容であり（`label() {text: "A"}`、`image(alt="…") {src: url}`、[言語 §1.7.1](./language.md#_1-7-1-構文)）、何も報告しない。
+
 **修正**：builtin が読む位置に内容を書く —— `heading(title)`、`image(src=url, alt=…)`、`button(text="Go")` —— 一緒に表示したい値はつなげる（`text(a + " " + b)`）。位置引数を描画しない builtin には、tile をコンテナの中でその隣に置く：`row(button(text="Go"), Header)`。`kumiki fix` は位置引数の無いテキスト系 builtin の `text=` を取り除いてその値を内容にし、`link` / `label` / `editable` で位置引数に隠れた `text=` を取り除く —— どちらも描画を変えない。捨てられる位置引数には一意の修正が無いので手で直す。
 
 ## E02xx — 型

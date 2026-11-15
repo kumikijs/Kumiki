@@ -659,6 +659,8 @@ On a builtin that renders no positional argument, `<args>` names what it shows i
 
 Each is reported at the dropped argument, and the diagnostic's `unrendered` field names which shape it is: `positional` for the first three forms, then `text-prop` and `text-shadowed`. Nothing else reports these: the argument parses and builds, and never reaches the page, so a `smoke` run is green on it. With a positional argument also written, `text=` on a text builtin is an ordinary prop and is not reported.
 
+`text=` and the block's `text` are one argument, so the last two shapes are reported in whichever spelling is written: `heading() {text: title}` and `label("B") {text: "A"}` are E0129 at the block entry, and the message says ``the block's `text` `` where it says `` `text=` `` above. Such a diagnostic has no `unrendered` field, since `kumiki fix` rewrites `text=` only; remove the entry, or move its value to where the builtin reads it. Where the builtin does read that argument, the block entry is its content (`label() {text: "A"}`, `image(alt="…") {src: url}`, [Language §1.7.1](./language.md#_1-7-1-syntax)), and nothing is reported.
+
 **Fix**: Write the content where the builtin reads it — `heading(title)`, `image(src=url, alt=…)`, `button(text="Go")` — and join values meant to show together (`text(a + " " + b)`). A tile goes beside a builtin that renders none, in a container: `row(button(text="Go"), Header)`. `kumiki fix` removes the `text=` of a text builtin that has no positional argument, making its value the content, and removes a `text=` that a positional argument shadows on `link` / `label` / `editable` — neither changes what renders. A dropped positional argument has no single repair and is left to you.
 
 ## E02xx — Types

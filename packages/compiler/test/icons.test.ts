@@ -25,6 +25,15 @@ describe("icon registry codegen", () => {
     expect(result.usedIcons).toEqual(["check", "info"]);
   });
 
+  it("surfaces a literal name written in the {…} block, which the icon renders", () => {
+    const block = FIXTURE.replace(
+      'icon(name="info") {size: "lg"}',
+      'icon() {name: "info", size: "lg"}',
+    );
+    const result = compile(block, { runtimeSpecifier: "./runtime.js" });
+    expect(result.kind === "ok" && result.usedIcons).toEqual(["check", "info"]);
+  });
+
   it("emits NO App.icons literal when no icons option is supplied (backwards compat)", () => {
     const js = compileOrFail(FIXTURE);
     expect(js).not.toContain("App.icons");
@@ -160,6 +169,21 @@ describe("icon registry strict mode", () => {
       iconNames: ["check"],
     });
     expect(result.kind).toBe("ok");
+  });
+
+  it("strictIcons=true flags a name written in the {…} block as one written as name=", () => {
+    const block = `
+      slot _ : Text = ""
+      tile Bad = icon() {name: "cheque"}
+      tile Root = column(Bad)
+      app A caps=[] routes={"/" -> Root, "/404" -> Root} init=[]
+    `;
+    const result = compile(block, {
+      runtimeSpecifier: "./runtime.js",
+      strictIcons: true,
+      iconNames: ["check"],
+    });
+    expect(result.kind === "fail" && result.errors.map((e) => e.code)).toEqual(["E0704"]);
   });
 
   it("strictIcons=true flags every distinct unknown name independently", () => {

@@ -1,0 +1,24 @@
+# Feature: a value builtin's content can be written in the `{…}` block.
+#
+# The argument a value builtin reads its content from when no positional one is
+# written (`text=` on `label`, `link` and `editable`, `src=` on `image`, `name=`
+# on `icon`) is one argument with the block entry of its name, as a named
+# argument and a block entry are one prop on every builtin. When a call writes
+# both, the block's value is the content, so neither `hidden` text renders. Each
+# step reads or clicks text that only the block wrote.
+
+tile Home
+    = column(
+        label() {text: "label from the block"},
+        editable() {text: "editable from the block"},
+        image(alt="logo") {src: "/logo.png"},
+        icon() {name: "plus"},
+        label(text="hidden label") {text: "label from the block, over text="},
+        link(to="/about", text="hidden link") {text: "about, from the block"})
+
+tile About = column(text("about page"), link(to="/") {text: "home"})
+
+app ContentInTheBlock
+    caps   = []
+    routes = {"/" -> Home, "/about" -> About, "/404" -> Home}
+    init   = []
