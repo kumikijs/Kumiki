@@ -76,11 +76,11 @@ describe("a value written as a child", () => {
     expect(diagnostics(home)).toEqual([E0128(home, "let", "card")]);
   });
 
-  it("is reported in any builtin that is not a value builtin", () => {
+  it("is reported in any builtin that renders its children", () => {
     const row = `row(text("a"), let x = 1 in Card({label: x.show}))`;
     expect(diagnostics(row)).toEqual([E0128(row, "let", "row")]);
-    const button = `column(button(42, text="go"))`;
-    expect(diagnostics(button)).toEqual([E0128(button, "42", "button")]);
+    const card = `column(card(text("a"), 42))`;
+    expect(diagnostics(card)).toEqual([E0128(card, "42", "card")]);
   });
 
   it("does not stop the rest of the check", () => {
@@ -96,10 +96,6 @@ describe("what renders in a child position is not reported", () => {
   ])("%s", (_, home) => {
     expect(codes(home)).toEqual([]);
   });
-});
-
-it("the name of a tile in a child position is not E0128", () => {
-  expect(codes("column(lower)")).not.toContain("E0128");
 });
 
 describe("a value where a value belongs is still a value", () => {
@@ -162,10 +158,9 @@ const armErrors = (home: string) => pointedErrorsOf(armProgram(home));
 const placed = (place: string) =>
   `A value is not a tile: ${place} has to be a tile. Show the value with a tile — \`text(…)\``;
 
-const uncalled = (name: string, builtin: string, { call = true } = {}) =>
+const uncalled = (name: string, builtin: string) =>
   `\`${name}\` is a builtin tile named without its call: ${builtin} renders a positional ` +
-  `argument only when it is a tile, so this one renders nothing.` +
-  (call ? ` Call it — \`${name}()\`` : "");
+  `argument only when it is a tile, so this one renders nothing. Call it — \`${name}()\``;
 
 describe("a value written as an arm or a tile body", () => {
   it.each([
@@ -283,16 +278,76 @@ describe("a name read after the scope that declared it ended", () => {
   });
 });
 
-describe("a tile's name", () => {
-  it("is a value in a container when a slot has it", () => {
+describe("a tile's name written where a tile belongs", () => {
+  const LEAF = `tile leaf = text("leaf")\ntile Leaf = text("Leaf")\n`;
+  const NEEDS = `tile needs in=Int = text($1.show)\ntile Needs in=Int = text($1.show)\n`;
+  // Each error with its position and message; `extra` follows the app, so `home` stays on line 1.
+  const found = (home: string, extra: string) =>
+    checkSource(`${armProgram(home)}${extra}`).map(
+      (e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`,
+    );
+  const at = (home: string, text: string) => `1:${13 + home.indexOf(text)}`;
+  const calledWithNothing = (name: string) => `Tile "${name}" expects 1 argument(s) but got 0`;
+  const E0127_LEAF = `"leaf" is a fn, and a fn is not a value — write the call: leaf()`;
+
+  it.each([
+    ["with no other definition of the name", "column(leaf)", LEAF],
+    ["beside a slot of the same name", "column(leaf)", `${LEAF}slot leaf : Text = "s"\n`],
+    ["under a loop variable of the same name", "column(for leaf in xs column(leaf))", LEAF],
+    [
+      "capitalised, as an arm under a loop variable of the same name",
+      "column(for Item in xs Item)",
+      "",
+    ],
+  ])("is the tile %s", (_, home, extra) => {
+    expect(found(home, extra)).toEqual([]);
+  });
+
+  it("is the tile beside a fn of the same name, which a value position still reads", () => {
+    const home = "column(leaf, text(leaf))";
+    expect(found(home, `${LEAF}fn leaf() -> Text = "f"\n`)).toEqual([
+      `E0127 ${at(home, "leaf))")} ${E0127_LEAF}`,
+    ]);
+  });
+
+  it.each([
+    ["alone", "column(needs, Needs)", NEEDS],
+    ["beside a slot of the same name", "column(needs, Needs)", `${NEEDS}slot needs : Int = 0\n`],
+  ])("is E0213 for a tile that declares `in=`, as its capitalised twin is: %s", (_, home, extra) => {
+    expect(found(home, extra)).toEqual([
+      `E0213 ${at(home, "needs,")} ${calledWithNothing("needs")}`,
+      `E0213 ${at(home, "Needs)")} ${calledWithNothing("Needs")}`,
+    ]);
+  });
+
+  it("is E0213 under a loop variable of the same name, which the child does not read", () => {
+    const home = "column(for needs in xs column(needs))";
+    expect(found(home, NEEDS)).toEqual([
+      `E0213 ${at(home, "needs))")} ${calledWithNothing("needs")}`,
+    ]);
+  });
+
+  it.each([
+    ["button", `column(button(leaf, text="go"))`, `column(button(Leaf, text="go"))`, "`text=`"],
+    [
+      "progress",
+      "column(progress(leaf, value=1))",
+      "column(progress(Leaf, value=1))",
+      "`value=` or `max=`",
+    ],
+  ])("is E0129 under %s, which renders no positional argument, as its capitalised twin is", (name, lower, upper, shown) => {
+    const said =
+      `${name} renders no positional argument, so this one is never rendered. ` +
+      `Write it as ${shown}, or show it beside the ${name}`;
+    expect(found(lower, LEAF)).toEqual([`E0129 ${at(lower, "leaf,")} ${said}`]);
+    expect(found(upper, LEAF)).toEqual([`E0129 ${at(upper, "Leaf,")} ${said}`]);
+  });
+
+  it("is a value when only a slot has the name", () => {
     const src = `${armProgram("column(Big)")}slot Big : Int = 1\n`;
     expect(pointedErrorsOf(src)).toEqual([
       { code: "E0128", message: message("column"), text: "Big)" },
     ]);
-  });
-
-  it("stays the tile when a loop variable shadows it, as codegen renders it", () => {
-    expect(codesOf(armProgram("column(for Item in xs Item)"))).toEqual([]);
   });
 });
 
@@ -304,10 +359,15 @@ describe("a builtin tile named without its call", () => {
     expect(armErrors(home)).toEqual([{ code: "E0128", message: uncalled(name, builtin), text }]);
   });
 
-  it("is not told to call it under a builtin that renders no positional argument", () => {
-    // `button(text="x", divider())` checks clean and renders no divider either.
+  it("is E0129 under a builtin that renders no positional argument, where a call renders nothing either", () => {
     expect(armErrors(`column(button(text="x", divider))`)).toEqual([
-      { code: "E0128", message: uncalled("divider", "button", { call: false }), text: "divider))" },
+      {
+        code: "E0129",
+        message:
+          "button renders no positional argument, so this one is never rendered. " +
+          "Write it as `text=`, or show it beside the button",
+        text: "divider))",
+      },
     ]);
   });
 
