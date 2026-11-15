@@ -13,6 +13,7 @@ import {
   FIX_COUNTER_TYPO_WITH_TEST,
   FIX_FAILING_SINGLE,
   FIX_REGRESSION,
+  FIX_REPAIR_INTRODUCES,
   FIX_TEST_THROWS,
   type ToolResult,
   useWorkdir,
@@ -64,21 +65,7 @@ describe("kumiki_auto_patch", { timeout: 30000 }, () => {
   });
 
   it("serialises a gate refusal as compile-blocked, naming what the patch would have added", async () => {
-    const file = write("repair-introduces.kumiki", [
-      "slot n  : Int  = 0",
-      'slot cn : Text = ""',
-      "reducer bump on=ui.click(Btn) do= n := cnt + 1",
-      'tile Btn  = button(text="go")',
-      "tile Page = column(Btn, text(n))",
-      "test bumps =",
-      "    reducer-test bump",
-      "        given  = {slots: {n: 0}, event: {type: ui.click, target: Btn}}",
-      "        expect = {slots: {n: 9}}",
-      "app A",
-      "    caps   = []",
-      '    routes = {"/" -> Page, "/404" -> Page}',
-      "    init   = []",
-    ]);
+    const file = copy(FIX_REPAIR_INTRODUCES, "repair-introduces.kumiki");
     const original = readFileSync(file, "utf8");
     const res = await callOnce("kumiki_auto_patch", { path: file, testName: "bumps", apply: true });
     type Wire = { code: string; severity: string };
