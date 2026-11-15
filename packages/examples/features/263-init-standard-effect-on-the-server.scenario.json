@@ -1,0 +1,12 @@
+{
+  "steps": [
+    {
+      "label": "in the browser the mount installs log, so the init entry is written and counted",
+      "expect": {
+        "noErrors": true,
+        "state": { "logged": 1 },
+        "domIncludes": ["logged 1"]
+      }
+    }
+  ]
+}

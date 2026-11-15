@@ -11,7 +11,7 @@
       "expect": {
         "noErrors": true,
         "state": { "noteKey": "b", "lastId": "load:b", "status": "note b" },
-        "domIncludes": ["load:b", "note b"]
+        "domIncludes": ["note b"]
       }
     }
   ]

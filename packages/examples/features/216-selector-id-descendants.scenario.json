@@ -1,0 +1,40 @@
+{
+  "steps": [
+    {
+      "label": "nothing has fired yet",
+      "expect": { "noErrors": true, "state": { "log": "" } }
+    },
+    {
+      "label": "Toolbar#save fires for the Save button inside the toolbar",
+      "do": { "clickText": "Save" },
+      "expect": { "noErrors": true, "state": { "log": "save;" }, "domIncludes": ["log=save;"] }
+    },
+    {
+      "label": "Toolbar#discard fires for the button DiscardBtn renders inside it",
+      "do": { "clickText": "Discard" },
+      "expect": { "noErrors": true, "state": { "log": "save;discard;" } }
+    },
+    {
+      "label": "Clear#clear matches the id written as an argument",
+      "do": { "clickText": "Clear" },
+      "expect": { "noErrors": true, "state": { "log": "save;discard;clear;" } }
+    },
+    {
+      "label": "ui.input(Search#query) fires for the input",
+      "do": { "fill": "#query", "value": "kumiki" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "save;discard;clear;search;", "query": "kumiki" }
+      }
+    },
+    {
+      "label": "ui.click(Search#go) fires for the button beside it",
+      "do": { "clickText": "Go" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "save;discard;clear;search;go;" },
+        "domIncludes": ["log=save;discard;clear;search;go;"]
+      }
+    }
+  ]
+}

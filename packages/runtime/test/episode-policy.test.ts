@@ -1,8 +1,8 @@
-import type { AppShape, EffectResult, EpisodeStep, MountedApp } from "@kumikijs/runtime";
-import { createEpisodeLogger, mount } from "@kumikijs/runtime";
+import type { AppShape, EffectResult, EpisodeStep } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { httpError } from "../src/effects-http.ts";
 import { captureConsole } from "./helpers/console.ts";
-import { freshRoot } from "./helpers/dom.ts";
+import { mountLogged } from "./helpers/episode-apps.ts";
 import { tick } from "./helpers/time.ts";
 
 type DebounceApp = {
@@ -58,12 +58,6 @@ function makeDebounceApp(debounceMs: number): DebounceApp {
       return searchCalls;
     },
   } as DebounceApp;
-}
-
-function mountLogged(app: AppShape) {
-  const logger = createEpisodeLogger({ memoryMax: 10 });
-  const { dispose } = mount(app, freshRoot(), { episodeLogger: logger });
-  return { logger, dispose, dispatch: (app as MountedApp)._dispatch };
 }
 
 const reducerNames = (steps: EpisodeStep[]): string[] =>
@@ -149,7 +143,7 @@ describe("policy-deferred effect episode fidelity", () => {
             new Promise<EffectResult>((resolve) => {
               if (++call > 1) resolveNew = resolve;
               signal?.addEventListener("abort", () => {
-                resolve({ kind: "err", value: { status: 0, message: "aborted", body: "" } });
+                resolve({ kind: "err", value: httpError(0, "aborted") });
               });
             }),
         },

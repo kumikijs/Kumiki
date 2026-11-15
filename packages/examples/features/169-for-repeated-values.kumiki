@@ -6,9 +6,10 @@
 # share a value, and each still gets a key unique among its siblings: which
 # loop rendered it, which occurrence of the value this is, and the value.
 #
-# A record shows alike for every record, so a list of records is keyed by
-# position. It re-renders in place too; a list of records that is reordered
-# wants an explicit key, like `{key: t.id}`, to keep each row's element.
+# A record adds no shown value to its key, so a list of records is keyed by
+# position: editing a row in place keeps its element. It re-renders in place
+# too; a list of records that is reordered wants an explicit key, like
+# `{key: t.id}`, to keep each row's element.
 #
 # So a re-render caused by anything, here an unrelated counter, reconciles
 # in place. The `input` beside the lists keeps its element, and with it focus

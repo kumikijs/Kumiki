@@ -1,9 +1,10 @@
-import { nearestName } from "./text-distance.ts";
+import { nearestNames } from "./text-distance.ts";
 
 /** The words a `{dispatch}` step and a replayed episode both use for a reducer name none of `names` matches. */
 export function noReducerNamed(written: string, names: Iterable<string>): string {
-  const near = nearestName(written, names);
-  const hint = near === null ? "" : ` — did you mean "${near}"?`;
+  const near = nearestNames(written, names);
+  // A tie names every reducer in it, so declaration order does not answer what distance does not.
+  const hint = near.length === 0 ? "" : ` — did you mean ${orList(near)}?`;
   return `no reducer named "${written}"${hint}`;
 }
 
@@ -33,4 +34,11 @@ export function dispatchFault(
     );
   }
   return undefined;
+}
+
+/** `"a"`, `"a" or "b"`, `"a", "b" or "c"`. */
+function orList(names: readonly string[]): string {
+  const quoted = names.map((n) => `"${n}"`);
+  const last = quoted.pop() ?? "";
+  return quoted.length === 0 ? last : `${quoted.join(", ")} or ${last}`;
 }

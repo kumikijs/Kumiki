@@ -4,7 +4,7 @@ import { typeToString } from "../src/assignable.ts";
 import type { TypeExpr } from "../src/ast.ts";
 import { BUILTIN_EFFECT_CAPS, BUILTIN_EFFECTS, REDUCER_REF } from "../src/capabilities.ts";
 import { STDLIB_TYPES } from "../src/stdlib-types.ts";
-import { checkSource } from "./helpers/diagnostics.ts";
+import { checkSource, reservedEffectNameMessage } from "./helpers/diagnostics.ts";
 
 const program = (body: string) => `slot n : Int = 0
 slot cfg : {path: Text} = {path: "/x"}
@@ -129,14 +129,16 @@ describe("the shapes the built-ins take are still accepted", () => {
   });
 });
 
-describe("a declared effect of the same name is the one checked", () => {
+describe("a declaration under a standard effect's name", () => {
   const shadowed = `effect navigate cap=nav.push in=Text out=Unit\n`;
+  const reserved = `E0234 ${reservedEffectNameMessage("navigate")}`;
   it("takes the declaration's in=", () => {
-    expect(diagnostics(`emit navigate("/about")\n${shadowed}`)).toEqual([]);
+    expect(diagnostics(`emit navigate("/about")\n${shadowed}`)).toEqual([reserved]);
   });
   it("and reports against it", () => {
     expect(diagnostics(`emit navigate({path: "/about"})\n${shadowed}`)).toEqual([
       "E0202 Expected Text but got {path: Text}",
+      reserved,
     ]);
   });
 });

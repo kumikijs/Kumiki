@@ -187,10 +187,48 @@ describe("loopKeys", () => {
     expect(new Set(_stdlibCore.loopKeys(["x", "x", "2|x", "1|2|x"], "App_0")).size).toBe(4);
   });
 
-  it("keys records by position, since every record shows alike", () => {
-    // `show` is not injective for a record, so only the occurrence tells two apart.
+  it("keys records, Maps and Sets by position, whatever they hold", () => {
     const keys = _stdlibCore.loopKeys([{ id: 2 }, { id: 1 }], "App_0");
-    expect(keys).toEqual(["App_0|1|[object Object]", "App_0|2|[object Object]"]);
+    expect(keys).toEqual(["App_0|1|", "App_0|2|"]);
+    expect(_stdlibCore.loopKeys([{ id: 1 }, { id: 2 }], "App_0")).toEqual(keys);
+    expect(_stdlibCore.loopKeys([{ id: 1, done: true }, { id: 2 }], "App_0")).toEqual(keys);
+  });
+
+  it("keys a List element and a variant by what they show", () => {
+    expect(_stdlibCore.loopKeys([[1, 2], { _tag: "Some", _0: 3 }], "App_0")).toEqual([
+      "App_0|1|[1, 2]",
+      "App_0|1|Some",
+    ]);
+  });
+
+  // A Map with a `_tag` key is a variant here, since a key is built without the element's type.
+  it("keys a Map with a `_tag` key by that key's value", () => {
+    expect(_stdlibCore.loopKeys([{ _tag: "x", b: "y" }], "App_0")).toEqual(["App_0|1|x"]);
+  });
+
+  describe("a record, Map or Set inside a List or Tuple element adds nothing to its key", () => {
+    const keyOf = (x: unknown) => _stdlibCore.loopKeys([x], "L")[0];
+
+    it.each<[string, unknown, unknown]>([
+      ["a Tuple's record edited in place", [1, { title: "a" }], [1, { title: "b" }]],
+      ["a List's records edited in place", [{ title: "a" }], [{ title: "b" }]],
+      ["a Map or a Set beside a value", [1, { a: 1 }, { "[1]": true }], [1, { a: 2 }, {}]],
+      ["a record inside a nested Tuple", [[1, { title: "a" }]], [[1, { title: "b" }]]],
+    ])("%s keeps its key", (_, before, after) => {
+      expect(keyOf(after)).toBe(keyOf(before));
+    });
+
+    it.each<[string, unknown, unknown]>([
+      ["a Tuple's scalar", [1, { title: "a" }], [2, { title: "a" }]],
+      ["a nested Tuple's scalar", [[1, { title: "a" }]], [[2, { title: "a" }]]],
+      ["a Tuple's variant", [{ _tag: "Some", _0: 1 }, { n: 1 }], [{ _tag: "None" }, { n: 1 }]],
+    ])("%s still tells two elements apart", (_, a, b) => {
+      expect(keyOf(a)).not.toBe(keyOf(b));
+    });
+
+    it("writes the element's other members as they show", () => {
+      expect(keyOf([1, { title: "a" }, "s"])).toBe('L|1|[1, , "s"]');
+    });
   });
 });
 

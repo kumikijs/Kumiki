@@ -4,6 +4,7 @@ import { createEpisodeLogger, panicInfo, runScenario, userPanicInfo } from "@kum
 import { describe, expect, it } from "vitest";
 import { freshRoot } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
+import { failureDetail } from "./helpers/scenario.ts";
 
 const EXAMPLE = feature("93-panic-info");
 
@@ -61,10 +62,63 @@ describe("episode-id names the episode the panic happened in", () => {
     expect(report.steps[0]?.domText).toContain(`fallback episode: ${id}`);
   });
 
+  it("gives each render's error-boundary fallback an id whose episode recorded the panic", async () => {
+    let n = 0;
+    const logger = createEpisodeLogger({ memoryMax: 10, idGen: () => `ep_${++n}` });
+    const app: AppShape = await loadApp(EXAMPLE);
+    const report = await runScenario(
+      app,
+      rootAtHome(),
+      { steps: [{ do: BREAK.render }, { do: BREAK.render }] },
+      { episodeLogger: logger },
+    );
+    expect(report.ok, failureDetail(report)).toBe(true);
+    const ids: string[] = [];
+    for (const step of report.steps) {
+      const text = step.domText;
+      const id = /fallback episode: (ep_\d+)/.exec(text)?.[1];
+      const ep = logger.list().find((e) => e.id === id);
+      expect(ep, `no episode ${id} in the log`).toBeDefined();
+      const panics = ep?.steps.filter((s) => s.kind === "panic") ?? [];
+      expect(panics).toHaveLength(1);
+      expect(panics[0]).toMatchObject({
+        category: "tile-render",
+        location: "Guarded",
+        handled: true,
+      });
+      expect(text).toContain(`fallback message: ${panics[0]?.message}`);
+      expect(text).toContain("fallback location: Guarded");
+      expect(ep?.status).toBe("panic");
+      // Handled: the boundary's panic does not reach app.error.
+      expect(step.state.caught).toBe("-");
+      ids.push(id ?? "");
+    }
+    expect(new Set(ids).size).toBe(2);
+  });
+
   it("is None when no episode logger is attached", async () => {
     const report = await breakIt("reducer", null);
     expect(report.steps[0]?.state.caughtEp).toMatchObject({ _tag: "None" });
     expect(report.steps[0]?.domText).toContain("error episode: (none)");
+  });
+});
+
+describe("a boundary's panic step names the location its fallback names", () => {
+  it("is the route target a shell's boundary caught the panic in", async () => {
+    const logger = createEpisodeLogger({ memoryMax: 10 });
+    const app: AppShape = await loadApp(feature("92-outlet-error-boundary"));
+    const report = await runScenario(
+      app,
+      rootAtHome(),
+      { steps: [{ do: { navigate: "/section/report" } }, { do: { clickText: "break" } }] },
+      { episodeLogger: logger },
+    );
+    expect(report.ok, failureDetail(report)).toBe(true);
+    expect(report.steps[1]?.domText).toContain("shell caught: get called on None at Report");
+    const last = logger.list().at(-1);
+    expect(last?.steps.filter((s) => s.kind === "panic")).toMatchObject([
+      { location: "Report", category: "tile-render", handled: true },
+    ]);
   });
 });
 

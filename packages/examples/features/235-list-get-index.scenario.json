@@ -1,0 +1,49 @@
+{
+  "steps": [
+    {
+      "label": "an Int index reads the element at that position",
+      "expect": {
+        "noErrors": true,
+        "state": { "i": 0 },
+        "domIncludes": ["at 0: a", "after it: b"]
+      }
+    },
+    {
+      "label": "an index below zero answers None, and the position after it is the first element",
+      "do": { "click": "#prev" },
+      "expect": {
+        "noErrors": true,
+        "state": { "i": -1 },
+        "domIncludes": ["at -1: none", "after it: a"]
+      }
+    },
+    {
+      "label": "back at the first position",
+      "do": { "click": "#next" },
+      "expect": { "noErrors": true, "state": { "i": 0 }, "domIncludes": ["at 0: a", "after it: b"] }
+    },
+    {
+      "label": "the index moves, and both reads follow it",
+      "do": { "click": "#next" },
+      "expect": { "noErrors": true, "state": { "i": 1 }, "domIncludes": ["at 1: b", "after it: c"] }
+    },
+    {
+      "label": "the position after the last element answers None",
+      "do": { "click": "#next" },
+      "expect": {
+        "noErrors": true,
+        "state": { "i": 2 },
+        "domIncludes": ["at 2: c", "after it: none"]
+      }
+    },
+    {
+      "label": "and so does the index itself, once it is past the end",
+      "do": { "click": "#next" },
+      "expect": {
+        "noErrors": true,
+        "state": { "i": 3 },
+        "domIncludes": ["at 3: none", "after it: none"]
+      }
+    }
+  ]
+}

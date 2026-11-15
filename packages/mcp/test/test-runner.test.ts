@@ -5,6 +5,7 @@ import {
   callOnce,
   FIX_COUNTER_TESTS,
   FIX_FAILING_SINGLE,
+  FIX_TEST_THROWS,
   flag,
   withClient,
 } from "./helpers/client.ts";
@@ -30,6 +31,24 @@ describe("kumiki_test", { timeout: 30000 }, () => {
     const parsed = JSON.parse(res.body) as Report;
     expect(parsed.total).toBe(1);
     expect(parsed.results[0]?.name).toBe("inc-works");
+  });
+
+  it("returns the error of a test whose body threw, beside the file's other results", async () => {
+    const res = await callOnce("kumiki_test", { path: FIX_TEST_THROWS });
+    expect(res.isError).toBe(true);
+    expect(JSON.parse(res.body)).toMatchObject({
+      total: 2,
+      passed: 1,
+      failed: 1,
+      results: [
+        {
+          name: "expect-panics",
+          pass: false,
+          error: "Index 3 is out of range for a List of length 1",
+        },
+        { name: "inc-works", pass: true },
+      ],
+    });
   });
 
   it("flags a failing test run and a filter that matches nothing", async () => {

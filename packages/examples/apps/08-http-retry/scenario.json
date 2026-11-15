@@ -3,11 +3,19 @@
     "loadQuote": [
       {
         "outcome": "err",
-        "value": { "status": 503, "message": "Service Unavailable", "body": "" }
+        "value": {
+          "status": 503,
+          "message": "Service Unavailable",
+          "body": { "_tag": "Some", "_0": "" }
+        }
       },
       {
         "outcome": "err",
-        "value": { "status": 503, "message": "Service Unavailable", "body": "" }
+        "value": {
+          "status": 503,
+          "message": "Service Unavailable",
+          "body": { "_tag": "Some", "_0": "" }
+        }
       },
       {
         "outcome": "ok",

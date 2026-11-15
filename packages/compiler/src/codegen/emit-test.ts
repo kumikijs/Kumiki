@@ -11,6 +11,7 @@ import {
 import { callsBuiltin, RUN_REDUCER } from "../builtin-calls.ts";
 import type { CodegenOptions } from "../codegen.ts";
 import { parseEpisodeLogText } from "../episode-log.ts";
+import { forAllGenerator, noGeneratorMessage } from "../for-all-generator.ts";
 import {
   bareNameAt,
   expectSection,
@@ -23,7 +24,6 @@ import { walkExpr } from "../typecheck/expr-walk.ts";
 import { bindRef, type EvalCtx, fieldKey, type GenCtx, makeEvalCtx } from "./context.ts";
 import { collectEmits } from "./emit-reducer.ts";
 import { tileExprJs } from "./emit-tile.ts";
-import { typeToGenDesc } from "./emit-type.ts";
 import { jsOfExpr, reducerNameArg } from "./expr.ts";
 
 /** The outcome of a mock value `ok(v)` / `err(e)` / `delay(ms, ok(v)|err(e))`. */
@@ -158,7 +158,12 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
     const forAll = t.forAll ?? [];
     const pctx = makeEvalCtx(gen, new Set(forAll.map((f) => f.name)));
     const varsJs = forAll
-      .map((f) => `${fieldKey(f.name)}: ${JSON.stringify(typeToGenDesc(f.type, gen, new Set()))}`)
+      .map((f) => {
+        // E0715 refuses this at check time; a caller that skipped `check` gets the code, not a stand-in.
+        const g = forAllGenerator(f.type, gen);
+        if ("refused" in g) throw new Error(`E0715 ${noGeneratorMessage(f.name, g.refused)}`);
+        return `${fieldKey(f.name)}: ${JSON.stringify(g.desc)}`;
+      })
       .join(", ");
     const binds = forAll
       .map((f) => `const ${bindRef(pctx, f.name)} = _b[${fieldKey(f.name)}];`)
@@ -227,9 +232,7 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
       const _el = ${elJs};
       const _r = App.reducers.find((r) => r.name === ${JSON.stringify(t.target)});
       if (!_r) throw new Error("reducer ${t.target} not found");
-      let _res = null, _panic = null;
-      try { _res = _r.apply(App.live, { $el: _el, $event: _el }); }
-      catch (e) { _panic = (e && e.message) ? e.message : String(e); }
+      ${underTestJs("_res", "_r.apply(App.live, { $el: _el, $event: _el })")}
       return _s.runReducerTest({ name: ${nameJs}, target: ${JSON.stringify(t.target)}, givenSlots: { ...App.live }, slotMetas: App.slots, result: _res, panic: _panic, expect: ${expectJs} });
     },
   },`;
@@ -255,11 +258,24 @@ export function genTest(t: TestDef, gen: GenCtx, opts: CodegenOptions): string {
     kind: "tile-test",
     run: () => {
       _s.resetLive(App.live, App.slots, ${slotsJs});
-      const _actual = App._tilesById[${JSON.stringify(t.target)}](${inJs});
+      const _in = ${inJs};
+      ${underTestJs("_actual", `App._tilesById[${JSON.stringify(t.target)}](_in)`)}
       const _expected = ${expectedJs};
-      return _s.runTileTest({ name: ${nameJs}, actual: _actual, expected: _expected });
+      return _s.runTileTest({ name: ${nameJs}, actual: _actual, panic: _panic, expected: _expected });
     },
   },`;
+}
+
+/**
+ * Declares `<result>` and `_panic`. Only a panic is caught: anything else the call throws points at
+ * the compiler or the runtime, so it is a throw in the test's body and keeps its kind. The test's
+ * own `given` and `expect` are evaluated outside this guard, so a panic in them stays a throw in
+ * the test's body.
+ */
+function underTestJs(result: string, call: string): string {
+  return `let ${result} = null, _panic = null;
+      try { ${result} = ${call}; }
+      catch (e) { if (!_s.isPanic(e)) throw e; _panic = e.message || "KumikiPanic"; }`;
 }
 
 function effectListJs(e: Expr, ctx: EvalCtx): string {

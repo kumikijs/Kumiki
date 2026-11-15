@@ -3,10 +3,21 @@
     "loadQuote": [
       {
         "outcome": "err",
-        "value": { "status": 503, "message": "Service Unavailable", "body": "" }
+        "value": {
+          "status": 503,
+          "message": "Service Unavailable",
+          "body": { "_tag": "Some", "_0": "busy" }
+        }
       },
       { "outcome": "ok", "value": { "text": "Fresh quote", "author": "B" } },
-      { "outcome": "err", "value": { "status": 503, "message": "Service Unavailable", "body": "" } }
+      {
+        "outcome": "err",
+        "value": {
+          "status": 503,
+          "message": "Service Unavailable",
+          "body": { "_tag": "Some", "_0": "busy" }
+        }
+      }
     ]
   },
   "steps": [

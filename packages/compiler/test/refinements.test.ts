@@ -1,7 +1,12 @@
 import { check, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import type { Refinement, SlotDef } from "../src/ast.ts";
-import { REFINEMENT_PREDS, refinementProblem, refinementToJs } from "../src/refinements.ts";
+import {
+  REFINEMENT_PREDS,
+  refinementHolds,
+  refinementProblem,
+  refinementToJs,
+} from "../src/refinements.ts";
 import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 const NO_POS = { line: 0, col: 0 };
@@ -86,6 +91,15 @@ describe("what each predicate accepts and refuses", () => {
     it(`${label} refuses what it should`, () => {
       const p = predicate(pred, args);
       expect(refused.filter((v) => p(v))).toEqual([]);
+    });
+    // The generator filters a `one-of` with the compile-time answer, so it must be the runtime's.
+    it(`${label} answers a literal at compile time as its check does`, () => {
+      const p = predicate(pred, args);
+      const literals = [...accepted, ...refused].filter(
+        (v): v is number | string => typeof v === "number" || typeof v === "string",
+      );
+      const r = refinement(pred, args);
+      expect(literals.filter((v) => refinementHolds(r, v) !== p(v))).toEqual([]);
     });
   }
 
@@ -335,8 +349,7 @@ describe("a predicate over a base type it cannot test is reported", () => {
 
   it("leaves an undefined type application to E0117", () => {
     const codes = checkSource(`slot x : Foo(Int) where nonempty = 1\n${TAIL}`).map((e) => e.code);
-    expect(codes).toContain("E0117");
-    expect(codes).not.toContain("E0804");
+    expect(codes).toEqual(["E0117"]);
   });
 
   it("names what the predicate tests and the base it was written over", () => {

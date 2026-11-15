@@ -1,12 +1,17 @@
 import { isOpaque, recordFieldType, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, KeyKind, Pos, TypeExpr } from "../ast.ts";
-import { FIELD_ACCESS_SHORTCUTS, FRAGMENT_ARGUMENTS, METHOD_MIN_ARGS } from "../codegen.ts";
+import { FIELD_ACCESS_SHORTCUTS, METHOD_MIN_ARGS } from "../codegen.ts";
 import { keyRepresentation } from "../key-representation.ts";
 import {
+  type FragmentArgument,
+  type FragmentPositional,
+  type FragmentPositionals,
+  fragmentArgument,
   hasMember,
   isReceiver,
   type Receiver,
   receiversOf,
+  TYPE_ARGUMENT_OF,
   UNIVERSAL_MEMBERS,
 } from "../stdlib-members.ts";
 import { STDLIB_TYPES } from "../stdlib-types.ts";
@@ -108,63 +113,78 @@ export function keyKindOfReader(
 
 export function fragmentBindings(
   recv: TypeExpr | null,
-  method: string,
-  argIndex: number,
+  call: Expr & { kind: "MethodCall" },
   sym: SymbolTable,
+  ctx: Ctx,
 ): [TypeExpr | null, TypeExpr | null] {
-  const none: [null, null] = [null, null];
-  const t = unaliasType(recv, sym);
-  if (t?.kind !== "TypeApp") return none;
-  const [a, b] = t.args;
-  switch (t.name) {
-    case "List": {
-      if (!a) return none;
-      if (method === "fold") return argIndex === 1 ? [null, a] : none;
-      if (argIndex !== 0 || !ELEMENT_FRAGMENTS.has(method)) return none;
-      return pairOrElement(a, sym);
-    }
-    case "Option":
-      if (argIndex !== 0 || !a) return none;
-      if (method === "flat-map") return [a, null];
-      return method === "map" || method === "filter" ? pairOrElement(a, sym) : none;
-    case "Result":
-      if (argIndex !== 0) return none;
-      if (method === "map") return a ? pairOrElement(a, sym) : none;
-      return method === "map-err" ? [b ?? null, null] : none;
-    case "Map":
-      if (method === "update") return argIndex === 1 ? [b ?? null, null] : none;
-      if ((method !== "filter" && method !== "map") || argIndex !== 0) return none;
-      return [keyRepresentation(a ?? null, sym) === null ? null : (a ?? null), b ?? null];
-    default:
-      return none;
+  const found = fragmentRow(recv, call.method, sym);
+  if (found === null) return [null, null];
+  const { row, app } = found;
+  if (row.length === 2) {
+    return [
+      positionalType(row[0], app, call, sym, ctx),
+      positionalType(row[1], app, call, sym, ctx),
+    ];
   }
+  const only = positionalType(row[0], app, call, sym, ctx);
+  return found.fragment.second === "pair-value" ? pairOrElement(only, sym) : [only, null];
 }
 
-const ELEMENT_FRAGMENTS: ReadonlySet<string> = new Set(
-  [...FRAGMENT_ARGUMENTS].filter(([, f]) => f.second === "pair-value").map(([m]) => m),
-);
-
-export function fragmentShape(
+function fragmentRow(
   recv: TypeExpr | null,
   method: string,
   sym: SymbolTable,
+): {
+  fragment: FragmentArgument;
+  app: TypeExpr & { kind: "TypeApp" };
+  row: FragmentPositionals;
+} | null {
+  const fragment = fragmentArgument(method);
+  const app = unaliasType(recv, sym);
+  if (fragment === undefined || app?.kind !== "TypeApp") return null;
+  const rows: Readonly<Record<string, FragmentPositionals | undefined>> = fragment.on;
+  const row = Object.hasOwn(rows, app.name) ? rows[app.name] : undefined;
+  return row === undefined ? null : { fragment, app, row };
+}
+
+/**
+ * A key is typed only when it reads back as a value of `K`: a type parameter or
+ * a `Bytes` key is handed over as the string it is stored under. `{}` as a
+ * fold's init infers to nothing, being the empty Map and the empty Set alike.
+ */
+function positionalType(
+  p: FragmentPositional,
+  app: TypeExpr & { kind: "TypeApp" },
+  call: Expr & { kind: "MethodCall" },
+  sym: SymbolTable,
+  ctx: Ctx,
+): TypeExpr | null {
+  switch (p) {
+    case "Acc": {
+      const init = call.args[0];
+      return init === undefined ? null : inferType(init, sym, ctx);
+    }
+    case "K": {
+      const key = app.args[TYPE_ARGUMENT_OF.K] ?? null;
+      return keyRepresentation(key, sym) === null ? null : key;
+    }
+    default:
+      return app.args[TYPE_ARGUMENT_OF[p]] ?? null;
+  }
+}
+
+export function fragmentShape(
+  recv: TypeExpr | null,
+  call: Expr & { kind: "MethodCall" },
+  sym: SymbolTable,
+  ctx: Ctx,
 ): FragmentShape | null {
   if (isOpaque(recv, sym)) return "undecided";
-  const t = unaliasType(recv, sym);
-  if (t?.kind !== "TypeApp" || !ELEMENT_FRAGMENTS.has(method)) return null;
-  const [a] = t.args;
-  switch (t.name) {
-    case "List":
-      return elementShape(a ?? null, sym).shape;
-    case "Option":
-      return method === "map" || method === "filter" ? elementShape(a ?? null, sym).shape : null;
-    case "Result":
-      return method === "map" ? elementShape(a ?? null, sym).shape : null;
-    case "Map":
-      return method === "filter" || method === "map" ? "key-value" : null;
-    default:
-      return null;
-  }
+  const found = fragmentRow(recv, call.method, sym);
+  if (found === null || found.fragment.second !== "pair-value") return null;
+  const { row } = found;
+  if (row.length === 2) return "key-value";
+  return elementShape(positionalType(row[0], found.app, call, sym, ctx), sym).shape;
 }
 
 function elementShape(
@@ -182,7 +202,10 @@ function elementShape(
 }
 
 /** `$1` / `$2` for a fragment handed `elem`, typed the way {@link elementShape} binds them. */
-function pairOrElement(elem: TypeExpr, sym: SymbolTable): [TypeExpr | null, TypeExpr | null] {
+function pairOrElement(
+  elem: TypeExpr | null,
+  sym: SymbolTable,
+): [TypeExpr | null, TypeExpr | null] {
   const el = elementShape(elem, sym);
   if (el.shape === "pair") return el.halves;
   return el.shape === "value" ? [elem, null] : [null, null];

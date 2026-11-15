@@ -7,6 +7,7 @@ import type {
 } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { httpError, httpFetch } from "../src/effects-http.ts";
 import { freshRoot } from "./helpers/dom.ts";
 import { tick } from "./helpers/time.ts";
 
@@ -17,9 +18,11 @@ async function until(done: () => boolean, limitMs = 2000): Promise<void> {
   await tick(10);
 }
 
+/** `load` answers with `responses` in turn, or with what `request` returns when one is given. */
 function makeApp(args: {
   retry?: AppShape["effects"][string]["retry"];
-  responses: EffectResult[];
+  responses?: EffectResult[];
+  request?: () => Promise<EffectResult>;
 }): {
   app: AppShape;
   attempts: number;
@@ -29,7 +32,7 @@ function makeApp(args: {
   let attempts = 0;
   const lastErr: { value: unknown } | null = { value: null };
   const lastOk: { value: unknown } | null = { value: null };
-  const responses = [...args.responses];
+  const responses = [...(args.responses ?? [])];
   const app: AppShape = {
     slots: { count: { value: 0 } },
     caps: ["http.get"],
@@ -40,6 +43,7 @@ function makeApp(args: {
         ...(args.retry ? { retry: args.retry } : {}),
         invoke: async () => {
           attempts++;
+          if (args.request) return args.request();
           return responses.shift() ?? { kind: "err", value: { status: 0, message: "exhausted" } };
         },
       },
@@ -135,6 +139,39 @@ describe("EffectSpec.retry", () => {
     }
   });
 
+  // Nothing was sent, so another attempt would fail the same way.
+  it.each<[string, Record<string, unknown>]>([
+    ["a decode that is no decoder", { decode: "TEXT" }],
+    [
+      "a body that cannot be sent",
+      {
+        body: {
+          _tag: "Multipart",
+          _0: { doc: { _tag: "FileV", _0: { name: "a.txt", _file: {} } } },
+        },
+      },
+    ],
+  ])("makes one attempt for %s, which fails before any request", async (_, request) => {
+    const fetch = vi.fn(async () => new Response("ok"));
+    vi.stubGlobal("fetch", fetch);
+    const state = makeApp({
+      retry: { kind: "exponential", n: 5, ms: 1, factor: 2 },
+      request: () => httpFetch("POST", { url: "/r", ...request }),
+    });
+    const root = freshRoot();
+    try {
+      const { dispose } = mount(state.app, root);
+      await tick(30);
+      expect(state.attempts).toBe(1);
+      expect(fetch).not.toHaveBeenCalled();
+      expect((state.lastErr?.value as { status: number }).status).toBe(0);
+      dispose();
+    } finally {
+      root.remove();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("makes only one attempt when retry is undefined", async () => {
     const state = makeApp({
       responses: [{ kind: "err", value: { status: 500, message: "x" } }],
@@ -211,7 +248,7 @@ function backoffApp(opts: BackoffOptions) {
         ...(opts.errText ? { errText: opts.errText } : {}),
         invoke: async (input) => {
           attempts.push({ at: Date.now(), input });
-          return { kind: "err", value: opts.fail ?? { status: 503, message: "busy", body: "" } };
+          return { kind: "err", value: opts.fail ?? httpError(503, "busy") };
         },
       },
       cancel: {
@@ -237,7 +274,7 @@ function backoffApp(opts: BackoffOptions) {
   return { attempts, errs, dispatch, dispose };
 }
 
-const ABORTED_HTTP = { status: 0, message: "aborted", body: "" };
+const ABORTED_HTTP = httpError(0, "aborted");
 
 describe("a request waiting between retry attempts", () => {
   let disposeApp: (() => void) | undefined;

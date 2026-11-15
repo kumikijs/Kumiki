@@ -1,6 +1,7 @@
 import { assertNever, type Expr, type Pos, type TestDef, type TileExpr } from "../ast.ts";
 import { RUN_REDUCER } from "../builtin-calls.ts";
 import { BUILTIN_TILES } from "../builtins.ts";
+import { forAllGenerator, noGeneratorMessage } from "../for-all-generator.ts";
 import {
   bareNameAt,
   eventParts,
@@ -31,9 +32,10 @@ import {
 import { effectOutcomeType } from "./effect.ts";
 import { checkExpr } from "./expr.ts";
 import { walkExpr } from "./expr-walk.ts";
+import { nestedScopes } from "./nested-scopes.ts";
 import { checkRouteSeed, isTestSlot } from "./slot.ts";
 import { checkTileExpr } from "./tile.ts";
-import { resolveType } from "./types.ts";
+import { reachesBrokenDefinition, resolveType } from "./types.ts";
 
 function checkWildcardsInKeys(expect: Expr, errors: KumikiError[]): void {
   const reported = new Set<Expr>();
@@ -96,7 +98,23 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
     return;
   }
   if (t.testKind === "property-test") {
-    for (const f of t.forAll ?? []) resolveType(f.type, sym, errors);
+    for (const f of t.forAll ?? []) {
+      const before = errors.length;
+      resolveType(f.type, sym, errors);
+      // An error in the type, or in a definition it reaches, is reported by its own code alone:
+      // a name that resolves to nothing (E0117), an arity (E0210), a refinement (E0803, E0804),
+      // an alias that resolves to itself (E0009).
+      if (errors.length > before || reachesBrokenDefinition(f.type, sym)) continue;
+      const g = forAllGenerator(f.type, sym);
+      if ("refused" in g) {
+        errors.push({
+          code: "E0715",
+          kind: "for-all-no-generator",
+          message: noGeneratorMessage(f.name, g.refused),
+          pos: f.pos,
+        });
+      }
+    }
     const checkRunReducer = (args: Expr[], pos: Pos): void => {
       if (args.length !== 1) {
         errors.push({
@@ -183,12 +201,22 @@ export function checkTest(t: TestDef, sym: SymbolTable, errors: KumikiError[]): 
     });
   }
   checkTileTestInput(t, sym, errors);
-  checkTileExpr(t.expect as TileExpr, sym, errors, {
-    kind: "tile",
-    localBinds: new Set(),
-    localTypes: new Map(),
-    routeBind: "no-payload",
-  });
+  checkTileExpr(
+    t.expect as TileExpr,
+    sym,
+    errors,
+    {
+      kind: "tile",
+      localBinds: new Set(),
+      localTypes: new Map(),
+      localBinders: new Map(),
+      routeBind: "no-payload",
+      endedScopes: new Map(),
+      nestedScopes: nestedScopes(t.expect),
+      expectedTree: true,
+    },
+    { kind: "expect" },
+  );
 }
 
 function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[]): void {
@@ -203,7 +231,11 @@ function checkTileTestInput(t: TestDef, sym: SymbolTable, errors: KumikiError[])
         kind: "test",
         localBinds: new Set(),
         localTypes: new Map(),
+        localBinders: new Map(),
         routeBind: "no-payload",
+        endedScopes: new Map(),
+        // No hint from this table would be read: `checkAgainst` reports no undefined name.
+        nestedScopes: new Map(),
         wildcardsReportedElsewhere: true,
       });
     }
@@ -235,7 +267,11 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     kind: "test",
     localBinds: new Set(),
     localTypes: new Map(),
+    localBinders: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
+    nestedScopes: nestedScopes(t.given, t.invariant, t.expect, t.mocks),
+    rootsShareNoExpression: true,
   };
   for (const f of t.forAll ?? []) bindLocal(base, f.name, f.type);
   const owned: Ctx = { ...base, wildcardsReportedElsewhere: true };
@@ -291,6 +327,8 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
     }
   }
   if (t.testKind === "episode-test") {
+    // Checked in the order written, so a scope the `mocks` end is ended for the `expect`.
+    checkTestMockValues(t.mocks, sym, errors, base, true);
     for (const f of sectionsOf(t, "episode-test", "expect", errors)) {
       switch (f.section) {
         case "slots-equal":
@@ -307,7 +345,6 @@ function checkTestNames(t: TestDef, sym: SymbolTable, errors: KumikiError[]): vo
           assertNever(f.section);
       }
     }
-    checkTestMockValues(t.mocks, sym, errors, base, true);
   }
   // A tile-test's `expect` is a tile expression, checked by `checkTileExpr`.
 }
@@ -362,19 +399,19 @@ function requireRecord(
 
 function checkTestSlotMap(rec: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   for (const f of recordFieldsOf(rec)) {
-    if (!isTestSlot(f.name, sym)) {
+    const known = isTestSlot(f.name, sym);
+    if (!known) {
       errors.push({
         code: "E0103",
         kind: "undef-slot",
         message: `Reference to undefined slot "${f.name}"`,
         pos: f.pos,
       });
-    } else if (!sym.slots.has(f.name)) {
-      checkRouteSeed(f.value, errors);
     }
     checkExpr(f.value, sym, errors, ctx);
     const slot = sym.slots.get(f.name);
     if (slot) checkAgainst(f.value, slot.type, sym, errors, ctx);
+    else if (known) checkRouteSeed(f.value, sym, errors, ctx);
   }
 }
 
@@ -389,6 +426,13 @@ function checkTestEvent(event: Expr, sym: SymbolTable, errors: KumikiError[], ct
     });
   }
   for (const f of payload) checkExpr(f.value, sym, errors, ctx);
+  // `type` and `target` are a trigger and a tile's name, not expressions, but a `null` there is
+  // still the expression E0235 reports.
+  for (const f of recordFieldsOf(event)) {
+    if ((f.name === "type" || f.name === "target") && f.value.kind === "Null") {
+      checkExpr(f.value, sym, errors, ctx);
+    }
+  }
 }
 
 /** `[persist(x), other]` — the effects a reducer-test expects to have been emitted. */
@@ -404,7 +448,10 @@ function checkTestEffects(list: Expr, sym: SymbolTable, errors: KumikiError[], c
   }
   for (const item of list.items) {
     const name = item.kind === "Call" ? item.callee : item.kind === "Ref" ? item.name : undefined;
-    if (name === undefined) continue;
+    if (name === undefined) {
+      if (item.kind === "Null") checkExpr(item, sym, errors, ctx);
+      continue;
+    }
     const input = effectInput(name, sym);
     if (!input) {
       errors.push({

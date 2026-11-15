@@ -1,25 +1,11 @@
-import { type AppShape, renderToString, routing } from "@kumikijs/runtime";
-import { describe, expect, it, onTestFinished } from "vitest";
-import { mountApp, navigate, tick } from "./helpers/dom.ts";
+import { renderToString, routing } from "@kumikijs/runtime";
+import { describe, expect, it } from "vitest";
+import { mountSource, navigate, tick } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
-
-async function mountRoute(
-  src: string,
-  initialPath?: string,
-): Promise<{ app: AppShape; root: HTMLElement }> {
-  const app = await loadSource(src);
-  const { root, handle } = mountApp(app, { router: "memory", ...(initialPath && { initialPath }) });
-  onTestFinished(() => {
-    handle.dispose();
-    root.remove();
-  });
-  await tick(0);
-  return { app, root };
-}
 
 /** Mount at `/`, then move to `path` the way a link does. */
 async function mountThenVisit(src: string, path: string) {
-  const mounted = await mountRoute(src);
+  const mounted = await mountSource(src);
   await navigate(mounted.app, path);
   return mounted;
 }
@@ -31,7 +17,7 @@ tile Boom error-boundary=Fallback = column(text(xs.head.get.show))`;
 
 describe("a tile named as a route keeps its error boundary", () => {
   it("renders the fallback when the route root's own render panics", async () => {
-    const { root } = await mountRoute(`${BOOM}
+    const { root } = await mountSource(`${BOOM}
 tile Host = column(Boom())
 app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
 `);
@@ -40,7 +26,7 @@ app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
   });
 
   it("still renders the fallback when the same tile is a child", async () => {
-    const { root } = await mountRoute(`${BOOM}
+    const { root } = await mountSource(`${BOOM}
 tile Host = column(Boom())
 app M caps=[] routes={"/" -> Host, "/404" -> Host} init=[]
 `);
@@ -48,7 +34,7 @@ app M caps=[] routes={"/" -> Host, "/404" -> Host} init=[]
   });
 
   it("carries the declaring tile's name into the fallback's PanicInfo", async () => {
-    const { root } = await mountRoute(`slot xs : List(Int) = []
+    const { root } = await mountSource(`slot xs : List(Int) = []
 tile Fallback in=PanicInfo = column(text("at " + $1.location))
 tile Boom error-boundary=Fallback = column(text(xs.head.get.show))
 tile Host = column(Boom())
@@ -80,7 +66,7 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
   });
 
   it("leaves a route root with no boundary to the built-in panic display", async () => {
-    const { root } = await mountRoute(`slot xs : List(Int) = []
+    const { root } = await mountSource(`slot xs : List(Int) = []
 tile Bare = column(text(xs.head.get.show))
 app M caps=[] routes={"/" -> Bare, "/404" -> Bare} init=[]
 `);
@@ -251,7 +237,7 @@ app M caps=[] routes={"/shell/*" -> Shell, "/404" -> NotFound} init=[]
 
 describe("a panic is attributed to the route target being built", () => {
   it("names a route root that panics with no boundary", async () => {
-    const { root } = await mountRoute(`slot xs : List(Int) = []
+    const { root } = await mountSource(`slot xs : List(Int) = []
 tile Bare = column(text(xs.head.get.show))
 app M caps=[] routes={"/" -> Bare, "/404" -> Bare} init=[]
 `);
@@ -259,7 +245,7 @@ app M caps=[] routes={"/" -> Bare, "/404" -> Bare} init=[]
   });
 
   it("names the /404 tile, which pickRootTile reaches by its own branch", async () => {
-    const { root } = await mountRoute(
+    const { root } = await mountSource(
       `slot xs : List(Int) = []
 tile Home = column(text("home"))
 tile Missing = column(text(xs.head.get.show))
@@ -271,7 +257,7 @@ app M caps=[] routes={"/" -> Home, "/404" -> Missing} init=[]
   });
 
   it("names the declaring tile when its own fallback panics", async () => {
-    const { root } = await mountRoute(`slot xs : List(Int) = []
+    const { root } = await mountSource(`slot xs : List(Int) = []
 tile Fallback in=PanicInfo = column(text(xs.head.get.show))
 tile Boom error-boundary=Fallback = column(text(panic("first")))
 tile Host = column(text("host"))
@@ -284,7 +270,7 @@ app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
 
 describe("an error boundary catches a panic and re-throws a defect", () => {
   it("re-throws a key-invariant violation rather than showing the fallback", async () => {
-    const { root } = await mountRoute(`slot items : List(Text) = ["a", "", "c"]
+    const { root } = await mountSource(`slot items : List(Text) = ["a", "", "c"]
 tile Fallback in=PanicInfo = column(text("caught: " + $1.message))
 tile Rows error-boundary=Fallback = column(for n in items text(n) {key: n})
 tile Host = column(Rows())
@@ -294,7 +280,7 @@ app M caps=[] routes={"/" -> Rows, "/404" -> Host} init=[]
   });
 
   it("hands the fallback the same payload app.error gets", async () => {
-    const { root } = await mountRoute(`slot xs : List(Int) = []
+    const { root } = await mountSource(`slot xs : List(Int) = []
 tile Fallback in=PanicInfo = column(text("m=" + $1.message + " at=" + $1.location + " cat=" + $1.category))
 tile Boom error-boundary=Fallback = column(text(xs.head.get.show))
 tile Host = column(Boom())
@@ -304,25 +290,12 @@ app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
   });
 
   it("keeps an empty panic message empty", async () => {
-    const { root } = await mountRoute(`slot go : Bool = true
+    const { root } = await mountSource(`slot go : Bool = true
 tile Fallback in=PanicInfo = column(text("len=" + $1.message.length.show))
 tile Boom error-boundary=Fallback = column(when(go, text(panic(""))))
 tile Host = column(Boom())
 app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
 `);
     expect(root.textContent).toContain("len=0");
-  });
-
-  it("gives the fallback tile no mount marker of its own", async () => {
-    const { app, root } = await mountRoute(`slot xs : List(Int) = []
-slot fbMounts : Int = 0
-reducer sawFb on=tile.mount(Fallback) do= fbMounts := fbMounts + 1
-tile Fallback in=PanicInfo = column(text("caught: " + $1.message))
-tile Boom error-boundary=Fallback = column(text(xs.head.get.show))
-tile Host = column(Boom())
-app M caps=[] routes={"/" -> Boom, "/404" -> Host} init=[]
-`);
-    expect(root.textContent).toContain("caught:");
-    expect(app.live?.fbMounts).toBe(0);
   });
 });

@@ -1,0 +1,40 @@
+# Feature (language.md, errors.md E0231): a primitive and a
+# built-in type constructor mean the same type in every program. This one
+# writes `Int`, `Text`, `List(…)`, `Option(…)` and `Map(…)` as the built-ins —
+# `bag.items.length` is the built-in List's member, `counts` takes a map
+# literal — and its own record over a list takes a name of its own, `Bag(T)`.
+# Declaring it as `type List(T) = {items: …}` instead is E0231, as is
+# `type Int = …` or `type Option = …`.
+#
+# `Email` is a standard-library domain type a program may declare: here it is
+# a record, and every use of the name means that record.
+
+type Email  = {user: Text, host: Text}
+type Bag(T) = {items: List(T), label: Text}
+
+fn address(e: Email) -> Text = e.user + "@" + e.host
+
+slot contact : Email          = {user: "ada", host: "example.com"}
+slot bag     : Bag(Int)       = {items: [3, 1, 2], label: "numbers"}
+slot counts  : Map(Text, Int) = {"seen": 0}
+slot picked  : Option(Int)    = None
+
+reducer doPick on=ui.click(PickBtn)
+    do= picked := Some(bag.items.length)
+        counts["seen"] := counts.get-or("seen", 0) + 1
+
+tile PickBtn = button(text="pick") {id: "pick"}
+
+tile App
+    = column(
+        text("contact: " + address(contact)),
+        text(bag.label + ": " + bag.items.length.show),
+        text("picked: " + picked.get-or(0).show),
+        text("seen: " + counts.get-or("seen", 0).show),
+        PickBtn)
+      {pad: "lg", gap: "md"}
+
+app BuiltinTypeNames
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

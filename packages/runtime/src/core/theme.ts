@@ -1,6 +1,6 @@
 import { getRenderingApp } from "./rendering.ts";
 import { appendStyleNode, findStyleNode, styleHostEl } from "./style-root.ts";
-import type { AppShape, Theme, ThemeValue } from "./types.ts";
+import { type AppShape, own, type Theme, type ThemeValue } from "./types.ts";
 
 let lastAppliedThemeName: string | null = null;
 
@@ -175,9 +175,6 @@ const FLEX_JUSTIFY: Record<string, string> = {
   between: "space-between",
   around: "space-around",
 };
-
-const own = (table: Record<string, string>, key: string): string | undefined =>
-  Object.hasOwn(table, key) ? table[key] : undefined;
 
 export function mapToken(t: string): string {
   return valueAt(currentTheme(), ["spacing", t]) ?? own(SPACING, t) ?? t;

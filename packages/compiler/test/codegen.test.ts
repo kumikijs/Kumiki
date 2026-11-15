@@ -409,7 +409,7 @@ describe("codegen", () => {
     `;
     const js = compileOrFail(src);
     expect(js).toMatch(/const __a0 = _s\.now\(\);/);
-    expect(js).toMatch(/const __k = \(\(\w+\) => String\(\w+\)\)\(__a0\);/);
+    expect(js).toMatch(/const __k = \(\(\w+\) => _s\.entryKey\(\w+\)\)\(__a0\);/);
     expect(js).toContain(
       'const __e = { effect: "search", args: [__a0], key: __k }; _emits.push(__e); return (__e.id = _s.emitId(_effects["search"], __e));',
     );
@@ -487,7 +487,7 @@ describe("expressions outside a reducer body still see the slot table", () => {
   it("lowers a slot reference in latest-per-key to the live map", () => {
     const js = compileOrFail(SRC);
     const keyOf = emittedLine(js, "keyOf:");
-    expect(keyOf).toContain('String(_live["noteKey"])');
+    expect(keyOf).toContain('_s.entryKey(_live["noteKey"])');
   });
 
   it("still binds the key lambda's own $1", () => {
@@ -550,5 +550,20 @@ app A
   it("emits no fallback to the template", () => {
     const js = loweredOf(source);
     expect(js).not.toContain("_s.fmt ?");
+  });
+});
+
+describe("a lower-cased tile written bare as a container's child", () => {
+  it("emits what the call of a capitalised tile emits, the name aside", () => {
+    const lowered = (name: string): string =>
+      compileOrFail(`slot leaf : Text = "hello"
+slot seen : Int = 0
+reducer sawIt on=tile.mount(${name}) do= seen := seen + 1
+tile Oops in=PanicInfo = text("caught: " + $1.message)
+tile ${name} error-boundary=Oops = column(text("body " + leaf))
+tile App = column(${name}, text("seen: " + seen.show))
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`);
+    expect(lowered("leaf")).toBe(lowered("Leaf").replaceAll("Leaf", "leaf"));
   });
 });

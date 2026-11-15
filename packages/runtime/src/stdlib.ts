@@ -1,6 +1,5 @@
 import {
   _setPathHelper,
-  currentEpisodeId,
   emitId,
   entryKey,
   isEntryOf,
@@ -10,10 +9,10 @@ import {
   listPosition,
   newId,
   type PathSegment,
-  panicInfo,
   type RefinementNaming,
   type RefinementRejection,
   readEnv,
+  recordInRenderPass,
   refinementRejectionOf,
   type SlotGate,
   slotAccepts,
@@ -22,6 +21,21 @@ import {
 } from "./core.ts";
 
 export type KeyKind = "number" | "bool" | "value";
+
+// What the type says and the value does not: a record and a Map are both plain objects, a Set
+// is an object of its keys, and a Tuple is an array like a List.
+export type ShowShape = 0 | RecordShape | Descriptor;
+
+type RecordShape = { readonly [field: string]: ShowShape };
+
+type Descriptor =
+  | readonly ["l", ShowShape]
+  | readonly ["t", ...ShowShape[]]
+  | readonly ["m", KeyKind | 0, ShowShape, ShowShape]
+  | readonly ["s", KeyKind | 0, ShowShape];
+
+// A List's, Tuple's, Map's or Set's shape is an array; a record's is an object of its fields.
+const isDescriptor = (s: ShowShape | undefined): s is Descriptor => Array.isArray(s);
 
 /** A stored object key, restored to the kind of value it was written from. */
 function restoreKey(key: string, kind: KeyKind | undefined): unknown {
@@ -122,6 +136,23 @@ function isCalendarDate(y: number, m: number, d: number): boolean {
   const leap = y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0);
   const days = m === 2 ? (leap ? 29 : 28) : m === 4 || m === 6 || m === 9 || m === 11 ? 30 : 31;
   return m >= 1 && m <= 12 && d >= 1 && d <= days;
+}
+
+const INT_TEXT = /^[+-]?[0-9]+$/;
+const FLOAT_TEXT = /^[+-]?[0-9]+([.][0-9]+)?([eE][+-]?[0-9]+)?$/;
+
+/**
+ * `Number` also reads blank text as 0, `0x` / `0o` / `0b`, `.5` and `1.`, so the form decides
+ * which text reads and `Number` only its value.
+ */
+function readNumber(
+  text: unknown,
+  form: RegExp,
+  holds: (n: number) => boolean,
+): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+  if (typeof text !== "string" || !form.test(text)) return _stdlibCore.None;
+  const n = Number(text);
+  return holds(n) ? _stdlibCore.Some(n) : _stdlibCore.None;
 }
 
 export const _stdlibCore = {
@@ -333,22 +364,49 @@ export const _stdlibCore = {
     }
     return (a as number) + (b as number);
   },
+  // A record, Map or Set adds no shown value, at any depth, so among elements that differ only
+  // there the key is positional: a row edited in place keeps its key, and its element.
   loopKeys(xs: readonly unknown[], loop: string): string[] {
     const seen = new Map<string, number>();
     return xs.map((x) => {
-      const shown = _stdlibCore.show(x);
+      const shown = _stdlibCore.show(x, 0, true);
       const n = (seen.get(shown) ?? 0) + 1;
       seen.set(shown, n);
       return `${loop}|${n}|${shown}`;
     });
   },
-  show(v: unknown): string {
+  show(v: unknown, shape?: ShowShape, keyOnly?: boolean): string {
     if (v === null || v === undefined) return "";
-    if (typeof v === "object" && v && "_tag" in v) {
-      const obj = v as { _tag: string };
-      return obj._tag;
+    if (v instanceof Uint8Array) {
+      let bin = "";
+      for (const byte of v) bin += String.fromCharCode(byte);
+      return btoa(bin);
     }
-    return String(v);
+    if (typeof v !== "object") return String(v);
+    // A descriptor's tag, then its slots; what a slot holds depends on the tag.
+    const d = isDescriptor(shape) ? shape : ([0] as const);
+    const tag = d[0];
+    if (!tag && "_tag" in v) return v._tag as string;
+    const at = (x: unknown, s?: ShowShape): string =>
+      typeof x === "string" ? JSON.stringify(x) : _stdlibCore.show(x, s, keyOnly);
+    const list = Array.isArray(v);
+    if (keyOnly && !list && isPlainDataBag(v)) return "";
+    const o = v as Record<string, unknown>;
+    // A Map's or Set's key kind reads its stored keys back: a Set is the Map of its members to
+    // `true`. A Tuple's slots past its tag are all shapes, which its type cannot say by index.
+    // A record's shape is read for its own entries: an inherited `constructor` is no field's.
+    const items = list
+      ? v.map((x, i) => at(x, tag === "l" ? d[1] : tag === "t" ? (d[i + 1] as ShowShape) : 0))
+      : tag === "m" || tag === "s"
+        ? (_stdlibCore.mapEntries(o, d[1] || undefined) as [unknown, unknown][]).map(
+            ([k, x]) => at(k, d[2]) + (tag === "m" ? `: ${at(x, d[3])}` : ""),
+          )
+        : Object.keys(o).map(
+            (k) =>
+              `${k}: ${at(o[k], shape && !isDescriptor(shape) && Object.hasOwn(shape, k) ? shape[k] : 0)}`,
+          );
+    const [open, close] = tag === "t" ? "()" : list || tag === "s" ? "[]" : "{}";
+    return open + items.join(", ") + close;
   },
   fmt(template: unknown, ...args: unknown[]): string {
     return _stdlibCore.show(template).replace(/\{(\d+)\}/g, (placeholder, digits: string) => {
@@ -399,8 +457,10 @@ export const _stdlibCore = {
   },
   boundaryPanic(e: unknown, location: string): Record<string, unknown> {
     if (!isPanic(e)) throw e;
-    const rec = panicInfo(e, "tile-render");
-    return userPanicInfo(rec, rec.location || location, currentEpisodeId());
+    // Recorded at the location the fallback shows, so the step and the fallback agree.
+    const at = e.location || location;
+    const { rec, episodeId } = recordInRenderPass(e, at);
+    return userPanicInfo(rec, at, episodeId);
   },
   optionGetOr(opt: unknown, def: unknown): unknown {
     if (opt && typeof opt === "object" && "_tag" in opt) {
@@ -558,15 +618,13 @@ export const _stdlibCore = {
     }
     return _stdlibCore.None;
   },
-  parseIntOpt(s: unknown): unknown {
-    const n = Number(s);
-    return String(s).trim() !== "" && Number.isFinite(n)
-      ? _stdlibCore.Some(Math.trunc(n))
-      : _stdlibCore.None;
+  // Every text-to-Int / Float reading codegen emits calls these, so no two spellings can read a
+  // text differently. An Int past ±(2^53 - 1) would be another number than the one spelt.
+  parseIntOpt(text: unknown): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+    return readNumber(text, INT_TEXT, Number.isSafeInteger);
   },
-  parseFloatOpt(s: unknown): unknown {
-    const n = Number(s);
-    return String(s).trim() !== "" && Number.isFinite(n) ? _stdlibCore.Some(n) : _stdlibCore.None;
+  parseFloatOpt(text: unknown): { _tag: "Some"; _0: unknown } | { _tag: "None" } {
+    return readNumber(text, FLOAT_TEXT, Number.isFinite);
   },
   fileUrl(file: unknown): string {
     if (!file || typeof file !== "object") return "";
