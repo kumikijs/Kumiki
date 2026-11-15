@@ -4,42 +4,57 @@ import type {
   EffectSpec,
   EmitSpec,
   Episode,
-  EpisodeLogger,
   MountedApp,
   ReducerSpec,
 } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { bareApp } from "./helpers/app.ts";
 import { captureConsole } from "./helpers/console.ts";
+import { defined } from "./helpers/defined.ts";
 import { freshRoot } from "./helpers/dom.ts";
+import { type LoggedMount, mountLogged } from "./helpers/episode-apps.ts";
 import { tick } from "./helpers/time.ts";
 
 // What each reducer of `load` was handed, and every `PanicInfo` `app.error` was handed.
-type Seen = { ok: unknown[]; okAgain: unknown[]; err: unknown[]; appErrors: unknown[] };
+type Seen = {
+  ok: unknown[];
+  okAgain: unknown[];
+  err: unknown[];
+  status: unknown[];
+  appErrors: unknown[];
+};
 
 // `save`'s key is read by the dispatcher when it takes the emit, after the reducer body that
 // emitted it has returned, so a reducer that emits it throws past its body.
 const SAVE: EmitSpec = { effect: "save", args: ["note"] };
 
 const NO_KEY = "no key for this note";
+const GAVE_UP = "loaded gave up";
 
-function deliveryApp(opts: {
+type DeliveryOptions = {
   answer: () => Promise<EffectResult>;
   /** The outcome whose reducer also emits `save`. */
   throwingOn?: "ok" | "err";
+  /** `loaded` panics in its body, after it has noted what it was handed. */
+  panicking?: boolean;
   /** A second `.ok` reducer, after the first. */
   secondOk?: boolean;
+  /** Whether there is an `app.error` reducer, and whether it emits `save` as well. */
+  appError?: "none" | "records" | "emits-save";
+  /** An `app.http` 5xx reducer, which emits `save`. */
+  on5xx?: boolean;
+  /** The page holds `Panel` once `note` has changed, and `tile.mount("Panel")` emits `save`. */
+  panel?: boolean;
   errText?: EffectSpec["errText"];
   fromInit?: boolean;
-}): { app: AppShape; seen: Seen } {
-  const seen: Seen = { ok: [], okAgain: [], err: [], appErrors: [] };
-  const recorder =
-    (into: unknown[], outcome: "ok" | "err"): ReducerSpec["apply"] =>
-    (_live, payload) => {
-      into.push(payload.$1);
-      return { slots: {}, emits: opts.throwingOn === outcome ? [SAVE] : [] };
-    };
+};
+
+// `loaded` writes what it was handed into `note`, which the page shows.
+function deliveryApp(opts: DeliveryOptions): { app: AppShape; seen: Seen } {
+  const seen: Seen = { ok: [], okAgain: [], err: [], status: [], appErrors: [] };
+  const emitsOn = (outcome: "ok" | "err"): EmitSpec[] =>
+    opts.throwingOn === outcome ? [SAVE] : [];
   const reducers: ReducerSpec[] = [
     {
       name: "start",
@@ -49,22 +64,31 @@ function deliveryApp(opts: {
     {
       name: "loaded",
       event: { kind: "effect", effect: "load", outcome: "ok" },
-      apply: recorder(seen.ok, "ok"),
+      apply: (_live, payload) => {
+        seen.ok.push(payload.$1);
+        if (opts.panicking) throw new Error(GAVE_UP);
+        return { slots: { note: payload.$1 }, emits: emitsOn("ok") };
+      },
     },
     {
       name: "failed",
       event: { kind: "effect", effect: "load", outcome: "err" },
-      apply: recorder(seen.err, "err"),
+      apply: (_live, payload) => {
+        seen.err.push(payload.$1);
+        return { slots: {}, emits: emitsOn("err") };
+      },
     },
-    {
+  ];
+  if (opts.appError !== "none") {
+    reducers.push({
       name: "onError",
       event: { kind: "lifecycle", name: "app.error" },
       apply: (_live, payload) => {
         seen.appErrors.push(payload.$event);
-        return { slots: {}, emits: [] };
+        return { slots: {}, emits: opts.appError === "emits-save" ? [SAVE] : [] };
       },
-    },
-  ];
+    });
+  }
   if (opts.secondOk) {
     reducers.push({
       name: "loadedAgain",
@@ -75,7 +99,26 @@ function deliveryApp(opts: {
       },
     });
   }
-  const app = bareApp({
+  if (opts.on5xx) {
+    reducers.push({
+      name: "serverDown",
+      event: { kind: "lifecycle", name: "server.down" },
+      apply: (_live, payload) => {
+        seen.status.push(payload.$1);
+        return { slots: {}, emits: [SAVE] };
+      },
+    });
+  }
+  if (opts.panel) {
+    reducers.push({
+      name: "panelShown",
+      event: { kind: "lifecycle", name: 'tile.mount("Panel")' },
+      apply: () => ({ slots: {}, emits: [SAVE] }),
+    });
+  }
+  const note = (): string => `note=${String((app as MountedApp).live?.note)}`;
+  const app: AppShape = bareApp({
+    slots: { note: { value: "stale" } },
     caps: ["storage.read"],
     effects: {
       load: {
@@ -98,7 +141,11 @@ function deliveryApp(opts: {
     },
     init: opts.fromInit ? [{ effect: "load", args: ["note"] }] : [],
     reducers,
-    root: () => ({ kind: "column", children: [] }),
+    ...(opts.on5xx ? { http: { on5xx: "serverDown" } } : {}),
+    root: () =>
+      opts.panel && (app as MountedApp).live?.note !== "stale"
+        ? { kind: "column", props: { _tile: "Panel" }, children: [{ kind: "text", text: note() }] }
+        : { kind: "text", text: note() },
   });
   return { app, seen };
 }
@@ -114,9 +161,27 @@ function errText(v: unknown): string {
 
 const answerOk = async (): Promise<EffectResult> => ({ kind: "ok", value: "hello" });
 const answerErr = async (): Promise<EffectResult> => ({ kind: "err", value: "disk gone" });
+const answer5xx = async (): Promise<EffectResult> => ({
+  kind: "err",
+  value: { status: 503, message: "down" },
+});
 const throwing = async (): Promise<EffectResult> => {
   throw new Error("disk gone");
 };
+
+/** Mount `app` with an episode logger, torn down when the test finishes. */
+function mounted(app: AppShape): LoggedMount {
+  const m = mountLogged(app);
+  onTestFinished(m.dispose);
+  return m;
+}
+
+/** Mount `app` and dispatch `start`, which launches `load`. */
+function started(app: AppShape): LoggedMount {
+  const m = mounted(app);
+  m.dispatch("start", {});
+  return m;
+}
 
 async function settled(seen: Seen): Promise<void> {
   const deadline = Date.now() + 2000;
@@ -125,42 +190,50 @@ async function settled(seen: Seen): Promise<void> {
   await tick(30);
 }
 
+// The process the tests run in, which the runtime's own types leave out: the runtime targets a
+// browser.
+type HostProcess = {
+  on(event: "unhandledRejection", listener: (reason: unknown) => void): void;
+  off(event: "unhandledRejection", listener: (reason: unknown) => void): void;
+};
+
+/** Every promise rejection that nothing handles while the test runs. */
+function unhandledRejections(): unknown[] {
+  const host = defined((globalThis as { process?: HostProcess }).process, "the test's process");
+  const seen: unknown[] = [];
+  const note = (reason: unknown): void => {
+    seen.push(reason);
+  };
+  host.on("unhandledRejection", note);
+  onTestFinished(() => {
+    host.off("unhandledRejection", note);
+  });
+  return seen;
+}
+
 describe("a request whose result delivery throws past a reducer body", () => {
-  let root: HTMLElement;
   let errors: string[];
   beforeEach(() => {
-    root = freshRoot();
     errors = captureConsole("error");
   });
   afterEach(() => {
     vi.restoreAllMocks();
-    root.remove();
   });
 
-  const start = (app: AppShape, logger?: EpisodeLogger): void => {
-    mount(app, root, logger ? { episodeLogger: logger } : {});
-    (app as MountedApp)._dispatch("start", {});
-  };
-
-  it("delivers its .ok once, and no .err after it", async () => {
-    const { app, seen } = deliveryApp({ answer: answerOk, throwingOn: "ok" });
-    start(app);
+  it.each<[string, DeliveryOptions["answer"], "ok" | "err", "ok" | "err", string]>([
+    [".ok", answerOk, "ok", "err", "hello"],
+    [".err", answerErr, "err", "ok", "disk gone"],
+  ])("delivers its %s once, and not the other", async (_, answer, got, other, value) => {
+    const { app, seen } = deliveryApp({ answer, throwingOn: got });
+    started(app);
     await settled(seen);
-    expect(seen.ok).toEqual(["hello"]);
-    expect(seen.err).toEqual([]);
-  });
-
-  it("delivers its .err once", async () => {
-    const { app, seen } = deliveryApp({ answer: answerErr, throwingOn: "err" });
-    start(app);
-    await settled(seen);
-    expect(seen.err).toEqual(["disk gone"]);
-    expect(seen.ok).toEqual([]);
+    expect(seen[got]).toEqual([value]);
+    expect(seen[other]).toEqual([]);
   });
 
   it("reports the throw as an error of the app, under category effect", async () => {
     const { app, seen } = deliveryApp({ answer: answerOk, throwingOn: "ok" });
-    start(app);
+    started(app);
     await settled(seen);
     expect(seen.appErrors).toEqual([
       expect.objectContaining({
@@ -176,8 +249,7 @@ describe("a request whose result delivery throws past a reducer body", () => {
 
   it("records it on the result's episode, beside that request's one effect-end", async () => {
     const { app, seen } = deliveryApp({ answer: answerOk, throwingOn: "ok" });
-    const logger = createEpisodeLogger();
-    start(app, logger);
+    const { logger } = started(app);
     await settled(seen);
     const ep = episodeWithEnd(logger.list(), "load");
     expect(ep.steps.filter((s) => s.kind === "effect-end" && s.name === "load")).toHaveLength(1);
@@ -194,8 +266,7 @@ describe("a request whose result delivery throws past a reducer body", () => {
 
   it("records it on the episode its result opens, for a request app.init launched", async () => {
     const { app, seen } = deliveryApp({ answer: answerOk, throwingOn: "ok", fromInit: true });
-    const logger = createEpisodeLogger();
-    mount(app, root, { episodeLogger: logger });
+    const { logger } = mounted(app);
     await settled(seen);
     const ep = logger.list().find((e) => e.trigger.kind === "effect.ok");
     expect(ep?.steps.find((s) => s.kind === "panic")).toMatchObject({
@@ -209,58 +280,174 @@ describe("a request whose result delivery throws past a reducer body", () => {
 
   it("still runs the effect's other reducers on that result, as after a panic in a body", async () => {
     const { app, seen } = deliveryApp({ answer: answerOk, throwingOn: "ok", secondOk: true });
-    start(app);
+    started(app);
     await settled(seen);
     expect(seen.ok).toEqual(["hello"]);
     expect(seen.okAgain).toEqual(["hello"]);
     expect(seen.err).toEqual([]);
   });
+
+  it("renders what the reducer wrote before the throw, with no app.error reducer", async () => {
+    const { app, seen } = deliveryApp({ answer: answerOk, throwingOn: "ok", appError: "none" });
+    const { root } = started(app);
+    await settled(seen);
+    expect((app as MountedApp).live?.note).toBe("hello");
+    expect(root.textContent).toBe("note=hello");
+    expect(errors.filter((line) => line.includes('effect "load"'))).toHaveLength(1);
+  });
+
+  // With an `app.error` reducer, its own render mounts `Panel` first, and that throw is its own.
+  it("reports what the render after it throws in turn, and still runs the other reducers", async () => {
+    const rejections = unhandledRejections();
+    const { app, seen } = deliveryApp({
+      answer: answerOk,
+      throwingOn: "ok",
+      secondOk: true,
+      panel: true,
+      appError: "none",
+    });
+    const { root, logger } = started(app);
+    await settled(seen);
+    const panics = episodeWithEnd(logger.list(), "load").steps.filter((s) => s.kind === "panic");
+    expect(panics).toEqual([
+      expect.objectContaining({ message: NO_KEY, location: 'effect "load"', category: "effect" }),
+      expect.objectContaining({ message: NO_KEY, location: 'effect "load"', category: "effect" }),
+    ]);
+    expect(errors.filter((line) => line.includes('effect "load"'))).toHaveLength(2);
+    expect(seen.okAgain).toEqual(["hello"]);
+    expect(root.textContent).toBe("note=hello");
+    expect(rejections).toEqual([]);
+  });
+
+  it("still runs the other reducers when the episode logger cannot record the throw", async () => {
+    captureConsole("warn");
+    const rejections = unhandledRejections();
+    const { app, seen } = deliveryApp({ answer: answerOk, throwingOn: "ok", secondOk: true });
+    const logger = createEpisodeLogger();
+    const root = freshRoot();
+    const handle = mount(app, root, {
+      episodeLogger: {
+        ...logger,
+        recordPanic: () => {
+          throw new Error("episode sink offline");
+        },
+      },
+    });
+    onTestFinished(() => {
+      handle.dispose();
+      root.remove();
+    });
+    (app as MountedApp)._dispatch("start", {});
+    await settled(seen);
+    expect(seen.appErrors).toEqual([
+      expect.objectContaining({ location: 'effect "load"', category: "effect" }),
+    ]);
+    expect(seen.okAgain).toEqual(["hello"]);
+    expect(rejections).toEqual([]);
+  });
+
+  it("reports a throw past the app.http 5xx reducer the same way", async () => {
+    const rejections = unhandledRejections();
+    const { app, seen } = deliveryApp({ answer: answer5xx, on5xx: true });
+    started(app);
+    await settled(seen);
+    expect(seen.status).toEqual([{ status: 503, message: "down" }]);
+    expect(seen.appErrors).toEqual([
+      expect.objectContaining({
+        message: NO_KEY,
+        location: 'effect "load"',
+        category: "effect",
+      }),
+    ]);
+    expect(rejections).toEqual([]);
+  });
+});
+
+describe("a panic inside the body of a reducer an effect's result runs", () => {
+  let errors: string[];
+  beforeEach(() => {
+    errors = captureConsole("error");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("stays a reducer panic, reported once and not under category effect", async () => {
+    const { app, seen } = deliveryApp({ answer: answerOk, panicking: true, secondOk: true });
+    started(app);
+    await settled(seen);
+    expect(seen.appErrors).toEqual([
+      expect.objectContaining({
+        message: GAVE_UP,
+        location: 'reducer "loaded"',
+        category: "reducer",
+      }),
+    ]);
+    expect(seen.okAgain).toEqual(["hello"]);
+    expect(errors.filter((line) => line.includes('effect "load"'))).toEqual([]);
+  });
+
+  it("does not run app.error again when that reducer's emit throws, and the other reducers still run", async () => {
+    const rejections = unhandledRejections();
+    const { app, seen } = deliveryApp({
+      answer: answerOk,
+      panicking: true,
+      secondOk: true,
+      appError: "emits-save",
+    });
+    const { logger } = started(app);
+    await settled(seen);
+    expect(seen.appErrors).toEqual([
+      expect.objectContaining({ location: 'reducer "loaded"', category: "reducer" }),
+    ]);
+    expect(seen.okAgain).toEqual(["hello"]);
+    expect(rejections).toEqual([]);
+    expect(errors.filter((line) => line.includes('reducer "onError"'))).toEqual([
+      expect.stringContaining(`[kumiki] error in reducer "onError": ${NO_KEY}`),
+    ]);
+    const panics = episodeWithEnd(logger.list(), "load").steps.filter((s) => s.kind === "panic");
+    expect(panics).toEqual([
+      expect.objectContaining({ location: 'reducer "loaded"', category: "reducer" }),
+      expect.objectContaining({ location: 'reducer "onError"', category: "reducer" }),
+    ]);
+  });
 });
 
 describe("an invoke that throws", () => {
-  let root: HTMLElement;
   beforeEach(() => {
-    root = freshRoot();
     captureConsole("error");
   });
   afterEach(() => {
     vi.restoreAllMocks();
-    root.remove();
   });
 
-  it("on an effect that fails with Text, hands its one .err the Text", async () => {
-    const { app, seen } = deliveryApp({ answer: throwing, errText });
-    mount(app, root);
-    (app as MountedApp)._dispatch("start", {});
+  it.each<[string, EffectSpec["errText"], unknown]>([
+    ["fails with Text, hands its one .err the Text", errText, "Error: disk gone"],
+    [
+      "fails with anything else, hands its one .err {message} with the thrown value's text",
+      undefined,
+      { message: "Error: disk gone" },
+    ],
+  ])("on an effect that %s", async (_, text, delivered) => {
+    const { app, seen } = deliveryApp({ answer: throwing, ...(text ? { errText: text } : {}) });
+    started(app);
     await settled(seen);
-    expect(seen.err).toEqual(["Error: disk gone"]);
-  });
-
-  it("on any other effect, hands its one .err {message} with the thrown value's text", async () => {
-    const { app, seen } = deliveryApp({ answer: throwing });
-    mount(app, root);
-    (app as MountedApp)._dispatch("start", {});
-    await settled(seen);
-    expect(seen.err).toEqual([{ message: "Error: disk gone" }]);
+    expect(seen.err).toEqual([delivered]);
   });
 });
 
 describe("an invoke that returns no result", () => {
-  let root: HTMLElement;
   beforeEach(() => {
-    root = freshRoot();
     captureConsole("error");
   });
   afterEach(() => {
     vi.restoreAllMocks();
-    root.remove();
   });
 
   it("delivers one .err, as a throwing invoke does", async () => {
     const answerNothing = (async () => undefined) as unknown as () => Promise<EffectResult>;
     const { app, seen } = deliveryApp({ answer: answerNothing });
-    mount(app, root);
-    (app as MountedApp)._dispatch("start", {});
+    started(app);
     await settled(seen);
     expect(seen.err).toHaveLength(1);
     expect(seen.ok).toEqual([]);

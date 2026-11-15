@@ -1,16 +1,15 @@
-# Feature: a request delivers exactly one result (runtime.md §10.4.5).
+# Feature: a request delivers exactly one result (runtime.md).
 #
 # `loadNote` reads "note" from localStorage, a capability that fails with
 # `Text`. `loaded` counts the `.ok` results it is handed and `failed` the
 # `.err` ones, keeping `$e`, a `Text`, in `problem`.
 #
 # Once `loaded` has run, the request has its result. Something can still throw
-# while that result is being delivered, past the body of `loaded`: the dispatch
-# of what it emits, the render after it, a host's episode logger. That is not a
-# second result for the request. It is an error of the app, so `app.error`
-# fires with category "effect" and location `effect "loadNote"`, and `failed`
-# does not run. It used to run, and it was handed a `{message}` record where
-# `Text` is declared, so the page read `problem: [object Object]`.
+# while that result is being delivered, past the body of `loaded`, such as a
+# host's episode logger recording it. That is not a second result for the
+# request. It is an error of the app, so `app.error` fires with category
+# "effect" and location `effect "loadNote"`, and `failed` does not run. Were it
+# to run, it would be handed a `{message}` record where `Text` is declared.
 #
 # The scenario walks one `.ok` and one `.err`. An integration test in
 # `packages/tests` mounts this app with an episode logger that throws while

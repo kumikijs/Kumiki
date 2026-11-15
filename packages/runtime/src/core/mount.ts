@@ -380,7 +380,9 @@ export function mountCore(
     extra: { name?: string; envReads?: readonly EnvRead[] } = {},
     token?: string,
   ): void {
-    const episodeId = episode?.recordPanic({ ...rec, location, ...extra }, token);
+    // Read through `fromLogger`, as a boundary records, so a logger that throws costs the
+    // episode id and not the report.
+    const episodeId = fromLogger(() => episode?.recordPanic({ ...rec, location, ...extra }, token));
     if (inPanicHandler) return;
     const handlers = app.reducers.filter(
       (h) => h.event.kind === "lifecycle" && h.event.name === "app.error",
@@ -389,7 +391,16 @@ export function mountCore(
     const info = userPanicInfo(rec, location, episodeId ?? fromLogger(() => episode?.currentId()));
     inPanicHandler = true;
     try {
-      for (const h of handlers) applyReducer(h, { $event: info });
+      for (const h of handlers) {
+        try {
+          applyReducer(h, { $event: info });
+        } catch (e) {
+          // A throw past an `app.error` reducer's body, such as the dispatch of what it emitted,
+          // is reported as a panic in its body is: not to `app.error` again, and the other
+          // handlers and whatever reported this failure carry on.
+          handleLivePanic(`reducer "${h.name}"`, e, h.name);
+        }
+      }
     } finally {
       inPanicHandler = false;
     }
@@ -485,13 +496,22 @@ export function mountCore(
     token = "",
   ): void {
     const exitScope = episode?.recordEffectEnd(token, effect, outcome, value);
-    // What throws past a reducer's body here (the dispatch of what it emitted, the render after
-    // it) is not another result: the request already has its one. It is an error of the app,
-    // reported as a reducer panic is, and the effect's other reducers still run after it.
+    // What throws past a reducer's body here, such as the dispatch of what it emitted or the
+    // episode logger recording its render, is not another result: the request already has its
+    // one. It is an error of the app, reported as a reducer panic is. `escaped` cannot throw, so
+    // the effect's other reducers still run after it.
     const location = `effect "${effect}"`;
     const escaped = (e: unknown): void => {
       reportPanic(location, e);
       fireAppError(panicInfo(e, "effect"), location);
+      // The body committed its slots before the throw, which may have skipped the render. What
+      // that render throws in turn, such as a `tile.mount` reducer's emit, is reported the same way.
+      try {
+        render();
+      } catch (again) {
+        reportPanic(location, again);
+        fireAppError(panicInfo(again, "effect"), location);
+      }
     };
     let matched = 0;
     try {

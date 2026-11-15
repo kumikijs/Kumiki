@@ -147,7 +147,8 @@ export function makeEffectDispatcher(
       outcome = res.kind;
       value = res.value;
     } catch (e) {
-      // An invoke that throws is this request's err, in the form `eff` fails with.
+      // An invoke that throws is this request's err: a `Text` for an effect that fails with
+      // `Text`, `{message}` for any other.
       outcome = "err";
       value = standInValue(eff, "err", { message: String(e) });
     }
