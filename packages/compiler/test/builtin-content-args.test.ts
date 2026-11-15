@@ -99,7 +99,7 @@ describe("a positional argument the builtin never reads", () => {
     ['icon("home")', "icon", "name"],
   ])("%s reports a positional, which it does not read", (tile, b, named) => {
     expect(diagnostics(tile)).toEqual([
-      `E0129 2:${at(tile, '"')} ${b} takes its ${named} as \`${named}=\` — a positional argument is never rendered. Write \`${b}(${named}=…)\``,
+      `E0129 2:${at(tile, '"')} ${b} renders no positional argument, so this one is never rendered. Write it as \`${named}=\`, or show it beside the ${b}`,
     ]);
   });
 });

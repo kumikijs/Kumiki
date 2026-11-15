@@ -1,4 +1,4 @@
-import type { AutoPatch, FixFromTestOutcome } from "@kumikijs/cli";
+import { type AutoPatch, type FixFromTestOutcome, UnreadableLockFileError } from "@kumikijs/cli";
 import { type KumikiError, type Severity, severityOf } from "@kumikijs/compiler";
 import { CapabilityManifestError } from "@kumikijs/compiler/node";
 
@@ -34,7 +34,12 @@ export function withWarnings(head: string, warnings: KumikiError[]): string[] {
 }
 
 export function errText(e: unknown) {
-  const kind = e instanceof CapabilityManifestError ? "capability-manifest" : "error";
+  const kind =
+    e instanceof CapabilityManifestError
+      ? "capability-manifest"
+      : e instanceof UnreadableLockFileError
+        ? "lock-file"
+        : "error";
   const message = e instanceof Error ? e.message : String(e);
   return failed(JSON.stringify({ error: { kind, message } }, null, 2));
 }
