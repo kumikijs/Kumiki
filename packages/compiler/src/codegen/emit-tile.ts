@@ -195,7 +195,6 @@ export function extractBindPath(bind: Expr | undefined, ctx: EvalCtx): BindInfo 
   return { root, path, pathJs: pathJs(path, ctx), read: readRaw };
 }
 
-/** A path's index keys are evaluated where the path is, on every render of the tile that holds it. */
 function pathJs(path: readonly PathStep[], ctx: EvalCtx): string {
   return `[${path.map((seg) => segmentJs(seg, (key) => jsOfExpr(key, ctx))).join(",")}]`;
 }

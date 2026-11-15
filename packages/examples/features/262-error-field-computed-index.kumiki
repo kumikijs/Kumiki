@@ -4,8 +4,8 @@
 # `i` moves each tile to the row it now names. Row 0 fails its email and
 # row 1 its age, so a message from the wrong row reads differently.
 #
-# Inside a `for` over a Map's keys, `error(field=people[k])` puts each
-# entry's message beside the field bound to it.
+# Inside a `for` over a Map's keys, `error(field=people[k])` shows each
+# entry's own first failure, whichever field it is in, beside that entry.
 
 type Contact = {email: Text where email, age: Int where between(18, 120)}
 

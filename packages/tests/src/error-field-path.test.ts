@@ -2,6 +2,8 @@ import { testFile } from "@kumikijs/cli";
 import { describe, expect, it } from "vitest";
 import { click, fill, find, mountSource, tick } from "./helpers/dom.ts";
 import { writeSource } from "./helpers/load.ts";
+import { MAP_KEYS } from "./helpers/map-keys.ts";
+import { withApp } from "./helpers/source.ts";
 
 const SOURCE = `
 type Contact = {email: Text where email, age: Int where between(0, 120)}
@@ -67,17 +69,23 @@ app ErrorFieldPath
 `;
 
 const ABSENT = `
-type Post = {title: Text where nonempty}
+type Post    = {title: Text where nonempty}
+type Contact = {email: Text where email}
 
 slot none : Option(Post)                   = None
 slot ys   : List(Text where email)         = ["a@b.co", "nope"]
 slot m    : Map(Text, Text where nonempty) = {"a": ""}
+slot rows : List(Contact)                  = [{email: "nope"}]
+slot i    : Int                            = 5
+slot k    : Text                           = "zz"
 
 tile App = column(
     error(field=none.get.title, id="none-title"),
     error(field=ys[5], id="ys-5"),
     error(field=ys[-1], id="ys-minus-1"),
-    error(field=m["zz"], id="m-zz"))
+    error(field=m["zz"], id="m-zz"),
+    error(field=rows[i].email, id="rows-i-email"),
+    error(field=m[k], id="m-k"))
 
 app ErrorFieldAbsent
     caps   = []
@@ -85,30 +93,22 @@ app ErrorFieldAbsent
     init   = []
 `;
 
-const COMPUTED = `
+/** A page whose age input and its error tile follow `i`, the tile placed `where` the input. */
+const moving = (where: "before" | "after"): string => {
+  const input = `input(bind=rows[i].age, type="number", id="age")`;
+  const error = `error(field=rows[i].age, id="row-age")`;
+  return withApp(`
 type Contact = {email: Text where email, age: Int where between(0, 120)}
 
-slot rows : List(Contact)      = [{email: "nope", age: 36}, {email: "a@b.co", age: 999}]
-slot i    : Int                = 0
-slot book : Map(Text, Contact) = {"a": {email: "nope", age: 36}, "b": {email: "a@b.co", age: 999}}
+slot rows : List(Contact) = [{email: "nope", age: 36}, {email: "a@b.co", age: 999}]
+slot i    : Int           = 0
 
 reducer next on=ui.click(Next) do= i := (i + 1) % rows.length
 
 tile Next = button(text="next")
 
-tile App = column(
-    Next,
-    input(bind=rows[i].age, type="number", id="age"),
-    error(field=rows[i], id="row"),
-    error(field=rows[i].email, id="row-email"),
-    error(field=rows[i].age, id="row-age"),
-    for k in book.keys error(field=book[k], id="book-" + k) {key: k})
-
-app ErrorFieldComputed
-    caps   = []
-    routes = {"/" -> App, "/404" -> App}
-    init   = []
-`;
+tile App = column(Next, ${where === "before" ? `${error}, ${input}` : `${input}, ${error}`})`);
+};
 
 function errorText(root: HTMLElement, id: string): string {
   const el = find(root, `#${id}`);
@@ -210,28 +210,72 @@ describe("error(field=…) at a literal index", () => {
 });
 
 describe("error(field=…) at a computed index", () => {
-  // Row 0 fails its email and row 1 its age, so a message from the wrong row reads differently.
-  it("says the failure of the element the index names, and follows the index", async () => {
-    const { app, root } = await mountSource(COMPUTED);
-    const shown = () => ["row", "row-email", "row-age"].map((id) => errorText(root, id));
-    expect(shown()).toEqual(["Invalid email format", "Invalid email format", ""]);
+  // Row 0 passes its age and row 1 fails it, so a message from the wrong row reads differently.
+  it.each([
+    "before",
+    "after",
+  ] as const)("drops text the input could not read once the index moves, with the tile %s the input", async (where) => {
+    const { app, root } = await mountSource(moving(where));
+    const age = () => find<HTMLInputElement>(root, "#age").value;
+    fill(root, "#age", "1.5");
+    expect(errorText(root, "row-age")).toBe("Must be a whole number");
     click(root, "next");
     await tick(0);
     expect(app.live?.i).toBe(1);
-    expect(shown()).toEqual(["Must be between 0 and 120", "", "Must be between 0 and 120"]);
+    expect(age()).toBe("999");
+    expect(errorText(root, "row-age")).toBe("Must be between 0 and 120");
+    click(root, "next");
+    await tick(0);
+    expect(age()).toBe("36");
+    expect(errorText(root, "row-age")).toBe("");
   });
+});
 
-  it("puts each Map entry's own failure beside it in a for over the keys", async () => {
-    const { root } = await mountSource(COMPUTED);
-    expect(errorText(root, "book-a")).toBe("Invalid email format");
-    expect(errorText(root, "book-b")).toBe("Must be between 0 and 120");
+describe("error(field=…) through a Map, at each kind of key", () => {
+  // The first entry passes and the second fails, so the whole slot's first failure is the second's.
+  it.each(
+    MAP_KEYS.map((k) => [k.kind, k] as const),
+  )("says the failure of the entry a key of %s names, and nothing for another key", async (_kind, {
+    decl,
+    type,
+    entry,
+    index,
+    other,
+  }) => {
+    const { root } = await mountSource(
+      withApp(`type Row = {qty: Int where between(1, 9)}
+${decl}
+slot m : Map(${type}, Row) = {${other}: {qty: 1}, ${entry}: {qty: 50}}
+tile App = column(error(field=m[${index}].qty, id="named"), error(field=m[${other}].qty, id="other"))`),
+    );
+    expect(errorText(root, "named")).toBe("Must be between 1 and 9");
+    expect(errorText(root, "other")).toBe("");
   });
+});
 
-  it("names text a control bound through the same index cannot read", async () => {
-    const { root } = await mountSource(COMPUTED);
-    fill(root, "#age", "1.5");
-    expect(errorText(root, "row-age")).toBe("Must be a whole number");
-    expect(errorText(root, "row-email")).toBe("Invalid email format");
+describe("error(field=…) whose key's own read panics", () => {
+  // The key is read as any expression is, so its own read can panic, where a step that reaches
+  // no value renders nothing.
+  const page = (tile: string): string =>
+    withApp(`
+type Contact = {email: Text where email}
+
+slot rows  : List(Contact) = [{email: "nope"}]
+slot sel   : Option(Int)   = None
+slot order : List(Int)     = []
+slot i     : Int           = 0
+
+tile App = column(text("[before]"), ${tile}, text("[after]"))`);
+
+  it.each([
+    ["error(field=rows[sel.get].email)", "get called on None"],
+    ["input(bind=rows[sel.get].email)", "get called on None"],
+    ["error(field=rows[order[i]].email)", "Index 0 is out of range for a List of length 0"],
+    ["input(bind=rows[order[i]].email)", "Index 0 is out of range for a List of length 0"],
+  ])("panics the render in %s", async (tile, panic) => {
+    const { root } = await mountSource(page(tile));
+    expect(root.textContent).toContain(panic);
+    expect(root.textContent).not.toContain("[before]");
   });
 });
 
@@ -241,6 +285,8 @@ describe("error(field=…) at a path that reaches nothing in the value", () => {
     "ys-5",
     "ys-minus-1",
     "m-zz",
+    "rows-i-email",
+    "m-k",
   ])("renders no message at #%s, and the page renders", async (id) => {
     const { root } = await mountSource(ABSENT);
     expect(errorText(root, id)).toBe("");
