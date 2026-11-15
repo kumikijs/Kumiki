@@ -367,6 +367,32 @@ describe("ownership locks", () => {
     expect(readFileSync(locks, "utf8")).toBe(held);
     expect(existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
   });
+
+  it.each([
+    ["kumiki_fix", FIX_COUNTER_TYPO, { apply: true }],
+    ["kumiki_auto_patch", FIX_COUNTER_TYPO_WITH_TEST, { testName: "inc-works", apply: true }],
+  ] as const)(
+    "%s with apply refuses a lock file not in the shape `lock` writes, writing nothing",
+    {
+      timeout: 30000,
+    },
+    async (tool, fixture, args) => {
+      const file = join(workdir.path, `${tool}.kumiki`);
+      copyFileSync(fixture, file);
+      const locks = `${file}.kumiki-locks.json`;
+      const held = '{"entries":[{"agent":"agent:a","patterns":"slot.*"}]}\n';
+      writeFileSync(locks, held);
+      const source = readFileSync(file, "utf8");
+      const res = await callOnce(tool, { path: file, ...args });
+      expect(res.isError).toBe(true);
+      expect(errorMessage(res.body)).toBe(
+        `Lock file "${locks}" is unreadable: entries[0].patterns is not a list. Fix it to the shape \`lock\` writes, {"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}]}, or delete it to release every lock.`,
+      );
+      expect(JSON.parse(res.body).error.kind).toBe("lock-file");
+      expect(readFileSync(file, "utf8")).toBe(source);
+      expect(readFileSync(locks, "utf8")).toBe(held);
+    },
+  );
 });
 
 // A client does not read the server's stderr. The second item is labelled as `withWarnings` labels

@@ -690,6 +690,9 @@ describe("a lock file not in the shape lock writes", () => {
     [(f) => ["unlock", f, "agent:a"], ""],
   ];
 
+  const refusal = (locks: string): string =>
+    `Lock file "${locks}" is unreadable: entries[0].patterns is not a list. Fix it to the shape \`lock\` writes, {"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}]}, or delete it to release every lock.`;
+
   it.each(
     CASES.map(([argv, prefix]) => [argv("app.kumiki", ".").join(" "), argv, prefix] as const),
   )(
@@ -707,16 +710,37 @@ describe("a lock file not in the shape lock writes", () => {
       };
       for (const [name, content] of Object.entries(files)) writeFileSync(join(at, name), content);
 
-      const refusal = `Lock file "${locks}" is unreadable: entries[0].patterns is not a list. Fix it to the shape \`lock\` writes, {"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}]}, or delete it to release every lock.`;
       expect(runCli(argv(file, at))).toMatchObject({
         stdout: "",
-        stderr: `Error: ${prefix}${refusal}\n`,
+        stderr: `Error: ${prefix}${refusal(locks)}\n`,
         code: 1,
       });
       expect(readdirSync(at).sort()).toEqual(Object.keys(files).sort());
       for (const [name, content] of Object.entries(files)) {
         expect(readFileSync(join(at, name), "utf8"), name).toBe(content);
       }
+    },
+  );
+
+  // A clean file has no repair to write, so `fix` reads the lock file only for one it can repair.
+  it(
+    "kumiki fix --apply exits 1 naming the lock file and what is wrong with it, and changes no file",
+    SPAWN,
+    () => {
+      const at = tempDir();
+      const file = join(at, "app.kumiki");
+      const locks = `${file}.kumiki-locks.json`;
+      writeFileSync(file, FIXABLE);
+      writeFileSync(locks, LOCKS);
+
+      expect(runCli(["fix", file, "--apply"])).toMatchObject({
+        stdout: "",
+        stderr: `Error: ${refusal(locks)}\n`,
+        code: 1,
+      });
+      expect(readdirSync(at).sort()).toEqual(["app.kumiki", "app.kumiki.kumiki-locks.json"]);
+      expect(readFileSync(file, "utf8")).toBe(FIXABLE);
+      expect(readFileSync(locks, "utf8")).toBe(LOCKS);
     },
   );
 });
