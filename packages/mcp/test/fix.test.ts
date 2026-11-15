@@ -7,6 +7,7 @@ import {
   FIX_COUNTER_TYPO,
   FIX_MIXED,
   FIX_PROPOSAL_BESIDE_SKIP,
+  FIX_REPAIR_INTRODUCES,
   FIX_WARNING_ONLY,
   flag,
   useWorkdir,
@@ -174,6 +175,32 @@ describe("kumiki_fix", () => {
     } finally {
       writeSpy.mockRestore();
     }
+    expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
+  it("apply-mode reports a regression-gate refusal as `blocked`, its diagnostics on the wire", async () => {
+    const file = join(workdir.path, "repair-introduces.kumiki");
+    copyFileSync(FIX_REPAIR_INTRODUCES, file);
+    const before = readFileSync(file, "utf8");
+    const res = await callOnce("kumiki_fix", { path: file, apply: true });
+    expect(res.isError).toBe(true);
+    const parsed = JSON.parse(res.body) as Applied & {
+      blocked: { reason: string; introduced: Array<Record<string, unknown>> };
+    };
+    expect(parsed.applied).toBe(0);
+    expect(parsed.regressionBlocked).toBe(true);
+    expect(parsed.blocked.reason).toBe("introduced");
+    expect(parsed.blocked.introduced.map((d) => [d.code, d.severity])).toEqual([
+      ["E0201", "error"],
+    ]);
+    expect(Object.keys(parsed.blocked.introduced[0] ?? {}).sort()).toEqual([
+      "code",
+      "col",
+      "kind",
+      "line",
+      "message",
+      "severity",
+    ]);
     expect(readFileSync(file, "utf8")).toBe(before);
   });
 });

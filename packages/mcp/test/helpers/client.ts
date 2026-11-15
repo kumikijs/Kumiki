@@ -24,6 +24,8 @@ export const FIX_PROPOSAL_BESIDE_SKIP = fixture("proposal-beside-skip");
 export const FIX_SMOKE_PANICS = fixture("smoke-panics");
 /** `expect-panics` indexes past the end of a list in its `expect`; `inc-works` passes. */
 export const FIX_TEST_THROWS = fixture("test-throws");
+/** `cnt` is closest to the Text slot `cn`, so the one repair breaks `n := cnt + 1` (E0201). */
+export const FIX_REPAIR_INTRODUCES = fixture("repair-introduces");
 export const COUNTER = app("01-counter");
 
 type TextContent = { type: "text"; text: string };
