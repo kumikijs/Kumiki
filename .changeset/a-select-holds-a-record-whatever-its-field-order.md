@@ -24,5 +24,6 @@ calls equal have one key, so the slot holds "2 x 3" on both paths:
 <option value="{&quot;h&quot;:3,&quot;w&quot;:2}" selected>2 x 3</option>
 ```
 
-A record option's `value` attribute now lists its fields in sorted order. A
-`Text`, a number and a variant keep the key they had.
+A `Text`, a number and a variant without a payload keep the key they had; the
+`value` of a record, a `List`, or anything holding one lists each record's
+fields in sorted order.

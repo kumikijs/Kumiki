@@ -1,4 +1,4 @@
-# Feature (runtime.md §10.3.8): a `select` holds a record option by value,
+# Feature (runtime.md): a `select` holds a record option by value,
 # whatever order the record's fields are written in.
 #
 # The slot is written `{h=3, w=2}` and its option `{w=2, h=3}`. `==` calls the

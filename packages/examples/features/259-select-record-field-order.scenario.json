@@ -1,7 +1,7 @@
 {
   "steps": [
     {
-      "label": "each slot starts on its record, written in another field order than its option",
+      "label": "the page shows each slot's record, written in another field order than its option",
       "expect": {
         "noErrors": true,
         "domIncludes": ["dims: 2 x 3", "dims is 2 x 3: true", "crop: 4 x 4"]

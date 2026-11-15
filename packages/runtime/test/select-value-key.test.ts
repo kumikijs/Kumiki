@@ -61,7 +61,7 @@ describe("a select's option key agrees with ==", () => {
     ["a nullary variant", tag("M"), "M"],
     ["a variant with a payload", some(tag("B")), "Some|B"],
     ["no value", undefined, "undefined"],
-  ])("keeps the key it gave %s", (_, v, key) => {
+  ])("keys %s as before", (_, v, key) => {
     expect(valueKey(v)).toBe(key);
   });
 });

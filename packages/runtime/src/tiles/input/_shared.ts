@@ -87,7 +87,9 @@ export function tileId(node: { id?: unknown; props?: unknown }): string | undefi
 /**
  * The key a `select` matches an option by, and the `value` its `<option>` carries on
  * both render paths. Two values `==` calls equal have one key, and two it tells apart
- * have two, save a non-finite `Float`, whose JSON text is `null`.
+ * have two, except a non-finite `Float`, whose JSON text is `null`, and a `File`: two
+ * Files with the same name, size and type are one key, while `==` holds only of a File
+ * and itself.
  */
 export function valueKey(v: unknown): string {
   if (v && typeof v === "object" && "_tag" in (v as Record<string, unknown>)) {
@@ -96,8 +98,9 @@ export function valueKey(v: unknown): string {
     for (let i = 0; `_${i}` in t; i++) parts.push(valueKey(t[`_${i}`]));
     return parts.join("|");
   }
-  // A record's JSON text lists its fields in the order they were written, which `==`
-  // ignores: the text a Map key is stored under sorts them, at every depth.
+  // A record, a List, Bytes or a value holding one: JSON text lists a record's fields in
+  // the order they were written, which `==` ignores, and the text a Map key is stored under
+  // sorts them, at every depth.
   if (v !== null && typeof v === "object") return entryKey(v);
   // `JSON.stringify` has no text for `undefined`, an option written with no `value`.
   return JSON.stringify(v) ?? String(v);
