@@ -159,31 +159,31 @@ const ROWS: Row[] = [
   // A value that is not a Text counts as written, in either spelling, and the element does not
   // carry it as a name: #988 types these props.
   {
-    label: "button, aria-label argument that names a tile",
+    label: "button, aria-label argument that is a variant",
     tile: "button",
-    args: "aria-label=Mark",
+    args: "aria-label=Dot",
     reported: false,
     renders: "[object Object]",
   },
   {
-    label: "link, aria-label argument that names a tile",
+    label: "link, aria-label argument that is a variant",
     tile: "link",
-    args: 'to="/", aria-label=Mark',
+    args: 'to="/", aria-label=Dot',
     reported: false,
     renders: "[object Object]",
   },
   {
-    label: "image, alt argument that names a tile",
+    label: "image, alt argument that is a variant",
     tile: "image",
-    args: 'src="a.png", alt=Mark',
+    args: 'src="a.png", alt=Dot',
     reported: false,
     renders: null,
   },
   {
-    label: "button, an aria-label argument under a prop that names a tile",
+    label: "button, an aria-label argument under a prop that is a variant",
     tile: "button",
     args: 'aria-label="Close"',
-    block: "aria-label: Mark",
+    block: "aria-label: Dot",
     reported: false,
     renders: "[object Object]",
   },
@@ -196,7 +196,7 @@ function call(row: Row, i: number): string {
 
 // One row per line, so a diagnostic's line says which row it is about.
 const HEADER = `slot name : Text = "Close"
-tile Mark = icon(name="x")
+type Glyph = Dot | Ring
 tile Probe = column(`;
 const FIRST_ROW_LINE = HEADER.split("\n").length + 1;
 const SOURCE = withApp(`${HEADER}\n${ROWS.map(call).join(",\n")})`, "Probe");

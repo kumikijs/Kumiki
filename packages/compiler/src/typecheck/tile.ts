@@ -6,8 +6,15 @@ import {
   type TileDef,
   type TileExpr,
   type TypeExpr,
+  type UiEventKind,
 } from "../ast.ts";
-import { BUILTIN_TILES, contentArg, contentReading, positionalIsTile } from "../builtins.ts";
+import {
+  BUILTIN_TILES,
+  CHILD_RENDERING_BUILTINS,
+  contentArg,
+  contentReading,
+  positionalIsTile,
+} from "../builtins.ts";
 import {
   type RouteMapEntry,
   redirectCycles,
@@ -15,7 +22,15 @@ import {
   unboundRedirectNames,
 } from "../redirects.ts";
 import { appType, primType } from "../stdlib-types.ts";
-import { HANDLER_NAMES, HANDLER_PROP_TILES, handlerReducerName } from "../ui-lifts.ts";
+import {
+  firesUnheardClauses,
+  HANDLER_NAMES,
+  HANDLER_PROP_TILES,
+  handlerReducerName,
+  liftForHandler,
+  wrappedClause,
+  wrapperNeverReceives,
+} from "../ui-lifts.ts";
 import { duplicateSubRoutes } from "../uniqueness.ts";
 import { checkAgainst } from "./against.ts";
 import {
@@ -27,7 +42,17 @@ import {
   checkSecondSpelling,
   checkToggleBind,
 } from "./bind.ts";
-import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
+import { checkCallee } from "./callee.ts";
+import {
+  bindLocal,
+  type Ctx,
+  checkArms,
+  endScope,
+  innerScope,
+  type KumikiError,
+  propOf,
+  type SymbolTable,
+} from "./context.ts";
 import {
   checkCondition,
   checkExpr,
@@ -38,7 +63,11 @@ import {
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
-import { collectRenderedBuiltinKinds, collectTileBuiltinKinds } from "./tile-collect.ts";
+import {
+  collectRenderedBuiltinKinds,
+  collectTileBuiltinKinds,
+  collectTileRootKinds,
+} from "./tile-collect.ts";
 import { checkA11y, checkBuiltinProp, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
 
@@ -49,12 +78,13 @@ export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]
     localTypes: new Map(),
     localBinders: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
   };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
     bindLocal(ctx, "$1", tile.in, "input");
   }
-  checkTileExpr(tile.body, sym, errors, ctx);
+  checkTileExpr(tile.body, sym, errors, ctx, { kind: "body" });
   if (tile.errorBoundary !== undefined && !sym.tiles.has(tile.errorBoundary)) {
     errors.push({
       code: "E0105",
@@ -99,9 +129,10 @@ function readsUndeclaredInput(tile: TileDef, sym: SymbolTable): boolean {
     localTypes: new Map(),
     localBinders: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
     undeclaredInputReads: seen,
   };
-  checkTileExpr(tile.body, sym, [], ctx);
+  checkTileExpr(tile.body, sym, [], ctx, { kind: "body" });
   return seen.length > 0;
 }
 
@@ -220,44 +251,148 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
   }
 }
 
+// `child` is a positional argument of a builtin that renders it only when it is a tile. The others
+// hold a whole tile-expr, where the parser reads any name as a tile call.
+type TilePlace =
+  | { readonly kind: "child"; readonly of: string }
+  | { readonly kind: "arm"; readonly of: "when" | "if" | "for" | "match" }
+  | { readonly kind: "body" }
+  | { readonly kind: "expect" };
+
+type Occupant =
+  | { readonly kind: "tile" }
+  | ValueName
+  | { readonly kind: "uncalled"; readonly name: string }
+  | { readonly kind: "unknown"; readonly name: string };
+
+// `ended` is a value whose scope is over, read after it: its E0103 says which scope it was.
+type ValueName =
+  | { readonly kind: "value" }
+  | { readonly kind: "ended"; readonly error: KumikiError };
+
+// The parser reads every name in an arm or a body as a tile call, so a call of a name no tile has
+// is resolved as a value. In a container it reads a bare lower-cased name as an expression, so a
+// `Ref` is the one expression that may still name a tile; there a value of the same name wins over
+// a builtin.
+function occupantOf(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): Occupant {
+  if (isTileExpr(v)) {
+    if (v.kind !== "TileCall" || namesTile(v.name, sym)) return { kind: "tile" };
+    return valueNamed(v.name, v.pos, sym, ctx) ?? { kind: "unknown", name: v.name };
+  }
+  if (v.kind !== "Ref") return { kind: "value" };
+  if (sym.tiles.has(v.name)) return { kind: "tile" };
+  const value = valueNamed(v.name, v.pos, sym, ctx);
+  if (value) return value;
+  if (BUILTIN_TILES.has(v.name)) return { kind: "uncalled", name: v.name };
+  return { kind: "unknown", name: v.name };
+}
+
+function namesTile(name: string, sym: SymbolTable): boolean {
+  return BUILTIN_TILES.has(name) || sym.tiles.has(name);
+}
+
+// Resolved as an expression resolves it, with the diagnostics discarded: E0103 and E0116 are how
+// those say a name names nothing, and null is that answer. The probe drops the collectors a probe
+// further out may have set, so none of them hears of it.
+function valueNamed(name: string, pos: Pos, sym: SymbolTable, ctx: Ctx): ValueName | null {
+  if (name.startsWith("$")) return { kind: "value" };
+  const { routeReadsSeen, fragmentFnCallsSeen, undeclaredInputReads, ...scope } = ctx;
+  const asName: KumikiError[] = [];
+  checkExpr({ kind: "Ref", name, pos }, sym, asName, scope);
+  const undefinedName = asName.find((e) => e.code === "E0103");
+  if (undefinedName === undefined) return { kind: "value" };
+  if (undefinedName.endedScope !== undefined) return { kind: "ended", error: undefinedName };
+  const asCall: KumikiError[] = [];
+  checkCallee(name, [], pos, sym, asCall, scope);
+  return asCall.some((e) => e.code === "E0116") ? null : { kind: "value" };
+}
+
+function notATile(
+  found: Exclude<Occupant, { kind: "tile" }>,
+  place: TilePlace,
+  pos: Pos,
+): KumikiError {
+  if (found.kind === "unknown") return undefinedTile(found.name, pos);
+  if (found.kind === "ended") return found.error;
+  const rule =
+    place.kind === "child"
+      ? `${place.of} renders a positional argument only when it is a tile, so this one renders nothing`
+      : `${placeName(place)} has to be a tile`;
+  // A `let` is a value only as a child: where a whole tile-expr stands, the parser refuses one.
+  // A call renders under a builtin that renders its positional arguments, and nothing elsewhere.
+  const message =
+    found.kind === "uncalled"
+      ? `\`${found.name}\` is a builtin tile named without its call: ${rule}.` +
+        (place.kind === "child" && CHILD_RENDERING_BUILTINS.has(place.of)
+          ? ` Call it — \`${found.name}()\``
+          : "")
+      : `A value is not a tile: ${rule}. Show the value with a tile — \`text(…)\`` +
+        (place.kind === "child"
+          ? " — or, for a `let`, write the value where it is used or compute it in a `fn`"
+          : "");
+  return { code: "E0128", kind: "value-as-child", message, pos };
+}
+
+function placeName(place: Exclude<TilePlace, { kind: "child" }>): string {
+  switch (place.kind) {
+    case "arm":
+      return `${place.of === "if" ? "an" : "a"} \`${place.of}\` arm`;
+    case "body":
+      return "a tile's body";
+    case "expect":
+      return "a tile-test's `expect`";
+  }
+}
+
+function undefinedTile(name: string, pos: Pos): KumikiError {
+  return {
+    code: "E0105",
+    kind: "undef-tile",
+    message: `Reference to undefined tile "${name}"`,
+    pos,
+  };
+}
+
+/** `place` is `null` for an argument no tile is rendered from, where a name is looked up as a tile only. */
 export function checkTileExpr(
   t: TileExpr,
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
+  place: TilePlace | null,
 ): void {
   switch (t.kind) {
     case "TileFor": {
       checkIterationTarget(t.iter, sym, errors, ctx);
       const inner = innerScope(ctx);
       bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx), "for");
-      checkTileExpr(t.body, sym, errors, inner);
+      checkTileExpr(t.body, sym, errors, inner, { kind: "arm", of: "for" });
+      endScope("for-expr", inner, ctx);
       return;
     }
     case "TileWhen":
       checkExpr(t.cond, sym, errors, ctx);
       checkCondition(t.cond, inferType(t.cond, sym, ctx), sym, errors, '"when"');
-      checkTileExpr(t.body, sym, errors, ctx);
+      checkTileExpr(t.body, sym, errors, ctx, { kind: "arm", of: "when" });
       return;
     case "TileIf":
       checkExpr(t.cond, sym, errors, ctx);
       checkCondition(t.cond, inferType(t.cond, sym, ctx), sym, errors, '"if"');
-      checkTileExpr(t.consequent, sym, errors, ctx);
-      checkTileExpr(t.alternate, sym, errors, ctx);
+      checkTileExpr(t.consequent, sym, errors, ctx, { kind: "arm", of: "if" });
+      checkTileExpr(t.alternate, sym, errors, ctx, { kind: "arm", of: "if" });
       return;
     case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
       const scrutType = matchedType(inferType(t.scrutinee, sym, ctx), t.arms, sym);
-      for (const arm of t.arms) {
-        const inner = innerScope(ctx);
+      checkArms(t.arms, ctx, (arm, inner) => {
         checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
-        checkTileExpr(arm.body, sym, errors, inner);
-      }
+        checkTileExpr(arm.body, sym, errors, inner, { kind: "arm", of: "match" });
+      });
       return;
     }
     case "TileCall":
-      checkTileCall(t, sym, errors, ctx);
+      checkTileCall(t, sym, errors, ctx, place);
       return;
   }
 }
@@ -358,14 +493,14 @@ function checkContentArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiErro
  * The values a builtin renders as text, as its lowering reads them: its content, `button`'s `text=`,
  * `link`'s `{text: …}` prop when no content is written, and the value `editable` binds.
  */
-function renderedText(t: TileExpr & { kind: "TileCall" }): Expr[] {
+function renderedText(t: TileExpr & { kind: "TileCall" }, ctx: Ctx): Expr[] {
   const named = (name: string) => t.args.find((a) => a.name === name)?.value;
   const content = contentArg(t)?.value;
   const values = [
     content,
     t.name === "button" ? named("text") : undefined,
     t.name === "link" && !content ? t.props.find((p) => p.name === "text")?.value : undefined,
-    t.name === "editable" ? named("bind") : undefined,
+    t.name === "editable" ? propOf(t, "bind", ctx)?.value : undefined,
   ];
   return values.filter((v): v is Expr => v !== undefined && !isTileExpr(v));
 }
@@ -375,38 +510,37 @@ function checkTileCall(
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
+  place: TilePlace | null,
 ): void {
-  const userTile = sym.tiles.get(t.name);
-  const undefinedTile = !BUILTIN_TILES.has(t.name) && !userTile;
-  if (undefinedTile) {
-    errors.push({
-      code: "E0105",
-      kind: "undef-tile",
-      message: `Reference to undefined tile "${t.name}"`,
-      pos: t.pos,
-    });
+  const unknown = !namesTile(t.name, sym);
+  if (place === null) {
+    if (unknown) errors.push(undefinedTile(t.name, t.pos));
+  } else {
+    const found = occupantOf(t, sym, ctx);
+    if (found.kind !== "tile") errors.push(notATile(found, place, t.pos));
+    // A value is reported whole, and an argument or a prop on it is moved with it.
+    if (found.kind === "value" || found.kind === "ended") return;
   }
+  const userTile = sym.tiles.get(t.name);
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
-  checkA11y(t, sym, errors);
+  checkA11y(t, sym, errors, ctx);
   checkContentArgs(t, errors);
-  for (const value of renderedText(t)) {
+  for (const value of renderedText(t, ctx)) {
     refuseRenderedEffectId(value, `${t.name}(...)`, sym, errors, ctx);
   }
   checkIconName(t, sym, errors);
-  checkButtonType(t, errors);
+  checkButtonType(t, errors, ctx);
   checkBindStrictProp(t, errors);
   checkBindTargetSteps(t, sym, errors, ctx);
   checkBindTargetRoot(t, sym, errors, ctx);
   checkToggleBind(t, sym, errors, ctx);
-  checkSecondSpelling(t, errors);
+  checkSecondSpelling(t, errors, ctx);
   checkInputBindType(t, sym, errors, ctx);
   if (t.name === "input") {
-    const bindArg = t.args.find((a) => a.name === "bind");
-    const typeArg = t.args.find((a) => a.name === "type");
-    const typeVal = typeArg?.value as Expr | undefined;
+    const bindVal = propOf(t, "bind", ctx)?.value;
+    const typeVal = propOf(t, "type", ctx)?.value;
     const isFileType = typeVal?.kind === "Str" && typeVal.value === "file";
-    if (bindArg && isFileType) {
-      const bindVal = bindArg.value as Expr;
+    if (bindVal && isFileType) {
       const slotName = bindVal.kind === "Ref" ? bindVal.name : "<expr>";
       errors.push({
         code: "E0205",
@@ -422,14 +556,14 @@ function checkTileCall(
         typeVal === undefined
           ? `no type, defaults to "text"`
           : `type="${(typeVal as Expr & { kind: "Str" }).value}"`;
-      for (const arg of t.args) {
-        if (arg.name !== "accept" && arg.name !== "multiple") continue;
-        const argVal = arg.value as Expr;
+      for (const name of ["accept", "multiple"]) {
+        const written = propOf(t, name, ctx);
+        if (!written) continue;
         errors.push({
           code: "E0206",
           kind: "file-only-prop",
-          message: `input prop "${arg.name}" requires type="file" (got ${observedType}); accept/multiple are only valid on file inputs (see docs/spec/forms.md)`,
-          pos: argVal.pos,
+          message: `input prop "${name}" requires type="file" (got ${observedType}); accept/multiple are only valid on file inputs (see docs/spec/forms.md)`,
+          pos: written.value.pos,
         });
       }
     }
@@ -439,71 +573,34 @@ function checkTileCall(
     const v = arg.value;
     // Whether a positional argument is a tile or a value depends on the tile it is passed to,
     // so an undefined one leaves nothing to check it as.
-    if (undefinedTile && arg.name === undefined) continue;
+    if (unknown && arg.name === undefined) continue;
     if (arg.name !== undefined && HANDLER_NAMES.has(arg.name)) {
       checkHandlerBinding(t.name, arg.name, "arg", v, sym, errors);
       continue;
     }
+    const place: TilePlace | null =
+      arg.name === undefined && positionalIsTile(t.name) ? { kind: "child", of: t.name } : null;
     if (isTileExpr(v)) {
-      checkTileExpr(v, sym, errors, ctx);
+      checkTileExpr(v, sym, errors, ctx, place);
       continue;
     }
-    if (
-      arg.name === undefined &&
-      positionalIsTile(t.name) &&
-      !(v.kind === "Ref" && sym.tiles.has(v.name))
-    ) {
-      errors.push({
-        code: "E0128",
-        kind: "value-as-child",
-        message:
-          `A value is not a tile: ${t.name} renders a positional argument only when it is a ` +
-          "tile, so this one renders nothing. Show the value with a tile — `text(…)` — or, " +
-          "for a `let`, write the value where it is used or compute it in a `fn`",
-        pos: v.pos,
-      });
-      continue;
+    if (place !== null) {
+      const found = occupantOf(v, sym, ctx);
+      if (found.kind !== "tile") {
+        errors.push(notATile(found, place, v.pos));
+        continue;
+      }
     }
+    if (arg.name !== undefined && checkNamingProp(t.name, arg.name, v, sym, errors, ctx)) continue;
     checkExpr(v, sym, errors, ctx);
     // Only codegen knows which of a builtin's arguments it renders as text.
-    if (BUILTIN_TILES.has(t.name)) noteShown(v, sym, ctx);
+    if (arg.name === "key" || BUILTIN_TILES.has(t.name)) noteShown(v, sym, ctx);
     if (arg.name !== undefined) checkBuiltinProp(t.name, arg.name, v, sym, errors, ctx);
   }
   for (const prop of t.props) {
     if (HANDLER_NAMES.has(prop.name)) {
       checkHandlerBinding(t.name, prop.name, "prop", prop.value, sym, errors);
-    } else if (prop.name === "motion" && prop.value.kind === "Str") {
-      if (!sym.motions.has(prop.value.value)) {
-        errors.push({
-          code: "E0107",
-          kind: "undef-motion",
-          message: `Reference to undefined motion "${prop.value.value}"`,
-          pos: prop.value.pos,
-        });
-      }
-    } else if (t.name === "link" && prop.name === "prefetch") {
-      const ref = prop.value;
-      const name = ref.kind === "Ref" ? ref.name : ref.kind === "Str" ? ref.value : null;
-      if (name === null) {
-        errors.push({
-          code: "E0201",
-          kind: "type-mismatch",
-          message: `link prefetch must be a reducer name`,
-          pos: ref.pos,
-        });
-      } else if (!sym.reducers.has(name)) {
-        errors.push({
-          code: "E0102",
-          kind: "undef-reducer",
-          message: `Reference to undefined reducer "${name}"`,
-          pos: ref.pos,
-        });
-      }
-    } else if (t.name === "link" && prop.name === "prefetch-args") {
-      // Handed on as the prefetch target's `$route.params`.
-      checkExpr(prop.value, sym, errors, ctx);
-      checkAgainst(prop.value, PREFETCH_ARGS_TYPE, sym, errors, ctx);
-    } else {
+    } else if (!checkNamingProp(t.name, prop.name, prop.value, sym, errors, ctx)) {
       checkExpr(prop.value, sym, errors, ctx);
       if (prop.name === "key" || BUILTIN_TILES.has(t.name)) noteShown(prop.value, sym, ctx);
       checkBuiltinProp(t.name, prop.name, prop.value, sym, errors, ctx);
@@ -513,6 +610,56 @@ function checkTileCall(
 }
 
 const PREFETCH_ARGS_TYPE = appType("Map", primType("Text"), primType("Text"));
+
+/**
+ * Checks a prop whose value names a motion or a link's prefetch target, or is that target's
+ * `$route.params`, in either spelling; false for any other prop.
+ */
+function checkNamingProp(
+  tile: string,
+  name: string,
+  value: Expr,
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): boolean {
+  if (name === "motion" && value.kind === "Str") {
+    if (!sym.motions.has(value.value)) {
+      errors.push({
+        code: "E0107",
+        kind: "undef-motion",
+        message: `Reference to undefined motion "${value.value}"`,
+        pos: value.pos,
+      });
+    }
+    return true;
+  }
+  if (tile !== "link") return false;
+  if (name === "prefetch") {
+    const reducer = value.kind === "Ref" ? value.name : value.kind === "Str" ? value.value : null;
+    if (reducer === null) {
+      errors.push({
+        code: "E0201",
+        kind: "type-mismatch",
+        message: `link prefetch must be a reducer name`,
+        pos: value.pos,
+      });
+    } else if (!sym.reducers.has(reducer)) {
+      errors.push({
+        code: "E0102",
+        kind: "undef-reducer",
+        message: `Reference to undefined reducer "${reducer}"`,
+        pos: value.pos,
+      });
+    }
+    return true;
+  }
+  if (name !== "prefetch-args") return false;
+  // Handed on as the prefetch target's `$route.params`.
+  checkExpr(value, sym, errors, ctx);
+  checkAgainst(value, PREFETCH_ARGS_TYPE, sym, errors, ctx);
+  return true;
+}
 
 function checkHandlerBinding(
   tileName: string,
@@ -550,26 +697,101 @@ function checkHandlerTarget(
   sym: SymbolTable,
   errors: KumikiError[],
 ): void {
-  const allowed = HANDLER_PROP_TILES[handler];
-  if (allowed == null) return;
-  if (BUILTIN_TILES.has(tileName)) {
-    if (allowed.has(tileName)) return;
-    errors.push(inertHandler(tileName, handler, `${tileName} does not fire it`, allowed, pos));
+  const reach = handlerReach(handler);
+  if (reach === null) return;
+  if (reach.via === "renderer") {
+    const because = notCalled(tileName, reach, sym);
+    if (because === null) return;
+    const fix = `Put it on ${tilesPhrase(reach.allowed)}, or subscribe with a reducer's on=ui.<event>(<Tile>)`;
+    errors.push(inertHandler(tileName, handler, because, fix, pos));
     return;
   }
-  if (!sym.tiles.has(tileName)) return;
+  const because = notReceived(tileName, reach, sym);
+  if (because === null) return;
+  // Subscribing on the same tile is W0212: a wrapper hears neither form.
+  const fix =
+    `Put it on ${tilesPhrase(reach.tiles)}, or subscribe with a reducer's ` +
+    `on=ui.${reach.ev}(<Tile>) on a tile that takes focus itself`;
+  errors.push(inertHandler(tileName, handler, because, fix, pos));
+}
+
+/**
+ * Where a handler prop runs. A `renderer` one runs only on the kinds whose renderer calls it. A
+ * `wrapper` one is attached to whatever element the tile produced, so it misses where that
+ * element wraps the one that fires `ev` and `ev` does not bubble to it.
+ */
+type HandlerReach =
+  | {
+      readonly via: "renderer";
+      readonly allowed: ReadonlySet<string>;
+      readonly ev: UiEventKind | undefined;
+    }
+  | { readonly via: "wrapper"; readonly ev: UiEventKind; readonly tiles: ReadonlySet<string> };
+
+function handlerReach(handler: string): HandlerReach | null {
+  const allowed = HANDLER_PROP_TILES[handler];
+  const lift = liftForHandler(handler);
+  if (allowed != null) return { via: "renderer", allowed, ev: lift?.ev };
+  if (lift === undefined || lift.tiles === null) return null;
+  // An event every wrapper receives (`key`) runs wherever the handler is attached.
+  if (wrapperNeverReceives(lift.ev, BUILTIN_TILES).length === 0) return null;
+  // A handler attached to whatever element the tile produced is reported only on a
+  // wrapped kind whose wrapper never receives the event; whether any other kind
+  // takes focus is not asked.
+  return { via: "wrapper", ev: lift.ev, tiles: lift.tiles };
+}
+
+/** Why `tileName` drops a handler no renderer it renders calls, or `null` where one does. */
+function notCalled(
+  tileName: string,
+  reach: HandlerReach & { via: "renderer" },
+  sym: SymbolTable,
+): string | null {
+  const unheard = (kinds: Iterable<string>): string[] =>
+    reach.ev === undefined ? [] : firesUnheardClauses(reach.ev, kinds);
+  if (BUILTIN_TILES.has(tileName)) {
+    if (reach.allowed.has(tileName)) return null;
+    const [because = `${tileName} does not fire it`] = unheard([tileName]);
+    return because;
+  }
+  if (!sym.tiles.has(tileName)) return null;
   const kinds = collectTileBuiltinKinds(tileName, sym);
-  if (kinds.size === 0) return;
-  if ([...kinds].some((k) => allowed.has(k))) return;
-  errors.push(
-    inertHandler(
-      tileName,
-      handler,
-      `${tileName} renders nothing that fires it (observed in body: ${[...kinds].sort().join(", ")})`,
-      allowed,
-      pos,
-    ),
+  if (kinds.size === 0 || [...kinds].some((k) => reach.allowed.has(k))) return null;
+  const observed = `(observed in body: ${[...kinds].sort().join(", ")})`;
+  const clauses = unheard(kinds);
+  return clauses.length === 0
+    ? `${tileName} renders nothing that fires it ${observed}`
+    : `${tileName} renders nothing that calls it: ${clauses.join("; ")} ${observed}`;
+}
+
+/**
+ * Why `tileName` drops a handler its event never reaches, or `null` where it may. The event
+ * does not bubble, so of a user tile only the elements the handler is merged onto are asked.
+ */
+function notReceived(
+  tileName: string,
+  reach: HandlerReach & { via: "wrapper" },
+  sym: SymbolTable,
+): string | null {
+  const { ev } = reach;
+  if (BUILTIN_TILES.has(tileName)) {
+    const [missed] = wrapperNeverReceives(ev, [tileName]);
+    return missed === undefined ? null : wrappedClause(ev, missed);
+  }
+  if (!sym.tiles.has(tileName)) return null;
+  const kinds = collectTileRootKinds(tileName, sym);
+  if (kinds.size === 0 || [...kinds].some((k) => wrapperNeverReceives(ev, [k]).length === 0)) {
+    return null;
+  }
+  const clauses = wrapperNeverReceives(ev, kinds).map((g) => wrappedClause(ev, g));
+  return (
+    `${tileName} renders nothing at its root where "${ev}" reaches it: ${clauses.join("; ")} ` +
+    `(observed at its root: ${[...kinds].sort().join(", ")})`
   );
+}
+
+function tilesPhrase(tiles: ReadonlySet<string>): string {
+  return [...tiles].sort().join(" / ");
 }
 
 /** One W0213, whichever side — builtin or user tile — asked for it. */
@@ -577,14 +799,14 @@ function inertHandler(
   tileName: string,
   handler: string,
   because: string,
-  allowed: ReadonlySet<string>,
+  fix: string,
   pos: Pos,
 ): KumikiError {
   return {
     code: "W0213",
     kind: "handler-on-inert-tile",
     severity: "warning",
-    message: `"${handler}" on ${tileName}() is dropped — ${because}. Put it on ${[...allowed].sort().join(" / ")}, or subscribe with a reducer's on=ui.<event>(<Tile>)`,
+    message: `"${handler}" on ${tileName}() is dropped — ${because}. ${fix}`,
     pos,
   };
 }

@@ -12,6 +12,7 @@ import {
   UI_EVENT_TILE_KINDS,
   UI_LIFTS,
   wrappedUnreached,
+  wrapperNeverReceives,
 } from "../src/ui-lifts.ts";
 import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
@@ -121,6 +122,25 @@ describe("wrappedUnreached", () => {
   });
 });
 
+describe("wrapperNeverReceives", () => {
+  const WRAPPED = ["check", "radio", "switch", "details"];
+
+  it("answers focus and blur as wrappedUnreached does", () => {
+    for (const ev of ["focus", "blur"] as const) {
+      expect(wrapperNeverReceives(ev, WRAPPED)).toEqual(wrappedUnreached(ev, WRAPPED));
+    }
+  });
+
+  it("answers no other event, key on a details included", () => {
+    const answered = ALL_UI_EVENT_KINDS.filter(
+      (ev) => wrapperNeverReceives(ev, WRAPPED).length > 0,
+    );
+    expect(answered.sort()).toEqual(["blur", "focus"]);
+    expect(wrappedUnreached("key", ["details"])).toHaveLength(1);
+    expect(wrapperNeverReceives("key", ["details"])).toEqual([]);
+  });
+});
+
 describe("firesUnheard / firesUnheardIn", () => {
   it("records only builtin kinds that its row leaves out", () => {
     for (const lift of UI_LIFTS) {
@@ -131,7 +151,7 @@ describe("firesUnheard / firesUnheardIn", () => {
     }
   });
 
-  it("records the absences that are runtime policy: link for click, and kinds for input", () => {
+  it("records the absences whose renderer does something else: link for click, and kinds for input", () => {
     const recorded = Object.fromEntries(
       UI_LIFTS.filter((l) => l.firesUnheard).map((l) => [
         l.ev,
@@ -145,23 +165,36 @@ describe("firesUnheard / firesUnheardIn", () => {
   });
 
   // W0212 gives one reason or the other, so a body could not be given both.
-  it("keeps records off the rows a wrapped kind's focused element leaves unreached", () => {
+  it("answers nothing on the rows a wrapped kind's focused element leaves unreached", () => {
     for (const lift of UI_LIFTS) {
       if (wrappedUnreached(lift.ev, BUILTIN_TILES).length === 0) continue;
-      expect(lift.firesUnheard, `the ${lift.ev} row`).toBeUndefined();
+      expect(firesUnheardIn(lift.ev, BUILTIN_TILES), `the ${lift.ev} row`).toEqual([]);
     }
   });
 
-  it("groups the kinds of a body by what their renderer does instead, with the row's handler", () => {
+  it("groups the kinds of a body by what their renderer does instead, naming the row's handler", () => {
     expect(firesUnheardIn("input", ["text", "switch", "slider", "check"])).toEqual([
-      { kinds: ["check", "switch"], instead: 'listens for "change" instead', handler: "onInput" },
-      { kinds: ["slider"], instead: "listens for it only to write the bind", handler: "onInput" },
+      { kinds: ["check", "switch"], reason: 'listens for "change" instead, never calling onInput' },
+      { kinds: ["slider"], reason: "listens for it only to write the bind, never calling onInput" },
     ]);
   });
 
-  it("answers nothing for a kind the row's record does not name, or a row with no record", () => {
+  it("gives the click row a default for every kind it leaves out, which only click has", () => {
+    expect(UI_LIFTS.filter((l) => l.everyElementFires).map((l) => l.ev)).toEqual(["click"]);
+  });
+
+  it("answers each kind the click row leaves out: link with its own reason, the rest the default", () => {
+    expect(firesUnheardIn("click", ["text", "box", "link", "image", "button"])).toEqual([
+      { kinds: ["box", "image", "text"], reason: "never calls onClick" },
+      { kinds: ["link"], reason: "listens for it only to navigate, never calling onClick" },
+    ]);
+  });
+
+  it("answers nothing for a kind the row neither records nor defaults, a lifted kind, or a row with no record", () => {
     expect(firesUnheardIn("input", ["button", "text"])).toEqual([]);
     expect(firesUnheardIn("change", ["editable"])).toEqual([]);
+    expect(firesUnheardIn("focus", ["box", "text"])).toEqual([]);
+    expect(firesUnheardIn("click", ["button", "check", "radio", "switch"])).toEqual([]);
     expect(firesUnheardIn("focus", ["check"])).toEqual([]);
   });
 });

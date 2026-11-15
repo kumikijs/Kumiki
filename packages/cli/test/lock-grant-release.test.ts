@@ -1,8 +1,9 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { lockDef, readOpLog, replaceDef, unlockDef } from "@kumikijs/cli";
 import { app } from "@kumikijs/examples";
 import { beforeEach, describe, expect, it } from "vitest";
-import { seedCopy } from "./helpers/files.ts";
+import { NOT_A_FILE, seedCopy } from "./helpers/files.ts";
 import { asAgent } from "./helpers/op-log.ts";
 
 const COUNTER = app("01-counter");
@@ -194,6 +195,17 @@ describe("lock", () => {
     expect(() => replaceDef(file, "slot.count", "N = 2")).toThrowError(
       /lock violation: slot\.count is locked by agent:b/,
     );
+  });
+});
+
+describe("lock and unlock", () => {
+  it.each(NOT_A_FILE)("refuse a path that %s, creating no lock file", (_what, make) => {
+    const path = join(dirname(file), "other.kumiki");
+    make(path);
+    const refusal = `File "${path}" not found`;
+    expect(() => lockDef(path, "agent:a", "slot.*")).toThrowError(refusal);
+    expect(() => unlockDef(path, "agent:a")).toThrowError(refusal);
+    expect(existsSync(`${path}.kumiki-locks.json`)).toBe(false);
   });
 });
 
