@@ -110,6 +110,9 @@ export function makeEffectDispatcher(
     onceSeen: new Map(),
     queues: new Map(),
   };
+  // Set by `dispose`, so an emit that reaches the dispatcher afterwards (a reducer's later emits,
+  // when an invoke disposed the app during its dispatch) launches nothing.
+  let disposed = false;
 
   // `dropped` now names the request `into` names, and so does every id that named `dropped`.
   const absorb = (dropped: string, into: string): void => {
@@ -131,6 +134,7 @@ export function makeEffectDispatcher(
     id: string,
     presetToken?: string,
   ): Promise<void> => {
+    if (disposed) return;
     // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
     if (eff.cap !== "" && !caps.has(eff.cap)) {
       settle(id);
@@ -163,6 +167,7 @@ export function makeEffectDispatcher(
 
   return {
     dispatch(emit: EmitSpec): void {
+      if (disposed) return;
       const eff = own(app.effects, emit.effect);
       if (!eff) {
         // No token: with no effect there is no policy to defer this emit, so it is reported now, on
@@ -274,8 +279,10 @@ export function makeEffectDispatcher(
       void launch(eff, input, id);
     },
     // Ends everything first and records after: recording a cancel can commit an episode, which
-    // runs the logger's `onEpisode`, and nothing that does may leave an effect running.
+    // runs the logger's `onEpisode`, and nothing that does may leave an effect running. A commit
+    // that throws does not keep the others from committing: the first throw is rethrown after.
     dispose(): void {
+      disposed = true;
       const cancelled: [token: string, name: string][] = [];
       for (const [name, t] of state.timers) {
         clearTimeout(t.h);
@@ -293,9 +300,16 @@ export function makeEffectDispatcher(
       for (const m of [state.timers, state.queues, state.runs, state.inflight, state.absorbedBy]) {
         m.clear();
       }
+      let thrown: { error: unknown } | undefined;
       for (const [token, name] of cancelled) {
-        if (token) onPolicyCancel?.(token, name);
+        if (!token) continue;
+        try {
+          onPolicyCancel?.(token, name);
+        } catch (error) {
+          thrown ??= { error };
+        }
       }
+      if (thrown) throw thrown.error;
     },
   };
 }
