@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import type { Command } from "commander";
 import { patchApplyFile, patchRevert } from "../mutate.ts";
+import { WARN_SKIPPED } from "./_shared/op-log.ts";
 import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage, printOrExit } from "./_shared/usage.ts";
 
@@ -25,7 +26,7 @@ export function registerPatch(program: Command): string {
       if (!file || !opsFile) exitWithUsage(APPLY_USAGE);
       const path = sourceFileArg(file);
       printOrExit(() => {
-        const ids = patchApplyFile(path, resolve(process.cwd(), opsFile));
+        const ids = patchApplyFile(path, resolve(process.cwd(), opsFile), WARN_SKIPPED);
         return `applied ${ids.length} ops: ${ids.join(", ")}`;
       });
     });
@@ -40,7 +41,7 @@ export function registerPatch(program: Command): string {
       if (!file || !opId) exitWithUsage(REVERT_USAGE);
       const path = sourceFileArg(file);
       printOrExit(() => {
-        const newId = patchRevert(path, opId);
+        const newId = patchRevert(path, opId, WARN_SKIPPED);
         return `reverted ${opId}  (${newId})`;
       });
     });

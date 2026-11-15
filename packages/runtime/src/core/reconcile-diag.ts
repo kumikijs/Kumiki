@@ -1,3 +1,4 @@
+import { tileNames } from "./lifecycle.ts";
 import { neverEqualCause, ownFieldPairs, tileTouchedId } from "./tile-equality.ts";
 import type {
   DiagnosticSite,
@@ -17,10 +18,6 @@ export function makeReconcileDiag(
   options: MountOptions,
 ): ReconcileDiag {
   const hostKinds = options.hostTileKinds?.length ? new Set(options.hostTileKinds) : undefined;
-  const authored = (node: TileNode): string | undefined => {
-    const name = (node as { props?: Record<string, unknown> }).props?._tile;
-    return typeof name === "string" ? name : undefined;
-  };
   const emit = (d: RuntimeDiagnostic): void => {
     try {
       report(d);
@@ -43,7 +40,7 @@ export function makeReconcileDiag(
       const site: DiagnosticSite = {
         tileKind: newNode.kind,
         id: tileTouchedId(newNode),
-        tile: authored(newNode),
+        tile: tileNames(newNode)[0],
       };
       for (const [field, oldValue, newValue] of ownFieldPairs(oldNode, newNode)) {
         const d = hazard(site, field, oldValue, newValue);
@@ -59,7 +56,7 @@ export function makeReconcileDiag(
         kind: "reconcile-fallback",
         tileKind: node.kind,
         id: tileTouchedId(node),
-        tile: authored(node),
+        tile: tileNames(node)[0],
         ...fallback,
       });
     },
