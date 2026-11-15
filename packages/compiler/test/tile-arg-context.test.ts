@@ -1,7 +1,7 @@
 import { type Expr, lex, parse, type TileExpr } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { tileCall } from "./helpers/ast.ts";
-import { summariesOf } from "./helpers/diagnostics.ts";
+import { codesOf, summariesOf } from "./helpers/diagnostics.ts";
 import { withApp } from "./helpers/programs.ts";
 
 const HOST = `type F = All | Done
@@ -165,10 +165,13 @@ describe("a builtin tile's name called where a value belongs", () => {
     'Btn(header=text("a"))',
     'Say(text("x"))',
     'Row(text("x"))',
-    'heading(text("x"))',
   ])("is reported by its position, not its spelling: %s", (tile) => {
     expect(summaries(tile)).toContain(misplaced("text"));
     expect(summaries(tile)).not.toContain('E0116 Call to undefined function "text"');
+  });
+
+  it("is E0236 alone as a value builtin's content", () => {
+    expect(codesOf(program('heading(text("x"))'))).toEqual(["E0236"]);
   });
 
   it("is reported as the only diagnostic where nothing else is wrong", () => {
