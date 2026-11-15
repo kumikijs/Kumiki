@@ -8,7 +8,15 @@ export {
   UnreadableLockFileError,
   unlockDef,
 } from "./mutate/locks.ts";
-export { type DefSpec, newId, type OpLogEntry, readOpLog } from "./mutate/op-log.ts";
+export {
+  type DefSpec,
+  describeSkipped,
+  newId,
+  type OpLogEntry,
+  type OpLogOptions,
+  readOpLog,
+  type SkippedOpLogLine,
+} from "./mutate/op-log.ts";
 export {
   addDef,
   CASCADE_HELP,
