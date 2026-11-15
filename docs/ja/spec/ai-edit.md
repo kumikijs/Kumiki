@@ -258,6 +258,7 @@ hash にはどの定義の名前も含まれない。定義自身の名前は除
 - 名前 → hash 解決はコンパイル時 / op 適用時に行う
 - 同名でも依存先が変われば別 hash
 - リネームは `(rename, name-old, name-new)` op のみ。hash は不変
+- tile の位置に書いた名前（`column(leaf)`）は、slot や `fn` が同じ名前を持っていてもその名前の tile を指し、値の位置（`text(leaf)`）では値を指す（[言語 §1.7.1](./language.md#_1-7-1-構文)）ので、`refs`・`rename`・`remove --cascade` はチェッカとビルドがそこで解決する定義に従う
 
 ### 9.5.3 表示時の名前 {#_9-5-3-names-at-display-time}
 
