@@ -327,6 +327,18 @@ tile App = column(Card)`);
     expect(warned).toEqual(["onLeaf"]);
   });
 
+  it("walks a tile named like a builtin, written as a bare child, as the program's tile", () => {
+    // `column(spinner)` renders the program's `spinner`, a button, not the builtin, which fires no click.
+    const src = withApp(`
+slot spinner : Text = "x"
+slot hits : Int = 0
+reducer onCard on=ui.click(Card) do= hits := hits + 1
+tile spinner = button(text="go")
+tile Card = column(text("card"), spinner)
+tile App = column(Card)`);
+    expect(checkSource(src).filter((e) => e.code === "W0212")).toEqual([]);
+  });
+
   it.each([
     [
       "a fallback that names itself",
