@@ -50,6 +50,11 @@ function nameAnchor(store: Store, pos: Pos, missing: string): PatchAnchor {
     : { kind: "line", pos };
 }
 
+/** Whether `pos` is at a positional (`$1`, `$2`, `$e`), which what encloses it binds. */
+function atPositional(store: Store, pos: Pos): boolean {
+  return store.lines[pos.line - 1]?.[pos.col - 1] === "$";
+}
+
 /** Apply a name-suggest repair the way its anchor says it writes. */
 function applyNameFix(anchor: PatchAnchor, missing: string, suggested: string) {
   return (text: string): string =>
@@ -196,7 +201,14 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   ["E0102", anyDefinition], // undef-reducer
   [
     "E0103", // undef-ref / undef-slot
-    (err, store) => outOfScopeReason(err) ?? anyDefinition(err, store),
+    // A positional renamed to the nearest declared name type-checks too, and is never what the
+    // fragment, tile or handler bound.
+    (err, store) => {
+      const outOfScope = outOfScopeReason(err);
+      if (outOfScope !== undefined) return outOfScope;
+      if (atPositional(store, err.pos)) return { reason: "e0103-positional-unbound" };
+      return anyDefinition(err, store);
+    },
   ],
   ["E0105", undefinedTile], // undef-tile
   ["E0107", anyDefinition], // undef-motion
