@@ -255,7 +255,7 @@ function episodeLogError(path: string, error: unknown): Error {
  * commits. A failed write is held, not thrown: the hook runs inside the runtime's commit, where
  * a throw would read as an error of the app. Nothing is appended after it, so the file has no
  * gap. The app's dispose cancels every effect it launched, so their episodes have committed by
- * the time the run returns (runtime.md §10.4.7). `close` stops the writing all the same, so
+ * the time the run returns (runtime.md). `close` stops the writing all the same, so
  * nothing that commits once the run is over is written, and gives back the held failure.
  */
 export function fileEpisodeLogger(path: string): {

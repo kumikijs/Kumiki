@@ -770,7 +770,7 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 
 ### 10.4.7 dispose
 
-アプリを dispose する（最後のビューを dispose する、[§10.9](#_10-9-ランタイム-api-埋め込み用)）と、dispatcher がまだ抱えている effect はすべて終わる。まだ発火していない `debounce` タイマーと、まだ始まっていない `queue` のエントリは launch されない。すでに launch された effect は、invoke がまだ走っていても、`retry=` の試行間で待機していても（[§10.4.4](#_10-4-4-retry)）、シグナルを通じて abort される。キャンセルによってすでに abort されたがまだ結果が戻っていない effect も同様である。これらはそれぞれ、自分の `effect-start` を確保した episode に `effect-cancel` step（`targetId = <effect-name>`）を残し、その episode は `effect-end` なしで `status="completed"` として、`dispose` が返る前に commit する。
+アプリを dispose する（最後のビューを dispose する、[§10.9](#_10-9-ランタイム-api-埋め込み用)）と、dispatcher がまだ抱えている effect はすべて終わる。まだ発火していない `debounce` タイマーと、まだ始まっていない `queue` のエントリは launch されない。すでに launch された effect は、invoke がまだ走っていても、`retry=` の試行間で待機していても（[§10.4.4](#_10-4-4-retry)）、シグナルを通じて abort される。キャンセルによってすでに abort されたがまだ結果が戻っていない effect も同様である。これらはそれぞれ、自分の `effect-start` を確保した episode に `effect-cancel` step（`targetId = <effect-name>`）を残し、その episode は status を変えずに、`effect-end` なしで、`dispose` が返る前に commit する。例外は、effect を launch する dispatch の最中に invoke がアプリを dispose した場合である。その episode はまだ開いているので、その dispatch が終わるときに commit し、それより後に reducer が emit したものは launch されない。これらの commit のどれかでロガーの `onEpisode` が throw しても、残りは commit し、`dispose` はそれらが commit した後に最初の throw を投げ直す。どちらの場合もアプリはアンマウントされているので、その shape はもう一度 mount できる。
 
 それ以降、アプリが launch したものは結果を届けない。アプリの dispose 後に答えた invoke は、abort を無視したものも含めて、`.ok` / `.err` reducer に届かず、step も残さず、未処理エラーとしても報告されない。したがって `dispose` が返った時点で、アプリが launch したすべての effect の episode は、アプリが止めたところで終わった形で commit 済みである。結果をログから取る replay（[§10.5.3](#_10-5-3-replay)）は、キャンセルされた effect の結果をログに見つけず、アプリが受け取らなかった結果を届けることはない。
 

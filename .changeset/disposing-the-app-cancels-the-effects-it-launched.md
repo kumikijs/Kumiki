@@ -23,10 +23,14 @@ running or it waits between retry attempts, as it already cancelled a pending
 (`targetId = <effect-name>`) on the episode that started it, and that episode
 commits before `dispose` returns. A result that arrives afterwards, including
 one from an invoke that ignored its abort, reaches no reducer, records no step,
-and is not reported as an unhandled error.
+and is not reported as an unhandled error. If the logger's `onEpisode` throws
+on one of those commits, the other episodes still commit and `dispose`
+rethrows the first error afterwards; the app is unmounted either way, so its
+shape can be mounted again. An emit that reaches the app after its dispose
+launches nothing.
 
-runtime.md §10.4.7 states the rule in both language tracks; http.md §6.5 and
-runtime.md §10.4.4 point to it for a request in its retry backoff, and
-runtime.md §10.5.2 no longer says `kumiki run --episode-log` leaves out an
-episode that commits after the run. `packages/examples/features/260-dispose-cancels-launched-effects.kumiki`
+runtime.md states the rule, under Dispose, in both language tracks; the retry
+sections of http.md and runtime.md point to it for a request in its retry
+backoff, and runtime.md's episode-log section no longer says
+`kumiki run --episode-log` leaves out an episode that commits after the run. `packages/examples/features/260-dispose-cancels-launched-effects.kumiki`
 ends its scenario while a request waits in its backoff.

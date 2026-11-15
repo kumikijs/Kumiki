@@ -1,5 +1,5 @@
-# Feature (runtime.md §10.4.7): disposing the app cancels every effect it
-# launched, and the episode of each commits before `dispose` returns.
+# Feature: disposing the app cancels every effect it launched, and the
+# episode of each commits before `dispose` returns.
 #
 #   kumiki run 260-dispose-cancels-launched-effects.kumiki \
 #       260-dispose-cancels-launched-effects.scenario.json --episode-log run.log.jsonl
