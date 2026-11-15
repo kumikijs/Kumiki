@@ -14,6 +14,7 @@ import {
   contentReading,
   positionalIsTile,
   shownInPlaceOfPositional,
+  tileNamedAt,
 } from "../builtins.ts";
 import {
   type RouteMapEntry,
@@ -270,10 +271,15 @@ type ValueName =
   | { readonly kind: "value" }
   | { readonly kind: "ended"; readonly error: KumikiError };
 
+type NotATile = Exclude<Occupant, { readonly kind: "tile" }>;
+
 // The parser reads every name in an arm or a body as a tile call, so a call of a name no tile has
 // is resolved as a value, and so is a builtin's name written alone. In a container it reads a bare
-// lower-cased name as an expression, so a `Ref` is the one expression that may still name a tile;
-// in both places a value of the same name wins over a builtin.
+// lower-cased name as an expression, and a program's tile of that name is taken before this
+// (`tileNamedAt`), so a `Ref` here is a value or nothing; in both places a value of the same name
+// wins over a builtin.
+function occupantOf(v: TileExpr, sym: SymbolTable, ctx: Ctx): Occupant;
+function occupantOf(v: Expr, sym: SymbolTable, ctx: Ctx): NotATile;
 function occupantOf(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): Occupant {
   if (isTileExpr(v)) {
     if (v.kind !== "TileCall" || sym.tiles.has(v.name)) return { kind: "tile" };
@@ -284,7 +290,6 @@ function occupantOf(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): Occupant {
     return builtin ? { kind: "tile" } : { kind: "unknown", name: v.name };
   }
   if (v.kind !== "Ref") return { kind: "value" };
-  if (sym.tiles.has(v.name)) return { kind: "tile" };
   const value = valueNamed(v.name, v.pos, sym, ctx);
   if (value) return value;
   if (BUILTIN_TILES.has(v.name)) return { kind: "uncalled", name: v.name };
@@ -311,11 +316,7 @@ function valueNamed(name: string, pos: Pos, sym: SymbolTable, ctx: Ctx): ValueNa
   return asCall.some((e) => e.code === "E0116") ? null : { kind: "value" };
 }
 
-function notATile(
-  found: Exclude<Occupant, { kind: "tile" }>,
-  place: TilePlace,
-  pos: Pos,
-): KumikiError {
+function notATile(found: NotATile, place: TilePlace, pos: Pos): KumikiError {
   if (found.kind === "unknown") return undefinedTile(found.name, pos);
   if (found.kind === "ended") return found.error;
   const rule =
@@ -609,11 +610,21 @@ function checkTileCall(
       continue;
     }
     if (place !== null) {
-      const found = occupantOf(v, sym, ctx);
-      if (found.kind !== "tile") {
-        errors.push(notATile(found, place, v.pos));
+      const named = tileNamedAt(t.name, arg, (name) => sym.tiles.get(name));
+      if (named) {
+        const { ref, def } = named;
+        const call: TileExpr & { kind: "TileCall" } = {
+          kind: "TileCall",
+          name: ref.name,
+          args: [],
+          props: [],
+          pos: ref.pos,
+        };
+        checkTileInput(call, def, sym, errors, ctx);
         continue;
       }
+      errors.push(notATile(occupantOf(v, sym, ctx), place, v.pos));
+      continue;
     }
     if (arg.name !== undefined && checkNamingProp(t.name, arg.name, v, sym, errors, ctx)) continue;
     checkExpr(v, sym, errors, ctx);
