@@ -1367,6 +1367,18 @@ Only an `effect` declaration is refused. Emitting a standard effect needs no dec
 
 **Fix**: Rename the effect together with every `emit`, `app.init` entry and `on=<name>.ok` / `.err` reducer that meant it — `kumiki rename <file> effect.log logRequest` rewrites them all — and emit the standard effect under its own name where the built-in is what was meant. `kumiki rename` rewrites every use, whichever effect it was written for, so an `emit` written for the built-in keeps its `E0202` under the new name and the rename is refused; such a program is renamed by hand, leaving that `emit` as it is. A declaration that restates a standard effect (`effect navigate cap=nav.push in={path: Text, …}`) is deleted instead, since the standard effect needs none. Delete its line directly: `kumiki remove` counts the emits as references to the declaration and refuses.
 
+### E0240 `reserved-field-name`
+
+A record field is named `_tag`, in a record type or a record literal: `type R = {_tag: Text, n: Int}`, the record type of a payload, a slot, a `fn`, an effect or a tile, and `{_tag="a", n=1}` wherever an expression goes. Reported at the field, once for each field so named.
+
+> `Record field "_tag" is reserved: the runtime marks a variant with a field of that name, so a record that has one is read as a variant. Name the field something else — "tag"`
+
+At run time a variant is a record whose `_tag` field holds its name — `Some(1)` is `{_tag: "Some", _0: 1}` — and that field is how the runtime tells a variant from a record, so a record written with one is read as a variant. A `select` keys a variant by its `_tag` and its payload ([runtime.md §10.3.8](./runtime.md#_10-3-8-value-matching-of-select)), and a record has no payload, so the options `{_tag="a", n=1}` and `{_tag="a", n=2}` would be one option: choosing the second would write the first into the bound slot.
+
+Only the name `_tag` is refused. `tag`, `_tags`, `_Tag` and `_0` are names of their own, and a Map whose key is the text `"_tag"` names no field.
+
+**Fix**: Rename the field — `tag`, `kind`, or a name that says what it holds — in the type and in every literal and field read that meant it.
+
 ## E03xx — Capabilities and Purity
 
 ### E0301 `missing-capability`

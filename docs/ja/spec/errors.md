@@ -1330,6 +1330,18 @@ bind していないコントロールが選択状態を読む prop — `check` 
 
 **修正**：effect を、それを意図していたすべての `emit`・`app.init` のエントリ・`on=<name>.ok` / `.err` の reducer とともに改名する — `kumiki rename <file> effect.log logRequest` がそれらをすべて書き換える。組み込みを意図していた箇所では、標準 effect をそれ自身の名前で emit する。`kumiki rename` はどの effect のために書かれたかを問わずすべての使用を書き換えるので、組み込みのために書かれた `emit` は新しい名前のもとでも `E0202` が残り、改名は拒否される。そのようなプログラムは手で改名し、その `emit` はそのまま残す。標準 effect を書き写しただけの宣言（`effect navigate cap=nav.push in={path: Text, …}`）は改名せずに削除する。標準 effect に宣言は要らないからである。削除はその行を直接消して行う：`kumiki remove` は emit を宣言への参照と数えて拒否する。
 
+### E0240 `reserved-field-name`
+
+レコードのフィールドが `_tag` という名前である。レコード型でもレコードリテラルでも同じである：`type R = {_tag: Text, n: Int}`、ペイロード・slot・`fn`・effect・tile のレコード型、そして式を書くどの位置の `{_tag="a", n=1}` も。そのフィールドの位置で、そう名付けたフィールドごとに 1 件報告する。
+
+> `Record field "_tag" is reserved: the runtime marks a variant with a field of that name, so a record that has one is read as a variant. Name the field something else — "tag"`
+
+実行時、バリアントは `_tag` フィールドにその名前を持つレコードであり — `Some(1)` は `{_tag: "Some", _0: 1}` — ランタイムはこのフィールドでバリアントとレコードを見分ける。そのため、このフィールドを持つように書かれたレコードはバリアントとして読まれる。`select` はバリアントを `_tag` とペイロードでキー付けし（[runtime.md §10.3.8](./runtime.md#_10-3-8-value-matching-of-select)）、レコードにはペイロードが無いので、選択肢 `{_tag="a", n=1}` と `{_tag="a", n=2}` は 1 つの選択肢になる：2 つ目を選ぶと、束縛した slot には 1 つ目が書き込まれる。
+
+拒否されるのは `_tag` という名前だけである。`tag`・`_tags`・`_Tag`・`_0` はそれぞれ別の名前であり、キーがテキスト `"_tag"` の Map はフィールドを名付けていない。
+
+**修正**：フィールドを改名する — `tag`・`kind`、あるいは何を持つかを言う名前に — 型の中でも、それを意図していたすべてのリテラルとフィールドの読み出しでも。
+
 ## E03xx — ケイパビリティと純粋性
 
 ### E0301 `missing-capability`
