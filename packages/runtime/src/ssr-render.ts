@@ -164,7 +164,7 @@ export function renderTileToString(node: TileNode): string {
       const inner = serializeAttrs({
         type: "radio",
         name: node.group,
-        // The key the mounted radio writes, as an `<option>` carries its select's key.
+        // The key the mounted radio writes, as an `<option>` carries its value's key.
         value: node.value === undefined ? undefined : valueKey(node.value),
         checked: node.selected,
         ...controlAttrs(node.props, true),

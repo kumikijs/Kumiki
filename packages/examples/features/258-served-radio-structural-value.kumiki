@@ -6,9 +6,10 @@
 # anything else. The server and the client write the same key, so the served
 # page tells the radios of each group here apart, whether their values are
 # `Text`, variants or records. The radio the slot holds is `checked` on both
-# paths, and choosing a radio still writes its value, not its key. The
-# scenario drives the mounted radios; what the server serves, and what hydrating
-# it picks up, is pinned by an integration test in `packages/tests`.
+# paths, and choosing a radio writes its value, not its key. The scenario
+# drives the mounted radios; what the server serves, and that a hydrated page
+# checks the slot's radio and writes the chosen value, are pinned by an
+# integration test in `packages/tests`.
 
 type Size   = S | M | L
 type Status = Backlog | InProgress | Done

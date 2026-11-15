@@ -34,8 +34,8 @@ function syncLabel(wrap: HTMLElement, props: TileProps | undefined): void {
   }
 }
 
-// The bind writes the value itself; the attribute carries its key, which the served
-// radio carries too, since a radio's `value` reflects into the markup.
+// The bind writes the value itself; the attribute carries only its key, the one the served
+// radio carries, so both render paths mark up the same `value`.
 function setRadioValue(inp: HTMLInputElement, value: unknown): void {
   if (value === undefined) {
     RADIO_VALUE.delete(inp);

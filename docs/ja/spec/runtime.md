@@ -227,7 +227,7 @@ app App ... theme = themeName    # ← slot 名を渡す
 - `Option(Status)` のような「variant でラップした variant」を option 値にできる
 - それ以外の値（`Text`・数値・レコード）は JSON テキストでキー化する。したがって `Text` の `m` のキーは引用符を含めた `"m"` になる。レコードの JSON テキストはフィールドを書かれた順に並べるので、`{h=3, w=2}` を持つ slot は `{w=2, h=3}` と書かれた option にマッチしない。`==` は両者を等しいとするにもかかわらずである。これは規則ではなく既知の制限である（[#941](https://github.com/kumikijs/Kumiki/issues/941)）
 - キーは両方の描画経路で `<option>` が `value` として持つものであり、キーが `v` のキーと等しい option が選択状態になる。配信されるページ（[§10.6.1](#_10-6-1-ssr)）はその option に `selected` 属性を付けるので、variant やレコードでも `Text` と同じく初期描画が `v` を表示する。`placeholder` の option が選択状態になるのは、両方の経路で、select が値を持たないときに限る
-- `radio` は `value=` を同じキーで持つ。両方の描画経路でそのキーが `<input>` の `value` になり、`value=` を持たない radio には `value` がない。配信されるページは、option と同じく、値のキーが異なる限りグループ内の radio を区別でき、`Text` の値 `pro` は option のものと同じく引用符を含めた `"pro"` として運ばれる。キーは radio の目印にすぎない：bind された radio を選ぶと値そのものが書き込まれ、radio がチェックされるかどうかは bind 先の slot との `==` または `selected=` で決まる（[フォーム §5.5.2](./forms.md#_5-5-2-radio)）ので、レコードのフィールド順はそれを左右しない
+- `radio` は `value=` を同じキーで持つ。両方の描画経路でそのキーが `<input>` の `value` になり、`value=` を持たない radio には `value` がない。配信されるページは、option と同じく、値のキーが異なる限りグループ内の radio を区別でき、`Text` の値 `pro` は option のものと同じく引用符を含めた `"pro"` として運ばれる。キーは radio の目印にすぎない：bind された radio を選ぶと値そのものが書き込まれ、radio がチェックされるかどうかは bind 先の slot との `==` または `selected=` で決まる（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）ので、レコードのフィールド順はそれを左右しない
 
 ### 10.3.9 focus 復元
 

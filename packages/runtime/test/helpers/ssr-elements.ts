@@ -47,8 +47,8 @@ export function styleOf(el: Element): Record<string, string> {
 
 const PROPERTY_ON_THE_CLIENT = new Set(["value", "checked", "selected"]);
 
-// The `value` of an `<option>` and of a radio does reflect: the client writes the
-// value's structural key into the attribute, so a served one has to carry the same key.
+// The client writes the structural key into the `value` attribute of an `<option>` and of a
+// radio, so a served one has to carry the same key.
 function propertyOnTheClient(el: Element, name: string): boolean {
   if (name === "value" && (el.tagName === "OPTION" || isRadio(el))) return false;
   return PROPERTY_ON_THE_CLIENT.has(name);
