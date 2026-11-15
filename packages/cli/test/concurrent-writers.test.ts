@@ -15,6 +15,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { addDef, lockDef, readOpLog, replaceDef } from "@kumikijs/cli";
 import { app } from "@kumikijs/examples";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { escapeRegExp } from "../src/text.ts";
 import { seedCopy } from "./helpers/files.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -287,10 +288,13 @@ describe("concurrent write verbs", () => {
   });
 
   it("restore the file when the op cannot be logged", () => {
-    mkdirSync(`${file}.kumiki-ops.jsonl`);
+    const log = `${file}.kumiki-ops.jsonl`;
+    mkdirSync(log);
     const before = readFileSync(file, "utf8");
     expect(() => addDef(file, "slot", "extra1", "Int = 0")).toThrow(
-      /could not be logged \(EISDIR.*\); the file was restored and nothing was written/,
+      new RegExp(
+        `could not be logged \\(${escapeRegExp(log)}: cannot be read \\(EISDIR.*\\)\\); the file was restored and nothing was written`,
+      ),
     );
     expect(readFileSync(file, "utf8")).toBe(before);
     expect(existsSync(lock)).toBe(false);
