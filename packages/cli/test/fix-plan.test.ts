@@ -134,6 +134,19 @@ ${APP_A}`);
     expect(check(parse(lex(patched))).map((e) => e.code)).toEqual(["E0129"]);
   });
 
+  it("leaves a positional argument on a builtin that renders none, and the text= beside it, as written (E0129)", () => {
+    const source = `tile Header = text("header")
+tile App = column(button(Header, text="Go"))
+${APP_A}`;
+    const file = seed(source);
+    const store = load(file);
+    const { patches, skipped } = planFixesExplained(store, check(store.program));
+    expect(patches).toEqual([]);
+    expect(skipped.map((sk) => sk.reason)).toEqual(["e0129-dropped-argument-has-no-single-repair"]);
+    expect(applyFixPlan(file, undefined).applied).toBe(0);
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
   it("tells the E0129 shapes apart by the diagnostic's field, not its message", () => {
     const store = storeOf(`slot title : Text = "Hi"
 tile App = column(heading(level=2, text=title), text("A", "B"), label(text="X", "Y"))
@@ -839,7 +852,7 @@ describe("planFixesExplained: skip-reason classification", () => {
   });
 });
 
-describe("planFixesExplained: a read after the scope that declared it ended (E0103)", () => {
+describe("planFixesExplained: a read outside the scope that declares the name (E0103)", () => {
   // `idx` is one edit from the slot `id`, so a rename would type-check and read `id`.
   const scoped = (body: string): string => `slot id    : Int = 0
 slot total : Int = 0
@@ -915,6 +928,58 @@ ${APP_A}`;
       patches: ['replace "cont" with "count" at 8:76'],
       skipped: [["E0103", "e0103-read-after-scope-ended"]],
     });
+  });
+
+  it.each([
+    ["a `let … in`", scoped("total := idx\n        id := let idx = 1 in idx")],
+    ["a `for` statement", scoped("total := idx\n        for idx in [1] { () }")],
+    ["an `if` branch", scoped("total := idx\n        if flag then { let idx = 1 } else { () }")],
+    [
+      "a match arm",
+      scoped(
+        "total := idx\n        match Some(1) with\n          | Some(idx) -> { () }\n          | None      -> { () }",
+      ),
+    ],
+    ["a tile's `for`", inApp("column(Btn, text(idx.show), for idx in [1] text(idx.show))")],
+    [
+      // A bare name in tile position is read as a tile call, and `Iten` is one edit from it.
+      "a tile's `for`, named alone in tile position",
+      inApp('column(Btn, when(flag, item), for item in ["a"] text(item))').replace(
+        "tile Btn",
+        'tile Iten = text("x")\ntile Btn',
+      ),
+    ],
+    [
+      "a tile's `match` arm",
+      inApp(
+        'column(Btn, text(v.show), match Some(1) with | Some(v) -> text(v.show) | None -> text("none"))',
+      ),
+    ],
+  ])("proposes no rename for a name %s declares, read before it", (_form, source) => {
+    const { patches, skipped } = plan(source);
+    expect(patches).toEqual([]);
+    expect(skipped).toEqual([["E0103", "e0103-read-before-scope-begins"]]);
+  });
+
+  const misspeltBefore = scoped(
+    "total := idx\n        count := cont\n        for idx in [1] { () }",
+  );
+  const ONE_OF_EACH_BEFORE = {
+    patches: ['replace "cont" with "count" at 7:18'],
+    skipped: [["E0103", "e0103-read-before-scope-begins"]],
+  };
+
+  it("still renames a misspelling beside a read before the scope", () => {
+    expect(plan(misspeltBefore)).toMatchObject(ONE_OF_EACH_BEFORE);
+  });
+
+  it("tells a read before the scope apart by the diagnostic's field, not its message", () => {
+    const reworded = plan(misspeltBefore, (m) => m.replace(/ — .*/, ""));
+    expect(reworded.messages).toEqual([
+      'Reference to undefined name "idx"',
+      'Reference to undefined name "cont"',
+    ]);
+    expect(reworded).toMatchObject(ONE_OF_EACH_BEFORE);
   });
 });
 

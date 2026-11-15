@@ -133,6 +133,17 @@ function variantTag(prefix: string, anchored: boolean): Planner {
   });
 }
 
+/**
+ * A read outside the nested scope that declares the name, after it ended or before it begins, is
+ * out of scope, not misspelled: a renamed read can type-check, and the regression gate then counts
+ * it as resolved.
+ */
+function outOfScopeReason(err: KumikiError): Declined | undefined {
+  if (err.endedScope !== undefined) return { reason: "e0103-read-after-scope-ended" };
+  if (err.laterScope !== undefined) return { reason: "e0103-read-before-scope-begins" };
+  return undefined;
+}
+
 // Each kind is repaired from the namespace its diagnostic suggests from: a slot
 // or tile proposed for a callee is E0116 again at the same position.
 const UNDEFINED_NAME: ReadonlyMap<string, Planner> = new Map([
@@ -190,11 +201,11 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   ["E0102", anyDefinition], // undef-reducer
   [
     "E0103", // undef-ref / undef-slot
-    // A read after the scope that declared it ended is out of scope, not misspelled: a renamed
-    // read can type-check, and the regression gate then counts it as resolved. So can a positional
-    // renamed to the nearest declared name, which is never what the fragment, tile or handler bound.
+    // A positional renamed to the nearest declared name type-checks too, and is never what the
+    // fragment, tile or handler bound.
     (err, store) => {
-      if (err.endedScope !== undefined) return { reason: "e0103-read-after-scope-ended" };
+      const outOfScope = outOfScopeReason(err);
+      if (outOfScope !== undefined) return outOfScope;
       if (atPositional(store, err.pos)) return { reason: "e0103-positional-unbound" };
       return anyDefinition(err, store);
     },
