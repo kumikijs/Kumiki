@@ -158,25 +158,25 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
   };
 
   /** One level of a chain's checks: the type the chain ends at first, then predicates base outward. */
-  const ownJs = (outermostFirst: readonly Refinement[], end: string | undefined) => {
+  const ownSteps = (outermostFirst: readonly Refinement[], end: string | undefined): string[] => {
     const steps: string[] = [];
     if (end) steps.push(`if ((f = ${named$(end)}(v, o))) return f;`);
     for (const r of [...outermostFirst].reverse()) {
       const body = refinementBodyJs(r);
       if (body) steps.push(`if (!(${body})) return ${FAIL(r)};`);
     }
-    return fnOf(steps);
+    return steps;
   };
 
-  // A link per level of a chain with checks of its own, pointing at the link below: chains that
-  // share a tail share its links, and one loop walks a chain however long it is, where a call per
-  // name would be a frame per name at runtime.
+  // A link per level of a chain with checks of its own, `[own, below]`: chains that share a tail
+  // share its links, and one loop walks a chain however long it is, where a call per name would be
+  // a frame per name at runtime.
   type Link = { readonly name: string; readonly chained: boolean };
   const links = new Map<string, Link>();
   let walkerDeclared = false;
 
   const checkOf = (link: Link): string => {
-    if (!link.chained) return `${link.name}.own`;
+    if (!link.chained) return `${link.name}[0]`;
     if (!walkerDeclared) {
       walkerDeclared = true;
       decls.push(WALK_LINKS);
@@ -223,18 +223,20 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
     // reached by no other chain, and a name whose chain ends at a type of its own calls no other
     // chain's check.
     if (levels.length === 1 && below === undefined && (key === null || !endsAtName)) {
-      return level.outermostFirst.length === 0 ? end : ownJs(level.outermostFirst, end);
+      return level.outermostFirst.length === 0 ? end : fnOf(ownSteps(level.outermostFirst, end));
     }
     const owns = levels.map((l, i) =>
-      ownJs(l.outermostFirst, i === levels.length - 1 ? end : undefined),
+      ownSteps(l.outermostFirst, i === levels.length - 1 ? end : undefined),
     );
     // Emitted from the base outward, so the link below is declared before the one that names it.
     let link = below;
     for (let i = levels.length - 1; i >= 0; i -= 1) {
-      const own = owns[i];
-      if (own !== undefined) {
+      const own = owns[i] ?? [];
+      if (own.length > 0) {
         const name = `_rq${next++}`;
-        decls.push(`const ${name} = { own: ${own}${link ? `, below: ${link.name}` : ""} };`);
+        // Falling off the end answers `undefined`, which a link says by returning nothing.
+        const fn = `(v, o) => { ${localOf(own)}${own.join(" ")} }`;
+        decls.push(`const ${name} = [${fn}${link ? `, ${link.name}` : ""}];`);
         link = { name, chained: link !== undefined };
       }
       const at = levels[i]?.key ?? null;
@@ -360,7 +362,7 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
 const WALK_LINKS = [
   "const _rqLinks = (l, v, o) => {",
   "const own = [];",
-  "for (let at = l; at !== undefined; at = at.below) own.push(at.own);",
+  "for (let at = l; at !== undefined; at = at[1]) own.push(at[0]);",
   "let f;",
   "for (let i = own.length - 1; i >= 0; i -= 1) if ((f = own[i](v, o))) return f;",
   "return undefined;",
@@ -370,9 +372,11 @@ const WALK_LINKS = [
 /** A statement-bodied explain function, or `undefined` when it has no steps. */
 function fnOf(steps: string[]): string | undefined {
   if (steps.length === 0) return undefined;
-  const body = steps.join(" ");
-  const local = body.includes("(f = ") ? "let f; " : "";
-  return `(v, o) => { ${local}${body} return undefined; }`;
+  return `(v, o) => { ${localOf(steps)}${steps.join(" ")} return undefined; }`;
 }
+
+/** The `f` a check's steps assign a nested failure to, declared when one does. */
+const localOf = (steps: readonly string[]): string =>
+  steps.some((step) => step.includes("(f = ")) ? "let f; " : "";
 
 const isHelper = (fn: string): boolean => /^_rq\d+$/.test(fn);
