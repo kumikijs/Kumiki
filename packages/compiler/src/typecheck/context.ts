@@ -1,14 +1,18 @@
-import type {
-  AppDef,
-  EffectDef,
-  Expr,
-  FnDef,
-  Pos,
-  ReducerDef,
-  SlotDef,
-  TileDef,
-  TypeDef,
-  TypeExpr,
+import {
+  type AppDef,
+  type EffectDef,
+  type Expr,
+  type FnDef,
+  type Pos,
+  type ReducerDef,
+  type SlotDef,
+  type TileDef,
+  type TileExpr,
+  type TileProp,
+  type TypeDef,
+  type TypeExpr,
+  type WrittenProp,
+  writtenProp,
 } from "../ast.ts";
 import { callsBuiltin } from "../builtin-calls.ts";
 
@@ -22,10 +26,10 @@ export type KumikiError = {
   severity?: Severity;
   unrendered?: "positional" | "text-prop" | "text-shadowed";
   /**
-   * E0103 only: the kind of nested body that declared the name and ended before this read;
+   * E0103 only: the kind of nested scope that declared the name and ended before this read;
    * `kumiki fix` reads it to skip the rename.
    */
-  endedScope?: StatementScope;
+  endedScope?: NestedScopeKind;
   /** E0218 only: the member whose append alone makes the target a List; `kumiki fix` reads it. */
   accessor?: "keys" | "to-list";
 };
@@ -37,8 +41,19 @@ export function severityOf(d: Pick<KumikiError, "severity">): Severity {
 /** The nested statement bodies of a reducer, each a scope of its own. */
 export type StatementScope = "if" | "for" | "match";
 
-/** The body a name ended with; `sibling` while a later branch or arm of its statement is checked. */
-export type EndedScope = { kind: StatementScope; sibling: boolean };
+/**
+ * A reducer's nested statement bodies, and the expressions that bind a name for their own body:
+ * `let … in`, a tile's `for`, an arm of a `match` expression.
+ */
+export type NestedScopeKind = StatementScope | "let-in" | "for-expr" | "match-expr";
+
+/**
+ * The scope a name ended with. `sibling` is set while a later branch or arm of its statement or
+ * `match` expression is checked; a `let … in` and a tile's `for` have one body, and so no sibling.
+ */
+export type EndedScope =
+  | { kind: StatementScope | "match-expr"; sibling: boolean }
+  | { kind: "let-in" | "for-expr" };
 
 export type SymbolTable = {
   types: Map<string, TypeDef>;
@@ -91,12 +106,32 @@ export type Ctx = {
   routeReadsSeen?: { name: string; pos: Pos }[];
   fragmentFnCallsSeen?: { name: string; pos: Pos }[];
   undeclaredInputReads?: Pos[];
-  /** Names a reducer's ended bodies declared and the enclosing scope does not bind. */
-  endedScopes?: Map<string, EndedScope>;
+  /**
+   * Names the ended scopes declared and the enclosing scope does not bind. Every inner scope shares
+   * this one map (`innerScope` spreads it), so a read in a sibling or an enclosing scope sees what
+   * an inner one ended.
+   */
+  endedScopes: Map<string, EndedScope>;
   /** The effect whose own expressions are checked, when it declares `in=Unit` and so binds no `$1`. */
   noInputEffect?: string;
   oneValueFragment?: { method: string; hides: boolean };
+  /** A tile-test's expected tree, whose lowering reads no `{…}` block. */
+  expectedTree?: boolean;
 };
+
+/** The `{…}` block a call's props are read from: none in an expected tree, as its lowering reads. */
+export function propBlock(t: TileExpr & { kind: "TileCall" }, ctx: Ctx): readonly TileProp[] {
+  return ctx.expectedTree ? [] : t.props;
+}
+
+/** The prop `name` of `t`, read as the lowering reads it in this context. */
+export function propOf(
+  t: TileExpr & { kind: "TileCall" },
+  name: string,
+  ctx: Ctx,
+): WrittenProp | undefined {
+  return writtenProp(t, name, propBlock(t, ctx));
+}
 
 export function bindLocal(
   ctx: Ctx,
@@ -121,11 +156,46 @@ export function innerScope<C extends Ctx>(ctx: C): C {
   };
 }
 
+/**
+ * End `inner`, an expression's scope of the kind `kind` opened in `ctx`: its names end with it. A
+ * statement body around it does not take them over as it does a nested statement's, because a read
+ * moved into that body would still be after the expression.
+ */
+export function endScope(kind: "let-in" | "for-expr", inner: Ctx, ctx: Ctx): void {
+  for (const name of inner.localBinds) {
+    if (!ctx.localBinds.has(name)) ctx.endedScopes.set(name, { kind });
+  }
+}
+
+/**
+ * Check the arms of a `match` expression in order, each by `checkArm` in a scope of its own opened
+ * in `ctx`. A name an arm binds ends with the arm, so a read in a later arm is in a sibling of the
+ * arm that bound it, and a read after the expression is after every arm.
+ */
+export function checkArms<A>(
+  arms: readonly A[],
+  ctx: Ctx,
+  checkArm: (arm: A, inner: Ctx) => void,
+): void {
+  const ended = new Set<string>();
+  for (const arm of arms) {
+    const inner = innerScope(ctx);
+    checkArm(arm, inner);
+    for (const name of inner.localBinds) {
+      if (ctx.localBinds.has(name)) continue;
+      ctx.endedScopes.set(name, { kind: "match-expr", sibling: true });
+      ended.add(name);
+    }
+  }
+  for (const name of ended) ctx.endedScopes.set(name, { kind: "match-expr", sibling: false });
+}
+
 export function pureScope(binds: readonly { name: string; type: TypeExpr }[]): Ctx {
   const ctx: Ctx = {
     kind: "slot-init",
     localBinds: new Set(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
     localTypes: new Map(),
     localBinders: new Map(),
   };

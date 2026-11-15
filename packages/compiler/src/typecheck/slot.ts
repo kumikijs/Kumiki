@@ -108,6 +108,7 @@ export function checkSlot(
     localTypes: new Map(),
     localBinders: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
   };
   checkExpr(slot.init, sym, errors, ctx);
   checkAgainst(slot.init, slot.type, sym, errors, ctx);

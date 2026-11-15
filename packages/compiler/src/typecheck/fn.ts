@@ -20,6 +20,7 @@ function fnBodyScope(fn: FnDef): Ctx {
     localTypes: new Map(scope.map((b) => [b.name, b.type])),
     localBinders: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
   };
   (ctx as Ctx & { fnName?: string }).fnName = fn.name;
   return ctx;

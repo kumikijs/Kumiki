@@ -71,6 +71,7 @@ describe("what a builtin renders as text", () => {
     ["button", "button(text=handle)"],
     ["link", 'link(to="/") {text: handle}'],
     ["editable", "editable(bind=handle)"],
+    ["editable", "editable() {bind: handle}"],
   ])("%s refuses %s", (name, expr) => {
     const body = tile(expr);
     expect(diagnostics(body)).toEqual([rendered(body, "handle", `${name}(...)`)]);

@@ -205,9 +205,11 @@ describe("binds-updated when the walk bails", () => {
     app._dispatch("advance", {});
 
     expect(lastBindsUpdated(committed)).toEqual([]);
-    expect(panics(committed.slice(-1))).toMatchObject([
-      { kind: "panic", location: "reconcile", category: "tile-render" },
-    ]);
+    const [panic, ...rest] = panics(committed.slice(-1));
+    expect(rest).toEqual([]);
+    expect(panic).toMatchObject({ kind: "panic", location: "reconcile", category: "tile-render" });
+    // The diff's own safety net, not a boundary: nothing handled it.
+    expect(panic).not.toHaveProperty("handled");
     dispose();
   });
 

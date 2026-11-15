@@ -36,10 +36,8 @@ Anything else in `field=` is **E0230 `error-field-not-path`**: a literal
 variable or `$1`, the `route` slot, a `for` or `when` tile, a member like
 `.length`, a step into a `Tuple` or a union, a call, an expression, an index
 into something that is not a `List` or `Map`, or an index whose key is
-computed (`rows[i].email`). So is an `error()` with no `field=`, and a
-`field` written in the `{…}` block, which the tile never read: with
-`.get` on a `None` there, the page panicked. These all passed `check`
-before and rendered nothing. A misspelled field is still E0108.
+computed (`rows[i].email`). So is an `error()` with no `field=`. These all
+passed `check` before and rendered nothing. A misspelled field is still E0108.
 
 The refinement walk for `List` and `Map` element types now follows an index
 step, so the generated JS of a program with a refined `List` / `Map` element

@@ -1,7 +1,9 @@
-import type { TestDef } from "@kumikijs/compiler";
-import { lex, ParseError, parse } from "@kumikijs/compiler";
+import type { Program, TestDef } from "@kumikijs/compiler";
+import { codegen, lex, ParseError, parse } from "@kumikijs/compiler";
+import type { TestResult } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { checkSource } from "./helpers/diagnostics.ts";
+import { importModule, LOADABLE } from "./helpers/module.ts";
 
 describe("test definitions", () => {
   it("parses a reducer-test and a tile-test", () => {
@@ -234,6 +236,31 @@ test rt = property-test
       const tests = parse(lex(src)).defs.filter((d): d is TestDef => d.kind === "TestDef");
       expect(tests[0]?.count).toBe(1);
       expect(checkSource(src)).toEqual([]);
+    });
+
+    // `codegen` is public and writes the count it is given, so a definition edited after the
+    // parser reaches the runner unchecked. A template literal writes -0 as 0.
+    it.each([0, -0])("fails the generated test when a parsed count is set to %s", async (count) => {
+      const parsed = parse(lex(withCount("5")));
+      const program: Program = {
+        ...parsed,
+        defs: parsed.defs.map((d) => (d.kind === "TestDef" ? { ...d, count } : d)),
+      };
+      const { js } = codegen(program, { ...LOADABLE, includeTests: true });
+      const mod = await importModule<{ default: { _tests: { run: () => TestResult }[] } }>(
+        js,
+        "count-codegen",
+      );
+      expect(mod.default._tests.map((t) => t.run())).toEqual([
+        {
+          name: "rt",
+          pass: false,
+          expected: "count is a whole number, 1 or more",
+          actual: "count = 0",
+          diffAt: "(count)",
+          cases: 0,
+        },
+      ]);
     });
   });
 
