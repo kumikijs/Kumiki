@@ -445,18 +445,23 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
    When the body renders a **list** (its body is a `for`), the call site's key
    — explicit or implicit — names the list, not one node, and one key on every
    node would collapse them onto a single identity. Each node takes the pair
-   of the call site's key and its own key — the one its own `for` gave it,
-   however deeply that `for` nests — or, when it has none, its position in
-   the flattened list, encoded as the JSON array `[callKey, nodeKey]`. A
-   node's own key that is itself such an array — the JSON text of an array of
-   two or more elements, spelled exactly as `JSON.stringify` writes it, which
-   is the key a node of a list one level down was given — contributes its
-   elements rather than itself: `[callKey, …nodeKey]`. So a key holds one
-   element per level of nesting, and its length grows linearly with the
-   depth. Whether a key is such an array is read from the string alone, so an
-   explicit `{key: …}` spelled that way is read as one too. The nodes stay
-   distinct and two pairs never spell the same string: a pair extended this
-   way has three or more elements, and one that is not has two. A reorder of
+   of the call site's key and its own key (what its own `for`, or the list
+   one level down, gave it) or, when it has none, its position in the
+   flattened list, encoded as the JSON array `[callKey, nodeKey]`. A node's
+   own key that is itself such an array — the JSON text of an array of two or
+   more elements, spelled exactly as `JSON.stringify` writes it, which is the
+   key a node of a list one level down was given — contributes its elements
+   rather than itself: `[callKey, …nodeKey]`. So a key holds one element per
+   level of list flattened into the same container, and its length grows
+   linearly with the depth. A container between two `for`s starts the count
+   again: in `for a in as column(for b in bs text(b))`, each `text` is keyed
+   within its `column`. Whether a key is such an array is read from the string
+   alone, so an explicit `{key: …}` spelled that way is read as one too. The
+   nodes stay distinct and, provided their own keys differ, two pairs never
+   spell the same string: a pair extended this way has three or more
+   elements, and one that is not has two; and only a key spelled exactly as
+   `JSON.stringify` writes it is split, so its elements give back exactly that
+   one key. A reorder of
    the outer list moves each node's element; a reorder inside the list moves
    them by their own keys. The list's nodes are children of the container the
    call sits in, however deeply the `for`s that produced them nest.

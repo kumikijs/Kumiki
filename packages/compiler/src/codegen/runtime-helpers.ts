@@ -46,8 +46,8 @@ function _wk(node, key) {
   }
   return { ...node, key: key };
 }
-// Only a key spelled as _wk writes a list key (an array of two or more, as
-// JSON.stringify spells it) is split, so no two keys add the same elements.
+// Only a key spelled exactly as _wk spells a list key (an array of two or more,
+// as JSON.stringify writes it) is split, so its elements give back that one key.
 function _keySegments(k) {
   if (k.charAt(0) !== "[") return [k];
   let segments;

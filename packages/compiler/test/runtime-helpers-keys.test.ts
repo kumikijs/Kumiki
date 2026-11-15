@@ -35,7 +35,7 @@ function forChain(loopKeys: string[]): Node[] {
   return _children(_named(body(0), "L1"));
 }
 
-// Each shown value holds quotes, so a key re-escaped per level would grow.
+// Each shown value holds a quote, so the expected key holds it escaped exactly once.
 const loopKeysOf = (count: number): string[] =>
   Array.from({ length: count }, (_, d) => `Page_${d}|1|"${d}"`);
 
@@ -105,6 +105,11 @@ describe("_wk", () => {
     expect(first).not.toBe(second);
   });
 
+  it('keeps a key of the string "0" apart from position 0 one level down', () => {
+    const inner = _wk([t("a"), { ...t("b"), key: "0" }], "in");
+    expect(keys(_wk([inner], "out"))).toEqual(['["out","in",0]', '["out","in","0"]']);
+  });
+
   it("composes the keys of a for nested in a for, as the codegen wraps each outer iteration", () => {
     const inner = (outer: string) =>
       _wk(
@@ -144,8 +149,18 @@ describe("_wk at depth", () => {
     expect(leaf?.text).toBe("leaf");
   });
 
+  it("keys two keyless nodes twenty lists deep by the lists' keys and their positions", () => {
+    const loopKeys = loopKeysOf(20);
+    const list = (d: number): Tree =>
+      _wk(d === loopKeys.length - 1 ? [t("first"), t("second")] : [list(d + 1)], loopKeys[d]);
+    expect(keys(_children(list(0)))).toEqual([
+      JSON.stringify([...loopKeys, 0]),
+      JSON.stringify([...loopKeys, 1]),
+    ]);
+  });
+
   it("keys a node 256 fors deep in one element per for", () => {
-    // As deep as the parser lets one definition nest (256 levels).
+    // 256 levels: as deep as the parser lets one definition nest, and a chain as long.
     const loopKeys = loopKeysOf(256);
     for (const tree of [nestedFors(loopKeys), forChain(loopKeys)]) {
       expect(tree.map((n) => n.key)).toEqual([JSON.stringify(loopKeys)]);
