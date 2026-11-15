@@ -2,7 +2,7 @@
 "@kumikijs/runtime": patch
 ---
 
-A served `radio` whose value is a variant or a record carries that value's structural key, where it carried `[object Object]`
+A served `radio` carries its value's structural key: a variant or a record radio no longer carries `[object Object]`, and a `Text` radio's `value` is now `"pro"`, quotes included, where it was `pro`
 
 `renderToString` served a radio's `value` as `String(value)`. For a variant or
 a record that is `[object Object]`, so every radio of a group bound to
@@ -24,7 +24,10 @@ radio carries the same `value`:
 
 `Some(Backlog)` is served as `Some|Backlog`, apart from `Some(InProgress)`, and
 a record as its JSON text. A `Text` radio's value is its key as well, `"pro"`
-with the quotes where it was `pro`, the same as a served option's. A radio
+with the quotes where it was `pro`, the same as a served option's. A served
+`form` submitted natively before hydration sends that key, as
+`?plan=%22pro%22` where it sent `?plan=pro`, so an app that reads
+`route.query.plan` then gets `"pro"`, quotes included. A radio
 with no `value=` carries no `value` on either path. Which radio is checked,
 and what choosing one writes, are unchanged: a bound radio still writes the
 value itself, not the key.

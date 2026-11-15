@@ -112,7 +112,24 @@ describe("radio", () => {
     const el = defined(inputTiles.radio, "radio")(before, ctx);
     const after: Of<"radio"> = { kind: "radio", group: "g", value: to };
     defined(inputPatchers.radio, "radio patcher")(el, before, after, ctx);
-    expect(el.querySelector("input")?.getAttribute("value") ?? null).toBe(shown);
+    expect(defined(el.querySelector("input"), "radio input").getAttribute("value")).toBe(shown);
+  });
+
+  it("writes the value a later pass gave it, not the one it was first rendered with", () => {
+    let value: unknown = { _tag: "S" };
+    const app = mountApp(
+      bareApp({
+        slots: { size: { value: { _tag: "M" } } },
+        root: () => ({ kind: "radio", group: "size", value, bind: "size" }),
+      }),
+    );
+    value = { _tag: "L" };
+    app._rerender?.();
+    defined(
+      document.body.querySelector<HTMLInputElement>("input[type=radio]"),
+      "the radio",
+    ).click();
+    expect(app.live?.size).toEqual({ _tag: "L" });
   });
 });
 

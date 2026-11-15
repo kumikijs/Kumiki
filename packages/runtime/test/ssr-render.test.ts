@@ -1,5 +1,6 @@
 import type { TileNode } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { defined } from "./helpers/defined.ts";
 import { serverElement, styleOf } from "./helpers/ssr-elements.ts";
 
 describe("the server pass on its own", () => {
@@ -108,7 +109,7 @@ describe("the server pass on its own", () => {
     ["no value", undefined, null],
   ])("serves a radio's value as its structural key (%s)", (_, value, want) => {
     const radio = serverElement({ kind: "radio", group: "g", value });
-    expect(radio.querySelector("input")?.getAttribute("value") ?? null).toBe(want);
+    expect(defined(radio.querySelector("input"), "radio input").getAttribute("value")).toBe(want);
   });
 
   it("escapes what it puts in text and in an attribute", () => {
