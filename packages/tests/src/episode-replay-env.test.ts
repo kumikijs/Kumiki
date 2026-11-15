@@ -7,13 +7,16 @@ import { loadApp } from "./helpers/load.ts";
 
 const EXAMPLE = feature("87-replayed-environment-read");
 const FIXTURE = EXAMPLE.replace(/\.kumiki$/, ".fixture.jsonl");
+const QUALIFIED_NOW = feature("201-qualified-time-now");
 
-const load = () => loadApp(EXAMPLE);
+const loadOf = (example: string) => () => loadApp(example);
 
 /** Drive one click through the live runtime and return the episode it wrote. */
-const recordOneClick = () => recordOne(load, { do: { clickText: "stamp" } });
+const recordOneClick = (example = EXAMPLE) =>
+  recordOne(loadOf(example), { do: { clickText: "stamp" } });
 
-const replayOnce = async (ep: EpisodeLogEntry) => (await replayEpisode(load, ep)).finalSlots;
+const replayOnce = async (ep: EpisodeLogEntry, example = EXAMPLE) =>
+  (await replayEpisode(loadOf(example), ep)).finalSlots;
 
 describe("an episode that read the environment", () => {
   it("records what `random()` and `now` answered", async () => {
@@ -49,5 +52,25 @@ describe("an episode that read the environment", () => {
     expect(slots.roll).toBe(4);
     expect(slots.stamped).toBe("1718700000000");
     expect(slots.inRange).toBe(true);
+  });
+});
+
+describe("`Time.now` in a reducer", () => {
+  // The example's reducer reads `Time.now`, `Time.now()` and `now`, in that order.
+  it("records each spelling as a `now` read", async () => {
+    const ep = await recordOneClick(QUALIFIED_NOW);
+    const reads = reducerStep(ep)["env-reads"] ?? [];
+    expect(reads.map((r) => r.kind)).toEqual(["now", "now", "now"]);
+    expect(reads.every((r) => typeof r.value === "number")).toBe(true);
+  });
+
+  it("replays the recorded instants into the slots that read them", async () => {
+    const ep = await recordOneClick(QUALIFIED_NOW);
+    // Instants no live clock answers, so a replay that read the clock instead
+    // of the journal cannot land on them.
+    const recorded = [1718700000000, 1718700000001, 1718700000002];
+    reducerStep(ep)["env-reads"] = recorded.map((value) => ({ kind: "now" as const, value }));
+    const slots = await replayOnce(ep, QUALIFIED_NOW);
+    expect([slots.stamped, slots.called, slots.bare]).toEqual(recorded);
   });
 });

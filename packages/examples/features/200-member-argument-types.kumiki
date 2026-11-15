@@ -1,0 +1,51 @@
+# Feature (stdlib.md): an argument has its parameter's type.
+#
+#   xs.push(x)   m.insert(k, v)   s.add(x)   xs.concat(ys)
+#
+# In the stdlib.md signatures a Map's key `K` and value `V`, and a
+# Set's or a List's element `T`, are the receiver's own type arguments, and
+# `merge` / `union` / `concat` take another container of the receiver's type.
+# An argument there is checked against that type the way a slot write is:
+# `prices.push("3")` is E0201 at the "3", as `prices := ["3"]` is. What a
+# slot admits, the argument admits — an `Int` into a `List(Float)`, `None`
+# into a `List(Option(Int))`, a `Text` as the key of a `Map(TodoId, V)`, a
+# record with every field — so every write below keeps its slot's element
+# type, and the sums and lookups add up as numbers.
+
+type TodoId = nominal Text
+type Todo   = {title: Text, done: Bool}
+type Color  = Red | Green | Blue
+
+slot prices : List(Float)       = [1.5]
+slot counts : Map(Text, Int)    = {}
+slot todos  : Map(TodoId, Todo) = {}
+slot tags   : Set(Text)         = []
+slot colors : Set(Color)        = []
+slot picks  : List(Option(Int)) = []
+slot byNum  : Map(Int, Text)    = {}
+
+reducer fill on=ui.click(Fill) do=
+    prices := prices.push(2).prepend(3).concat([4, 0.5])
+    counts := counts.insert("a", 1).insert("b", 2).update("a", $1 + 10).merge({"c": 3}).remove("b")
+    todos  := todos.insert("t1", {title: "write", done: false}).update("t1", $1.copy(done = true))
+    tags   := tags.add("x").add("y").toggle("x").union(["z"])
+    colors := colors.add(Red).add(Green).remove(Green).toggle(Blue)
+    picks  := picks.push(Some(1)).push(None).prepend(Some(2))
+    byNum  := byNum.insert(1, "one").insert(2, "two")
+
+tile Fill = button(text="fill") {id: "fill"}
+
+tile App = column(
+  Fill,
+  text("prices: " + prices.fold(0, $1 + $2).show),
+  text("counts: a=" + counts.get-or("a", 0).show + " b=" + counts.has("b").show + " c=" + counts.get-or("c", 0).show),
+  text("todo: " + todos.get("t1").map($1.done).get-or(false).show),
+  text("tags: " + tags.size.show + " x=" + tags.has("x").show + " z=" + tags.has("z").show),
+  text("colors: " + colors.has(Red).show + " " + colors.has(Green).show + " " + colors.has(Blue).show),
+  text("picks: " + picks.length.show + " none=" + picks.contains(None).show),
+  text("byNum: " + byNum.get-or(2, "-") + " keys=" + byNum.keys.fold(0, $1 + $2).show))
+
+app MemberArgumentTypes
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []

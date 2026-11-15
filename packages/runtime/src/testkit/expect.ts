@@ -14,6 +14,8 @@ export type TestResult = {
   cases?: number;
   /** Wall-clock milliseconds the test took (filled in by the runner). */
   ms?: number;
+  /** What a test's body threw, as `kumiki test` prints it; set only when it threw. */
+  error?: string;
 };
 
 export function _jsonStr(v: unknown): string {
@@ -22,6 +24,15 @@ export function _jsonStr(v: unknown): string {
   } catch {
     return String(v);
   }
+}
+
+function panicLine(panic: string): string {
+  return `panic: ${_jsonStr(panic)}`;
+}
+
+/** One report for a panic where a result was expected, so every runner prints it in the same lines. */
+export function unexpectedPanic(name: string, expected: string, panic: string): TestResult {
+  return { name, pass: false, expected, actual: panicLine(panic), diffAt: "(unexpected panic)" };
 }
 
 export type ReducerExpect =
@@ -45,20 +56,12 @@ export function compareReducerExpect(
     return {
       name,
       pass,
-      expected: `panic: ${_jsonStr(expect.message)}`,
-      actual: panic === null ? "(no panic)" : `panic: ${_jsonStr(panic)}`,
+      expected: panicLine(expect.message),
+      actual: panic === null ? "(no panic)" : panicLine(panic),
       ...(pass ? {} : { diffAt: "(panic)" }),
     };
   }
-  if (panic !== null) {
-    return {
-      name,
-      pass: false,
-      expected: _jsonStr(expect.slots),
-      actual: `panic: ${_jsonStr(panic)}`,
-      diffAt: "(unexpected panic)",
-    };
-  }
+  if (panic !== null) return unexpectedPanic(name, _jsonStr(expect.slots), panic);
   if (unhandledErr !== null) {
     return {
       name,

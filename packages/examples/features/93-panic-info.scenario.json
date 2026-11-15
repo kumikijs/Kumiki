@@ -17,7 +17,8 @@
           "fallback location: Guarded",
           "fallback category: tile-render",
           "fallback episode: (none)",
-          "fallback cause: (none)"
+          "fallback cause: (none)",
+          "error message: -"
         ],
         "domExcludes": ["undefined"]
       }

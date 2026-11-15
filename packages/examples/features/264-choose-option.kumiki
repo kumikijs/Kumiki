@@ -1,0 +1,25 @@
+# Feature: a `{choose, value}` step takes the same option of a `select` at the
+# scenario tier and the browser tier.
+#
+# The step names an option by its label first, compared with whitespace trimmed
+# and runs of it collapsed, and by its exact value only when no option carries
+# that label. The `select` tile writes a Text value into its option as JSON, so
+# `"b"` is the value of the option labelled Bee and the label of the third
+# option: the step takes the third. A selector matching the `<label>` drives the
+# select the label is for. The placeholder is a disabled option, and a step
+# naming it is refused at both tiers, as a user's pick would be.
+
+slot pick : Text = "a"
+
+fn picks() -> List({label: Text, value: Text})
+   = [{label: "Ay", value: "a"}, {label: "Bee", value: "b"}, {label: "\"b\"", value: "c"}]
+
+tile Box  = box(text("not a select")) {id: "box"}
+tile Lbl  = label("pick one", for="pick") {id: "lbl"}
+tile Pick = select(bind=pick, options=picks(), placeholder="Pick one") {id: "pick"}
+tile App  = column(Box, Lbl, Pick, text("pick: " + pick))
+
+app ChooseOption
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

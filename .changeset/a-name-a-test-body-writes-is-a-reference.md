@@ -60,7 +60,5 @@ the checker reports as E0714, is not read at all.
 
 The first three renames now exit 0 with a file that checks, and the test still
 passes. `rename` rewrites a name the test wrote as an identifier: a call, an
-`expect.effects` entry, a `<slots.X>`, an event `target`. A name written as a
-record key — a `slots` / `slots-equal` key, a `mocks` key — has no position of
-its own, and `rename` refuses it. The `<slots.X>` wildcard node carries the new
-`slotPos` for that position.
+`expect.effects` entry, a `<slots.X>`, an event `target`. The `<slots.X>`
+wildcard node carries the new `slotPos` for that position.

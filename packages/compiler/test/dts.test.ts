@@ -116,6 +116,17 @@ describe("generateDts", () => {
     );
   });
 
+  it("declares a File at a capability boundary as the record of its fields", () => {
+    const line = dtsOf(`
+      effect e cap=custom.thing in=File out=Result(Unit, Text)
+      tile App = column(text("x"))
+      app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+    `)
+      .split("\n")
+      .find((l) => l.includes('"custom.thing"'));
+    expect(line).toContain("Provider<{ name: string; size: number; type: string },");
+  });
+
   it("maps Map and Set to their runtime object representations", () => {
     const dts = dtsOf(`
       type M = Map(Text, Int)

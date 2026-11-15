@@ -2,6 +2,7 @@ import type { EffectDef, FnDef, ReducerDef, SlotDef, TileDef, TypeDef } from "..
 import { isPerTileFamily, TILE_FAMILY, type TileFamily } from "../builtins.ts";
 import type { ParseReading } from "../parse-reading.ts";
 import type { NestedRefinements } from "./nested-refinements.ts";
+import type { ShowShapes } from "./show-shapes.ts";
 
 export type GenCtx = {
   slots: SlotDef[];
@@ -15,6 +16,7 @@ export type GenCtx = {
   usedIcons: Set<string>;
   refinements: NestedRefinements;
   usedReaders: Set<ParseReading>;
+  showShapes: ShowShapes;
   expectedTree?: boolean;
 };
 

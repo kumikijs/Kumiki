@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import { check, lex, parse } from "@kumikijs/compiler";
+import { feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 import { mountApp } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
@@ -28,6 +30,38 @@ describe("a value as a child is refused before it can render nothing", () => {
   });
 });
 
+describe("the name of a tile as a child mounts the tile", () => {
+  it.each([
+    ["with no other definition of the name", ""],
+    ["beside a fn of the same name", `fn leaf() -> Text = "fn"\n`],
+    ["beside a slot of the same name", `slot leaf : Text = "slot"\n`],
+  ])("%s", async (_, extra) => {
+    const { root } = mountApp(
+      await loadSource(`${extra}tile leaf = text("tile")\n${program("column(leaf)")}`),
+    );
+    expect(root.textContent).toBe("tile");
+  });
+});
+
+describe("a value as an arm or a tile body is refused before it is built", () => {
+  it.each([
+    "column(when(n > 0, n))",
+    `column(if n > 0 then Card({label: "a"}) else n)`,
+    "column(for x in [1, 2] x)",
+    "n",
+  ])("%s", async (home) => {
+    expect(check(parse(lex(program(home)))).map((e) => e.code)).toEqual(["E0128"]);
+    await expect(loadSource(program(home))).rejects.toThrow("E0128");
+  });
+});
+
+it("a builtin named in an arm renders as its call does", async () => {
+  const render = async (home: string) => mountApp(await loadSource(program(home))).root.innerHTML;
+  const named = await render("column(when(n == 0, divider))");
+  expect(named).toContain('data-kumiki-tile="divider"');
+  expect(named).toBe(await render("column(when(n == 0, divider()))"));
+});
+
 describe("a value where a value belongs mounts and shows the value", () => {
   it.each([
     [`column(text(let x = "shown" in x))`, "shown"],
@@ -36,5 +70,45 @@ describe("a value where a value belongs mounts and shows the value", () => {
   ])("%s", async (home, says) => {
     const { root } = mountApp(await loadSource(program(home)));
     expect(root.textContent).toBe(says);
+  });
+});
+
+describe("the container-child-value example's values, written bare, are each refused", () => {
+  const bare: [string, string][] = [
+    ["  text(total.show),", "  total,"],
+    [`  text("Total items"),`, `  "Total items",`],
+    ["  text(greeting()),", "  greeting(),"],
+    [`  row(text("Sum: "), text(total.show)),`, `  row(text("Sum: "), total.show),`],
+  ];
+  const shown = readFileSync(feature("221-container-child-value"), "utf8").split("\n");
+  for (const [from] of bare) {
+    if (shown.filter((l) => l === from).length !== 1) {
+      throw new Error(`the example does not have exactly one line ${from}`);
+    }
+  }
+  const lines = shown.map((l) => bare.find(([from]) => from === l)?.[1] ?? l);
+  const source = lines.join("\n");
+  const at = (line: string, value: string) =>
+    `${lines.indexOf(line) + 1}:${line.indexOf(value) + 1}`;
+
+  it("is E0128 at each value, naming its container and text(…)", () => {
+    const diagnostics = check(parse(lex(source)));
+    expect(diagnostics.map((e) => `${e.code} ${e.pos.line}:${e.pos.col}`)).toEqual([
+      `E0128 ${at("  total,", "total")}`,
+      `E0128 ${at(`  "Total items",`, `"Total`)}`,
+      `E0128 ${at("  greeting(),", "greeting")}`,
+      `E0128 ${at(`  row(text("Sum: "), total.show),`, "total.show")}`,
+    ]);
+    expect(diagnostics.map((e) => e.message.split(" renders ")[0])).toEqual([
+      "A value is not a tile: column",
+      "A value is not a tile: column",
+      "A value is not a tile: column",
+      "A value is not a tile: row",
+    ]);
+    for (const e of diagnostics) expect(e.message).toContain("`text(…)`");
+  });
+
+  it("is not built", async () => {
+    await expect(loadSource(source)).rejects.toThrow("E0128");
   });
 });

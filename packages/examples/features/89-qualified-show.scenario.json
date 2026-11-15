@@ -20,12 +20,12 @@
         "noErrors": true,
         "state": {
           "from-duration": "90000",
-          "from-bytes": "104,105",
+          "from-bytes": "aGk=",
           "from-int": "90",
           "from-user": "ada",
           "from-method": "90"
         },
-        "domIncludes": ["duration=90000", "bytes=104,105", "int=90", "user=ada", "method=90"]
+        "domIncludes": ["duration=90000", "bytes=aGk=", "int=90", "user=ada", "method=90"]
       }
     }
   ]

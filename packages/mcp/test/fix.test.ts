@@ -2,7 +2,15 @@ import * as fs from "node:fs";
 import { copyFileSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { callOnce, FIX_COUNTER_TYPO, flag, useWorkdir } from "./helpers/client.ts";
+import {
+  callOnce,
+  FIX_COUNTER_TYPO,
+  FIX_MIXED,
+  FIX_PROPOSAL_BESIDE_SKIP,
+  FIX_WARNING_ONLY,
+  flag,
+  useWorkdir,
+} from "./helpers/client.ts";
 
 // A plain-object namespace, so `vi.spyOn(fs, ...)` can replace an export.
 vi.mock("node:fs", async (importOriginal) => ({ ...(await importOriginal<typeof fs>()) }));
@@ -34,6 +42,66 @@ describe("kumiki_fix", () => {
     expect(res.body).toContain("E0103");
     expect(res.body).toContain("conut");
     expect(readFileSync(file, "utf8")).toBe(original);
+  });
+
+  it("proposes no rename for a read before the scope that declares the name", async () => {
+    // `idx` is one edit from the slot `id`; renamed, the first `text` would read the slot.
+    const file = join(workdir.path, "before-scope.kumiki");
+    const source = [
+      "slot id : Int = 0",
+      "slot xs : List(Int) = [1, 2]",
+      "tile App = column(text(idx.show), for idx in xs text(idx.show))",
+      'app M caps=[] routes={"/" -> App, "/404" -> App} init=[]',
+      "",
+    ].join("\n");
+    writeFileSync(file, source);
+    const res = await callOnce("kumiki_fix", { path: file });
+    expect(res.body.split("\n")).toEqual([
+      "(no auto-patches available)",
+      expect.stringMatching(/^error E0103 undef-ref at 3:24: Reference to undefined name "idx" — /),
+    ]);
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
+  it.each([
+    {
+      name: "a warning-only file",
+      path: FIX_WARNING_ONLY,
+      isError: false,
+      lines: [
+        "no errors (1 warning)",
+        expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:17: /),
+      ],
+    },
+    {
+      name: "an error it cannot repair beside a warning",
+      path: FIX_MIXED,
+      isError: true,
+      lines: [
+        "(no auto-patches available)",
+        'error E0103 undef-ref at 4:30: Reference to undefined name "zzz"',
+        expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:17: /),
+      ],
+    },
+    {
+      name: "a proposal beside an error it cannot repair and a warning",
+      path: FIX_PROPOSAL_BESIDE_SKIP,
+      isError: true,
+      lines: [
+        'error E0103 undef-ref at 2:45: Reference to undefined name "conut"',
+        '  fix: replace "conut" with "count" at 2:45',
+        'error E0105 undef-tile at 4:25: Reference to undefined tile "Missing" (no auto-patch)',
+        expect.stringMatching(/^warning W0212 ui-event-tile-mismatch at 2:17: /),
+      ],
+    },
+  ])("in dry-run on $name names each diagnostic's severity, as `kumiki check` prints it", async ({
+    path,
+    isError,
+    lines,
+  }) => {
+    const res = await callOnce("kumiki_fix", { path });
+    expect(res.isError).toBe(isError);
+    expect(res.body.split("\n")).toEqual(lines);
   });
 
   it("with apply:true writes the patch, returns before/after, and leaves the file clean", async () => {

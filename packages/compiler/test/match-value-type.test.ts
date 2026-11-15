@@ -146,8 +146,13 @@ describe("a match with no declared destination has its arms' common type", () =>
   });
 
   it("has no type when one arm's value is undecidable, rather than the other arm's", () => {
+    // `.map` with a fragment answers no type, so the `None` arm is undecidable.
+    const undecided = "Some(p).map($1).get-or(p)";
     expect(
-      inReducer(`let v = match ou with | Some(id) -> id | None -> (let w = p in w); p := v`),
+      inReducer(`let v = match ou with | Some(id) -> id | None -> ${undecided}; p := v`),
+    ).toEqual([]);
+    expect(
+      inReducer(`let v = match ou with | Some(id) -> id | None -> ${undecided}; n := v`),
     ).toEqual([]);
   });
 });

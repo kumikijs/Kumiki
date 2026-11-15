@@ -9,8 +9,8 @@
 # they stay distinct, and reordering `groups` moves each group's elements
 # instead of rebuilding them, as reordering `tags` moves each tag's. A group
 # is named by a `Text`, so the key the `for` stamps follows it on a reorder; a
-# record shows alike whatever its fields, and its implicit key would fall back
-# to its position.
+# record adds no shown value to its implicit key, which would fall back to its
+# position.
 #
 # The same holds however deeply the `for`s nest: `AllPairs` is a for-bodied
 # tile whose iterations call another for-bodied tile (`Pair`), the next column

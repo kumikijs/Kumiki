@@ -1,0 +1,41 @@
+# Feature (routing.md): a `sub-routes` parent whose `route-outlet()`
+# sits in a tile it renders rather than in its own body.
+#
+# The outlet only has to be in the tree the parent renders. Code generation
+# inlines every tile the parent's body expands into, and the runtime fills the
+# first outlet in that tree with the matched child — so a layout helper can
+# hold it. Here it is two tiles down: `SettingsLayout` renders
+# `SettingsShell`, which calls `SettingsBody()`, which holds the outlet. A
+# parent with no `route-outlet` anywhere in that expansion is E0113.
+
+tile NotFound        = page(heading("404 — not found"))
+tile AccountSettings = column(heading("Account settings"))
+tile BillingSettings = column(heading("Billing settings"))
+
+tile Landing = page(
+    heading("Landing"),
+    link(to="/settings/account") {text: "Open settings"})
+
+tile SettingsNav = column(
+    link(to="/settings/account") {text: "Account"},
+    link(to="/settings/billing") {text: "Billing"})
+
+tile SettingsBody = column(route-outlet()) {pad: "md"}
+
+tile SettingsShell = row(SettingsNav, SettingsBody()) {gap: "lg"}
+
+tile SettingsLayout
+    sub-routes = {
+        "/settings/account" -> AccountSettings,
+        "/settings/billing" -> BillingSettings
+    }
+    = page(heading("Settings"), SettingsShell)
+
+app SubRoutesOutletInChildTile
+    caps   = [nav.push]
+    routes = {
+        "/"           -> Landing,
+        "/settings/*" -> SettingsLayout,
+        "/404"        -> NotFound
+    }
+    init   = []

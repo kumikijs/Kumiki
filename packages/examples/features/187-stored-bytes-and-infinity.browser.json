@@ -8,7 +8,7 @@
     {
       "label": "Load reads it back as the value it was: the two bytes and Infinity",
       "do": { "click": "#load" },
-      "expect": { "noErrors": true, "visible": ["same=true data=104,105 ratio=Infinity"] }
+      "expect": { "noErrors": true, "visible": ["same=true data=aGk= ratio=Infinity"] }
     }
   ]
 }

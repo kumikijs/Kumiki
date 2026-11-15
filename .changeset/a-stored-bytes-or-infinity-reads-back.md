@@ -30,7 +30,7 @@ tag. After:
 
 ```
 localStorage "blob": ~{"data":{"$bytes":"aGk="},"ratio":{"$float":"Infinity"}}
-shown: same=true data=104,105 ratio=Infinity
+shown: same=true data=aGk= ratio=Infinity
 ```
 
 The reader is strict. In the tagged form an object with a key starting with a

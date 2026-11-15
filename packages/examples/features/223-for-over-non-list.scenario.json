@@ -1,0 +1,40 @@
+{
+  "steps": [
+    {
+      "label": "both tile spellings render the List inside the Some",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["row a", "row b", "item a", "item b", "counted: 0, matched: 0, missing: 0"]
+      }
+    },
+    {
+      "label": "the reducer that iterates .get-or([]) runs once per row",
+      "do": { "click": "#count" },
+      "expect": { "noErrors": true, "domIncludes": ["counted: 2, matched: 0, missing: 0"] }
+    },
+    {
+      "label": "the reducer that matches iterates the Some's List",
+      "do": { "click": "#count-matched" },
+      "expect": { "noErrors": true, "domIncludes": ["counted: 2, matched: 2, missing: 0"] }
+    },
+    {
+      "label": "None renders no rows and the match's other branch",
+      "do": { "click": "#clear" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["nothing loaded"],
+        "domExcludes": ["row a", "item a"]
+      }
+    },
+    {
+      "label": ".get-or([]) iterates nothing for None",
+      "do": { "click": "#count" },
+      "expect": { "noErrors": true, "domIncludes": ["counted: 2, matched: 2, missing: 0"] }
+    },
+    {
+      "label": "the match takes its None branch",
+      "do": { "click": "#count-matched" },
+      "expect": { "noErrors": true, "domIncludes": ["counted: 2, matched: 2, missing: 1"] }
+    }
+  ]
+}

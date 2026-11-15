@@ -1,0 +1,25 @@
+{
+  "steps": [
+    {
+      "label": "a slot starts from a fn with no -> whose body is a Text",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["title: hello", "ids: ", "total: 0"]
+      }
+    },
+    {
+      "label": "the keys of a fn's Map result read back as Ints, and a record field takes an Int",
+      "do": { "click": "#run" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "ids": [1, 2, 3],
+          "total": 6,
+          "timing": { "ms": 500 },
+          "label": "fast"
+        },
+        "domIncludes": ["ids: 1,2,3", "total: 6", "ms: 500", "label: fast", "seen: 1"]
+      }
+    }
+  ]
+}

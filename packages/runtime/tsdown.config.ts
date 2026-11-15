@@ -12,10 +12,10 @@ export default defineConfig([
     fixedExtension: false,
     outputOptions: publishedOutputOptions,
   },
-  // Its own build, so index.js inlines the code it shares with text-distance instead of
+  // Its own build, so index.js inlines the code it shares with these subpaths instead of
   // importing it from a shared chunk.
   {
-    entry: { "text-distance": "src/text-distance.ts" },
+    entry: { "text-distance": "src/text-distance.ts", "positive-int": "src/positive-int.ts" },
     format: "esm",
     dts: true,
     fixedExtension: false,
@@ -61,6 +61,7 @@ export default defineConfig([
       "tiles-input-slider": "src/tiles/input/slider.ts",
       "tiles-input-switch": "src/tiles/input/switch.ts",
       "tiles-input-form": "src/tiles/input/form.ts",
+      "tiles-input-fieldset": "src/tiles/input/fieldset.ts",
       "tiles-input-editable": "src/tiles/input/editable.ts",
       "tiles-collection": "src/tiles-collection.ts",
       "tiles-overlay": "src/tiles-overlay.ts",

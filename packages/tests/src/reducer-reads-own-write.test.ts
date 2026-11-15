@@ -102,11 +102,9 @@ describe("a read after a write whose value is undefined in JS", () => {
     ["directly in the body", "got"],
     ["in a match arm", "match 1 with | n -> got"],
   ])("reads what the batch commits, %s", async (_row, read) => {
-    const source = withApp(`type K = A | B
-slot k    : K    = B
-slot got  : Text = "old"
+    const source = withApp(`slot got  : Text = "old"
 slot seen : Text = "unset"
-reducer go on=ui.click(Go) do= got := match k with | A -> "a"
+reducer go on=ui.click(Go) do= got := $el.missing
                                seen := ${read}
 tile Go = button(text="go", onClick=go)
 tile App = column(Go)`);

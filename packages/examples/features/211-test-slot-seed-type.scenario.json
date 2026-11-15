@@ -1,0 +1,23 @@
+{
+  "steps": [
+    {
+      "label": "the slots start at their declared values",
+      "expect": { "noErrors": true, "domIncludes": ["count: 0", "at: "] }
+    },
+    {
+      "label": "inc counts up from the live value",
+      "do": { "click": "#inc" },
+      "expect": { "noErrors": true, "domIncludes": ["count: 1"], "state": { "count": 1 } }
+    },
+    {
+      "label": "locate reads the route the app is on, which names no id and no hash",
+      "do": { "click": "#where" },
+      "expect": { "noErrors": true, "domIncludes": ["at: -#-"], "state": { "at": "-#-" } }
+    },
+    {
+      "label": "save writes the count, and the ok reducer reports it",
+      "do": { "click": "#save" },
+      "expect": { "noErrors": true, "domIncludes": ["status: saved 1"] }
+    }
+  ]
+}

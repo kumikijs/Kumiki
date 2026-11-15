@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
-import { applyFixPlan, fixCmd, planFix } from "@kumikijs/cli";
-import { type AppDef, lex, type Program, parse, type TileDef } from "@kumikijs/compiler";
+import { applyFixPlan, fixCmd, planFix, planFixesExplained } from "@kumikijs/cli";
+import { type AppDef, check, lex, type Program, parse, type TileDef } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { seed as writeSource } from "./helpers/files.ts";
+import { storeOf, seed as writeSource } from "./helpers/files.ts";
 
 /** Run `kumiki fix <file> --apply` on `source`; the exit code and the file it left. */
 function fixApply(source: string): { code: number; after: string; program: Program } {
@@ -199,6 +199,52 @@ app A
       reasons: ["e0001-404-is-a-redirect"],
     });
   });
+
+  it.each([
+    '"/404" -> NotFound',
+    '"/404" ->> "/"',
+  ])("when a sub-routes map has an entry at /404 (%s), which is removed rather than added to", (entry) => {
+    const source = `tile Landing  = page(heading("Landing"))
+tile NotFound = page(heading("Not found"))
+
+tile SettingsLayout
+    sub-routes = {"/settings" -> Landing, ${entry}}
+    = page(heading("Settings"), route-outlet())
+
+app A
+    caps   = []
+    routes = {"/" -> Landing, "/settings/*" -> SettingsLayout, "/404" -> NotFound}
+    init   = []
+`;
+    expect(planFor(source, "E0001")).toEqual({
+      patched: false,
+      reasons: ["e0001-404-in-sub-routes"],
+    });
+  });
+});
+
+describe("E0001: each diagnostic of a run is planned by its own kind", () => {
+  it("adds the app's missing /404 and skips a /404 sub-route reported beside it", () => {
+    const source = `tile Landing  = page(heading("Landing"))
+tile NotFound = page(heading("Not found"))
+
+tile SettingsLayout
+    sub-routes = {"/settings" -> Landing, "/404" -> NotFound}
+    = page(heading("Settings"), route-outlet())
+
+app A
+    caps   = []
+    routes = {"/" -> Landing, "/settings/*" -> SettingsLayout}
+    init   = []
+`;
+    const plan = planFix(writeSource(source), undefined);
+    expect(plan.patches.map((p) => [p.code, p.description])).toEqual([
+      ["E0001", 'add "/404" -> NotFound to app.routes'],
+    ]);
+    expect(plan.skipped.map((s) => [s.code, s.reason])).toEqual([
+      ["E0001", "e0001-404-in-sub-routes"],
+    ]);
+  });
 });
 
 describe("E0301: the capability is a new item of app.caps", () => {
@@ -287,5 +333,46 @@ app A
     ]);
     const [layout] = tilesNamed(program, "SettingsLayout");
     expect(layout?.subRoutes?.map((r) => r.path)).toEqual(["/settings"]);
+  });
+
+  it("compose in either order the diagnostics arrive in", () => {
+    // Both are region patches: E0001 prepends a tile, which moves every line of the app, and
+    // E0301 lengthens the caps clause, which moves every offset after it.
+    const store = storeOf(`${SAVES}
+app A
+    caps   = []
+    routes = {"/" -> App}
+    init   = []
+`);
+    const errors = check(store.program);
+    expect(errors.map((e) => e.code).sort()).toEqual(["E0001", "E0301"]);
+    for (const arrived of [errors, [...errors].reverse()]) {
+      const order = arrived.map((e) => e.code).join(" then ");
+      const { patches } = planFixesExplained(store, arrived);
+      expect(
+        patches.map((p) => p.code),
+        order,
+      ).toEqual(arrived.map((e) => e.code));
+      expect(
+        patches.map((p) => p.anchor.kind),
+        order,
+      ).toEqual(["region", "region"]);
+      const composed = patches.reduce((text, p) => p.apply(text), store.source);
+      expect(() => parse(lex(composed)), order).not.toThrow();
+      const program = parse(lex(composed));
+      const app = appOf(program);
+      expect(app.caps, order).toEqual(["storage.write"]);
+      expect(
+        app.routes.map((r) => [r.path, r.tile]),
+        order,
+      ).toEqual([
+        ["/", "App"],
+        ["/404", "NotFound"],
+      ]);
+      expect(
+        check(program).map((e) => `${e.code} ${e.message}`),
+        order,
+      ).toEqual([]);
+    }
   });
 });

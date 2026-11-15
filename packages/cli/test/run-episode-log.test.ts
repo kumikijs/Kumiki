@@ -4,7 +4,7 @@ import { app, feature } from "@kumikijs/examples";
 import { createEpisodeLogger, type EpisodeLogger } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { fileEpisodeLogger, runScenarioSource } from "../src/smoke.ts";
-import { runCli, SPAWN } from "./helpers/cli.ts";
+import { runCli, SPAWN, spawns } from "./helpers/cli.ts";
 import { tempDir } from "./helpers/files.ts";
 
 const COUNTER = app("01-counter");
@@ -86,7 +86,7 @@ describe("kumiki run --episode-log", () => {
     it.each([
       ["the --episode-log flag", true],
       ["KUMIKI_EPISODE_LOG", false],
-    ])("writes every committed episode to the file named by %s", SPAWN, (_, viaFlag) => {
+    ])("writes every committed episode to the file named by %s", spawns(2), (_, viaFlag) => {
       const logFile = join(tempDir(), "run.log.jsonl");
       const r = viaFlag
         ? runCli(["run", EVERY_EPISODE, EVERY_EPISODE_SCENARIO, "--episode-log", logFile])
@@ -102,9 +102,10 @@ describe("kumiki run --episode-log", () => {
     });
   });
 
-  // The request is still waiting in its retry backoff when the scenario ends; it finishes
-  // after the app is disposed, and only then does the click's episode commit.
-  it("writes no episode that commits after the run has returned", SPAWN, () => {
+  // The request is still waiting in its retry backoff when the scenario ends. Disposing the app
+  // ends that wait, so the click's episode commits before the run returns, ending in the aborted
+  // err that no reducer receives.
+  it("writes the episode of a request the app's dispose ended in its retry backoff", SPAWN, () => {
     const full = JSON.parse(readFileSync(join(dirname(RETRY), "scenario.json"), "utf8")) as {
       steps: Array<{ do?: unknown }>;
     };
@@ -115,7 +116,16 @@ describe("kumiki run --episode-log", () => {
     const logFile = join(dir, "run.log.jsonl");
     const r = runCli(["run", RETRY, scenario, "--episode-log", logFile]);
     expect(r.code, r.out).toBe(0);
-    expect(readFileSync(logFile, "utf8")).toBe("");
+    const lines = readFileSync(logFile, "utf8").trim().split("\n");
+    expect(lines).toHaveLength(1);
+    const ep = JSON.parse(lines[0] ?? "") as { status: string; steps: unknown[] };
+    expect(ep.status).toBe("completed");
+    expect(ep.steps.at(-1)).toMatchObject({
+      kind: "effect-end",
+      name: "loadQuote",
+      result: "err",
+      value: { status: 0, message: "aborted" },
+    });
   });
 
   // A directory fails at open on Linux, before the scenario runs. On Windows the open
@@ -128,7 +138,7 @@ describe("kumiki run --episode-log", () => {
     expect(r.stderr).toContain(`could not write episode log ${dir}`);
   });
 
-  it("creates the file for a run that commits no episode", SPAWN, () => {
+  it("creates the file for a run that commits no episode", spawns(2), () => {
     const dir = tempDir();
     const scenario = join(dir, "idle.scenario.json");
     writeFileSync(scenario, JSON.stringify({ steps: [{ expect: { noErrors: true } }] }));

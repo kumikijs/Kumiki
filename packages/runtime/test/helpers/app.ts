@@ -1,5 +1,5 @@
 import type { AppShape, MountedApp, ReducerSpec, TileNode } from "@kumikijs/runtime";
-import { mount } from "@kumikijs/runtime";
+import { _stdlibCore, mount } from "@kumikijs/runtime";
 
 /** An app with no slots, capabilities, effects, init emits or reducers, plus `overrides`. */
 export function bareApp(overrides: Partial<AppShape> = {}): AppShape {
@@ -25,4 +25,28 @@ export function lifecycleReducer(name: string, apply: ReducerSpec["apply"]): Red
     event: { kind: "lifecycle", name },
     apply,
   };
+}
+
+/**
+ * `body` under an `error-boundary` that `tile` declares, lowered as codegen lowers one. The
+ * fallback is `fallback` of the `episode-id` it was handed, or of `(none)`; by default a text
+ * naming it.
+ */
+export function boundaryAround(
+  tile: string,
+  body: () => TileNode,
+  fallback: (episode: string) => TileNode = (episode) => ({
+    kind: "text",
+    text: `fallback episode: ${episode}`,
+  }),
+): TileNode {
+  try {
+    return body();
+  } catch (e) {
+    const info = _stdlibCore.boundaryPanic(e, tile) as {
+      "episode-id": { _tag: string; _0?: string };
+    };
+    const ep = info["episode-id"];
+    return fallback(ep._tag === "Some" ? (ep._0 ?? "") : "(none)");
+  }
 }

@@ -1,0 +1,26 @@
+{
+  "steps": [
+    {
+      "label": "a tile's calls run the program's fns",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "random=4",
+          "fmt=custom 3",
+          "panic=soft x",
+          "file-url=https://cdn.example/a.png",
+          "prefers-dark=maybe"
+        ]
+      }
+    },
+    {
+      "label": "a reducer's calls, another fn's and a fragment's run them too",
+      "do": { "click": "#go" },
+      "expect": {
+        "noErrors": true,
+        "state": { "rolled": 8, "labels": ["custom 1", "custom 2"], "next": 9 },
+        "domIncludes": ["rolled=8", "labels=custom 1, custom 2", "next=9"]
+      }
+    }
+  ]
+}
