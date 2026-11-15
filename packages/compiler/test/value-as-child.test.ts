@@ -76,11 +76,11 @@ describe("a value written as a child", () => {
     expect(diagnostics(home)).toEqual([E0128(home, "let", "card")]);
   });
 
-  it("is reported in any builtin that is not a value builtin", () => {
+  it("is reported in any builtin that renders its children", () => {
     const row = `row(text("a"), let x = 1 in Card({label: x.show}))`;
     expect(diagnostics(row)).toEqual([E0128(row, "let", "row")]);
-    const button = `column(button(42, text="go"))`;
-    expect(diagnostics(button)).toEqual([E0128(button, "42", "button")]);
+    const card = `column(card(text("a"), 42))`;
+    expect(diagnostics(card)).toEqual([E0128(card, "42", "card")]);
   });
 
   it("does not stop the rest of the check", () => {
@@ -158,10 +158,9 @@ const armErrors = (home: string) => pointedErrorsOf(armProgram(home));
 const placed = (place: string) =>
   `A value is not a tile: ${place} has to be a tile. Show the value with a tile — \`text(…)\``;
 
-const uncalled = (name: string, builtin: string, { call = true } = {}) =>
+const uncalled = (name: string, builtin: string) =>
   `\`${name}\` is a builtin tile named without its call: ${builtin} renders a positional ` +
-  `argument only when it is a tile, so this one renders nothing.` +
-  (call ? ` Call it — \`${name}()\`` : "");
+  `argument only when it is a tile, so this one renders nothing. Call it — \`${name}()\``;
 
 describe("a value written as an arm or a tile body", () => {
   it.each([
@@ -329,11 +328,19 @@ describe("a tile's name written where a tile belongs", () => {
   });
 
   it.each([
-    ["button", `column(button(leaf, text="go"))`, `column(button(Leaf, text="go"))`],
-    ["progress", "column(progress(leaf, value=1))", "column(progress(Leaf, value=1))"],
-  ])("checks clean under %s, which drops its positional argument, as its capitalised twin does", (_, lower, upper) => {
-    expect(found(lower, LEAF)).toEqual([]);
-    expect(found(upper, LEAF)).toEqual([]);
+    ["button", `column(button(leaf, text="go"))`, `column(button(Leaf, text="go"))`, "`text=`"],
+    [
+      "progress",
+      "column(progress(leaf, value=1))",
+      "column(progress(Leaf, value=1))",
+      "`value=` or `max=`",
+    ],
+  ])("is E0129 under %s, which renders no positional argument, as its capitalised twin is", (name, lower, upper, shown) => {
+    const said =
+      `${name} renders no positional argument, so this one is never rendered. ` +
+      `Write it as ${shown}, or show it beside the ${name}`;
+    expect(found(lower, LEAF)).toEqual([`E0129 ${at(lower, "leaf,")} ${said}`]);
+    expect(found(upper, LEAF)).toEqual([`E0129 ${at(upper, "Leaf,")} ${said}`]);
   });
 
   it("is a value when only a slot has the name", () => {
@@ -352,10 +359,15 @@ describe("a builtin tile named without its call", () => {
     expect(armErrors(home)).toEqual([{ code: "E0128", message: uncalled(name, builtin), text }]);
   });
 
-  it("is not told to call it under a builtin that renders no positional argument", () => {
-    // `button(text="x", divider())` checks clean and renders no divider either.
+  it("is E0129 under a builtin that renders no positional argument, where a call renders nothing either", () => {
     expect(armErrors(`column(button(text="x", divider))`)).toEqual([
-      { code: "E0128", message: uncalled("divider", "button", { call: false }), text: "divider))" },
+      {
+        code: "E0129",
+        message:
+          "button renders no positional argument, so this one is never rendered. " +
+          "Write it as `text=`, or show it beside the button",
+        text: "divider))",
+      },
     ]);
   });
 
