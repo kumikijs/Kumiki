@@ -77,6 +77,24 @@ export function headerOf(store: Store, entry: DefEntry, verb: string): string {
   return text.slice(from, to);
 }
 
+/** The definition as the file holds it, from its first line to its last. */
+export function definitionText(store: Store, entry: DefEntry): string {
+  return store.lines.slice(entry.range.startLine - 1, entry.range.endLine).join("\n");
+}
+
+/** What a `remove` records so that its revert can put the definition back where it stood. */
+export function removedText(
+  store: Store,
+  entry: DefEntry,
+): { text: string; after?: string; gap: number } {
+  const before = store.defs[store.defs.indexOf(entry) - 1];
+  return {
+    text: definitionText(store, entry),
+    ...(before === undefined ? {} : { after: `${before.layer}.${before.name}` }),
+    gap: entry.range.startLine - (before?.range.endLine ?? 0) - 1,
+  };
+}
+
 export function bodyOf(store: Store, entry: DefEntry, verb: string): string {
   if (HEADER_START.has(entry.layer)) {
     const { text, from } = headerSpan(store, entry, verb);
