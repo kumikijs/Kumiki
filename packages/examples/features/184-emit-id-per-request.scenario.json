@@ -1,0 +1,23 @@
+{
+  "effects": {
+    "load": [{ "outcome": "ok", "value": "part a" }, { "outcome": "ok", "value": "part b" }]
+  },
+  "steps": [
+    {
+      "label": "nothing emitted yet: both slots hold the empty handle",
+      "expect": {
+        "noErrors": true,
+        "state": { "idA": "", "idB": "" },
+        "domIncludes": ["same id: true"]
+      }
+    },
+    {
+      "label": "the two emits of one reducer yield two different ids",
+      "do": { "click": "#start" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["same id: false", "status: [part a] [part b]"]
+      }
+    }
+  ]
+}

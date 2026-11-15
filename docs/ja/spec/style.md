@@ -72,8 +72,10 @@ theme DefaultTheme = {
 ```
 theme-def ::= 'theme' identifier '=' '{' theme-section (',' theme-section)* '}'
 theme-section ::= identifier ':' '{' theme-entry (',' theme-entry)* '}'
-theme-entry ::= identifier ':' (string | '{' theme-entry (',' theme-entry)* '}')
+theme-entry ::= identifier ':' (string | int | float | '{' theme-entry (',' theme-entry)* '}')
 ```
+
+`int` と `float` は [§1.2](./language.md#_1-2-字句) の数値リテラルで、符号を含む（`-4`）。
 
 `theme` は型 `Theme` の単一値。複数 theme を定義してダーク/ライトを切り替えられる。
 
@@ -197,7 +199,7 @@ overlay(Content, when(modalOpen, Modal())) {align: "center"}
 | `panel` | グループ化ボックス。視覚的な境界 (border) や見出しを持つ |
 | `region` | a11y 上の名前付き領域。スクリーンリーダー向け landmark |
 | `scroll` | overflow auto なコンテナ。`h` 指定で固定高スクロール |
-| `fieldset` | form 内のフィールドグループ。`<fieldset>` 相当 |
+| `fieldset` | form 内のフィールドグループ。ブラウザ既定の枠線・パディング・マージン・最小幅をリセットした `<fieldset>` を描画する（[ランタイム §10.3.4](./runtime.md#_10-3-4-dom-レンダリングの不変条件)） |
 
 ```kumiki snippet
 panel(heading("Settings"), settingsForm) {bg: "surface", pad: "md"}
@@ -415,6 +417,8 @@ tile Loader = box(icon(name="spinner")) {motion: "Spin"}
   | `translate-x` / `translate-y` | px（数値） | 位置 |
   | `scale` | 数値 | 大きさ |
   | `rotate` | deg（数値） | 回転 |
+
+  `translate-x`・`translate-y`・`scale`・`rotate` の値は数値リテラルなので符号を持てる（[§1.2](./language.md#_1-2-字句)）：`from: {translate-x: -24}` はタイルの静止位置より 24px 左から、`from: {rotate: -90}` は反時計回りに 1/4 回転した位置から始まる。
 
   1 ストップ上の複数 transform プロパティは、記述順によらず**固定順** — `translate-x` → `translate-y` → `scale` → `rotate` — で単一の `transform` に合成される（CSS `transform` は非可換なので、決定論のため順序を固定している）。未知プロパティはコンパイルエラー（**E0401**）、不正な keyframes（`from`/`to` 無し）は **E0403**。
 - タイミングフィールドは任意（既定 `duration:"normal"`、`easing:"ease"`、`iteration:1`、`direction:"normal"`）。閉じた集合外の値は **E0402**。

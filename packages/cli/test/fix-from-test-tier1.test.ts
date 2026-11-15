@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { fixCmd, fixFromTest, runFixFromTest } from "@kumikijs/cli";
-import { describe, expect, it, vi } from "vitest";
-import { seedLines } from "./helpers/files.ts";
+import { describe, expect, it } from "vitest";
+import { printed } from "./helpers/console.ts";
+import { seed, seedLines } from "./helpers/files.ts";
+import { tiedCounts } from "./helpers/tie.ts";
 
 const REPAIR_INTRODUCES_AN_ERROR = [
   "slot n  : Int  = 0",
@@ -42,27 +44,32 @@ describe("tier-1 repair is gated the way every other write is", () => {
 
   it("prints the refusal in the same words `fix --apply` prints", async () => {
     const file = seedLines(REPAIR_INTRODUCES_AN_ERROR);
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    try {
-      const rolled = /^\(auto-patch rolled back/;
-      fixCmd(file, true);
-      const fromFix = logSpy.mock.calls.map((c) => String(c[0])).filter((l) => rolled.test(l));
-      logSpy.mockClear();
+    const rolled = /^\(auto-patch rolled back/;
+    const fromFix = (await printed(() => fixCmd(file, true))).out
+      .split("\n")
+      .filter((l) => rolled.test(l));
 
-      await fixFromTest(file, "bumps", true);
-      const said = logSpy.mock.calls.map((c) => String(c[0]));
+    const said = await printed(() => fixFromTest(file, "bumps", true));
 
-      expect(said.filter((l) => rolled.test(l))).toEqual(fromFix);
-      expect(fromFix).toHaveLength(1);
-      expect(fromFix[0]).toContain("E0201@");
-      // Never the header that says a repair landed.
-      expect(said.some((l) => l.startsWith("applied "))).toBe(false);
-      expect(errSpy.mock.calls.map((c) => String(c[0])).join("\n")).toContain("E0103");
-    } finally {
-      logSpy.mockRestore();
-      errSpy.mockRestore();
-    }
+    expect(said.out.split("\n").filter((l) => rolled.test(l))).toEqual(fromFix);
+    expect(fromFix).toHaveLength(1);
+    expect(fromFix[0]).toContain("E0201@");
+    // Never the header that says a repair landed.
+    expect(said.out.split("\n").some((l) => l.startsWith("applied "))).toBe(false);
+    expect(said.err).toBe('error E0103 undef-ref at 3:40: Reference to undefined name "cnt"');
+  });
+
+  it("prints a proposal the way `fix` prints one: the diagnostic, and the edit under it", async () => {
+    const file = seedLines(REPAIR_INTRODUCES_AN_ERROR);
+
+    const said = await printed(() => fixFromTest(file, "bumps", false));
+
+    expect(said.result.status).toBe("compile-proposed");
+    expect(said.out.split("\n")).toEqual([
+      'test "bumps" is blocked by compile errors; proposed fixes (dry-run):',
+      'error E0103 undef-ref at 3:40: Reference to undefined name "cnt"',
+      '  fix: replace "cnt" with "cn" at 3:40',
+    ]);
   });
 
   it("still reports the planned count in a dry run, which is what it proposes", async () => {
@@ -101,5 +108,25 @@ describe("tier-1 repair is gated the way every other write is", () => {
       expect(outcome.compileErrors?.map((e) => e.code)).toEqual(["E0103"]);
     }
     expect(readFileSync(file, "utf8")).toContain("seen := route.path");
+  });
+});
+
+describe("a tie between close names at the compile tier", () => {
+  // The compile tier answers before the named test is looked up, so the file needs no test.
+  it.each([
+    false,
+    true,
+  ])("is no-patch with the tied names, and writes nothing (apply: %s)", async (apply) => {
+    const source = tiedCounts("countA", "countB");
+    const file = seed(source);
+
+    const outcome = await runFixFromTest(file, "any", apply);
+
+    expect(outcome).toMatchObject({
+      status: "no-patch",
+      reason: "close-names-tied",
+      candidates: ["countA", "countB"],
+    });
+    expect(readFileSync(file, "utf8")).toBe(source);
   });
 });

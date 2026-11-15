@@ -1,4 +1,5 @@
 import { iterStringLiterals, planTestPatch, planTestPatchExplained } from "@kumikijs/cli";
+import type { TestResult } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
 import { storeOf } from "./helpers/files.ts";
@@ -334,14 +335,20 @@ describe("planTestPatchExplained: skip-reason classification", () => {
     return result.patch === null ? result.reason : undefined;
   };
 
-  it("test-passes-or-no-leaf: pass=true short-circuits before any tier", () => {
-    expect(reasonOf("", { name: "t", pass: true })).toBe("test-passes-or-no-leaf");
-  });
-
-  it("leaf-equal-no-diff: leaf.actual === leaf.expected", () => {
-    expect(
-      reasonOf("", { name: "t", pass: false, leaf: { actual: "same", expected: "same" } }),
-    ).toBe("leaf-equal-no-diff");
+  it.each<[string, string, TestResult]>([
+    ["test-passes-or-no-leaf", "a passing test", { name: "t", pass: true }],
+    [
+      "test-threw",
+      "a test whose body threw, which has no leaf",
+      { name: "t", pass: false, error: "Index 3 is out of range for a List of length 1" },
+    ],
+    [
+      "leaf-equal-no-diff",
+      "leaf.actual === leaf.expected",
+      { name: "t", pass: false, leaf: { actual: "same", expected: "same" } },
+    ],
+  ])("%s: %s, before any tier", (reason, _case, result) => {
+    expect(reasonOf("", result)).toBe(reason);
   });
 
   it.each([

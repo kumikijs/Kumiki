@@ -1,6 +1,6 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
-import { runCli } from "./helpers/cli.ts";
+import { runCli, spawns } from "./helpers/cli.ts";
 import { seed } from "./helpers/files.ts";
 import { logPath } from "./helpers/op-log.ts";
 
@@ -40,7 +40,7 @@ function loggedIds(): string[] {
 const opId = (stdout: string): string => /\((op_\w+)\)/.exec(stdout)?.[1] ?? "(no op-id)";
 
 describe("an op log that ends in a torn line", () => {
-  it("is listed by view --history and written past by the next op", { timeout: 120_000 }, () => {
+  it("is listed by view --history and written past by the next op", spawns(4), () => {
     const first = runCli(["replace", file, "slot.count", "Int = 1"]);
     expect(first.code).toBe(0);
     appendFileSync(log, TORN);
@@ -63,7 +63,7 @@ describe("an op log that ends in a torn line", () => {
     expect(loggedIds()).toEqual([opId(first.stdout), opId(replace.stdout), opId(add.stdout)]);
   });
 
-  it("is warned about by a verb that then fails", { timeout: 120_000 }, () => {
+  it("is warned about by a verb that then fails", spawns(2), () => {
     expect(runCli(["replace", file, "slot.count", "Int = 1"]).code).toBe(0);
     appendFileSync(log, TORN);
 
@@ -76,7 +76,7 @@ describe("an op log that ends in a torn line", () => {
 });
 
 describe("an op log with a line that is not an op before its last", () => {
-  it("rejects a write with the file untouched and says which line", { timeout: 120_000 }, () => {
+  it("rejects a write with the file untouched and says which line", spawns(3), () => {
     expect(runCli(["replace", file, "slot.count", "Int = 1"]).code).toBe(0);
     writeFileSync(log, `${TORN}\n${readFileSync(log, "utf8")}`);
     const before = readFileSync(file, "utf8");

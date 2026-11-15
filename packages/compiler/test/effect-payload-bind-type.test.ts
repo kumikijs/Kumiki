@@ -97,10 +97,10 @@ reducer failed on=loadSession.err($e, _) do= n := $e`),
   it.each([
     ["session.read", `map-request={key: "k", decode: Decoder.Json(Session)}`],
     ["indexed.read", `map-request={store: "s", key: "k", decode: Decoder.Json(Session)}`],
-    ["indexed.write", `map-request={store: "s", key: "k", value: $1}`],
+    ["indexed.write", `map-request={store: "s", key: "k", value: "v"}`],
     ["indexed.delete", `map-request={store: "s", key: "k"}`],
-    ["storage.write", `map-request={key: "k", value: $1}`],
-    ["session.write", `map-request={key: "k", value: $1}`],
+    ["storage.write", `map-request={key: "k", value: "v"}`],
+    ["session.write", `map-request={key: "k", value: "v"}`],
   ])("holds for cap=%s", (cap, mapRequest) => {
     const src = `type Session = {email: Text}
 slot n : Int = 0

@@ -9,6 +9,7 @@ import {
   createEpisodeLogger,
   describeDiagnostic,
   type EpisodeLogger,
+  isPanic,
   runScenario,
   type Scenario,
   type ScenarioReport,
@@ -46,11 +47,21 @@ async function registerDom(): Promise<void> {
 
 export type LoadedApp = AppShape & { live: Record<string, unknown> };
 
+type LoadOptions = { includeTests?: boolean; sourcePath?: string; moduleDir?: string };
+
 export async function loadApp(
   source: string,
   capabilities: string[] = [],
-  opts: { includeTests?: boolean; sourcePath?: string; moduleDir?: string } = {},
+  opts: LoadOptions = {},
 ): Promise<LoadedApp> {
+  return (await compileForLoad(source, capabilities, opts)).app;
+}
+
+async function compileForLoad(
+  source: string,
+  capabilities: string[],
+  opts: LoadOptions,
+): Promise<{ app: LoadedApp; warnings: KumikiError[] }> {
   const baseOpts = {
     runtimeSpecifier: "ignored",
     bundle: true,
@@ -78,19 +89,25 @@ export async function loadApp(
   await import(pathToFileURL(file).href);
   const app = (globalThis as unknown as { __kumikiApp?: LoadedApp }).__kumikiApp;
   if (!app) throw new Error("compiled module did not expose __kumikiApp");
-  return app;
+  return { app, warnings: result.warnings };
 }
 
 function compileFailure(source: string, diagnostics: KumikiError[], sourcePath?: string): string {
+  const lines = diagnosticLines(source, diagnostics);
+  return `compile failed${sourcePath ? ` (${sourcePath})` : ""}:\n${lines.join("\n")}`;
+}
+
+/** Each diagnostic of a `compile` of `source`, with the `test` it sits in when there is one. */
+function diagnosticLines(source: string, diagnostics: KumikiError[]): string[] {
+  if (diagnostics.length === 0) return [];
   // `compile` returned diagnostics rather than throwing, so the source parsed.
   const tests = loadSource(source).defs.filter((e) => e.layer === "test");
-  const lines = diagnostics.map((d) => {
+  return diagnostics.map((d) => {
     const test = tests.find(
       ({ range }) => d.pos.line >= range.startLine && d.pos.line <= range.endLine,
     );
     return `${formatDiagnostic(d)}${test ? ` (in test "${test.name}")` : ""}`;
   });
-  return `compile failed${sourcePath ? ` (${sourcePath})` : ""}:\n${lines.join("\n")}`;
 }
 
 /** Compile + mount + exercise a Kumiki source string; return the smoke report. */
@@ -105,7 +122,7 @@ export async function smokeSource(
     /** Milliseconds to settle after each step. Default 20, as the CLI drives it. */
     settleMs?: number;
   } = {},
-): Promise<SmokeReport> {
+): Promise<SmokeReport & { warnings: KumikiError[] }> {
   await ensureDom();
   clearStorage();
   useHttpFixture(
@@ -115,13 +132,14 @@ export async function smokeSource(
         ? readHttpFixture(opts.sourcePath)
         : null,
   );
-  const app = await loadApp(source, capabilities, opts);
-  return inFreshRoot((root) =>
+  const { app, warnings } = await compileForLoad(source, capabilities, opts);
+  const report = await inFreshRoot((root) =>
     smoke(app, root, {
       settleMs: opts.settleMs ?? 20,
       diagnosticsAsIssues: opts.diagnosticsAsIssues ?? false,
     }),
   );
+  return { ...report, warnings };
 }
 
 async function inFreshRoot<T>(run: (root: HTMLElement) => Promise<T>): Promise<T> {
@@ -139,8 +157,12 @@ export async function smokeFile(
   path: string,
   capabilities: string[] = [],
   opts: { diagnosticsAsIssues?: boolean } = {},
-): Promise<SmokeReport> {
+): Promise<SmokeReport & { warnings: KumikiError[] }> {
   return smokeSource(readFileSync(path, "utf8"), capabilities, { ...opts, sourcePath: path });
+}
+
+function printWarnings(source: string, warnings: KumikiError[]): void {
+  for (const line of diagnosticLines(source, warnings)) console.error(line);
 }
 
 /** CLI entry: print a human-readable report and exit non-zero on failure. */
@@ -149,7 +171,9 @@ export async function smokeCmd(
   capabilities: string[] = [],
   opts: { diagnosticsAsIssues?: boolean } = {},
 ): Promise<void> {
-  const report = await smokeFile(path, capabilities, opts);
+  const source = readFileSync(path, "utf8");
+  const report = await smokeSource(source, capabilities, { ...opts, sourcePath: path });
+  printWarnings(source, report.warnings);
   if (report.ok) {
     console.log(`ok — mounted, rendered, ${report.interactions} interaction(s), no runtime errors`);
     printDiagnostics(report, console.log);
@@ -185,16 +209,17 @@ export async function runScenarioSource(
   scenario: Scenario,
   capabilities: string[] = [],
   opts: { episodeLogger?: EpisodeLogger | null; sourcePath?: string } = {},
-): Promise<ScenarioReport> {
+): Promise<ScenarioReport & { warnings: KumikiError[] }> {
   await ensureDom();
   clearStorage();
   useHttpFixture(opts.sourcePath ? readHttpFixture(opts.sourcePath) : null);
-  const app = await loadApp(source, capabilities, {
+  const { app, warnings } = await compileForLoad(source, capabilities, {
     ...(opts.sourcePath ? { sourcePath: opts.sourcePath } : {}),
   });
-  return inFreshRoot((root) =>
+  const report = await inFreshRoot((root) =>
     runScenario(app, root, scenario, { settleMs: 20, episodeLogger: opts.episodeLogger ?? null }),
   );
+  return { ...report, warnings };
 }
 
 function loadScenario(path: string): Scenario {
@@ -221,6 +246,42 @@ function loadScenario(path: string): Scenario {
   return doc as Scenario;
 }
 
+function episodeLogError(path: string, error: unknown): Error {
+  return new Error(`could not write episode log ${path}: ${messageOf(error)}`, { cause: error });
+}
+
+/**
+ * The in-memory store keeps only the most recent N, so the file is appended as each episode
+ * commits. A failed write is held, not thrown: the hook runs inside the runtime's commit, where
+ * a throw would read as an error of the app. Nothing is appended after it, so the file has no
+ * gap. `close` stops the writing, so an episode that commits once the run is over (an effect
+ * its dispose did not cancel) is not written, and gives back the held failure.
+ */
+export function fileEpisodeLogger(path: string): {
+  logger: EpisodeLogger;
+  close: () => Error | null;
+} {
+  let failure: { error: unknown } | null = null;
+  let closed = false;
+  const logger = createEpisodeLogger({
+    onEpisode: (ep) => {
+      if (closed || failure) return;
+      try {
+        appendFileSync(path, `${JSON.stringify(ep)}\n`);
+      } catch (error) {
+        failure = { error };
+      }
+    },
+  });
+  return {
+    logger,
+    close: () => {
+      closed = true;
+      return failure ? episodeLogError(path, failure.error) : null;
+    },
+  };
+}
+
 /** CLI entry: run a scenario JSON file against a .kumiki file; print the trace. */
 export async function runCmd(
   kumikiPath: string,
@@ -230,11 +291,23 @@ export async function runCmd(
 ): Promise<void> {
   const scenario = loadScenario(scenarioPath);
   const logFile = opts.episodeLog ?? process.env.KUMIKI_EPISODE_LOG;
-  const episodeLogger = logFile ? createEpisodeLogger() : null;
-  const report = await runScenarioSource(readFileSync(kumikiPath, "utf8"), scenario, capabilities, {
-    episodeLogger,
+  if (logFile) {
+    // Tried before the scenario runs, or a run that commits no episode never touches the
+    // path. Appending nothing keeps what the file already holds.
+    try {
+      appendFileSync(logFile, "");
+    } catch (e) {
+      throw episodeLogError(logFile, e);
+    }
+  }
+  const log = logFile ? fileEpisodeLogger(logFile) : null;
+  const source = readFileSync(kumikiPath, "utf8");
+  const report = await runScenarioSource(source, scenario, capabilities, {
+    episodeLogger: log?.logger ?? null,
     sourcePath: kumikiPath,
   });
+  const logFailure = log?.close() ?? null;
+  printWarnings(source, report.warnings);
   for (let i = 0; i < report.steps.length; i++) {
     const s = report.steps[i];
     if (!s) continue;
@@ -250,11 +323,7 @@ export async function runCmd(
     for (const d of s.diagnostics) console.log(`    diagnostic: ${describeDiagnostic(d)}`);
   }
   console.log(report.ok ? "\nscenario passed" : "\nscenario FAILED");
-  if (episodeLogger && logFile) {
-    for (const ep of episodeLogger.list()) {
-      appendFileSync(logFile, `${JSON.stringify(ep)}\n`);
-    }
-  }
+  if (logFailure) throw logFailure;
   if (!report.ok) process.exit(1);
 }
 
@@ -266,17 +335,40 @@ export async function runTestsSource(
   capabilities: string[] = [],
   opts: { sourcePath?: string } = {},
 ): Promise<TestResult[]> {
+  return (await compileAndRunTests(source, capabilities, opts)).results;
+}
+
+async function compileAndRunTests(
+  source: string,
+  capabilities: string[],
+  opts: { sourcePath?: string },
+): Promise<{ results: TestResult[]; warnings: KumikiError[] }> {
   await ensureDom();
-  await loadApp(source, capabilities, {
+  const { warnings } = await compileForLoad(source, capabilities, {
     includeTests: true,
     ...(opts.sourcePath ? { sourcePath: opts.sourcePath } : {}),
   });
   const tests = (globalThis as unknown as { __kumikiTests?: TestRunner[] }).__kumikiTests ?? [];
-  return tests.map((t) => {
+  const results = tests.map((t) => {
     const t0 = performance.now();
-    const r = t.run();
+    const r = runOne(t);
     return { ...r, ms: Math.round(performance.now() - t0) };
   });
+  return { results, warnings };
+}
+
+export function runOne(t: TestRunner): TestResult {
+  try {
+    return t.run();
+  } catch (e) {
+    return { name: t.name, pass: false, error: thrownText(e) };
+  }
+}
+
+/** A panic is the program failing; anything else points at the harness, so it keeps its kind. */
+function thrownText(e: unknown): string {
+  if (!(e instanceof Error)) return leafStr(e);
+  return isPanic(e) && e.message !== "" ? e.message : String(e);
 }
 
 export async function testFile(path: string, capabilities: string[] = []): Promise<TestResult[]> {
@@ -290,6 +382,19 @@ function leafStr(v: unknown): string {
   } catch {
     return String(v);
   }
+}
+
+/** Shared with `kumiki fix`, so a failing test reads the same in both. */
+export function failureLines(r: TestResult): string[] {
+  const lines: string[] = [];
+  if (r.expected !== undefined) lines.push(`  expected: ${r.expected}`);
+  if (r.actual !== undefined) lines.push(`  actual:   ${r.actual}`);
+  if (r.diffAt !== undefined) {
+    const arrow = r.leaf ? `  ${leafStr(r.leaf.expected)} -> ${leafStr(r.leaf.actual)}` : "";
+    lines.push(`  diff at:  ${r.diffAt}${arrow}`);
+  }
+  if (r.error !== undefined) lines.push(`  error:    ${r.error}`);
+  return lines;
 }
 
 /** Match a test name against a filter: exact, or a `prefix-*` / `prefix*` wildcard. */
@@ -325,6 +430,7 @@ export type TestReport = {
   failed: number;
   /** Populated only when `opts.coverage === true`. */
   coverage?: Coverage;
+  warnings: KumikiError[];
 };
 
 export async function runTests(
@@ -333,7 +439,19 @@ export async function runTests(
   capabilities: string[] = [],
   opts: { coverage?: boolean } = {},
 ): Promise<TestReport> {
-  const all = await testFile(path, capabilities);
+  return testReportOf(readFileSync(path, "utf8"), path, filter, capabilities, opts);
+}
+
+async function testReportOf(
+  source: string,
+  path: string,
+  filter: string | undefined,
+  capabilities: string[],
+  opts: { coverage?: boolean },
+): Promise<TestReport> {
+  const { results: all, warnings } = await compileAndRunTests(source, capabilities, {
+    sourcePath: path,
+  });
   const results = all.filter((r) => matchesFilter(r.name, filter));
   const passed = results.filter((r) => r.pass).length;
   const cov =
@@ -347,6 +465,7 @@ export async function runTests(
     passed,
     failed: results.length - passed,
     ...(cov ? { coverage: cov } : {}),
+    warnings,
   };
 }
 
@@ -370,12 +489,7 @@ function printTestReport(report: TestReport): number {
       continue;
     }
     console.log(`FAIL  ${r.name}${tag}`);
-    if (r.expected !== undefined) console.log(`  expected: ${r.expected}`);
-    if (r.actual !== undefined) console.log(`  actual:   ${r.actual}`);
-    if (r.diffAt !== undefined) {
-      const arrow = r.leaf ? `  ${leafStr(r.leaf.expected)} -> ${leafStr(r.leaf.actual)}` : "";
-      console.log(`  diff at:  ${r.diffAt}${arrow}`);
-    }
+    for (const line of failureLines(r)) console.log(line);
   }
   console.log(`\n${report.passed}/${report.total} passed`);
   if (report.coverage) printCoverage(report.coverage);
@@ -390,7 +504,12 @@ export async function testCmd(
   opts: { coverage?: boolean; watch?: boolean } = {},
 ): Promise<void> {
   const runOnce = async (): Promise<number> => {
-    const report = await runTests(path, filter, capabilities, { coverage: opts.coverage ?? false });
+    // Read once, so the lines the warnings are placed by are the lines that were compiled.
+    const source = readFileSync(path, "utf8");
+    const report = await testReportOf(source, path, filter, capabilities, {
+      coverage: opts.coverage ?? false,
+    });
+    printWarnings(source, report.warnings);
     return printTestReport(report);
   };
   if (opts.watch) {
@@ -402,7 +521,6 @@ export async function testCmd(
       }
     };
     await runSafe();
-    console.log("\nwatching for changes… (Ctrl-C to stop)");
     const { watch } = await import("node:fs");
     let timer: ReturnType<typeof setTimeout> | undefined;
     const watcher = watch(path, () => {
@@ -412,6 +530,8 @@ export async function testCmd(
         void runSafe();
       }, 100);
     });
+    // Only once the watcher is in place: a change saved after this line is seen.
+    console.log("\nwatching for changes… (Ctrl-C to stop)");
     process.on("SIGINT", () => {
       watcher.close();
       console.log("\nwatch stopped");

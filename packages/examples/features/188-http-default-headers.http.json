@@ -1,0 +1,6 @@
+{
+  "GET /items/1": { "json": { "name": "lamp" } },
+  "PATCH /items/1": { "json": { "name": "lamp" } },
+  "GET /feed": { "json": { "name": "lamp" } },
+  "GET /readme": { "text": "shop" }
+}

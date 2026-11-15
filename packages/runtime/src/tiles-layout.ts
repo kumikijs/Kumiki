@@ -51,7 +51,7 @@ function renderFlexColumn(node: Node<"page" | "column">, ctx: TileCtx): HTMLElem
 }
 
 function renderBox(
-  node: Node<"card" | "box" | "panel" | "fieldset" | "stack" | "region" | "scroll">,
+  node: Node<"card" | "box" | "panel" | "stack" | "region" | "scroll">,
   ctx: TileCtx,
 ): HTMLElement {
   const div = document.createElement("div");
@@ -88,7 +88,6 @@ export const layoutTiles: TileRenderers = {
   card: renderBox,
   box: renderBox,
   panel: renderBox,
-  fieldset: renderBox,
   stack: renderBox,
   region: renderBox,
   scroll: renderBox,
@@ -126,7 +125,6 @@ export const layoutPatchers: TilePatchers = {
   card: patchContainer,
   box: patchContainer,
   panel: patchContainer,
-  fieldset: patchContainer,
   stack: patchContainer,
   region: patchContainer,
   scroll: patchContainer,

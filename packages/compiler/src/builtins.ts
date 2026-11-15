@@ -66,6 +66,36 @@ export function positionalIsTile(name: string): boolean {
   return BUILTIN_TILES.has(name) && !VALUE_ARG_BUILTINS.has(name);
 }
 
+/** The builtins codegen renders a positional tile argument of, as a child; the rest drop it. */
+export const CHILD_RENDERING_BUILTINS: ReadonlySet<string> = new Set([
+  "page",
+  "region",
+  "row",
+  "column",
+  "stack",
+  "overlay",
+  "grid",
+  "box",
+  "card",
+  "panel",
+  "divider",
+  "scroll",
+  "form",
+  "fieldset",
+  "list",
+  "list-item",
+  "table",
+  "table-head",
+  "table-body",
+  "table-row",
+  "table-cell",
+  "modal",
+  "drawer",
+  "tooltip",
+  "popover",
+  "details",
+]);
+
 export type TileFamily =
   | "layout"
   | "text"
@@ -106,7 +136,6 @@ export const TILE_FAMILY: Record<string, TileFamily> = {
   panel: "layout",
   divider: "layout",
   scroll: "layout",
-  fieldset: "layout",
   "route-outlet": "layout",
   // tiles-text
   text: "text",
@@ -126,6 +155,7 @@ export const TILE_FAMILY: Record<string, TileFamily> = {
   slider: "input",
   switch: "input",
   form: "input",
+  fieldset: "input",
   editable: "input",
   // tiles-collection
   list: "collection",

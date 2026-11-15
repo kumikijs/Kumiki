@@ -2,13 +2,16 @@ import { codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import {
   BUILTIN_CALLS,
+  BUILTIN_MEMBERS,
   type BuiltinArity,
   QUALIFIED_BUILTIN_CALLS,
   QUALIFIED_CALL_NAMESPACES,
   TYPE_MEMBER_CALLS,
   UNIMPLEMENTED_CALLS,
+  UNQUALIFIED_BUILTIN_CALLS,
 } from "../src/builtin-calls.ts";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { jsBinding } from "../src/codegen/context.ts";
+import { checkSource, codesOf, messagesOf } from "./helpers/diagnostics.ts";
 import { compileOrFail, fnLowering } from "./helpers/module.ts";
 
 function inReducer(expr: string): string {
@@ -24,7 +27,7 @@ type Probe = Text
 }
 
 const inFn = (callSite: string): string => `slot a : Int = 0
-fn probe() -> Text = (${callSite}).show
+fn probe() -> Int = [${callSite}].length
 tile App = column(text(probe()))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 type Probe = Text
@@ -65,6 +68,156 @@ describe("E0116 undef-call", () => {
 
   it("still walks the arguments", () => {
     expect(codesOf(inReducer("a := doubel(missing)")).sort()).toEqual(["E0103", "E0116"]);
+  });
+});
+
+// `map-request` is a position no declared type judges, so a capitalised name there
+// is decided by its own resolution alone. `Status` is declared below its first use.
+function inRequest(request: string): string {
+  return `slot s : Status = Idle
+effect load cap=http.post in=Unit out=Result(Text, HttpError) map-request=${request}
+reducer go on=ui.click(B) do= emit load()
+tile B = button(text="b")
+tile App = column(B, text(s.show))
+app A caps=[http.post] routes={"/" -> App, "/404" -> App} init=[]
+type Status = Idle | Busy
+`;
+}
+
+// A `let` in a reducer body: the other position no declared type judges.
+function inLet(expr: string): string {
+  return `slot t : Text = ""
+reducer go on=ui.click(B) do= let v = ${expr}
+    t := "x"
+tile B = button(text="b")
+tile App = column(B, text(t))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+type Status = Idle | Busy
+type Load(T) = Waiting | Loaded(T)
+type Cents = nominal Int
+`;
+}
+
+describe("E0116 undef-variant / undef-qualifier", () => {
+  it.each([
+    {
+      name: "a tag no type declares",
+      request: '{url: "/x", decode: Nonsense}',
+      kind: "undef-variant",
+      message: 'Reference to undefined variant "Nonsense"',
+    },
+    {
+      name: "the qualifier of a bare member when the qualifier names nothing",
+      request: '{url: "/x", decode: Decodr.None}',
+      kind: "undef-qualifier",
+      message:
+        'Reference to undefined qualifier "Decodr" in "Decodr.None" — did you mean "Decoder"?',
+    },
+  ])("reports $name", ({ request, kind, message }) => {
+    expect(checkSource(inRequest(request))).toEqual([
+      { code: "E0116", kind, message, pos: { line: 2, col: 95 } },
+    ]);
+  });
+
+  it.each(["Nonsense", "Decodr.None"])("refuses to build %s", (expr) => {
+    expect(compile(inFn(expr), { runtimeSpecifier: "./runtime.js" })).toMatchObject({
+      kind: "fail",
+      errors: [{ code: "E0116" }],
+    });
+  });
+
+  it.each([
+    ["Idel", 'Reference to undefined variant "Idel" — did you mean "Idle"?'],
+    ["Loadd(1)", 'Reference to undefined variant "Loadd" — did you mean "Loaded"?'],
+    ["Som(1)", 'Reference to undefined variant "Som" — did you mean "Some"?'],
+    ['Jsn({"a": 1})', 'Reference to undefined variant "Jsn" — did you mean "Json"?'],
+    ["Idel.show", 'Reference to undefined qualifier "Idel" in "Idel.show" — did you mean "Idle"?'],
+  ])("suggests the closest declared or built-in name for %s", (expr, message) => {
+    expect(messagesOf(inLet(expr))).toEqual([message]);
+  });
+
+  // A nominal has no construction form, so `Cents(1)` is a variant record where
+  // a number belongs, and a `Map(Cents, …)` keyed by it never meets `1`.
+  it.each([
+    ["Cents(1)", "Cents"],
+    ["Status", "Status"],
+  ])("reports a type's name written as a constructor: %s", (expr, name) => {
+    expect(messagesOf(inLet(expr))).toEqual([`Reference to undefined variant "${name}"`]);
+  });
+
+  it("accepts every tag a type declares, wherever the type is written", () => {
+    // Every `let` is a position no type judges, so only the tag's own resolution
+    // stands between it and a report.
+    const src = `slot inline : Red | Green = Red
+slot rec : {mode: On | Off} = {mode: Off}
+slot t : Text = ""
+reducer go on=ui.click(B) do= let a = Busy
+    let b = Loaded(1)
+    let c = Green
+    let d = On
+    let e = Some(1)
+    let f = None
+    let g = Ok(1)
+    let h = Err("x")
+    let i = TextV("x")
+    let j = Idle.show
+    let k = Time.now
+    t := match a with | Idle -> "i" | Busy -> "b"
+tile B = button(text="b")
+tile App = column(B, text(t))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+type Status = Idle | Busy
+type Load(T) = Waiting | Loaded(T)
+`;
+    expect(codesOf(src)).toEqual([]);
+  });
+
+  it.each([
+    'Json({"a": 1})',
+    'Form({"a": "b"})',
+    'Multipart({"a": TextV("b")})',
+    'Text("t")',
+    'Bytes(Bytes.from-text("b"))',
+    "Empty",
+  ])("accepts the HttpBody variant %s as a request body", (body) => {
+    expect(codesOf(inRequest(`{url: "/x", body: ${body}, decode: Decoder.Text}`))).toEqual([]);
+  });
+
+  it.each([
+    "Status",
+    "Map(Text, Status)",
+    "{id: Text, s: Status}",
+    "List(Text)",
+  ])("reads the argument of Decoder.Json(%s) as the type it spells", (type) => {
+    expect(codesOf(inRequest(`{url: "/x", decode: Decoder.Json(${type})}`))).toEqual([]);
+  });
+
+  // The declared type names the tags the position takes, so its report is the
+  // more precise one; a second at the same name would be one mistake reported twice.
+  it.each([
+    ["slot s : Status = Zork", "E0216"],
+    ["slot n : Int = Zork", "E0201"],
+    ["reducer r on=app.start do= emit save(Zork)", "E0216"],
+  ])("leaves the tag in %s to the declared type's %s", (defs, code) => {
+    const src = `${defs}
+effect save cap=storage.write in=Status out=Result(Unit, Text)
+tile App = column(text("a"))
+app A caps=[storage.write] routes={"/" -> App, "/404" -> App} init=[]
+type Status = Idle | Busy
+`;
+    expect(codesOf(src)).toEqual([code]);
+  });
+
+  it("leaves a capitalised reducer named by confirm to the reducer-name report", () => {
+    const src = `slot n : Int = 0
+reducer Yes on=app.start do= n := 1
+reducer no on=app.start do= n := 2
+reducer ask on=ui.click(B) do= emit confirm({title: "sure?", onYes: Yes, onNo: no})
+tile B = button(text="ask")
+tile App = column(B, text(n.show))
+app A caps=[notification.show] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(codesOf(src)).toEqual(["E0202"]);
   });
 });
 
@@ -208,6 +361,171 @@ test round-trips =
         invariant = run-reducer(inc).slots.count == count + 1
 `;
     expect(checkSource(src)).toEqual([]);
+  });
+});
+
+// Generated from the table the checker and codegen both decide by, so a builtin added to it is
+// held to this without a line here.
+describe("a declared fn wins over a builtin of its name", () => {
+  const NAMES = [...UNQUALIFIED_BUILTIN_CALLS, ...UNIMPLEMENTED_CALLS];
+  const isKeyword = (name: string) => lex(name)[0]?.kind === "kw";
+
+  // Two `Int`s to an `Int` is no builtin's signature, so a call checked or lowered as the builtin
+  // cannot pass for the fn's.
+  const declaring = (name: string) => `slot a : Int = 0
+slot b : Int = 0
+slot xs : List(Int) = [1, 2]
+fn ${name}(x: Int, y: Int) -> Int = x + y
+fn viaFn(x: Int) -> Int = ${name}(x, 10)
+reducer r on=ui.click(B) do=
+  a := ${name}(a, 1)
+  b := xs.fold(0, ${name})
+tile B = button(text="b")
+tile App = column(B, text(${name}(a, 2).show), text(viaFn(b).show))
+tile Missing = text("missing")
+app A caps=[] routes={"/" -> App, "/404" -> Missing} init=[]
+test r-adds =
+    reducer-test r
+        given  = {slots: {a: ${name}(0, 0), b: 0, xs: [1]}, event: {type: ui.click, target: B}}
+        expect = {slots: {a: ${name}(0, 1), b: 1}, effects: []}
+test holds =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {a: n}, event: {type: ui.click, target: B}}
+        invariant = ${name}(n, 0) >= n
+`;
+
+  const OWN = "plus";
+
+  // Codegen alone, so the lowering is asserted whatever the checker says.
+  const emit = (name: string, src = declaring(name)) =>
+    codegen(parse(lex(src)), { runtimeSpecifier: "./runtime.js", includeTests: true }).js;
+
+  it("is a program the checker accepts under a name no builtin has", () => {
+    expect(checkSource(declaring(OWN))).toEqual([]);
+  });
+
+  it("reaches every name but the one the lexer reserves", () => {
+    expect(NAMES.filter(isKeyword)).toEqual(["now"]);
+    expect(() => parse(lex(declaring("now")))).toThrow("Expected ident, got kw(now)");
+  });
+
+  const DECLARABLE = NAMES.filter((n) => !isKeyword(n));
+
+  it.each(DECLARABLE)("checks a call to fn %s against the fn's signature", (name) => {
+    expect(checkSource(declaring(name))).toEqual([]);
+  });
+
+  // The same fn called the way no `(Int, Int) -> Int` accepts, so an empty answer cannot pass for
+  // a call checked against the fn: only its signature explains each diagnostic.
+  const misCalling = (name: string, call: string) => `slot a : Int = 0
+fn ${name}(x: Int, y: Int) -> Int = x + y
+reducer r on=ui.click(B) do= a := ${call}
+tile B = button(text="b")
+tile App = column(B, text(a.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+  it.each(DECLARABLE)("reports a call to fn %s with one argument by the fn's arity", (name) => {
+    const found = checkSource(misCalling(name, `${name}(1)`));
+    expect(found.map((e) => `${e.code} ${e.message}`)).toEqual([
+      `E0213 Function "${name}" expects 2 argument(s) but got 1`,
+    ]);
+  });
+
+  it.each(DECLARABLE)("reports a Text argument to fn %s by the fn's parameter type", (name) => {
+    expect(codesOf(misCalling(name, `${name}("x", 1)`))).toEqual(["E0201"]);
+  });
+
+  it("gives a call to a declared fn fmt no W0214", () => {
+    const calling = (fn: string) => `slot t : Text = ""
+${fn}
+reducer r on=ui.click(B) do= t := fmt("{1}", 1)
+tile B = button(text="b")
+tile App = column(B, text(t))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(codesOf(calling(""))).toEqual(["W0214"]);
+    expect(checkSource(calling("fn fmt(t: Text, n: Int) -> Text = t + n.show"))).toEqual([]);
+  });
+
+  it("leaves the chained `.run-reducer(r)` no builtin once a fn has the name", () => {
+    const src = `fn run-reducer(x: Int) -> Int = x + 1
+slot count : Int = 0
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="b")
+tile App = column(B, text(count.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+test chain =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {count: n}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(n).run-reducer(inc).slots.count >= 0
+`;
+    expect(checkSource(src).map((e) => `${e.code} ${e.message}`)).toEqual([
+      'E0801 Method ".run-reducer" is not implemented by the runtime',
+      'E0103 Reference to undefined name "inc"',
+    ]);
+    expect(emit("run-reducer", src)).toContain('reducers: { total: ["inc"], used: [] }');
+  });
+
+  it.each(DECLARABLE)("lowers every call to fn %s to the fn", (name) => {
+    // A builtin lowers through `_s.`, which the look-behind leaves alone.
+    const calls = new RegExp(`(?<![.\\w$])${jsBinding(name)}\\(`, "g");
+    expect(emit(name).replace(calls, `${OWN}(`)).toBe(emit(OWN));
+  });
+
+  it("leaves the reducer statement `panic(message)` the builtin", () => {
+    const src = `slot t : Text = ""
+fn panic(x: Text) -> Text = "soft " + x
+reducer r on=ui.click(B) do=
+  t := panic("expr")
+  panic("stmt")
+tile B = button(text="b")
+tile App = column(B, text(t))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(checkSource(src)).toEqual([]);
+    const js = emit("panic", src);
+    expect(js).toContain('_next["t"] = panic("expr");');
+    expect(js).toContain('_s.panic("stmt");');
+    expect(js).not.toContain('_s.panic("expr")');
+  });
+
+  it("leaves run-reducer the builtin where no fn has the name", () => {
+    const src = `slot count : Int = 0
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="b")
+tile App = column(B, text(count.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+test holds =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {count: n}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(inc).slots.count == n + 1
+`;
+    expect(checkSource(src)).toEqual([]);
+    const js = emit("run-reducer", src);
+    expect(js).toContain('_s.runReducerStep(App, _init, "inc", _event)');
+    expect(js).toContain('reducers: { total: ["inc"], used: ["inc"] }');
+  });
+
+  it("counts no reducer as run by a property-test call to fn run-reducer", () => {
+    // Called as the fn, `inc` is the for-all value of that name, and no reducer runs.
+    const src = `slot count : Int = 0
+fn run-reducer(x: Int) -> Int = x + 1
+reducer inc on=ui.click(B) do= count := count + 1
+tile B = button(text="b")
+tile App = column(B, text(count.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+test holds =
+    property-test
+        for-all   = {inc: Int}
+        given     = {slots: {count: inc}, event: {type: ui.click, target: B}}
+        invariant = run-reducer(inc) == inc + 1
+`;
+    expect(checkSource(src)).toEqual([]);
+    expect(emit("run-reducer", src)).toContain('reducers: { total: ["inc"], used: [] }');
   });
 });
 
@@ -412,15 +730,15 @@ describe("a qualified stdlib member is read the same way without its parentheses
   });
 
   it("reads a keyword member the same way, in either spelling", () => {
-    for (const where of ["Decoder.if", "Duration.if", "Bytes.if"]) {
+    for (const where of ["Decoder.if", "Duration.if", "Bytes.if", "Time.if"]) {
       expect(codesOf(inReducer(`t := (${where}).show`)), where).toEqual(["E0116"]);
     }
     expect(codesOf(inReducer("t := (Decoder.if(a)).show"))).toEqual(["E0116"]);
   });
 
   it("claims the qualifier position and not the name", () => {
-    const src = `type Duration = Short | Long
-slot d : Duration = Short
+    const src = `type Decoder = Short | Long
+slot d : Decoder = Short
 slot t : Text = ""
 reducer pick on=ui.click(B) do= d := Long
 tile B = button(text="b")
@@ -465,14 +783,14 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
     if (name !== "Decoder.Json") {
       it(`${name} lowers to ${sentinel} with no parentheses`, () => {
         const body = loweringOf(name);
-        expect(body).toContain(`_s.show(${sentinel})`);
+        expect(body).toContain(`[${sentinel}]`);
         expect(body).not.toContain("_tag:");
       });
     }
 
     it(`${name} lowers the same way written as a call`, () => {
       const body = loweringOf(name === "Decoder.Json" ? `${name}(Text)` : `${name}()`);
-      expect(body).toContain(`_s.show(${sentinel})`);
+      expect(body).toContain(`[${sentinel}]`);
     });
   }
 
@@ -492,7 +810,141 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 
   it("accepts the constants themselves", () => {
     expect(codesOf(inReducer("t := (Decoder.None).show"))).toEqual([]);
-    expect(codesOf(inReducer("t := (EffectId.none).show"))).toEqual([]);
+    expect(codesOf(inReducer("a := [EffectId.none].length"))).toEqual([]);
+  });
+});
+
+describe("`Time.now` is the builtin `now`", () => {
+  // Asserted against what the bare keyword gets, never against a copy of it.
+  const SPELLINGS = ["Time.now", "Time.now()"];
+
+  const EVERYWHERE = `slot at : Time = NOW
+fn later(t: Time) -> Time = NOW.plus(Duration.s(1))
+reducer stamp on=ui.click(B) do= at := NOW
+tile B = button(text="b")
+tile App = column(B, text(NOW.format("yyyy")), text(later(at).show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+test stamps =
+    reducer-test stamp
+        given  = {slots: {at: NOW}, event: {type: ui.click, target: B}}
+        expect = {slots: {}}
+`;
+
+  const moduleWith = (spelling: string): string =>
+    compileOrFail(EVERYWHERE.replaceAll("NOW", spelling), {
+      runtimeSpecifier: "./runtime.js",
+      includeTests: true,
+    });
+
+  it("lowers to the module `now` lowers to, in a slot, fn, reducer, tile and test", () => {
+    // Codegen embeds no source positions, so a byte-identical module is "the same builtin" in
+    // every position at once, the environment read the runtime journals included. Each position's
+    // lowering is looked for, so the comparison cannot hold vacuously.
+    const bare = moduleWith("now");
+    const POSITIONS = [
+      "function later(t) { return ((_s.now())",
+      '"at": { value: _s.now() }',
+      '_next["at"] = _s.now();',
+      '_s.formatTime(_s.now(), "yyyy")',
+      '{ "at": _s.now() }',
+    ];
+    for (const lowered of POSITIONS) expect(bare, lowered).toContain(lowered);
+    // The tile is emitted once per route that mounts `App` and once more for the tests.
+    expect(bare.match(/_s\.now\(\)/g)?.length).toBe(7);
+    for (const spelling of SPELLINGS) expect(moduleWith(spelling), spelling).toBe(bare);
+  });
+
+  it("is a Time, refused where a Bool is declared in the sentence `now` gets", () => {
+    const flag = (body: string) =>
+      checkSource(`fn flag() -> Bool = ${body}
+tile App = column(text(flag().show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`);
+    const bare = flag("now");
+    expect(bare).toEqual([
+      {
+        code: "E0201",
+        kind: "type-mismatch",
+        message: "Expected Bool but got Time",
+        pos: { line: 1, col: 21 },
+      },
+    ]);
+    for (const spelling of SPELLINGS) expect(flag(spelling), spelling).toEqual(bare);
+  });
+
+  it.each(SPELLINGS)("%s is a Time where one is declared, with Time's members", (spelling) => {
+    expect(codesOf(inReducer(`t := ${spelling}.plus(Duration.s(1)).format("yyyy")`))).toEqual([]);
+  });
+
+  it("takes no argument, as `now` takes none", () => {
+    expect(checkSource(inReducer("t := Time.now(1).show"))).toEqual([
+      {
+        code: "E0213",
+        kind: "call-arity-mismatch",
+        message: 'Function "now" expects 0 argument(s) but got 1',
+        pos: { line: 4, col: 35 },
+      },
+    ]);
+  });
+
+  it("reads a member Time does not have as a call to nothing, in either spelling", () => {
+    const bare = checkSource(inReducer("t := (Time.nope).show"));
+    expect(bare).toEqual([
+      {
+        code: "E0116",
+        kind: "undef-call",
+        message: 'Call to undefined function "Time.nope"',
+        pos: { line: 4, col: 36 },
+      },
+    ]);
+    expect(checkSource(inReducer("t := (Time.nope()).show"))).toEqual(bare);
+  });
+
+  const BARE_TYPE_MEMBERS: [string, string][] = [
+    ["parse", "E0213"],
+    ["show", "E0213"],
+    ["fresh", "E0802"],
+  ];
+
+  it("covers every type member", () => {
+    expect(BARE_TYPE_MEMBERS.map(([m]) => m).sort()).toEqual([...TYPE_MEMBER_CALLS.keys()].sort());
+  });
+
+  it.each(
+    BARE_TYPE_MEMBERS,
+  )("reports a bare Time.%s as its called spelling (%s)", (member, code) => {
+    const bare = checkSource(inReducer(`t := (Time.${member}).show`));
+    expect(bare.map((e) => e.code)).toEqual([code]);
+    expect(checkSource(inReducer(`t := (Time.${member}()).show`))).toEqual(bare);
+  });
+
+  it("keeps fresh and an argument-less parse / show as type members, which Decoder / EffectId / Duration / Bytes report as E0116", () => {
+    expect(loweringOf('Time.parse("2026-08-14")')).toContain('_s.parseTime("2026-08-14")');
+    expect(codesOf(inReducer("t := Time.show(a)"))).toEqual([]);
+    expect(checkSource(inReducer("t := (Time.parse()).show"))[0]?.message).toBe(
+      'Function "Time.parse" expects 1 argument(s) but got 0',
+    );
+  });
+
+  it("is the spelling `Time`, not a type whose base is Time", () => {
+    const src = `type Stamp = nominal Time
+slot s : Stamp = Stamp.now()
+tile App = column(text(s.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(codesOf(src)).toEqual(["E0116"]);
+  });
+
+  // A known gap (errors.md E0116): written bare on any qualifier other than Time and the four
+  // namespaces, a member is a field read with no type. This test changes when the gap closes.
+  it("leaves a bare Stamp.now a field read that passes check", () => {
+    const src = `type Stamp = nominal Time
+slot s : Stamp = Stamp.now
+tile App = column(text(s.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(codesOf(src)).toEqual([]);
+    expect(compileOrFail(src)).toContain('"s": { value: (({ _tag: "Stamp" }))["now"] }');
   });
 });
 
@@ -502,8 +954,15 @@ describe("every built-in is held to the count its lowering reads", () => {
   /** `fresh` / `parse` / `show` resolve on any capitalised qualifier. */
   const QUALIFIER = "Probe";
 
+  // `now` is a keyword and takes no parentheses, so its count is written through `Time.now`.
+  const QUALIFIED_SPELLING = new Map(
+    [...BUILTIN_MEMBERS].map(([written, builtin]) => [builtin, written]),
+  );
+
   function callOf(name: string): (n: number) => string {
-    const spelling = TYPE_MEMBER_CALLS.has(name) ? `${QUALIFIER}.${name}` : name;
+    const spelling = TYPE_MEMBER_CALLS.has(name)
+      ? `${QUALIFIER}.${name}`
+      : (QUALIFIED_SPELLING.get(name) ?? name);
     const filler = fillerOf(name);
     return (n) => `${spelling}(${Array.from({ length: n }, () => filler).join(", ")})`;
   }
@@ -514,15 +973,11 @@ describe("every built-in is held to the count its lowering reads", () => {
     ...TYPE_MEMBER_CALLS,
   ];
 
-  const PARSER_FIXED = new Set(["now"]);
-
-  const NAMED = ALL.filter(([name]) => !PARSER_FIXED.has(name));
-
   it("covers all three tables", () => {
     expect(ALL.length).toBe(
       BUILTIN_CALLS.size + QUALIFIED_BUILTIN_CALLS.size + TYPE_MEMBER_CALLS.size,
     );
-    expect([...PARSER_FIXED].every((n) => BUILTIN_CALLS.has(n))).toBe(true);
+    expect([...QUALIFIED_SPELLING.keys()].every((n) => BUILTIN_CALLS.has(n))).toBe(true);
   });
 
   const EXPECTED: Record<string, string> = {
@@ -560,27 +1015,27 @@ describe("every built-in is held to the count its lowering reads", () => {
     expect(Object.fromEntries(ALL.map(spelled))).toEqual(EXPECTED);
   });
 
-  it("does not reach the one the parser spells for you", () => {
+  it("the keyword now takes no parentheses, so its count is checked through Time.now", () => {
     expect(codesOf(inReducer("t := now.show"))).toEqual([]);
     expect(() => parse(lex(inReducer("t := now(1).show")))).toThrow(/Expected/);
   });
 
-  for (const [name, arity] of NAMED) {
+  for (const [name, arity] of ALL) {
     const call = callOf(name);
 
     it(`${name} accepts ${arity.min}`, () => {
-      expect(codesOf(inReducer(`t := (${call(arity.min)}).show`))).toEqual([]);
+      expect(codesOf(inReducer(`a := [${call(arity.min)}].length`))).toEqual([]);
     });
 
     if (arity.min > 0) {
       it(`${name} reports one argument too few`, () => {
-        expect(codesOf(inReducer(`t := (${call(arity.min - 1)}).show`))).toEqual(["E0213"]);
+        expect(codesOf(inReducer(`a := [${call(arity.min - 1)}].length`))).toEqual(["E0213"]);
       });
     }
 
     if (Number.isFinite(arity.max)) {
       it(`${name} reports one argument too many`, () => {
-        expect(codesOf(inReducer(`t := (${call(arity.max + 1)}).show`))).toEqual(["E0213"]);
+        expect(codesOf(inReducer(`a := [${call(arity.max + 1)}].length`))).toEqual(["E0213"]);
       });
     }
   }

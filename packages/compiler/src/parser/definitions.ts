@@ -1,3 +1,4 @@
+import { isPositiveInt } from "@kumikijs/runtime/positive-int";
 import type {
   Def,
   DuplicateName,
@@ -20,7 +21,6 @@ import type {
   TypeDef,
   TypeExpr,
 } from "../ast.ts";
-import { isPositiveInt } from "../positive-int.ts";
 import { AppParser } from "./app.ts";
 import { ParseError } from "./token-stream.ts";
 
@@ -101,11 +101,12 @@ export class Parser extends AppParser {
     } else if (v.kind === "str") {
       this.next();
       out[key] = v.value;
-    } else if (v.kind === "num") {
-      this.next();
-      out[key] = v.value;
     } else {
-      throw new ParseError(`Theme values must be string, number, or nested record`, v.pos);
+      const n = this.tryEatSignedNumber();
+      if (n === undefined) {
+        throw new ParseError(`Theme values must be string, number, or nested record`, v.pos);
+      }
+      out[key] = n;
     }
   }
 

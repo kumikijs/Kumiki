@@ -1,4 +1,4 @@
-import type { IndexedDbStore, KeyKind } from "@kumikijs/runtime";
+import type { IndexedDbStore, KeyKind, ShowShape } from "@kumikijs/runtime";
 
 export type Pos = { line: number; col: number };
 
@@ -222,8 +222,39 @@ export function isTileExpr(v: Expr | TileExpr): v is TileExpr {
   return TILE_EXPR_KINDS.has((v as TileExpr).kind);
 }
 
+export type WrittenProp = { value: Expr; namePos: Pos };
+
+// A named argument and a `{…}` entry of the same name are one prop, and every reader asks here so
+// none reads one spelling only. The block wins when a call writes both; a tile-test's expected tree
+// passes no block because a snapshot does not compare it. A tile written as an argument is a child.
+export function writtenProp(
+  t: TileExpr & { kind: "TileCall" },
+  name: string,
+  block: readonly TileProp[] = t.props,
+): WrittenProp | undefined {
+  const prop = block.find((p) => p.name === name);
+  if (prop) return { value: prop.value, namePos: prop.pos };
+  const arg = t.args.find((a) => a.name === name);
+  if (arg?.name === undefined || isTileExpr(arg.value)) return undefined;
+  return { value: arg.value, namePos: arg.namePos };
+}
+
 export function assertNever(node: never): void {
   void node;
+}
+
+/**
+ * The sign is part of a number literal (language.md), but the lexer emits it as
+ * its own operator, so `-1` reaches the AST as a negation of `1`. One leading `-`
+ * is folded in: `- -1` is the negation of the literal `-1`, so it is `null` here.
+ * Parentheses leave no node, so `-(1)` is the literal `-1`.
+ */
+export function numberLiteral(e: Expr): { value: number; raw: string } | null {
+  if (e.kind === "Num") return { value: e.value, raw: e.raw ?? String(e.value) };
+  if (e.kind === "UnaryOp" && e.op === "-" && e.rhs.kind === "Num") {
+    return { value: -e.rhs.value, raw: `-${e.rhs.raw ?? String(e.rhs.value)}` };
+  }
+  return null;
 }
 
 export type Refinement = {
@@ -255,6 +286,11 @@ export type EventPattern =
       kind: "LifecycleEvent";
       name: string;
       tileTarget?: { readonly event: "tile.mount" | "tile.unmount" } & NamedRef;
+      routePattern?: {
+        readonly event: "route.enter" | "route.leave" | "route.error";
+        readonly pattern: string;
+        readonly pos: Pos;
+      };
       pos: Pos;
     };
 
@@ -303,11 +339,23 @@ export type { KeyKind };
 
 export type FragmentShape = "pair" | "key-value" | "value" | "undecided";
 
-export type Expr =
+export type { ShowShape };
+
+export type Expr = ExprForm & {
+  /**
+   * Set by the checker where the value is shown; absent without `check()`, and where the type has
+   * no shape or could not be inferred, so the value is read as itself.
+   */
+  showShape?: ShowShape;
+};
+
+type ExprForm =
   | { kind: "Num"; value: number; raw?: string; pos: Pos }
   | { kind: "Str"; value: string; pos: Pos }
   | { kind: "Bool"; value: boolean; pos: Pos }
   | { kind: "Unit"; pos: Pos }
+  // Kumiki has no null: parsed only so the checker can report E0235 where it is written.
+  | { kind: "Null"; pos: Pos }
   | { kind: "TupleLit"; items: [Expr, Expr, ...Expr[]]; pos: Pos }
   | { kind: "Ref"; name: string; pos: Pos }
   | { kind: "BinOp"; op: BinOp; lhs: Expr; rhs: Expr; pos: Pos }
@@ -342,7 +390,7 @@ export type Expr =
     }
   | { kind: "MapLit"; entries: { key: Expr; value: Expr }[]; pos: Pos }
   | { kind: "Wildcard"; wild: "any-id"; pos: Pos }
-  | { kind: "Wildcard"; wild: "slot"; slot: string; pos: Pos }
+  | { kind: "Wildcard"; wild: "slot"; slot: string; slotPos: Pos; pos: Pos }
   | { kind: "MatchExpr"; scrutinee: Expr; arms: MatchArm[]; pos: Pos }
   | { kind: "IfExpr"; cond: Expr; consequent: Expr; alternate: Expr; pos: Pos }
   | { kind: "LetIn"; name: string; value: Expr; body: Expr; pos: Pos }

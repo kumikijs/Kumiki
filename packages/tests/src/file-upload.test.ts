@@ -1,6 +1,6 @@
 import { feature } from "@kumikijs/examples";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { find, mountApp } from "./helpers/dom.ts";
+import { find, mountApp, pickFile } from "./helpers/dom.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const examplePath = feature("43-file-upload-preview");
@@ -35,19 +35,6 @@ const avatar = (): File =>
     type: "image/png",
   });
 
-/** Pick `file` in `input` as the browser's file chooser would. */
-function pick(input: HTMLInputElement, file: File): void {
-  try {
-    Object.defineProperty(input, "files", {
-      configurable: true,
-      value: [file] as unknown as FileList,
-    });
-  } catch {
-    (input as unknown as { files: File[] }).files = [file];
-  }
-  input.dispatchEvent(new Event("change", { bubbles: true }));
-}
-
 describe("file upload — input(type=file) + $event.files + file-url()", () => {
   it("picking a file replaces None with Some(File) and renders a blob URL preview", async () => {
     const app = await loadApp(examplePath);
@@ -57,7 +44,7 @@ describe("file upload — input(type=file) + $event.files + file-url()", () => {
       expect(input.getAttribute("accept")).toBe("image/*");
       expect(root.querySelector("img")).toBeNull();
 
-      pick(input, avatar());
+      pickFile(input, avatar());
 
       const img = root.querySelector<HTMLImageElement>("img");
       expect(img, "preview <img> must appear after picking a file").not.toBeNull();
@@ -97,7 +84,7 @@ app FileFields
 `);
     const { root, handle } = mountApp(app);
     try {
-      pick(find<HTMLInputElement>(root, 'input[type="file"]'), avatar());
+      pickFile(find<HTMLInputElement>(root, 'input[type="file"]'), avatar());
       expect(app.live).toMatchObject({
         pickedName: "avatar.png",
         pickedSize: avatar().size,

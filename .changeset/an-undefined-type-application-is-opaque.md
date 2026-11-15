@@ -1,0 +1,16 @@
+---
+"@kumikijs/compiler": patch
+---
+
+An application of a type name that resolves to nothing is now as opaque as the bare name: **E0117 `undef-type`** is its one report.
+
+```
+slot x : Foo = 1          # E0117
+slot y : Foo(Int) = 1     # was E0117 and E0201 "Expected Foo(Int) but got Int"; now E0117 alone
+```
+
+Before, the bare `Foo` accepted every value after E0117, but `Foo(Int)` was compared argument by argument like a stdlib constructor, so the literal was blamed for not matching a type that does not exist. The same second report followed every place the application was written — a fn parameter or result, a record field or variant payload, `List(Foo(Int))`, `Option(Foo(Int))`, an alias `type A = Foo(Int)`, `nominal Foo(Int)`, `Foo(Int) where positive`, `Foo(Int, Text)`, a misspelt `Lst(Int)`, a tile's `in=` (at `Row(1)`) and an effect's `in=` (E0202 at `emit save(1)`) — and every use of such a value: `n := y`, `y + 1`, `y < 1`, `not y`, `if y`, a `match` on `y` (E0208), `input(bind=y)` (E0226), each now reports nothing beyond the E0117. `T.parse` on an alias of an undefined application (`type Q = Foo(Int)`) adds nothing to the E0117 at the definition either, as on an alias of an undefined bare name; before, it added E0802 and `E0201 Expected Option(Int) but got Option(Foo)` at the call.
+
+A type parameter applied to arguments inside its own definition (`type H(T) = {v: T(Int)}`) is not such a name: its one report was the same kind of E0201 (`Expected T(Int) but got Int`), and it is now E0210 at the `T(Int)`.
+
+A stdlib constructor and a program's own generic are unaffected: `slot l : List(Int) = ["x"]`, `slot o : Option(Text) = 1` and `G(Int)` with a wrong field for `type G(T) = {v: T}` are still E0201.

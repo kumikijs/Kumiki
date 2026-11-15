@@ -1,8 +1,8 @@
-import type { AppShape, EffectResult, EpisodeStep, MountedApp } from "@kumikijs/runtime";
-import { createEpisodeLogger, mount } from "@kumikijs/runtime";
+import type { AppShape, EffectResult, EpisodeStep } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { httpError } from "../src/effects-http.ts";
 import { captureConsole } from "./helpers/console.ts";
-import { freshRoot } from "./helpers/dom.ts";
+import { mountLogged } from "./helpers/episode-apps.ts";
 import { tick } from "./helpers/time.ts";
 
 type DebounceApp = {
@@ -58,12 +58,6 @@ function makeDebounceApp(debounceMs: number): DebounceApp {
       return searchCalls;
     },
   } as DebounceApp;
-}
-
-function mountLogged(app: AppShape) {
-  const logger = createEpisodeLogger({ memoryMax: 10 });
-  const { dispose } = mount(app, freshRoot(), { episodeLogger: logger });
-  return { logger, dispose, dispatch: (app as MountedApp)._dispatch };
 }
 
 const reducerNames = (steps: EpisodeStep[]): string[] =>
@@ -149,7 +143,7 @@ describe("policy-deferred effect episode fidelity", () => {
             new Promise<EffectResult>((resolve) => {
               if (++call > 1) resolveNew = resolve;
               signal?.addEventListener("abort", () => {
-                resolve({ kind: "err", value: { status: 0, message: "aborted", body: "" } });
+                resolve({ kind: "err", value: httpError(0, "aborted") });
               });
             }),
         },
@@ -228,16 +222,17 @@ describe("policy-deferred effect episode fidelity", () => {
           name: "onInput",
           event: { kind: "ui", ev: "input" },
           selector: { tile: "Q" },
+          // The id an `emit` expression stamps on its record, so `kill` can name it.
           apply: (_l, p) => ({
             slots: { q: p.value as string },
-            emits: [{ effect: "search", args: [{ q: p.value }] }],
+            emits: [{ effect: "search", args: [{ q: p.value }], id: "search#1" }],
           }),
         },
         {
           name: "kill",
           event: { kind: "ui", ev: "click" },
           selector: { tile: "Kill" },
-          apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["search:_"] }] }),
+          apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["search#1"] }] }),
         },
       ],
     };
@@ -257,7 +252,7 @@ describe("policy-deferred effect episode fidelity", () => {
     ]);
     const clickEp = eps.find((ep) => ep.trigger.kind === "ui.click");
     expect(cancels(clickEp!.steps)).toEqual([
-      expect.objectContaining({ kind: "effect-cancel", targetId: "search:_" }),
+      expect.objectContaining({ kind: "effect-cancel", targetId: "search#1" }),
     ]);
     dispose();
   });

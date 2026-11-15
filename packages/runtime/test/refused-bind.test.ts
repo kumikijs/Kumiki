@@ -1,6 +1,7 @@
 import type { AppShape, MountedApp, TileNode } from "@kumikijs/runtime";
 import { mount } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
+import { forgetMovedRefusals } from "../src/core/binding.ts";
 import { noteBindWrite, refusedBindControls, refusedBindShown } from "../src/core.ts";
 import { bareApp } from "./helpers/app.ts";
 import { freshRoot } from "./helpers/dom.ts";
@@ -379,6 +380,33 @@ describe("refused values laid over a slot", () => {
     const held = { name: "held", nick: "held", email: "e" };
     expect(refusedBindShown(app, "a", document.body, held)).toEqual({
       value: { name: "1", nick: "2", email: "e" },
+    });
+  });
+
+  it("forgets a refusal at an index the held List no longer reaches", () => {
+    const app = {};
+    noteBindWrite(app, control("50"), "a", 50, false, [{ at: 1 }, "qty"]);
+    expect(refusedBindShown(app, "a", document.body, [{ qty: 1 }])).toBeUndefined();
+    expect(refusedBindControls(app)).toEqual([]);
+  });
+
+  it("forgets a refusal whose control now binds another path", () => {
+    const app = {};
+    const el = control("50");
+    el.dataset.kumikiBind = "a[1].qty";
+    noteBindWrite(app, el, "a", 50, false, [{ at: 1 }, "qty"]);
+    expect(forgetMovedRefusals(app)).toBe(false);
+    expect(refusedBindControls(app)).toEqual([el]);
+    el.dataset.kumikiBind = "a[0].qty";
+    expect(forgetMovedRefusals(app)).toBe(true);
+    expect(refusedBindControls(app)).toEqual([]);
+  });
+
+  it("lays a refusal at an index the held List still reaches", () => {
+    const app = {};
+    noteBindWrite(app, control("50"), "a", 50, false, [{ at: 1 }, "qty"]);
+    expect(refusedBindShown(app, "a", document.body, [{ qty: 1 }, { qty: 2 }])).toEqual({
+      value: [{ qty: 1 }, { qty: 50 }],
     });
   });
 

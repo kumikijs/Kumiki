@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -7,12 +7,14 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { connect } from "node:net";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { app } from "@kumikijs/examples";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { normalizePath, type ViteDevServer } from "vite";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { startDevServer } from "../src/dev.ts";
-import { CLI_ARGV, runCli } from "./helpers/cli.ts";
+import { runCli, SPAWN, spawnCli, waitFor } from "./helpers/cli.ts";
 import { tempDir } from "./helpers/files.ts";
 
 const COUNTER = app("01-counter");
@@ -55,6 +57,21 @@ describe("kumiki dev", () => {
     const code = await res.text();
     expect(code).not.toContain("__KUMIKI_TARGET__");
     expect(code).toMatch(/app\.kumiki/);
+  });
+
+  it("puts a project path holding `$$` or `$&` into the dev client as written", async () => {
+    const dir = join(tempDir(), "a$$b$&c");
+    mkdirSync(dir);
+    const file = join(dir, "app.kumiki");
+    copyFileSync(COUNTER, file);
+    const { server, url } = await startDevServer(file, { port: 0 });
+    close = () => server.close();
+    const res = await fetch(new URL("/@kumiki-dev/client.ts", url));
+    // Read as a pattern, the path names a directory that does not exist and the import fails.
+    expect(res.status).toBe(200);
+    const code = await res.text();
+    expect(code).not.toContain("__KUMIKI_TARGET__");
+    expect(code).toContain('import InitialApp from "/app.kumiki?import"');
   });
 
   it("reads a capability manifest at the project root, as check does", {
@@ -216,6 +233,155 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 });
 
+// The runtime keeps module-level state, so the page works only if the dev
+// client and the app import it through one URL.
+describe("the runtime kumiki dev serves", () => {
+  const RUNTIME = "@kumikijs/runtime";
+  const requireHere = createRequire(import.meta.url);
+  // Resolved per describe, not at collection, so a runtime that stops resolving fails these
+  // cases alone rather than the whole file.
+  let pluginRuntime: string;
+  beforeAll(() => {
+    pluginRuntime = normalizePath(
+      createRequire(requireHere.resolve("@kumikijs/vite")).resolve(RUNTIME),
+    );
+  });
+  /** The workspace links the runtime into this package, so a project here resolves the link. */
+  const WORKSPACE_TMP = resolve(import.meta.dirname, "../test-tmp");
+
+  const APP = `slot n : Int = 0
+reducer inc on=ui.click(B) do= n := n + 1
+tile B = button(text="+")
+tile App = column(B, text(n.show))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+  const cleanups: (() => Promise<void> | void)[] = [];
+  afterEach(async () => {
+    for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  });
+
+  function workspaceDir(): string {
+    mkdirSync(WORKSPACE_TMP, { recursive: true });
+    return tempDir(WORKSPACE_TMP);
+  }
+
+  function project(where: "tmp" | "workspace" = "tmp"): string {
+    const dir = where === "tmp" ? tempDir() : workspaceDir();
+    writeFileSync(join(dir, "app.kumiki"), APP);
+    return dir;
+  }
+
+  function runtimeFrom(dir: string): string {
+    return normalizePath(createRequire(join(dir, "package.json")).resolve(RUNTIME));
+  }
+
+  /** Asked of the directories, not of `require`: the runner's `NODE_PATH` is not read by Vite. */
+  function runtimeAbove(dir: string): boolean {
+    for (let d = dir; ; d = dirname(d)) {
+      if (existsSync(join(d, "node_modules", RUNTIME))) return true;
+      if (dirname(d) === d) return false;
+    }
+  }
+
+  async function serve(dir: string) {
+    const warnings: string[] = [];
+    const warn = vi.spyOn(console, "warn").mockImplementation((...args: unknown[]) => {
+      warnings.push(args.join(" "));
+    });
+    let started: Awaited<ReturnType<typeof startDevServer>>;
+    try {
+      started = await startDevServer(join(dir, "app.kumiki"), { port: 0 });
+    } finally {
+      warn.mockRestore();
+    }
+    cleanups.push(() => started.server.close());
+    return { ...started, warned: warnings.join("\n") };
+  }
+
+  function mountImport(code: string): string {
+    const m = /import\s*\{[^}]*\bmount\b[^}]*\}\s*from\s*"([^"]+)"/.exec(code);
+    if (!m?.[1]) throw new Error(`no import of mount in:\n${code}`);
+    return m[1];
+  }
+
+  /**
+   * Requests the client, its app and the app's runtime as a browser would, then asks the server
+   * which file and pre-bundle served the runtime.
+   */
+  async function loadPage(server: ViteDevServer, url: string) {
+    const get = async (path: string) => {
+      const res = await fetch(new URL(path, url));
+      expect(res.status, path).toBe(200);
+      return res.text();
+    };
+    const client = await get("/@kumiki-dev/client.ts");
+    const appUrl = /import\s+\w+\s+from\s*"([^"]+\.kumiki[^"]*)"/.exec(client)?.[1];
+    if (!appUrl) throw new Error(`the dev client imports no .kumiki module:\n${client}`);
+    const appCode = await get(appUrl);
+    const clientRuntime = mountImport(client);
+    const appRuntime = mountImport(appCode);
+    await get(appRuntime);
+    const env = server.environments.client;
+    const served = (await env.moduleGraph.getModuleByUrl(appRuntime))?.file;
+    const meta = env.depsOptimizer?.metadata;
+    expect(meta, "the client environment has a deps optimizer").toBeDefined();
+    const prebundle = meta?.optimized[RUNTIME] ?? meta?.discovered[RUNTIME];
+    return { clientRuntime, appRuntime, served, prebundle };
+  }
+
+  it("serves the plugin's runtime, without a warning, where the root cannot resolve one", async () => {
+    const dir = project();
+    expect(runtimeAbove(dir), "a directory above the OS temp dir holds @kumikijs/runtime").toBe(
+      false,
+    );
+
+    const { server, url, warned } = await serve(dir);
+    expect(warned).not.toContain("Failed to resolve dependency");
+
+    const page = await loadPage(server, url);
+    expect(page.appRuntime).toBe(page.clientRuntime);
+    expect(page.served).toBe(pluginRuntime);
+    expect(page.prebundle).toBeUndefined();
+  });
+
+  it("pre-bundles the runtime the project installed, once, for the client and the app", async () => {
+    const dir = project();
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "p", private: true }));
+    const installed = join(dir, "node_modules", "@kumikijs", "runtime");
+    mkdirSync(installed, { recursive: true });
+    writeFileSync(
+      join(installed, "package.json"),
+      JSON.stringify({ name: RUNTIME, type: "module", exports: { ".": "./index.js" } }),
+    );
+    // `./bundle` is the published `.` entry: one file that imports nothing.
+    copyFileSync(requireHere.resolve(`${RUNTIME}/bundle`), join(installed, "index.js"));
+    const own = runtimeFrom(dir);
+    expect(own).not.toBe(pluginRuntime);
+
+    const { server, url } = await serve(dir);
+    const page = await loadPage(server, url);
+    expect(page.appRuntime).toBe(page.clientRuntime);
+    expect(page.prebundle?.src).toBe(own);
+    expect(page.served).toBe(page.prebundle?.file);
+  });
+
+  it("does not pre-bundle a runtime linked from the workspace, and serves its source once, for the client and the app", async () => {
+    // Vite serves a linked package from its source.
+    const dir = project("workspace");
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "p", private: true }));
+    const linked = runtimeFrom(dir);
+    // So this case cannot tell the link's answer from the plugin's: what it pins is the pre-bundle.
+    expect(linked, "the workspace link is the plugin's own copy").toBe(pluginRuntime);
+
+    const { server, url } = await serve(dir);
+    const page = await loadPage(server, url);
+    expect(page.appRuntime).toBe(page.clientRuntime);
+    expect(page.served).toBe(linked);
+    expect(page.prebundle).toBeUndefined();
+  });
+});
+
 const DISPATCH_TIMEOUT_MS = 30_000;
 
 describe("kumiki dev — CLI dispatch argument parsing", () => {
@@ -273,30 +439,17 @@ describe("kumiki dev — CLI dispatch argument parsing", () => {
     "starts the server when the arguments are valid",
     async () => {
       // `--port 0` takes any free port; only a non-zero port is strict.
-      const child = spawn(process.execPath, [...CLI_ARGV, "dev", COUNTER, "--port", "0"], {
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      const dev = spawnCli(["dev", COUNTER, "--port", "0"]);
       try {
-        const banner = await new Promise<string>((resolveBanner, reject) => {
-          let out = "";
-          let err = "";
-          child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
-            out += chunk;
-            const line = /kumiki dev — http:\/\/\S+/.exec(out);
-            if (line) resolveBanner(line[0]);
-          });
-          child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
-            err += chunk;
-          });
-          child.on("exit", (code) => {
-            reject(new Error(`kumiki dev exited ${code} before listening:\n${out}${err}`));
-          });
-        });
-        expect(banner).toMatch(/^kumiki dev — http:\/\//);
+        await waitFor(
+          dev,
+          () => /kumiki dev — http:\/\/\S+/.test(dev.stdout),
+          "the listening banner",
+        );
       } finally {
-        child.kill();
+        await dev.stop();
       }
     },
-    DISPATCH_TIMEOUT_MS,
+    SPAWN.timeout,
   );
 });

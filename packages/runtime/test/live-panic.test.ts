@@ -1,7 +1,7 @@
-import type { AppShape, MountedApp } from "@kumikijs/runtime";
+import type { AppShape, EpisodeLogger, MountedApp, TileNode } from "@kumikijs/runtime";
 import { _stdlib, createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { bareApp } from "./helpers/app.ts";
+import { bareApp, boundaryAround } from "./helpers/app.ts";
 import { captureConsole } from "./helpers/console.ts";
 import { freshRoot } from "./helpers/dom.ts";
 
@@ -34,6 +34,23 @@ function makePanicApp(boom: () => never = () => _stdlib.panic("boom in reducer")
     root: () => ({ kind: "column", children: [{ kind: "heading", text: "panic-app" }] }),
   });
   return { app, events };
+}
+
+/** An app whose root panics once `breakIt` has run, rendered inside `wrap`. */
+function breakableApp(wrap: (body: () => TileNode) => TileNode = (body) => body()): AppShape {
+  const app: AppShape = bareApp({
+    slots: { broken: { value: false } },
+    reducers: [
+      {
+        name: "breakIt",
+        event: { kind: "ui", ev: "click" },
+        apply: () => ({ slots: { broken: true }, emits: [] }),
+      },
+    ],
+    root: () =>
+      wrap(() => (app.live?.broken ? _stdlib.panic("render boom") : { kind: "text", text: "ok" })),
+  });
+  return app;
 }
 
 describe("live panic handling", () => {
@@ -115,5 +132,34 @@ describe("live panic handling", () => {
     expect(() => mount(app, root)).not.toThrow();
     expect(root.textContent ?? "").toContain("render boom");
     expect(errors.length).toBeGreaterThan(0);
+  });
+
+  it("records a render panic no boundary catches as one `render` step on its dispatch's episode", () => {
+    const app = breakableApp();
+    const logger = createEpisodeLogger();
+    mount(app, root, { episodeLogger: logger });
+    dispatch(app, "breakIt");
+    const ep = logger.list().at(-1);
+    expect(ep?.steps.filter((s) => s.kind === "panic")).toMatchObject([
+      { kind: "panic", location: "render", category: "tile-render" },
+    ]);
+    expect(ep?.status).toBe("panic");
+  });
+
+  it("keeps a boundary's fallback, naming no episode, when the host logger's recordPanic throws", () => {
+    const warnings = captureConsole("warn");
+    const app = breakableApp((body) => boundaryAround("Guarded", body));
+    const logger: EpisodeLogger = {
+      ...createEpisodeLogger(),
+      recordPanic: () => {
+        throw new TypeError("host logger bug");
+      },
+    };
+    mount(app, root, { episodeLogger: logger });
+    expect(() => dispatch(app, "breakIt")).not.toThrow();
+    expect(() => dispatch(app, "breakIt")).not.toThrow();
+    expect(root.textContent).toBe("fallback episode: (none)");
+    expect(errors).toEqual([]);
+    expect(warnings).toHaveLength(1);
   });
 });

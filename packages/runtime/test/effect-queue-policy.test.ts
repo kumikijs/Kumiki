@@ -40,14 +40,14 @@ function makeQueueApp(): { app: AppShape; log: string[]; peak: () => number } {
         event: { kind: "ui", ev: "click" },
         apply: () => ({
           slots: {},
-          emits: ["a", "b", "c"].map((arg) => ({ effect: "work", args: [arg] })),
+          // Each emit carries the id an `emit` expression stamps, so `kill` can name one.
+          emits: ["a", "b", "c"].map((arg) => ({ effect: "work", args: [arg], id: `work#${arg}` })),
         }),
       },
       {
         name: "kill",
         event: { kind: "ui", ev: "click" },
-        // Every `work` emit shares the key `_`, so this id names the queue.
-        apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["work:_"] }] }),
+        apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["work#b"] }] }),
       },
     ],
     root: () => ({ kind: "column", children: [] }),
@@ -76,15 +76,95 @@ describe("policy=queue runs one at a time", () => {
     dispose();
   });
 
-  it("releases a queued launch that http.cancel cancelled", async () => {
+  it("releases the queued launch that http.cancel cancelled, and only that one", async () => {
     const { app, log } = makeQueueApp();
-    const { dispose } = mount(app, host);
+    const logger = createEpisodeLogger();
+    const { dispose } = mount(app, host, { episodeLogger: logger });
     dispatch(app, "go");
     await tick(5);
     dispatch(app, "kill");
     await tick(120);
-    // `a` was already running when the cancel landed.
-    expect(log.filter((l) => l.startsWith("start"))).toEqual(["start a"]);
+    // `kill` lands while `a` runs, so `b` is still waiting: it is removed and never starts.
+    expect(log.filter((l) => l.startsWith("start"))).toEqual(["start a", "start c"]);
+    const byReducer = (name: string) =>
+      logger.list().find((ep) => ep.steps.some((st) => st.kind === "reducer" && st.name === name));
+    const go = byReducer("go");
+    const kill = byReducer("kill");
+    expect(go?.status).toBe("completed");
+    const goSteps = go?.steps ?? [];
+    expect(goSteps.filter((st) => st.kind === "effect-cancel")).toEqual([
+      expect.objectContaining({ targetId: "work" }),
+    ]);
+    expect(goSteps.filter((st) => st.kind === "effect-end")).toHaveLength(2);
+    expect(kill?.steps.filter((st) => st.kind === "effect-cancel")).toEqual([
+      expect.objectContaining({ targetId: "work#b" }),
+    ]);
+    dispose();
+  });
+
+  it("finds the entry a cancel names in whichever queue holds it", async () => {
+    const log: string[] = [];
+    const queued = (name: string) => ({
+      name,
+      cap: "log.write",
+      policy: { kind: "queue" as const },
+      invoke: async (input: unknown) => {
+        log.push(`start ${String(input)}`);
+        await tick(10);
+        return { kind: "ok" as const, value: null };
+      },
+    });
+    const app = bareApp({
+      caps: ["log.write", "http.cancel"],
+      effects: {
+        cancel: {
+          name: "cancel",
+          cap: "http.cancel",
+          invoke: async () => ({ kind: "ok", value: null }),
+        },
+        workX: queued("workX"),
+        workY: queued("workY"),
+      },
+      reducers: [
+        {
+          name: "go",
+          event: { kind: "ui", ev: "click" },
+          apply: () => ({
+            slots: {},
+            // `workX` is emitted first, so its queue is the first one a cancel looks through.
+            emits: [
+              ...["x1", "x2", "x3"].map((arg) => ({
+                effect: "workX",
+                args: [arg],
+                id: `workX#${arg}`,
+              })),
+              ...["y1", "y2", "y3"].map((arg) => ({
+                effect: "workY",
+                args: [arg],
+                id: `workY#${arg}`,
+              })),
+            ],
+          }),
+        },
+        {
+          name: "kill",
+          event: { kind: "ui", ev: "click" },
+          apply: () => ({ slots: {}, emits: [{ effect: "cancel", args: ["workY#y2"] }] }),
+        },
+      ],
+      root: () => ({ kind: "column", children: [] }),
+    });
+    const { dispose } = mount(app, host);
+    dispatch(app, "go");
+    await tick(3);
+    dispatch(app, "kill");
+    await tick(100);
+    expect(log.filter((l) => l.startsWith("start x"))).toEqual([
+      "start x1",
+      "start x2",
+      "start x3",
+    ]);
+    expect(log.filter((l) => l.startsWith("start y"))).toEqual(["start y1", "start y3"]);
     dispose();
   });
 

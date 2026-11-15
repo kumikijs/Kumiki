@@ -133,7 +133,9 @@ function canonicalForm(
   const out: unknown[] = [];
   for (const t of lex(text)) {
     if (t.kind === "eof") continue;
-    const at = labels.get(key({ line: t.pos.line + offset, col: t.pos.col }));
+    // A reference is where its name's text starts, which in a string literal is past the quote.
+    const col = t.kind === "str" ? t.pos.col + 1 : t.pos.col;
+    const at = labels.get(key({ line: t.pos.line + offset, col }));
     out.push(at ?? [t.kind, t.kind === "num" ? t.raw : t.value]);
   }
   return JSON.stringify(out);

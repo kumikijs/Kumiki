@@ -19,6 +19,7 @@ const ENV_VALUE_TYPE: Record<EnvReadKind, "number" | "string" | "boolean"> = {
   now: "number",
   random: "number",
   "fresh-id": "string",
+  "effect-id": "string",
   "prefers-dark": "boolean",
 };
 
@@ -111,4 +112,35 @@ export function readEnv<T>(kind: EnvReadKind, live: () => T): T {
   }
   frame.live++;
   return live();
+}
+
+type PlatformCrypto = { getRandomValues?: (bytes: Uint8Array) => Uint8Array };
+
+// The millisecond and counter of the last id `newId` minted: the floor the next id sorts above.
+let lastMs = 0;
+let counter = 0;
+
+/**
+ * What a `fresh-id` or an `effect-id` read answers live: a UUIDv7 (RFC 9562), so each id sorts,
+ * as text, after the one before it. A new millisecond seeds the 12-bit counter from 11 random
+ * bits, leaving its top bit clear so a millisecond holds at least 2,049 ids. `crypto.randomUUID`
+ * is not asked, since it mints a v4. Within one runtime the millisecond and the counter keep ids
+ * distinct, so the random bits only separate ids two runs mint in one millisecond, and
+ * `Math.random` is enough for that where `getRandomValues` is missing. Nothing needs an id to be
+ * unguessable.
+ */
+export function newId(): string {
+  const c = (globalThis as { crypto?: PlatformCrypto }).crypto;
+  const b = new Uint8Array(10);
+  if (c?.getRandomValues) c.getRandomValues(b);
+  else for (let i = 0; i < 10; i++) b[i] = Math.floor(Math.random() * 256);
+  const now = Date.now();
+  if (now > lastMs || ++counter > 0xfff) {
+    lastMs = Math.max(now, lastMs + 1);
+    counter = (((b[8] as number) & 7) << 8) | (b[9] as number);
+  }
+  b[0] = ((b[0] as number) & 0x3f) | 0x80;
+  const ms = lastMs.toString(16).padStart(12, "0");
+  const rand = Array.from(b.subarray(0, 8), (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${ms.slice(0, 8)}-${ms.slice(8)}-${(0x7000 | counter).toString(16)}-${rand.slice(0, 4)}-${rand.slice(4)}`;
 }

@@ -179,6 +179,38 @@ ${APP}`,
     clean(`type Sign = nominal Int where one-of(-1, 0, 1)${APP}`);
   });
 
+  it("accepts a negative literal where a theme value takes a number", () => {
+    const src = `theme T = {spacing: {nudge: -4, half: -0.5, flat: 0}}${APP}`;
+    clean(src);
+    expect(parse(lex(src)).defs[0]).toMatchObject({
+      kind: "ThemeDef",
+      body: { spacing: { nudge: -4, half: -0.5, flat: 0 } },
+    });
+  });
+
+  it("still refuses a `-` in a theme value that is not a number's sign", () => {
+    for (const value of [`-`, `-"4px"`, `-{a: 1}`, `- -4`]) {
+      expect(outcome(`theme T = {spacing: {nudge: ${value}}}${APP}`), value).toEqual([
+        "THROW Parse error at 1:29: Theme values must be string, number, or nested record",
+      ]);
+    }
+  });
+
+  // A `-` the sign rule does not take is left for the caller, so each refuses it where it stands.
+  it("refuses a `-` in a refinement argument that is not a number's sign, at the `-`", () => {
+    const line = `type Pick = nominal Text where one-of(-"a")`;
+    expect(outcome(`${line}${APP}`)).toEqual([
+      `THROW Parse error at 1:${line.indexOf(`-"`) + 1}: Refinement argument must be a literal`,
+    ]);
+  });
+
+  it("refuses a `-` in a retry count that is not a number's sign, at the `-`", () => {
+    const line = `effect e cap=http.get in=Unit out=Result(Text, Text) retry=linear(-x, 100ms)`;
+    expect(outcome(`${line}${APP}`)).toEqual([
+      `THROW Parse error at 1:${line.indexOf("-x") + 1}: Expected num, got op(-)`,
+    ]);
+  });
+
   it("chains `where` without a bound, as `refinement-type` being recursive says", () => {
     clean(`type Handle = nominal Text where len-gt(3) where len-lt(9) where nonempty${APP}`);
     clean(`type Bare = Text where len-gt(3) where len-lt(9) where nonempty${APP}`);
@@ -215,6 +247,56 @@ app A caps=[telemetry.out] routes={"/" -> App2, "/404" -> App2} init=[]
 
   it("reads | as boolean or when a variant constructor follows it", () => {
     clean(`fn f(a: Bool) -> Bool = a | Some(1).is-some${APP}`);
+  });
+});
+
+describe("`|` stays bool OR unless a pattern and `->` follow it", () => {
+  const rhs: [string, Record<string, unknown>][] = [
+    ["b", { kind: "Ref", name: "b" }],
+    ["b.c", { kind: "FieldAccess", base: { kind: "Ref", name: "b" }, field: "c" }],
+    ["f(x)", { kind: "Call", callee: "f", args: [{ kind: "Ref", name: "x" }] }],
+  ];
+  const or = (shape: Record<string, unknown>) => ({
+    kind: "BinOp",
+    op: "|",
+    lhs: { kind: "Ref", name: "a" },
+    rhs: shape,
+  });
+  const defOf = (src: string) => parse(lex(src)).defs[0];
+
+  it.each(rhs)("in a value match's arm body: a | %s", (written, shape) => {
+    expect(
+      defOf(`fn g(x: Color) -> Bool = match x with | Red -> a | ${written} | other -> b`),
+    ).toMatchObject({
+      body: {
+        kind: "MatchExpr",
+        arms: [
+          { pattern: { kind: "PVariant", name: "Red" }, body: or(shape) },
+          { pattern: { kind: "PBind", name: "other" }, body: { kind: "Ref", name: "b" } },
+        ],
+      },
+    });
+  });
+
+  it.each(rhs)("in a statement match's arm body: a | %s", (written, shape) => {
+    expect(
+      defOf(
+        `reducer r on=ui.click(Go) do= match c with | Red -> a := a | ${written} | other -> a := b`,
+      ),
+    ).toMatchObject({
+      do: [
+        {
+          kind: "MatchStmt",
+          arms: [
+            { pattern: { kind: "PVariant", name: "Red" }, body: [{ rhs: or(shape) }] },
+            {
+              pattern: { kind: "PBind", name: "other" },
+              body: [{ rhs: { kind: "Ref", name: "b" } }],
+            },
+          ],
+        },
+      ],
+    });
   });
 });
 
@@ -376,6 +458,13 @@ fn label(s: Text) -> Text = match s with
 tile App = text(label(status))
 app T caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
     expect(outcome(src)[0]).toContain("THROW");
+  });
+
+  it("has no match with no arms", () => {
+    const src = `slot size : Tuple(Int, Int) = (3, 4)
+tile Width = match size with
+app T caps=[] routes={"/" -> Width, "/404" -> Width} init=[]`;
+    expect(outcome(src)).toEqual(["THROW Parse error at 2:14: match requires at least one arm"]);
   });
 
   it("takes only key: value pairs in a props block, never a tile", () => {

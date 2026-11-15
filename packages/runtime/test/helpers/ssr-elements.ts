@@ -47,11 +47,18 @@ export function styleOf(el: Element): Record<string, string> {
 
 const PROPERTY_ON_THE_CLIENT = new Set(["value", "checked", "selected"]);
 
+// An `<option>`'s `value` does reflect: the client writes the option's structural
+// key into the attribute, so a served option has to carry the same key.
+function propertyOnTheClient(el: Element, name: string): boolean {
+  if (name === "value" && el.tagName === "OPTION") return false;
+  return PROPERTY_ON_THE_CLIENT.has(name);
+}
+
 /** Every attribute except `style`, which is compared through the CSSOM. */
 function attrsOf(el: Element): Record<string, string> {
   const out: Record<string, string> = {};
   for (const a of Array.from(el.attributes)) {
-    if (a.name === "style" || PROPERTY_ON_THE_CLIENT.has(a.name)) continue;
+    if (a.name === "style" || propertyOnTheClient(el, a.name)) continue;
     out[a.name] = a.value;
   }
   return out;

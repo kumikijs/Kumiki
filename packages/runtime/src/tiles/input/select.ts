@@ -32,8 +32,8 @@ function reconcileSelectOptions(
       ph.value = "";
       ph.textContent = String(placeholder);
       ph.disabled = true;
-      ph.selected = currentValue == null;
       sel.insertBefore(ph, sel.firstChild);
+      ph.selected = currentValue == null;
     }
   } else if (hasPlaceholder && firstOption !== undefined) {
     sel.removeChild(firstOption);
@@ -61,14 +61,16 @@ function reconcileSelectOptions(
     }
     if (found) {
       if (found.textContent !== String(opt.label)) found.textContent = String(opt.label);
-      found.selected = k === currentKey;
       sel.insertBefore(found, sel.options[i + offset] ?? null);
+      found.selected = k === currentKey;
     } else {
       const o = document.createElement("option");
       o.value = k;
       o.textContent = String(opt.label);
-      o.selected = k === currentKey;
       sel.insertBefore(o, sel.options[i + offset] ?? null);
+      // Selected once it is in the list: happy-dom (smoke, `kumiki run`) loses the
+      // selectedness of an option inserted already selected past the second place.
+      o.selected = k === currentKey;
     }
   }
   while (sel.options.length > options.length + offset) {

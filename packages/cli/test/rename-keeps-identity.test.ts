@@ -329,6 +329,27 @@ app Counter
     init   = []
 `;
 
+const QUOTED_APP = `app Quoted
+    caps   = []
+    routes = {"/" -> App, "/x" -> App, "/404" -> App}
+    init   = []
+`;
+
+/** A motion and a reducer, each named in quotes by the tile that uses it. */
+const QUOTED = `slot n : Int = 0
+
+motion Spin = {keyframes: {from: {rotate: 0}, to: {rotate: 360}}}
+
+reducer load on=route.enter("/x") do= n := n + 1
+
+tile Badge = box(text("b")) {motion: "Spin"}
+
+tile Go = link(to="/x") {text: "go", prefetch: "load"}
+
+tile App = column(Badge, Go)
+
+${QUOTED_APP}`;
+
 describe("content hash across a rename", () => {
   it("is unchanged for the renamed definition and every definition referencing it", () => {
     const file = seed(COUNTER);
@@ -416,6 +437,58 @@ describe("content hash across a rename", () => {
     renameDef(file, "slot.count", "total");
 
     expect(`@h:${hashOf(file, "slot.total")}`).toBe(recorded?.slice("slot:count".length));
+  });
+
+  it.each([
+    ["motion.Spin", "motion.Whirl", "tile.Badge"],
+    ["reducer.load", "reducer.fetch", "tile.Go"],
+  ])("is unchanged for %s and the tile naming it in quotes", (qname, to, naming) => {
+    const file = seed(QUOTED);
+    const before = [qname, naming, "tile.App", "app.Quoted"].map((q) => hashOf(file, q));
+    expect(new Set(before).size).toBe(4);
+
+    renameDef(file, qname, to.slice(to.indexOf(".") + 1));
+
+    const after = [to, naming, "tile.App", "app.Quoted"].map((q) => hashOf(file, q));
+    expect(after).toEqual(before);
+  });
+
+  it("keeps the digest of a tile naming a motion in quotes matching view --hash after the motion's rename", () => {
+    const file = seed(QUOTED);
+    const { opId: replace } = replaceDef(file, "tile.App", "column(Go, Badge)");
+    const recorded = readOpLog(file)
+      .find((e) => e["op-id"] === replace)
+      ?.["depends-on"].find((d) => d.startsWith("tile:Badge@h:"));
+    expect(recorded).toBeDefined();
+
+    renameDef(file, "motion.Spin", "Whirl");
+
+    expect(`@h:${hashOf(file, "tile.Badge")}`).toBe(recorded?.slice("tile:Badge".length));
+  });
+
+  it("is the same for two tiles that name definitions of the same content, in quotes or not", () => {
+    const file = seed(`slot n : Int = 0
+
+motion Spin = {keyframes: {from: {rotate: 0}, to: {rotate: 360}}}
+
+motion Twirl = {keyframes: {from: {rotate: 0}, to: {rotate: 360}}}
+
+reducer load on=route.enter("/x") do= n := n + 1
+
+tile A = box(text("b")) {motion: "Spin"}
+
+tile B = box(text("b")) {motion: "Twirl"}
+
+tile Quoted = link(to="/x") {text: "go", prefetch: "load"}
+
+tile Bare = link(to="/x") {text: "go", prefetch: load}
+
+tile App = column(A, B, Quoted, Bare)
+
+${QUOTED_APP}`);
+
+    expect(hashOf(file, "tile.A")).toBe(hashOf(file, "tile.B"));
+    expect(hashOf(file, "tile.Quoted")).toBe(hashOf(file, "tile.Bare"));
   });
 });
 

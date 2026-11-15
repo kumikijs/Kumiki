@@ -1,7 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { episodeLogPathFor } from "@kumikijs/cli";
+import { episodeLogPathFor, requireSourceFile } from "@kumikijs/cli";
 import { z } from "zod";
-import { requireSourceFile } from "../input.ts";
 import { json, text } from "../wire.ts";
 import type { RegisterTool } from "./registrar.ts";
 
