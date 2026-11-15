@@ -128,6 +128,17 @@ function variantTag(prefix: string, anchored: boolean): Planner {
   });
 }
 
+/**
+ * A read outside the nested scope that declares the name, after it ended or before it begins, is
+ * out of scope, not misspelled: a renamed read can type-check, and the regression gate then counts
+ * it as resolved.
+ */
+function outOfScopeReason(err: KumikiError): Declined | undefined {
+  if (err.endedScope !== undefined) return { reason: "e0103-read-after-scope-ended" };
+  if (err.laterScope !== undefined) return { reason: "e0103-read-before-scope-begins" };
+  return undefined;
+}
+
 // Each kind is repaired from the namespace its diagnostic suggests from: a slot
 // or tile proposed for a callee is E0116 again at the same position.
 const UNDEFINED_NAME: ReadonlyMap<string, Planner> = new Map([
@@ -153,6 +164,25 @@ const UNDEFINED_NAME: ReadonlyMap<string, Planner> = new Map([
   ],
 ]);
 
+// A name E0105 reports names no value either, so a slot, `fn` or reducer written in its place is
+// E0128, and so is a builtin's bare name in a container: only the program's own tiles repair it.
+const closeTile = nameRepair({
+  prefix: "",
+  quoted: 1,
+  pool: (store) => namesIn(store, "tile"),
+  noSuggestion: "no-close-name-suggestion",
+  anchored: true,
+});
+
+// The checker does not look a variant tag up as a value there, but it is one, so a tile written in
+// its place renders something else.
+const undefinedTile: Planner = (err, store) => {
+  const name = /"([^"]+)"/.exec(err.message)?.[1];
+  return name !== undefined && constructorTags(store.program).includes(name)
+    ? { reason: "e0105-variant-tag-is-a-value" }
+    : closeTile(err, store);
+};
+
 const undefinedCallee = nameRepair({
   prefix: "e0116-",
   quoted: 1,
@@ -166,14 +196,9 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   ["E0102", anyDefinition], // undef-reducer
   [
     "E0103", // undef-ref / undef-slot
-    // A read after the scope that declared it ended is out of scope, not misspelled: a renamed
-    // read can type-check, and the regression gate then counts it as resolved.
-    (err, store) =>
-      err.endedScope !== undefined
-        ? { reason: "e0103-read-after-scope-ended" }
-        : anyDefinition(err, store),
+    (err, store) => outOfScopeReason(err) ?? anyDefinition(err, store),
   ],
-  ["E0105", anyDefinition], // undef-tile
+  ["E0105", undefinedTile], // undef-tile
   ["E0107", anyDefinition], // undef-motion
   [
     "E0211", // undef-tile-in-selector

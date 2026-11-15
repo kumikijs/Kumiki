@@ -89,14 +89,14 @@ comment     ::= '#' until-eol                    ; 1 行コメントのみ
 ### 1.2.2 予約語
 
 ```
-type  slot  effect  reducer  tile  fn  app
+type  slot  effect  reducer  tile  fn  app  test
 nominal  where  when  for  in  let  if  then  else  match  with
 on  do  emit  cap  out  policy  retry
 true  false
 fresh  self  now  null
 ```
 
-`null` は予約されているが**プログラム中で使用禁止**（型エラー）。
+`null` は予約されているが**プログラム中で使用禁止**である。式の位置に書けば [E0235](./errors.md#e0235-null-value) になり、レコードのフィールド名にもならない（[§1.9](#_1-9-式言語)）。値が無いことがある値は `Option` であり、値の無さは `None` で表す。
 
 ### 1.2.3 設計判断
 
@@ -704,7 +704,7 @@ pattern      ::= identifier
 **builtin の内容 — 位置引数**:
 - テキスト系 builtin（`text("Home")`, `heading("Hi")`, `code("…")`）の内容は `( … )` に書く最初の**位置**引数である。名前付き引数はどこに書いても prop である — `heading(level=2, title)` が表示するのは `title` で、`level` は prop のまま。
 - `button` のラベルは名前付き引数 `text=` である。`link` と `label` はどちらでも取る：最初の位置引数（`link("Home", to="/x")`、`label("Name")`）、それが無ければ `text=`（`link(to="/x", text="Home")`）。したがって `editable` と同じく、位置引数と並べた `text=` は読まれない。（`link` は旧来の `{text: "…"}` prop 形式も受け付け、いずれも同じノードにコンパイルされる。）builtin が読まない引数を内容として書くと —— 2 つ目の位置引数、位置引数の無いテキスト系 builtin の `text=`、または `link` / `label` / `editable` で位置引数と並べた `text=` —— [E0129](./errors.md#e0129-unrendered-arg) になる：`text=` は `button` / `link` / `label` / `editable` のラベル引数であり、テキスト系 builtin では prop である。
-- 値 builtin（`text`・`heading`・`markdown`・`code`・`editable`・`label`・`link`・`image`・`icon`）以外の builtin の位置引数は、tile —— `tile-expr` か定義済み tile の名前 —— のときにだけ描画される。そこに書いた値 —— `column(text("a"), 42)`、slot、`column(let x = 42 in Card(x))` —— は何も描画せず [E0128](./errors.md#e0128-value-as-child) になる：tile で表示する（`text(n.show)`）か、値を使う位置に直接書くか、`fn` で計算する。値の位置（値 builtin の内容、ユーザー tile の入力、名前付き引数）では `let` は値であり、値として検査される。tile 本体と `when` / `if` / `for` / `match` の腕はそれ自体が `tile-expr` なので、そこでの `let` はパースエラーになる。
+- 位置引数を子として描画する builtin はコンテナである：`page`・`region`・`row`・`column`・`stack`・`overlay`・`grid`・`box`・`card`・`panel`・`scroll`・`form`・`fieldset`・`list`・`list-item`・`table`・`table-head`・`table-body`・`table-row`・`table-cell`・`modal`・`drawer`・`tooltip`・`popover`・`details`。値 builtin（`text`・`heading`・`markdown`・`code`・`editable`・`label`・`link`・`image`・`icon`）でもないそれ以外の builtin —— `button`・`input`・`progress`・`divider` など —— は位置引数を tile でも値でも描画しないので、そこに書いたものは [E0129](./errors.md#e0129-unrendered-arg) になり、builtin が代わりに表示するものを名指す（`button(text="Go")`、`progress(value=…)`）。tile はコンテナの中でその隣に置く。コンテナの位置引数は、tile —— `tile-expr` か定義済み tile の名前 —— のときにだけ描画される。プログラムが定義する tile の名前は、大文字小文字にかかわらず、また同じ名前を持つものが他にあっても、そこではその tile である：同じ名前の slot や `fn`（[E0007](./errors.md#e0007-duplicate-definition) は層ごとに定義を数えるので許される）、あるいはスコープにある `let` / `for` / `match` の束縛である。したがって `slot leaf` の横でも `column(leaf)` は tile を描画し、`column(Leaf)` が `Leaf` を描画するのと同じである。束縛が定義をシャドーしない唯一の場所である（[§1.6.7](#_1-6-7-scoping-and-shadowing)）：そこに書いた値は何であれ何も描画せず E0128 になるので、tile がその名前の成り立つ唯一の読みだからである。名前は何も渡さずに呼んだ tile なので、`in=` を宣言する tile はそこで [E0213](./errors.md#e0213-call-arity-mismatch) になり、その本体は呼び出しと同じく自分のスコープを読み、子の周りの束縛は読まない。値の位置（`text(leaf)`・`Card(leaf)`・名前付き引数）では名前は値である。そこに書いた値 —— `column(text("a"), 42)`、slot、`column(let x = 42 in Card(x))` —— は何も描画せず [E0128](./errors.md#e0128-value-as-child) になる：tile で表示する（`text(n.show)`）か、値を使う位置に直接書くか、`fn` で計算する。値の位置（値 builtin の内容、ユーザー tile の入力、名前付き引数）では `let` は値であり、値として検査される。tile 本体と `when` / `if` / `for` / `match` の腕はそれ自体が `tile-expr` なので、そこでの `let` はパースエラーになり、そこに書いた名前は tile 呼び出しとして読まれる：そこで名指した値 —— `when(c, total)`、`if c then greeting() else Header`、`for x in xs x` —— も E0128 になる。組み込み tile の名前はコンテナの中では値なので、`column(divider)` は何も描画せず E0128 になる（`divider()` と書く）。腕や本体の中では呼び出しとして読まれる（`when(c, divider)`）。
 
 **`when(cond, tile)` のセマンティクス**:
 - `cond` が真 → `tile` をレンダリング
@@ -713,8 +713,8 @@ pattern      ::= identifier
 - ランタイムは null/undefined 子を skip するため、`when` で「空欄」を生む安全な手段
 
 **`if` と `match` の値文脈 vs tile 文脈**:
-- tile 引数が tile になるのは、**値 builtin 以外の builtin の位置引数**（`column`, `row`, `card`, `box` 等）だけである —— tile が描画される唯一の位置。そこでは `if` と `match` は tile 式（`TileIf` / `TileMatch`）で各 arm は tile を返し、`(` か `{` が続く builtin 名はその builtin の呼び出し、大文字始まりの名前は user tile になる。
-- それ以外の tile 引数はすべて値である：値 builtin の内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：値 builtin 以外の builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になる。
+- tile 引数が tile になるのは、**位置引数を内容として読まない builtin の位置引数**だけである —— `text`・`heading`・`markdown`・`code`・`editable`・`label`・`link` 以外のすべての builtin。それを描画するのはコンテナ（`column`, `row`, `card`, `box` 等）だけで、それ以外（`button`, `progress`, `image` 等）では tile でも値でも [E0129](./errors.md#e0129-unrendered-arg) になるが、どの tile もそこで構文解析できるように tile として読む。そこでは `if` と `match` は tile 式（`TileIf` / `TileMatch`）で各 arm は tile を返し、`(` か `{` が続く builtin 名はその builtin の呼び出し、大文字始まりの名前は user tile になる。
+- それ以外の tile 引数はすべて値である：値 builtin が位置引数から読む内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：位置引数を内容として読まない builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になる。
 - `when` と `for` には値の形が無いので、どこに書いても tile である。
 - 例: `text(match m with | A -> "a" | B -> "b")` ← 値 match
 - 例: `button(text="Save", disabled=if busy then true else false)`、`Row(if wide then 2 else 1)` ← 値 if
@@ -740,7 +740,9 @@ button(text="Save", onClick=saveTodo) {todoId: $1}
 
 `onClick=saveTodo` で reducer `saveTodo` がクリック時に呼ばれる。`{todoId: $1}` は `$el.todoId` として reducer に届く。
 
-名前が解決される名前空間は reducer だけであり、これは大文字始まりでも変わらない：`onClick=Bump` は reducer `Bump` を束縛し、どの reducer も指さない名前は [E0102](./errors.md#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。大文字か小文字かが決めるのはパーサが与える形だけであって、どの層を指しているかを言い分ける手段ではない。イベントハンドラ（`onClick=` / `onChange=` 等）として書いた大文字始まりの名前は、値 builtin 以外の builtin（`box` / `button` / `check` / `radio` / `column` 等）では *tile call* に、それ以外——props ブロック、`link` のような値 builtin、user tile——では variant タグになる。
+user tile の呼び出し側に書いたデータ prop は、その tile がルートに描画するノードへ 1 つずつマージされる：そのノードの同名の prop を置き換え、呼び出し側が書かなかった prop — `aria-*` 属性は 1 つずつ別の prop として数える — は、描画される要素でも `$el` でも tile が書いたまま残る。したがって `tile Ghost = button(text="Ghost", id="three")` に対して `Ghost {variant: "ghost"}` は id `three` を保ち、`ui.click(Ghost#three)`（[§1.6.2](#_1-6-2-セレクタ)）はそのボタンで発火する。一方 `Ghost {id: "x"}` と `Ghost(id="x")` はその id を `x` に置き換える。要素は `id` を props から受け取るので、`id=` をノードにも持つコントロールも呼び出し側に従う：`tile Field = input(id="name", bind=q)` に対して `Field {id: "other"}` は input を `#other` として描画する。builtin が自身の引数から描画するものは prop ではなく、マージされない：`Ghost(text="Other")` は `Ghost` と表示したままで、呼び出し側の `text` は `$el` にだけ届く。input の `value` や `placeholder` も同じである。
+
+名前が解決される名前空間は reducer だけであり、これは大文字始まりでも変わらない：`onClick=Bump` は reducer `Bump` を束縛し、どの reducer も指さない名前は [E0102](./errors.md#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。大文字か小文字かが決めるのはパーサが与える形だけであって、どの層を指しているかを言い分ける手段ではない。イベントハンドラ（`onClick=` / `onChange=` 等）として書いた大文字始まりの名前は、位置引数を内容として読まない builtin（`box` / `button` / `check` / `radio` / `column` / `image` 等）では *tile call* に、それ以外——props ブロック、`link` のように位置引数から内容を読む値 builtin、user tile——では variant タグになる。
 
 これらの形は引数を持たないため、裸の名前と引数なしの呼び出しは解析後には同一である — `onClick=Bump` / `onClick=Bump()` / `onClick=Bump {}` は同じノードであり、3 つとも reducer を束縛する。引数を伴う値は名前ではなく、[E0201](./errors.md#e0201-type-mismatch) になる。
 
@@ -904,7 +906,7 @@ expr        ::= literal
 call        ::= qname '(' (expr (',' expr)*)? ')'
 record-lit  ::= '{' (field-init (',' field-init)*)? '}'
 field-init  ::= field-name ('=' | ':') expr | field-name
-field-name  ::= identifier | reserved-word     ; §1.2.2 のうち true / false / now 以外
+field-name  ::= identifier | reserved-word     ; §1.2.2 のうち true / false / now / null 以外
 collection-lit ::= '[' (expr (',' expr)*)? ']'
                  | '{' (entry (',' entry)*)? '}'
 entry       ::= expr ':' expr
@@ -921,7 +923,7 @@ binop       ::= '+' | '-' | '*' | '/' | '%'
 unop        ::= '-' | '!'
 ```
 
-**`{ … }` リテラルは、最初のキーがフィールド名ならレコード、そうでなければ Map である。** フィールド名は識別子か予約語なので `{type: ui.click, target: Go}` や `{for: "name"}` はレコードだが、単独で値になる予約語 `true`・`false`・`now` はフィールド名ではない。これらはキーである。`{true: "on", false: "off"}` は `Map(Bool, Text)` で、`{(true): "on", false: "off"}` が書くのと同じ Map になり、`{now: "start"}` は `Map(Time, Text)` になる。それ以外の最初のキー — 文字列、数値、`Some(1)`、括弧で囲んだ名前 `(k)` — もリテラルを Map にする。リテラル全体の読み方は最初のキーが決める。`{a: 1, true: 2}` は `true` の位置で構文エラーになる。`true` は値であり、レコードのフィールド名ではないからである。`{true}` や `{true = 1}` も同じ構文エラーになる。Map のキーには `:` が続くので、`,`・`=`・`}` が続く `true` はフィールド名の位置にある。
+**`{ … }` リテラルは、最初のキーがフィールド名ならレコード、そうでなければ Map である。** フィールド名は識別子か予約語なので `{type: ui.click, target: Go}` や `{for: "name"}` はレコードだが、単独で式になる予約語 — 値である `true`・`false`・`now` と、値ですらない `null` — はフィールド名ではない。これら 4 つはキーである。`{true: "on", false: "off"}` は `Map(Bool, Text)` で、`{(true): "on", false: "off"}` が書くのと同じ Map になり、`{now: "start"}` は `Map(Time, Text)` になる。`{null: 1}` も Map であり、そのキーは [E0235](./errors.md#e0235-null-value) になる。それ以外の最初のキー — 文字列、数値、`Some(1)`、括弧で囲んだ名前 `(k)` — もリテラルを Map にする。リテラル全体の読み方は最初のキーが決める。`{a: 1, true: 2}` は `true` の位置で構文エラーになる。`true` は値であり、レコードのフィールド名ではないからである。`{true}` や `{true = 1}` も同じ構文エラーになる。Map のキーには `:` が続くので、`,`・`=`・`}` が続く `true` はフィールド名の位置にある。これらの位置の `null` も構文エラーになり、そのメッセージは `null` が値でもないことを述べる。
 
 `if` と `match` の値はいずれかの分岐の値なので、**どの分岐も式の行き先に合っていなければならない**。`ou` が `Option(UserId)`、`p` が `PostId` のとき、`p := match ou with | Some(id) -> id | None -> p` は `Some` の arm で [E0201](./errors.md#e0201-type-mismatch) になる。各 arm はそのパターンが束縛する型で読まれ、`p := ou.get-or(p)` と同じ扱いになる。型を宣言する側がない位置（`let`、演算子のオペランド）では、式の型は分岐の共通の型になる。分岐どうしが食い違う場合、共通の型は分岐が共有する基底型で、nominal は落ちる。`UserId` の分岐と `PostId` の分岐なら `Text` になる。式が型を持たず何も報告されないのは、分岐が基底型を共有しない場合か、型が決められない分岐がある場合だけである。
 
@@ -935,7 +937,7 @@ reducer 本体の `match` 文（[§1.6.1](#_1-6-1-構文)）とタイル位置�
 
 - **ラムダ式禁止**
 - **`try/catch` 禁止**
-- **`null` / `undefined` 禁止**
+- **`null` / `undefined` 禁止** — `null` は [E0235](./errors.md#e0235-null-value)。値が無いことがある値は `Option` である
 - **`while` ループ禁止**
 - **代入式禁止**（`:=` は statement、式中で使えない）
 - **リテラルパターン禁止。** `match` のパターンは union の variant、`Variant(binds)`、tuple、束縛名、`_` の **いずれか**だけ。リテラル値に対するパターン（`match s with | "Overdue" -> … | "Today" -> …` や数値・真偽値リテラル）は **サポートされず**、パースに失敗する。`match` は *union / variant* を分解するためのものであり、`Text` / `Int` / `Bool` の値で分岐するためのものではない。値で分岐するなら `if/else`（あるいは `if` の連鎖）を使うか、ケースを union 型として表して variant に対して match する：

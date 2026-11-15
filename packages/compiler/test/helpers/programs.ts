@@ -1,5 +1,9 @@
 type AppOptions = { caps?: string | undefined; init?: string | undefined };
 
+/** An effect `load` on `storage.read` that takes a key and answers its `Text`. */
+export const LOAD_EFFECT =
+  "effect load cap=storage.read in=Text out=Result(Text, Text) map-request={key: $1, decode: Decoder.Json(Text)}";
+
 /** `defs` completed into a program by an app that routes every path to the tile `App` it declares. */
 export const withApp = (defs: string, { caps = "", init = "" }: AppOptions = {}): string =>
   `${defs}
