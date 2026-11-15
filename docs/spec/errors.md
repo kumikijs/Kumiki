@@ -447,9 +447,11 @@ A member of `Decoder`, `EffectId`, `Duration` or `Bytes` written **without paren
 
 The lowering reads `_init` and `_event`, which are bound only inside a trial, so the module a `given` or an `expect` produces dies with `_init is not defined` before a single test reports its result.
 
-A builtin tile's name is not in the set either: a tile is no function, and a call to one is a tile only where a tile renders, as a positional argument of a container ([Language §1.7.1](./language.md#_1-7-1-syntax)); on another builtin that does not read its positional argument as content it is a tile that renders nothing, [E0129](#e0129-unrendered-arg). Called anywhere else where no `fn` has that name — a named argument, a user tile's input, any expression — it is an E0116 with a sentence of its own, again because the name is right and the position is wrong. As a value builtin's content it is [E0236](#e0236-tile-as-content) instead:
+A builtin tile's name is not in the set either: a tile is no function, and a call to one is a tile only where a tile renders, as a positional argument of a container ([Language §1.7.1](./language.md#_1-7-1-syntax)); on another builtin that does not read its positional argument as content it is a tile that renders nothing, [E0129](#e0129-unrendered-arg). Called anywhere else where no `fn` has that name — a named argument, a user tile's input, any expression — it is an E0116 with a sentence of its own, again because the name is right and the position is wrong:
 
 > `"<name>" is a tile, and a tile renders only as a positional argument of a container`
+
+As a value builtin's content it is [E0236](#e0236-tile-as-content) instead.
 
 > `Call to undefined function "<name>"`
 
@@ -1230,19 +1232,22 @@ Two places are not this code. Where a record field name goes — `{null = 1}`, `
 
 ### E0236 `tile-as-content`
 
-A tile is written as a value builtin's content. A value builtin shows a value as its content ([Language §1.7.1](./language.md#_1-7-1-syntax)) — read from the first positional argument on `text`, `heading`, `markdown` and `code`, from it or `text=` on `link`, `label` and `editable`, from `src=` on `image` and from `name=` on `icon` ([E0129](#e0129-unrendered-arg)) — so a tile written there is never rendered: `text(when(c, column(…)))` shows nothing. The mirror, a value where a tile belongs, is [E0128](#e0128-value-as-child).
+A tile is written as a value builtin's content. A value builtin shows a value as its content ([Language §1.7.1](./language.md#_1-7-1-syntax)) — read from the first positional argument on `text`, `heading`, `markdown` and `code`, from it or `text=` on `link`, `label` and `editable` (and on `link` from the `{text: …}` block entry when neither is written), from `src=` on `image` and from `name=` on `icon` ([E0129](#e0129-unrendered-arg)) — so a tile written there is never rendered: `text(when(c, column(…)))` shows nothing. The mirror, a value where a tile belongs, is [E0128](#e0128-value-as-child).
 
 > ``A tile is not a value: <builtin> shows a value as its content, so this tile is never rendered. Write the tile as a child of a container — `column(when(c, …))` — or show a value — `<content>` ``
 
-`<content>` is the builtin with a value where it reads its content: `text(x.show)`, or `image(src=x.show)` / `label(text=x.show)` where the content is written as a named argument.
+`<content>` is the builtin with a value where it reads its content: `text(x.show)`, `image(src=x.show)` / `label(text=x.show)` where the content is written as a named argument, or `link {text: x.show}` where it is written in the `{…}` block.
 
 A tile there is one of:
 
 - a `when` or a `for`, which only a `tile-expr` has;
 - a call of a builtin (`text(column(…))`) or of a tile the program defines (`text(Card({label: "a"}))`, `text(lower())`), or the name of a tile the program defines (`text(Header)`);
-- a tile in an arm of a value `if` / `match` — `text(if c then Header else "b")` — which is what the content is when that arm is taken. Each tile arm is reported.
+- a tile in an arm of a value `if` / `match` — `text(if c then Header else "b")` — which is what the content is when that arm is taken. Each tile arm is reported;
+- a tile as the body of a `let … in` — `text(let x = 1 in Header)` — which is what the content is.
 
-The content is read as an expression, so a name is first the value it names: a slot, a `let` or loop variable, a `match` binding and a `fn` named like a tile (`heading(label(x))` with a `fn label`) are values, and so is a capitalised name that a union has as a tag. A builtin's name written without its call (`text(code)`) calls nothing, and is the undefined name it is ([E0103](#e0103-undef-ref-undef-slot)). So is a loop variable of a tile's name read after its loop (`column(for lower in xs text("a"), text(lower))`), whose E0103 says the loop ended. A value `if` / `match` whose arms are values (`text(match m with | A -> "a" | B -> "b")`) is a value.
+Only the content itself is looked into, through the arms of a value `if` / `match` and the body of a `let … in`. A tile deeper in an expression (`text(Header + "!")`) is checked as part of that expression.
+
+The content is read as an expression, so a name is first the value it names, even where a tile has that name: a slot, a `let` or loop variable, a `match` binding and a `fn` (`heading(label(x))` with a `fn label`) are values, and so is a capitalised name that a union has as a tag, the standard library's included (`HttpBody`'s `Empty`). A call is a value only where a `fn` has the callee's name: with `slot code`, `text(code("x"))` is still the builtin's call. A builtin's name written without its call (`text(code)`) calls nothing, and is the undefined name it is ([E0103](#e0103-undef-ref-undef-slot)). So is a loop variable of a tile's name read after its loop (`column(for lower in xs text("a"), text(lower))`), whose E0103 says the loop ended. A value `if` / `match` whose arms are values (`text(match m with | A -> "a" | B -> "b")`) is a value.
 
 Each tile is reported where it is written, and nothing else in the content is checked — the tile's own arguments, an `if`'s condition, its other arm: the content is moved whole, into a container or out for a value, and a diagnostic in it shows once it is.
 

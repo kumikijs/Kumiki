@@ -726,7 +726,7 @@ pattern      ::= identifier
 - Example: `text(match m with | A -> "a" | B -> "b")` ← value match
 - Example: `button(text="Save", disabled=if busy then true else false)`, `Row(if wide then 2 else 1)` ← value if
 - Example: `column(match xs with | Loaded(ys) -> ... | None -> spinner())` ← tile match
-- A value builtin's content is a value, and a tile written there is never rendered: a `when` / `for`, a call or the name of a tile (`text(column(…))`, `text(Header)`), or a tile in an arm of a value `if` / `match` (`text(if c then Header else "b")`) is [E0236](./errors.md#e0236-tile-as-content). Write the tile as a child of a container — `column(when(c, …))` — or show a value — `text(x.show)`
+- A value builtin's content is a value, and a tile written there is never rendered: a `when` / `for`, a tile's call, or the name of a tile the program defines (`text(column(…))`, `text(Header)`), as the content, in an arm of a value `if` / `match` (`text(if c then Header else "b")`) or as the body of a `let … in`, is [E0236](./errors.md#e0236-tile-as-content). Write the tile as a child of a container — `column(when(c, …))` — or show a value — `text(x.show)`.
 
 ### 1.7.2 Invariants
 
