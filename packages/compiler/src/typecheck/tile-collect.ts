@@ -8,7 +8,7 @@ import {
   writtenProp,
 } from "../ast.ts";
 import { BUILTIN_TILES, CHILD_RENDERING_BUILTINS } from "../builtins.ts";
-import { boundaryTarget, expansionTargets } from "../def-graph.ts";
+import { boundaryTarget, expansionTargets, type TileEdge } from "../def-graph.ts";
 import { HANDLER_NAMES, handlerReducerName, UI_EVENT_TILE_KINDS } from "../ui-lifts.ts";
 import type { SymbolTable } from "./context.ts";
 
@@ -53,50 +53,59 @@ function addElement(into: Map<string, RenderedElement>, el: RenderedElement): vo
   into.set(JSON.stringify([el.kind, el.id]), el);
 }
 
-// The edges codegen lowers a tile by: its body's expansion, plus, with `fallbacks`, the
-// error-boundary fallbacks of each tile called in it, which render in that call's place. The
-// tile's own fallback replaces its tree and renders outside it, so it is not included.
-function renderedTree(
-  tileName: string,
-  sym: SymbolTable,
-  fallbacks: boolean,
-  memo: Map<string, RenderedTree> = new Map(),
-): RenderedTree {
-  const known = memo.get(tileName);
-  if (known) return known;
+function renderedTree(tileName: string, sym: SymbolTable, fallbacks: boolean): RenderedTree {
   if (BUILTIN_TILES.has(tileName)) {
     return { root: new Map([[tileName, { kind: tileName, id: null }]]), inner: new Map() };
   }
   const def = sym.tiles.get(tileName);
-  if (!def) return NOTHING_RENDERED;
-  memo.set(tileName, NOTHING_RENDERED);
+  return def ? treeOf(def, sym, fallbacks, new Map()) : NOTHING_RENDERED;
+}
+
+// A call of a builtin's name renders the builtin, before a program tile of that name, while a
+// bare child renders only a program tile (`collectChildren`), however it is named.
+function rendersBuiltin(edge: TileEdge): edge is TileEdge & Required<Pick<TileEdge, "call">> {
+  return edge.call !== undefined && BUILTIN_TILES.has(edge.to);
+}
+
+// The edges codegen lowers a tile by: its body's expansion, plus, with `fallbacks`, the
+// error-boundary fallbacks of each tile called in it, which render in that call's place. The
+// tile's own fallback replaces its tree and renders outside it, so it is not included.
+function treeOf(
+  def: TileDef,
+  sym: SymbolTable,
+  fallbacks: boolean,
+  memo: Map<string, RenderedTree>,
+): RenderedTree {
+  const known = memo.get(def.name);
+  if (known) return known;
+  memo.set(def.name, NOTHING_RENDERED);
   const root = new Map<string, RenderedElement>();
   const inner = new Map<string, RenderedElement>();
   for (const edge of expansionTargets(def.body)) {
     const here = edge.root ? root : inner;
-    if (BUILTIN_TILES.has(edge.to)) {
-      const id = edge.call ? writtenProp(edge.call, "id")?.value : undefined;
+    if (rendersBuiltin(edge)) {
+      const id = writtenProp(edge.call, "id")?.value;
       addElement(here, { kind: edge.to, id: id?.kind === "Str" ? id.value : null });
       continue;
     }
     const callee = sym.tiles.get(edge.to);
     if (!callee) continue;
-    const sub = renderedTree(callee.name, sym, fallbacks, memo);
+    const sub = treeOf(callee, sym, fallbacks, memo);
     const decided = edge.call ? callSiteId(edge.call) : undefined;
     for (const el of sub.root.values()) {
       addElement(here, decided === undefined ? el : { kind: el.kind, id: decided });
     }
     for (const el of sub.inner.values()) addElement(inner, el);
-    // Only a call is lowered with its callee's boundary; an identifier
-    // argument standing in for the tile inlines the body alone.
-    for (const fb of fallbacks && edge.call ? fallbackChain(callee, sym) : []) {
-      const fallback = renderedTree(fb, sym, fallbacks, memo);
+    // A bare child that names the tile is lowered as its call, so it is placed with its boundary
+    // as a call is.
+    for (const fb of fallbacks ? fallbackChain(callee, sym) : []) {
+      const fallback = treeOf(fb, sym, fallbacks, memo);
       for (const el of fallback.root.values()) addElement(here, el);
       for (const el of fallback.inner.values()) addElement(inner, el);
     }
   }
   const tree: RenderedTree = { root, inner };
-  memo.set(tileName, tree);
+  memo.set(def.name, tree);
   return tree;
 }
 
@@ -109,11 +118,11 @@ function fallbackChain(
   def: TileDef,
   sym: SymbolTable,
   seen: ReadonlySet<string> = new Set([def.name]),
-): string[] {
+): TileDef[] {
   const boundary = boundaryTarget(def);
   const fallback = boundary ? sym.tiles.get(boundary.to) : undefined;
   if (!fallback || seen.has(fallback.name)) return [];
-  return [fallback.name, ...fallbackChain(fallback, sym, new Set([...seen, fallback.name]))];
+  return [fallback, ...fallbackChain(fallback, sym, new Set([...seen, fallback.name]))];
 }
 
 /**
@@ -140,12 +149,13 @@ function usesByTile(sym: SymbolTable): Map<string, Use[]> {
   };
   for (const def of sym.tiles.values()) {
     for (const edge of expansionTargets(def.body)) {
+      const callee = rendersBuiltin(edge) ? undefined : sym.tiles.get(edge.to);
+      if (!callee) continue;
       const id = edge.call ? callSiteId(edge.call) : undefined;
-      add(edge.to, { by: def.name, root: edge.root, id });
-      // A call's fallbacks render in its place, outside the props the call writes.
-      const callee = edge.call ? sym.tiles.get(edge.to) : undefined;
-      for (const fb of callee ? fallbackChain(callee, sym) : []) {
-        add(fb, { by: def.name, root: edge.root, id: undefined });
+      add(callee.name, { by: def.name, root: edge.root, id });
+      // A call's fallbacks, and a bare child's, render in its place, outside the props a call writes.
+      for (const fb of fallbackChain(callee, sym)) {
+        add(fb.name, { by: def.name, root: edge.root, id: undefined });
       }
     }
   }
@@ -160,7 +170,7 @@ function routeTargets(sym: SymbolTable): Set<string> {
   ].flatMap((r) => (r.tile.startsWith(">>") ? [] : [r.tile]));
   const fallbacks = targets.flatMap((name) => {
     const def = sym.tiles.get(name);
-    return def ? fallbackChain(def, sym) : [];
+    return def ? fallbackChain(def, sym).map((fb) => fb.name) : [];
   });
   return new Set([...targets, ...fallbacks]);
 }

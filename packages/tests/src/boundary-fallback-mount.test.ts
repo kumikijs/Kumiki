@@ -1,7 +1,5 @@
-import { hydrate, renderToString, routing } from "@kumikijs/runtime";
-import { describe, expect, it, onTestFinished } from "vitest";
-import { freshRoot, mountSource, navigate, press, tick } from "./helpers/dom.ts";
-import { loadSource } from "./helpers/load.ts";
+import { describe, expect, it } from "vitest";
+import { hydrateSource, mountSource, navigate, press } from "./helpers/dom.ts";
 import { withApp } from "./helpers/source.ts";
 
 /** Counts both events for `Oops`, the fallback every program here declares. */
@@ -185,18 +183,8 @@ tile Boom error-boundary=Oops = column(text(panic("bang")))
 tile Home = page(text("home"), Boom)`,
       "Home",
     );
-    const rendered = await renderToString(await loadSource(src), { route: "/", routing });
-    expect(rendered.html).toContain("oops bang");
-
-    const app = await loadSource(src);
-    const root = freshRoot();
-    root.innerHTML = rendered.html;
-    const handle = hydrate(app, root, rendered, { router: "memory" });
-    onTestFinished(() => {
-      handle.dispose();
-      root.remove();
-    });
-    await tick(0);
+    const { app, root, html } = await hydrateSource(src);
+    expect(html).toContain("oops bang");
     expect(root.textContent).toContain("oops bang");
     expect(app.live?.fbMounts).toBe(1);
   });
