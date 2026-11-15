@@ -339,13 +339,13 @@ slot o : Option(Int) = None
     expect(builtSummariesOf(program([`tile T0 = column(${calls})`, ...leaves]))).toEqual([]);
   });
 
-  it("does not count a tile written where nothing renders it", () => {
-    // A spinner drops its positional argument, so the tile named there is not inlined
+  it("does not count a tile written where nothing renders it, which is E0129 alone", () => {
+    // A spinner renders no positional argument, so the tile named there is not inlined
     // (see cycles.test.ts): `T1`'s chain is a tree of its own, within the limit.
     const src = (body: string) =>
       program([`tile T0 = column(${body})`, ...chain(127, { from: 1 })]);
     expect(codesOf(src("T1"))).toEqual(["E0237"]);
-    expect(codesOf(src("spinner(T1)"))).toEqual([]);
+    expect(codesOf(src("spinner(T1)"))).toEqual(["E0129"]);
   });
 
   it("counts the expressions in a tile as the parser counts them", () => {
