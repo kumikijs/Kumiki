@@ -149,6 +149,9 @@ function bindRootNotASlot(root: Expr, sym: SymbolTable, ctx: Ctx): RootReport | 
         "a literal is a value",
         fix,
       );
+    case "Null":
+      // E0235 is its one report.
+      return null;
     default:
       return notASlot("this expression", "it computes a value", fix);
   }

@@ -6,6 +6,9 @@ import { bodyOf, definitionText, withText } from "./definition-text.ts";
 import { enforceLock } from "./locks.ts";
 import { type DefSpec, logOp } from "./op-log.ts";
 
+// Only `patch revert` calls these, under its write lock, after its own read of the log has handed
+// over a torn last line; the read `logOp` makes again would skip that same line.
+
 /**
  * Where a definition's text goes back: `gap` lines after the end of the definition `after` names,
  * or after the start of the file without one.
@@ -33,13 +36,17 @@ export function replaceText(path: string, qname: string, text: string): string {
       const written = load(path);
       const now = written.byQName.get(qname);
       const body = now === undefined ? undefined : bodyOf(written, now, "replace");
-      return logOp(path, {
-        op: "replace",
-        layer: entry.layer,
-        name: entry.name,
-        ...(body !== undefined ? { body } : {}),
-        prev,
-      });
+      return logOp(
+        path,
+        {
+          op: "replace",
+          layer: entry.layer,
+          name: entry.name,
+          ...(body !== undefined ? { body } : {}),
+          prev,
+        },
+        {},
+      );
     });
   });
 }
@@ -55,11 +62,15 @@ export function restoreDefs(path: string, defs: readonly [RestoredDef, ...Restor
     for (const d of placeOrder(defs)) next = placeText(next, d);
     const spec = ({ layer, name, body }: DefSpec): DefSpec => ({ layer, name, body });
     return commit(path, next, "add", () =>
-      logOp(path, {
-        op: "add",
-        ...spec(main),
-        ...(rest.length > 0 ? { with: rest.map(spec) } : {}),
-      }),
+      logOp(
+        path,
+        {
+          op: "add",
+          ...spec(main),
+          ...(rest.length > 0 ? { with: rest.map(spec) } : {}),
+        },
+        {},
+      ),
     );
   });
 }
