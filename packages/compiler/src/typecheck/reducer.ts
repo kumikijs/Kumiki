@@ -28,6 +28,7 @@ import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
+import { nestedScopes } from "./nested-scopes.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
 import { bindsRoute, namedByHandler, subscribedKinds, subscriptionIds } from "./tile-collect.ts";
 
@@ -46,6 +47,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     capsAvailable: new Set(sym.app?.caps ?? []),
     routeBind: routeBindOf(r, sym),
     endedScopes: new Map(),
+    nestedScopes: nestedScopes(r.do),
     endedInBody: new Set(),
   };
   if (r.on.kind === "EffectEvent") {

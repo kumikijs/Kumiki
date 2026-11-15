@@ -48,7 +48,7 @@ type KumikiError = {
 |---|---|---|
 | `E0001` | あり | app 自身の `routes` に `"/404" -> NotFound` を追加する（tile の `sub-routes` には追加しない）。`NotFound` tile は、プログラムがまだ定義していなければ挿入する。パッチを出すのは `missing-404` だけである。app に `routes` 節がないとき、`404-is-redirect`（リダイレクトを置き換えて直すもので、その隣にエントリを追加すれば `/404` が 2 つになる：`E0008`）、および `404-in-sub-routes`（エントリを削除して直すもの）にはパッチを出さない。 |
 | `E0102` | あり | 既知の reducer 名に対する近傍名の提案（Levenshtein ≤ 2 または ≤ 25%）。 |
-| `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。名前を宣言したスコープ — reducer の `if` の枝・`for` の本体・match arm、`let … in` の本体、tile の `for` の本体、`match` 式の arm — が終わった後で、同じ定義の中でその名前を読んでいる場合（診断の `endedScope` が設定されている）はパッチを出さない：読み出しは綴りの誤りではなくスコープ外であり、名前を置き換えた読み出しは型検査を通って別の値を読むことがある。宣言と読み出しのどちらを動かすかはユーザの意図である。 |
+| `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。名前を宣言するスコープ — reducer の `if` の枝・`for` の本体・match arm、`let … in` の本体、tile の `for` の本体、`match` 式の arm — の外で、つまりそのスコープが終わった後か始まる前に、同じ定義の中でその名前を読んでいる場合（診断の `endedScope` か `laterScope` が設定されている）はパッチを出さない：読み出しは綴りの誤りではなくスコープ外であり、名前を置き換えた読み出しは型検査を通って別の値を読むことがある。宣言と読み出しのどちらを動かすかはユーザの意図である。 |
 | `E0104` | あり | 宣言済みの `effect` 名と、プログラムが宣言しない[標準 effect](./stdlib.md#_2-6-標準-effect) に対する近傍名の提案（スコープ限定 — 名前の近い tile や slot は候補にならない）。 |
 | `E0105` | あり | 既知の tile 名に対する近傍名の提案。 |
 | `E0106` | あり | `on=timer(d, name=N)` から収集したタイマー名に対する近傍名の提案（スコープ限定 — トップレベル定義は候補にならない）。 |
@@ -266,9 +266,13 @@ reducer 名がどの `reducer` 定義も指していない。名指す箇所は 
 
 同じ `if` のもう一方の枝や、同じ match・同じ `match` 式の後続の arm での読み出しは、すでに枝・arm の中にあるので、メッセージは名前を宣言している側を指す：`if` なら `it was declared in the other branch of this "if"` … `the branch that declares it`、match なら `another arm of this match` … `the arm that declares it`、`match` 式なら `another arm of this "match" expression` … `the arm that declares it` となる。
 
-式の後では、読み出しを式の中へ移す：`let … in` の本体、tile の `for` の本体 — このループの外へも名前は値を持ち出せない — 、`match` 式の arm である。`let … in` が束縛する値は、メッセージが示すとおり、代わりに両方の読みから見える場所で一度だけ束縛してもよい：reducer では `let` 文で、`fn` や slot の初期化式では両方の読みを囲む 1 つの `let … in` で、tile では両方の読みを `in=` を宣言した tile の中へ移してその値を渡すことで。`app.init` の各要素は式を共有しないので、そこでは読み出しを `let … in` の中へ移すしかない。
+式の後では、読み出しを式の中へ移す：`let … in` の本体、tile の `for` の本体 — このループの外へも名前は値を持ち出せない — 、`match` 式の arm である。`let … in` が束縛する値は、メッセージが示すとおり、代わりに両方の読みから見える場所で一度だけ束縛してもよい：reducer では `let` 文で、`fn`、slot の初期化式、effect 自身の式では両方の読みを囲む 1 つの `let … in` で、tile では両方の読みを `in=` を宣言した tile の中へ移してその値を渡すことで。`app.init` の各要素、app の `http` ブロックの各フィールド、テストの各セクションは式を共有しないので、そこでは読み出しを `let … in` の中へ移すしかない。
 
-スコープ内に近い名前がいくらあってもスコープは名指される：読み出しは綴りの誤りではなくスコープ外なので、`kumiki fix` は名前の置き換えを提案しない。`for idx in xs` の後の `idx` の読み出しを slot `id` に置き換えると、型検査を通ってその slot を読んでしまう。
+スコープの**前**での読み出しも同じように報告される。読み出しがその内側にないそうしたスコープの中で、同じ定義が名前をより後で宣言している場合 — 後の文、tile の後の兄弟の引数、後の枝や arm、あるいは条件や対象がその名前を読む `if` や `match` の枝や arm — メッセージは名前が宣言される位置を示し（`it is declared later, at 3:39, in a tile's "for"`）、それは名前の位置、variant パターンが束縛する名前ならそのパターンの位置である。診断の `laterScope` フィールドがスコープの種類を `endedScope` と同じ一覧から示す。読み出しはその後で計算される値を見られないので、修正は読み出しをそのスコープの中の宣言の後へ移すことである。`let … in` が束縛する値は、代わりに両方の読みから見える場所で一度だけ束縛してもよい。そうしたスコープが複数あればメッセージは最初に始まるものを名指し、同時に始まる 2 つなら先にある宣言を名指す。宣言を囲むだけのスコープは名指さない。2 つのフィールドのうち設定されるのは多くとも 1 つで、読み出しの前に終わったスコープと後に始まるスコープの両方で宣言された名前は前者として報告される。
+
+同じ本体の中で名前を宣言する `let` より前にある読み出しと、宣言自身の右辺（[言語 §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)）— `for` が反復するリスト、`let … in` が束縛する値、arm のパターンが名前を束縛する `match` の対象 — の中の読み出しについては、メッセージはスコープを名指さない。名前はその右辺から束縛されるので、そこでは名前がスコープに入る前に読まれる。スコープが名指されないので、`kumiki fix` は綴りの誤りと同じように置き換えを提案しうる。
+
+スコープ内に近い名前がいくらあってもスコープは名指される：読み出しは綴りの誤りではなくスコープ外なので、`kumiki fix` は名前の置き換えを提案しない。`for idx in xs` の後や前の `idx` の読み出しを slot `id` に置き換えると、型検査を通ってその slot を読んでしまう。
 
 **修正**：参照先の slot / 束縛が宣言済みか確認する。
 
@@ -410,9 +414,11 @@ outlet は tile 自身の body に書かれている必要はない。ランタ�
 
 lowering が読む `_init` / `_event` は trial の中でしか束縛されないため、`given` や `expect` から生成されたモジュールは、どのテストも結果を出す前に `_init is not defined` で死ぬ。
 
-builtin tile の名前も候補に含まれない。tile は関数ではなく、その呼び出しが tile になるのは tile が描画される位置——コンテナの位置引数（[言語 §1.7.1](./language.md#_1-7-1-構文)）——だけである。位置引数を内容として読まないそれ以外の builtin では、何も描画しない tile であり [E0129](#e0129-unrendered-arg) になる。同名の `fn` が無いところでそれ以外の位置——名前付き引数、user tile の入力、値 builtin の内容、任意の式——で呼ぶと E0116 になり、専用の文面を持つ。ここでも誤っているのは名前ではなく位置だからである：
+builtin tile の名前も候補に含まれない。tile は関数ではなく、その呼び出しが tile になるのは tile が描画される位置——コンテナの位置引数（[言語 §1.7.1](./language.md#_1-7-1-構文)）——だけである。位置引数を内容として読まないそれ以外の builtin では、何も描画しない tile であり [E0129](#e0129-unrendered-arg) になる。同名の `fn` が無いところでそれ以外の位置——名前付き引数、user tile の入力、任意の式——で呼ぶと E0116 になり、専用の文面を持つ。ここでも誤っているのは名前ではなく位置だからである：
 
 > `"<name>" is a tile, and a tile renders only as a positional argument of a container`
+
+値 builtin の内容で呼んだ場合は代わりに [E0236](#e0236-tile-as-content) になる。
 
 > `Call to undefined function "<name>"`
 
@@ -599,7 +605,7 @@ tile が期待される位置に値が書かれている。tile を期待する�
 
 codegen は位置引数の値を捨てる。そのため `column(text("a"), 42)` は `text` だけを描画し、`n` が slot の `column(text("a"), n)` は子のリストに `null` を入れ、`column(let x = 42 in Card(x))` は空のルートをマウントしていた。`let` は tile を検査からも隠していた：`Card` の引数は `in=` と照合されず、その下に書いた builtin は `fn` として探された（E0116）。診断は値の位置に出し、値の中身は検査しない —— その中の診断は、誤ったものも正しいもの（未定義の名前）も、値を本来の位置に移したときに出る。
 
-値の位置にある値は報告しない：値 builtin の内容（`text(let x = 1 in x.show)`）、ユーザー tile の入力（`Card(let x = "a" in {label: x})`）、名前付き引数。`tile-expr` が本体全体である位置 —— tile 本体、`when` / `if` / `for` / `match` の腕 —— では、`let` は代わりにパースエラーになる（`tile Foo = let x = 0 in …`、`when(c, let x = 1 in …)`）。名前でも呼び出しでもない他の値 —— リテラル（`when(c, 42)`）やメンバ読み出し（`when(c, total.show)`）—— も同じくパースエラーになる。
+値の位置にある値は報告しない：値 builtin の内容（`text(let x = 1 in x.show)`）、ユーザー tile の入力（`Card(let x = "a" in {label: x})`）、名前付き引数。値 builtin の内容にある tile は [E0236](#e0236-tile-as-content) である。`tile-expr` が本体全体である位置 —— tile 本体、`when` / `if` / `for` / `match` の腕 —— では、`let` は代わりにパースエラーになる（`tile Foo = let x = 0 in …`、`when(c, let x = 1 in …)`）。名前でも呼び出しでもない他の値 —— リテラル（`when(c, 42)`）やメンバ読み出し（`when(c, total.show)`）—— も同じくパースエラーになる。
 
 **修正**：値を tile で表示する —— `column(text(n.show))`、`when(c, text(total.show))` —— か、値を使う位置に直接書く —— `column(Card({label: "a"}))` —— か、`fn` で計算してそれを呼ぶ。名指した組み込み tile は呼び出しを書く —— `column(divider())`。
 
@@ -905,6 +911,7 @@ Chromium では、`controls` があれば Tab は `<video>` に止まり、`focu
 | 組み込み呼び出しへの `b(...)` | 呼び出し側が渡すべき引数の数 | `Function "<name>" expects [at least ]<n> argument(s) but got <m>` |
 | `emit E(...)` | 引数 1 つ、`in=Unit` なら 0 —— 標準 effect では [標準ライブラリ §2.6](./stdlib.md#_2-6-標準-effect) が与える `in=` | `Effect "<name>" expects <n> argument(s) but got <m>` |
 | user tile への `T(...)` | `in=` を宣言していれば 1 つ、無ければ 0 | `Tile "<name>" expects <n> argument(s) but got <m>` |
+| 子として書いた user tile の名前（`column(t)`、[言語 §1.7.1](./language.md#_1-7-1-構文)） | 同上。子は何も渡さない | `Tile "<name>" expects 1 argument(s) but got 0` |
 | union variant の `V(...)` | その variant の payload 列 | `Variant "<name>" carries <n> payload(s) but got <m>` |
 | 標準ライブラリのメソッドへの `x.m(...)` | lowering が読む引数の数 | `Method ".<m>" expects <n> argument(s) but got <m>` |
 | 式断片に `fn` 名を渡す `x.m(f)`（[E0127](#e0127-fn-as-value)） | 式断片が束縛する positional の数、ただし 1 つ以上 | `Function "<name>" expects <n> argument(s) but .<m> supplies at most <k>`（または `needs at least 1`、`.fold` では `supplies exactly 2 — the accumulator and the element`、キーと値の対ではないレシーバの上では `on "<T>" supplies 1 — …`） |
@@ -1189,6 +1196,29 @@ dispatcher は各リクエストをその key で実行し、同じ key で別�
 このコードにならない場所が 2 つある。レコードのフィールド名の位置 — `{null = 1}`、`{a, null}`、`{a: 1, null: 2}` — では、`true` と同じく `null` の位置で構文エラーになる。値ビルトインでないビルトインの位置引数（`column(null)`）では [E0128](#e0128-value-as-child) になり、値の中身は検査されない。
 
 **修正**：型を `Option(T)` と宣言し、値が無いところには `None`、あるところには `Some(x)` を書く — `slot picked : Option(TodoId) = None`。値があるかどうかは `== null` ではなく、`.is-none` / `.is-some`、`.get-or(d)`、あるいは `match` で問う。
+
+### E0236 `tile-as-content`
+
+値 builtin の内容に tile が書かれている。値 builtin は値を内容として表示する（[言語 §1.7.1](./language.md#_1-7-1-構文)）—— `text`・`heading`・`markdown`・`code` は最初の位置引数から、`link`・`label`・`editable` はそれか `text=` から（`link` はどちらも書かれていなければ `{text: …}` ブロックの項目から）、`image` は `src=` から、`icon` は `name=` から読む（[E0129](#e0129-unrendered-arg)）—— ので、そこに書いた tile は決して描画されない：`text(when(c, column(…)))` は何も表示しない。逆向き、tile の位置にある値は [E0128](#e0128-value-as-child) である。
+
+> ``A tile is not a value: <builtin> shows a value as its content, so this tile is never rendered. Write the tile as a child of a container — `column(when(c, …))` — or show a value — `<content>` ``
+
+`<content>` は、builtin が内容を読む位置に値を書いた形である：`text(x.show)`、内容を名前付き引数で書いた場合は `image(src=x.show)` / `label(text=x.show)`、`{…}` ブロックに書いた場合は `link {text: x.show}`。
+
+そこにある tile とは次のいずれかである：
+
+- `when` か `for`。これらは `tile-expr` にしかない。
+- builtin の呼び出し（`text(column(…))`）か、プログラムが定義する tile の呼び出し（`text(Card({label: "a"}))`、`text(lower())`）、またはプログラムが定義する tile の名前（`text(Header)`）。
+- 値の `if` / `match` の腕にある tile —— `text(if c then Header else "b")`。その腕が選ばれたときの内容はそれである。tile の腕はそれぞれ報告する。
+- `let … in` の本体にある tile —— `text(let x = 1 in Header)`。内容はそれである。
+
+見るのは内容そのものと、値の `if` / `match` の腕、`let … in` の本体だけである。式のさらに内側にある tile（`text(Header + "!")`）は、その式の一部として検査する。
+
+内容は式として読まれるので、名前は、tile がその名前を持つところでも、まずそれが名指す値である：slot、`let` やループ変数、`match` の束縛、`fn`（`fn label` がある場合の `heading(label(x))`）は値であり、union がタグとして持つ大文字の名前も、標準ライブラリのもの（`HttpBody` の `Empty`）を含めて値である。呼び出しが値になるのは、その名前の `fn` があるところだけである：`slot code` があっても `text(code("x"))` は builtin の呼び出しである。呼び出しを書かない builtin の名前（`text(code)`）は何も呼ばず、未定義の名前（[E0103](#e0103-undef-ref-undef-slot)）である。ループの後で読んだ、tile と同じ名前のループ変数（`column(for lower in xs text("a"), text(lower))`）も同じで、その E0103 はループが終わったことを告げる。腕が値である値の `if` / `match`（`text(match m with | A -> "a" | B -> "b")`）は値である。
+
+tile はそれぞれ書かれた位置で報告し、内容のそれ以外 —— tile 自身の引数、`if` の条件、もう一方の腕 —— は検査しない：内容は丸ごと、コンテナの中へ、あるいは値と入れ替えて移すものであり、その中の診断は移したときに出る。
+
+**修正**：tile をコンテナの子として書く —— `column(when(c, column(…)))`、`column(Header)`、`column(if c then Header else text("b"))` —— か、builtin で値を表示する —— `text(x.show)`。
 
 ### W0213 `handler-on-inert-tile` (warning)
 

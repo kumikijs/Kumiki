@@ -63,7 +63,7 @@ typo` is still caught rather than accepted, because the two differ by code.
 |---|---|---|
 | `E0001` | yes | Add `"/404" -> NotFound` to the app's own `routes` (never to a tile's `sub-routes`), and inject a `NotFound` tile unless the program already defines one. Only `missing-404` is patched. No patch when the app has no `routes` clause; for `404-is-redirect`, which is repaired by replacing the redirect (an entry added beside it would be a second `/404`, `E0008`); or for `404-in-sub-routes`, which is repaired by removing the entry. |
 | `E0102` | yes | Close-name suggestion (Levenshtein ≤ 2 or ≤ 25%) against known reducer names. |
-| `E0103` | yes | Close-name suggestion against known slot / binding names. No patch for a name read, later in the same definition, after the scope that declared it ended — a reducer's `if` branch, `for` body or match arm, a `let … in` body, a tile's `for` body or an arm of a `match` expression (the diagnostic's `endedScope` is set): the read is out of scope, not misspelled, and a renamed read can type-check and read a different value. Whether to move the declaration or the read is user intent. |
+| `E0103` | yes | Close-name suggestion against known slot / binding names. No patch for a name read, in the same definition, outside the scope that declares it — a reducer's `if` branch, `for` body or match arm, a `let … in` body, a tile's `for` body or an arm of a `match` expression — after that scope ended or before it begins (the diagnostic's `endedScope` or `laterScope` is set): the read is out of scope, not misspelled, and a renamed read can type-check and read a different value. Whether to move the declaration or the read is user intent. |
 | `E0104` | yes | Close-name suggestion against declared `effect` names plus the [standard effects](./stdlib.md#_2-6-standard-effects), which no program declares (scoped — a tile or slot whose name is close is not a candidate). |
 | `E0105` | yes | Close-name suggestion against known tile names. |
 | `E0107` | yes | Close-name suggestion against declared motion names. |
@@ -303,9 +303,13 @@ After an `if` or a match, the name is declared once before it with an `if` or ma
 
 A read in a later branch or arm of the same `if`, match or `match` expression is already in one, so the message points at the one that declares the name: `it was declared in the other branch of this "if"` … `the branch that declares it`, for a match `another arm of this match` … `the arm that declares it`, and for a `match` expression `another arm of this "match" expression` … `the arm that declares it`.
 
-After an expression, the read moves into it: into the body of the `let … in`, the body of the tile's `for` — a name carries no value out of that loop either — or the arm of the `match` expression. The value a `let … in` binds can instead be bound once where both reads see it, as the message says: with a `let` statement in a reducer; with one `let … in` around both reads in a `fn` or a slot initializer; in a tile, by moving both reads into a tile that declares `in=` and passing it the value. The entries of `app.init` share no expression, so there the read can only move into the `let … in`.
+After an expression, the read moves into it: into the body of the `let … in`, the body of the tile's `for` — a name carries no value out of that loop either — or the arm of the `match` expression. The value a `let … in` binds can instead be bound once where both reads see it, as the message says: with a `let` statement in a reducer; with one `let … in` around both reads in a `fn`, a slot initializer or an effect's own expressions; in a tile, by moving both reads into a tile that declares `in=` and passing it the value. The entries of `app.init`, the fields of an app's `http` block and the sections of a test share no expression, so there the read can only move into the `let … in`.
 
-The scope is named however close another name in scope is: the read is out of scope, not misspelled, so `kumiki fix` proposes no rename for it. A read of `idx` after `for idx in xs` renamed to a slot `id` would type-check and read the slot.
+A read **before** the scope is reported the same way. When the name is declared later in the same definition, in such a scope the read is not inside — a later statement, a later sibling argument of a tile, a later branch or arm, or a branch or arm of the `if` or `match` whose condition or scrutinee reads it — the message says where the name is declared (`it is declared later, at 3:39, in a tile's "for"`): at the name, or at the variant pattern that binds it. The diagnostic's `laterScope` field carries the kind of scope, from the same list as `endedScope`. The read cannot see a value computed after it, so the repair moves the read into that scope, after the declaration; the value a `let … in` binds can instead be bound once where both reads see it. Of several such scopes the message names the first to begin, and of two that begin together the earlier declaration; a scope that only encloses the declaration is not named. At most one of the two fields is set: a name declared in a scope that ended before the read and in one that begins after it is reported as the first.
+
+The message names no scope for a read in the same body ahead of the `let` that declares the name, nor for one in the declaration's own right-hand side ([Language §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)): the list a `for` iterates, the value a `let … in` binds, or the scrutinee of a `match` whose arm's pattern binds the name. The name is bound from it, so it is read before the name is in scope. With no scope named, `kumiki fix` may propose a rename there, as for a misspelling.
+
+The scope is named however close another name in scope is: the read is out of scope, not misspelled, so `kumiki fix` proposes no rename for it. A read of `idx` after `for idx in xs`, or before it, renamed to a slot `id` would type-check and read the slot.
 
 **Fix**: Confirm that the referenced slot / binding is declared.
 
@@ -447,9 +451,11 @@ A member of `Decoder`, `EffectId`, `Duration` or `Bytes` written **without paren
 
 The lowering reads `_init` and `_event`, which are bound only inside a trial, so the module a `given` or an `expect` produces dies with `_init is not defined` before a single test reports its result.
 
-A builtin tile's name is not in the set either: a tile is no function, and a call to one is a tile only where a tile renders, as a positional argument of a container ([Language §1.7.1](./language.md#_1-7-1-syntax)); on another builtin that does not read its positional argument as content it is a tile that renders nothing, [E0129](#e0129-unrendered-arg). Called anywhere else where no `fn` has that name — a named argument, a user tile's input, a value builtin's content, any expression — it is an E0116 with a sentence of its own, again because the name is right and the position is wrong:
+A builtin tile's name is not in the set either: a tile is no function, and a call to one is a tile only where a tile renders, as a positional argument of a container ([Language §1.7.1](./language.md#_1-7-1-syntax)); on another builtin that does not read its positional argument as content it is a tile that renders nothing, [E0129](#e0129-unrendered-arg). Called anywhere else where no `fn` has that name — a named argument, a user tile's input, any expression — it is an E0116 with a sentence of its own, again because the name is right and the position is wrong:
 
 > `"<name>" is a tile, and a tile renders only as a positional argument of a container`
+
+As a value builtin's content it is [E0236](#e0236-tile-as-content) instead.
 
 > `Call to undefined function "<name>"`
 
@@ -636,7 +642,7 @@ The first is a value as a positional argument. The second is a value where a who
 
 Codegen drops a value in a positional argument, so `column(text("a"), 42)` rendered only the `text`, `column(text("a"), n)` with `n` a slot put a `null` into the child list, and `column(let x = 42 in Card(x))` mounted an empty root. A `let` hid a tile from the checker as well: `Card`'s argument was not compared with its `in=`, and a builtin under it was looked up as a `fn` (E0116). The diagnostic is at the value, and nothing inside the value is checked — a diagnostic in there, wrong or right (an undefined name), shows once the value is moved where it belongs.
 
-A value where a value belongs is not reported: a value builtin's content (`text(let x = 1 in x.show)`), a user tile's input (`Card(let x = "a" in {label: x})`), a named argument. Where a `tile-expr` is the whole of a body — a tile body, or a `when` / `if` / `for` / `match` arm — a `let` is a parse error instead (`tile Foo = let x = 0 in …`, `when(c, let x = 1 in …)`), and so is any other value that is not a name or a call: a literal (`when(c, 42)`) or a member read (`when(c, total.show)`).
+A value where a value belongs is not reported: a value builtin's content (`text(let x = 1 in x.show)`), a user tile's input (`Card(let x = "a" in {label: x})`), a named argument. A tile as a value builtin's content is [E0236](#e0236-tile-as-content). Where a `tile-expr` is the whole of a body — a tile body, or a `when` / `if` / `for` / `match` arm — a `let` is a parse error instead (`tile Foo = let x = 0 in …`, `when(c, let x = 1 in …)`), and so is any other value that is not a name or a call: a literal (`when(c, 42)`) or a member read (`when(c, total.show)`).
 
 **Fix**: Show the value with a tile — `column(text(n.show))`, `when(c, text(total.show))` — or write it where it is used — `column(Card({label: "a"}))` — or compute it in a `fn` and call that. Write a builtin tile's call where it is named — `column(divider())`.
 
@@ -942,6 +948,7 @@ An application passes a different number of arguments than the thing it applies 
 | `b(...)` on a built-in call | the arguments a call to it must supply | `Function "<name>" expects [at least ]<n> argument(s) but got <m>` |
 | `emit E(...)` | one argument, or none when `in=Unit` — for a standard effect, the `in=` [Standard Library §2.6](./stdlib.md#_2-6-standard-effects) gives it | `Effect "<name>" expects <n> argument(s) but got <m>` |
 | `T(...)` on a user tile | one argument when it declares `in=`, else none | `Tile "<name>" expects <n> argument(s) but got <m>` |
+| a user tile's name as a child (`column(t)`, [Language §1.7.1](./language.md#_1-7-1-syntax)) | the same, and the child passes none | `Tile "<name>" expects 1 argument(s) but got 0` |
 | `V(...)` on a union variant | that variant's payload list | `Variant "<name>" carries <n> payload(s) but got <m>` |
 | `x.m(...)` on a stdlib method | the arguments its lowering reads | `Method ".<m>" expects <n> argument(s) but got <m>` |
 | `x.m(f)` with a `fn` name as the fragment ([E0127](#e0127-fn-as-value)) | the positionals the fragment binds, at least one | `Function "<name>" expects <n> argument(s) but .<m> supplies at most <k>` (or `needs at least 1`, `supplies exactly 2 — the accumulator and the element` on `.fold`, `on "<T>" supplies 1 — …` over a receiver that is not a key/value pair) |
@@ -1226,6 +1233,29 @@ The parser reads `null` wherever an expression goes, so that the checker can rep
 Two places are not this code. Where a record field name goes — `{null = 1}`, `{a, null}`, `{a: 1, null: 2}` — `null` is a parse error at the `null`, as `true` is there. As a positional argument of a builtin that is not a value builtin (`column(null)`), it is [E0128](#e0128-value-as-child), which checks nothing inside the value.
 
 **Fix**: Declare the type `Option(T)` and write `None` where there is no value and `Some(x)` where there is one — `slot picked : Option(TodoId) = None`. Ask whether there is one with `.is-none` / `.is-some`, `.get-or(d)` or a `match`, not with `== null`.
+
+### E0236 `tile-as-content`
+
+A tile is written as a value builtin's content. A value builtin shows a value as its content ([Language §1.7.1](./language.md#_1-7-1-syntax)) — read from the first positional argument on `text`, `heading`, `markdown` and `code`, from it or `text=` on `link`, `label` and `editable` (and on `link` from the `{text: …}` block entry when neither is written), from `src=` on `image` and from `name=` on `icon` ([E0129](#e0129-unrendered-arg)) — so a tile written there is never rendered: `text(when(c, column(…)))` shows nothing. The mirror, a value where a tile belongs, is [E0128](#e0128-value-as-child).
+
+> ``A tile is not a value: <builtin> shows a value as its content, so this tile is never rendered. Write the tile as a child of a container — `column(when(c, …))` — or show a value — `<content>` ``
+
+`<content>` is the builtin with a value where it reads its content: `text(x.show)`, `image(src=x.show)` / `label(text=x.show)` where the content is written as a named argument, or `link {text: x.show}` where it is written in the `{…}` block.
+
+A tile there is one of:
+
+- a `when` or a `for`, which only a `tile-expr` has;
+- a call of a builtin (`text(column(…))`) or of a tile the program defines (`text(Card({label: "a"}))`, `text(lower())`), or the name of a tile the program defines (`text(Header)`);
+- a tile in an arm of a value `if` / `match` — `text(if c then Header else "b")` — which is what the content is when that arm is taken. Each tile arm is reported;
+- a tile as the body of a `let … in` — `text(let x = 1 in Header)` — which is what the content is.
+
+Only the content itself is looked into, through the arms of a value `if` / `match` and the body of a `let … in`. A tile deeper in an expression (`text(Header + "!")`) is checked as part of that expression.
+
+The content is read as an expression, so a name is first the value it names, even where a tile has that name: a slot, a `let` or loop variable, a `match` binding and a `fn` (`heading(label(x))` with a `fn label`) are values, and so is a capitalised name that a union has as a tag, the standard library's included (`HttpBody`'s `Empty`). A call is a value only where a `fn` has the callee's name: with `slot code`, `text(code("x"))` is still the builtin's call. A builtin's name written without its call (`text(code)`) calls nothing, and is the undefined name it is ([E0103](#e0103-undef-ref-undef-slot)). So is a loop variable of a tile's name read after its loop (`column(for lower in xs text("a"), text(lower))`), whose E0103 says the loop ended. A value `if` / `match` whose arms are values (`text(match m with | A -> "a" | B -> "b")`) is a value.
+
+Each tile is reported where it is written, and nothing else in the content is checked — the tile's own arguments, an `if`'s condition, its other arm: the content is moved whole, into a container or out for a value, and a diagnostic in it shows once it is.
+
+**Fix**: Write the tile as a child of a container — `column(when(c, column(…)))`, `column(Header)`, `column(if c then Header else text("b"))` — or show a value with the builtin — `text(x.show)`.
 
 ### W0213 `handler-on-inert-tile` (warning)
 
