@@ -1,0 +1,33 @@
+# Feature: the editing verbs take a definition from its first token to its
+# last, however its lines are laid out.
+#
+#   kumiki view    <file> fn.double
+#   kumiki replace <file> slot.step 'Int = 3'
+#   kumiki remove  <file> slot.step --cascade
+#   kumiki replace <file> slot.notes 'Text = "Counts up."'
+#
+# `fn double` and `slot step` share a line. `view fn.double` prints
+# `fn double(x: Int) -> Int = x * 2`, and `replace slot.step` and
+# `remove slot.step` write only `slot step`: `fn double` stays on the line.
+# The text of `slot notes` runs over two lines, and the second starts with
+# `#`. It is inside the string, not a comment, so `view slot.notes` prints
+# both lines and `replace slot.notes` writes over both.
+
+slot count : Int = 0
+fn double(x: Int) -> Int = x * 2   slot step : Int = 2
+slot notes : Text = "Counts up by two.
+## Doubled"
+
+reducer inc on=ui.click(IncBtn) do= count := count + step
+
+tile IncBtn = button(text="+")
+tile App = column(
+  markdown(notes),
+  heading("Count: " + count),
+  text("Doubled: " + double(count)),
+  IncBtn)
+
+app TokenSpan
+  caps = []
+  routes = {"/" -> App, "/404" -> App}
+  init = []
