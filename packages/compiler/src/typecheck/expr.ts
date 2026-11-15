@@ -21,7 +21,13 @@ import {
   checkRecordUpdate,
   getOrResultType,
 } from "./against.ts";
-import { arithmeticHint, checkCallee, endedScopeHint, reportRunReducerPosition } from "./callee.ts";
+import {
+  arithmeticHint,
+  checkCallee,
+  endedScopeHint,
+  laterScopeHint,
+  reportRunReducerPosition,
+} from "./callee.ts";
 import {
   bindLocal,
   type Ctx,
@@ -55,6 +61,7 @@ import {
   keyKindOfReader,
   undefMemberError,
 } from "./members.ts";
+import { laterDeclaration } from "./nested-scopes.ts";
 import {
   checkArmsAfterNestedMatch,
   checkMatchCovers,
@@ -186,6 +193,17 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
     case "Bool":
     case "Unit":
       return;
+    case "Null":
+      // The one report about it: `inferType` leaves its type undecided, which fits wherever it
+      // lands. An expression around it that mismatches on its own still prints that type, as `?`.
+      errors.push({
+        code: "E0235",
+        kind: "null-value",
+        message:
+          "`null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one",
+        pos: e.pos,
+      });
+      return;
     case "Ref": {
       if (
         (e.name === "route" || e.name === "$route") &&
@@ -278,6 +296,17 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
           message: `Reference to undefined name "${e.name}"${endedScopeHint(e.name, ended, ctx)}`,
           pos: e.pos,
           endedScope: ended.kind,
+        });
+        return;
+      }
+      const later = laterDeclaration(ctx.nestedScopes, e.name, e.pos);
+      if (later !== undefined) {
+        errors.push({
+          code: "E0103",
+          kind: "undef-ref",
+          message: `Reference to undefined name "${e.name}"${laterScopeHint(later, ctx)}`,
+          pos: e.pos,
+          laterScope: later.kind,
         });
         return;
       }
