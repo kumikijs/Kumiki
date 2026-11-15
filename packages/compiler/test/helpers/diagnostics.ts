@@ -34,6 +34,12 @@ export const reservedEffectNameMessage = (name: string): string =>
 export const nullValueMessage =
   "`null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one";
 
+/** E0236's message, for a tile as `builtin`'s content, where `shown` is that builtin showing a value. */
+export const tileAsContentMessage = (builtin: string, shown: string): string =>
+  `A tile is not a value: ${builtin} shows a value as its content, so this tile is never ` +
+  `rendered. Write the tile as a child of a container — \`column(when(c, …))\` — or show a ` +
+  `value — \`${shown}\``;
+
 /** Each diagnostic as `"<code> <message>"`. */
 export const summariesOf = (src: string): string[] =>
   checkSource(src).map((e) => `${e.code} ${e.message}`);
