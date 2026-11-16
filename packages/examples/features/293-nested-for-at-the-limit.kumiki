@@ -7,6 +7,10 @@
 # module, so the module a nest this deep compiles to loads on a stack as small
 # as Windows' gives. Every list holds one element, so the nest renders one
 # text, and the button renames it, which renders the whole nest again.
+#
+# The button sits beside the nest in `Deep`, and the routes name `Deep`
+# itself: a tile around it would inline it two levels down, and put the
+# tree past the same 256 levels (E0237).
 
 slot one   : List(Int) = [0]
 slot label : Text      = "leaf"
@@ -17,6 +21,7 @@ tile Rename = button(text="rename") {id: "rename"}
 
 tile Deep
     = column(
+        Rename,
         for x1 in one for x2 in one for x3 in one for x4 in one for x5 in one
         for x6 in one for x7 in one for x8 in one for x9 in one for x10 in one
         for x11 in one for x12 in one for x13 in one for x14 in one for x15 in one
@@ -67,11 +72,9 @@ tile Deep
         for x236 in one for x237 in one for x238 in one for x239 in one for x240 in one
         for x241 in one for x242 in one for x243 in one for x244 in one for x245 in one
         for x246 in one for x247 in one for x248 in one for x249 in one for x250 in one
-        text(label))
-
-tile App = column(Deep, Rename) {pad: "lg", gap: "md"}
+        text(label)) {pad: "lg", gap: "md"}
 
 app NestedForAtTheLimit
     caps   = []
-    routes = {"/" -> App, "/404" -> App}
+    routes = {"/" -> Deep, "/404" -> Deep}
     init   = []
