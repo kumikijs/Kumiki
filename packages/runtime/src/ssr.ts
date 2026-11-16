@@ -6,6 +6,7 @@ import {
   computeSlotDiffs,
   type EffectResult,
   type EmitSpec,
+  invokeOnce,
   NONE,
   type ParsedRoute,
   panicInfo,
@@ -179,7 +180,7 @@ async function dispatchEmit(
   const token = logger.recordEffectStart(emit.effect, input);
   let result: EffectResult;
   try {
-    result = await Promise.resolve(effect.invoke(input, caps));
+    result = await invokeOnce(effect, input, caps);
   } catch (e) {
     result = {
       kind: "err",

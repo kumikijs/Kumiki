@@ -1,4 +1,4 @@
-import type { AppShape, CapabilityProvider, EffectSpec } from "@kumikijs/runtime";
+import type { AppShape, CapabilityProvider, EffectResult, EffectSpec } from "@kumikijs/runtime";
 import { createEpisodeLogger, hydrate, renderToString } from "@kumikijs/runtime";
 import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -144,6 +144,28 @@ describe("the SSR pass gates an effect on its capability", () => {
       "effect-start",
       "effect-end",
     ]);
+  });
+});
+
+describe("the SSR pass reads a provider result that is not {kind, value}", () => {
+  it.each<[string, unknown, string]>([
+    ["a record with no kind", { ok: true }, '{"ok":true}'],
+    ["undefined", undefined, "undefined"],
+  ])("as the request's err when it is %s, and still renders", async (_, returned, shown) => {
+    const { app } = makeApp("telemetry.track", ["telemetry.track"]);
+
+    const { html, snapshot } = await renderToString(app, {
+      providers: { "telemetry.track": () => returned as EffectResult },
+    });
+
+    expect(snapshot.slots.saved).toBe("none");
+    expect(html).toContain("saved: none");
+    expect(errors).toEqual([
+      expect.stringContaining(`effect "save" returned an error with no .err reducer: `),
+    ]);
+    expect(errors[0]).toContain(
+      `the telemetry.track provider returned ${shown}, not {kind, value}`,
+    );
   });
 });
 
