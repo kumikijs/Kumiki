@@ -104,11 +104,23 @@ fresh  self  now  null
 - **Newline is the statement separator**: only inside `do=` can `;` join multiple statements
 - **Identifiers are at most 32 characters**
 - **An expression, type, pattern or tile tree is at most 256 levels deep**: past that the parser reports a positioned error. No program in the examples or benchmarks comes near it.
+- **A tile tree stays within 256 levels once its user tiles are inlined**: code generation inlines every call to a user tile, so tiles that call each other add their depths up. Past the limit the checker reports [E0237](./errors.md#e0237-tile-depth) at the call where the tree goes over.
 - **Multi-line comments prohibited**
 - **Macros prohibited**
 
 ::: details What the 256-level limit is measured against
 A construct that contains itself — a parenthesised expression, a list, a record, an `if`, a statement body, a tile call, a tuple pattern, a type application, a theme record — may not nest further, and neither may a left-associative chain build more than that many nodes (`1 + 1 + 1 + …`, `x.trim().trim()…`, a run of `not` or `-`, the `where`s written on one type expression, the `.field` / `[index]` steps of an assignment target). The two count together. Each step of a chain is a node over everything the chain has read before it, so whatever an earlier operand holds — a parenthesised chain, an index that is an index chain of its own, a type application whose argument carries `where`s — sits one level further down for every later step: the steps of the two chains in `1 + (1 + … + 1) + 1 + …` add up rather than each counting alone. A binary operator's right operand sits a level under its operator, and a run's first `where` is a node over the type it follows, as each later one is. Parentheses build no node, so a parenthesised operand counts only for what it holds. The limit is on the resulting tree, not on how the parser reached it: every stage after the parse walks that tree by recursion, so a chain parsed by a loop still exhausts the stack downstream.
+:::
+
+::: details How the inlined tile tree is counted
+The parser sees one definition at a time. The module code generation emits nests as deep as the tile tree with every user tile's body inlined at its call, and nothing else bounds how deep that goes: a chain of definitions, none of them deep, adds up to a module a JavaScript engine refuses to load. So the same bound holds for that tree, counted in tile levels:
+
+- a tile's own body counts as the parser counts it against the limit on one definition, above: its calls and its `for`, `when`, `if` and `match`, and the expressions written in it too;
+- a tile named by a bare identifier (`column(sidebar)`) counts as a call to it;
+- a user tile's body hangs one level below its call, and one more for each wrapper code generation puts around it: one when the call passes an argument, and one when it is keyed, by a `{key: …}` it writes or by the `for` that renders it (through any `when` / `if` / `match` between them, though not from inside a builtin's children);
+- an `error-boundary` is a level of its own: it wraps every call of the tile that declares it, with that tile's body and the fallback's body both beneath it.
+
+Siblings do not add up — a tree is as deep as its deepest path. A chain `tile T0 = column(T1)`, `tile T1 = column(T2)`, … is two levels a link, so with `text("leaf")` at its end 127 links fit; a chain of keyed calls passing an argument is three levels a link, and one a `for` renders, passing an argument, four. A `tile-test`'s expected tree is inlined where the test is compiled, so it is held to the same bound. A `sub-routes` child is not inlined (the router renders it through `route-outlet`), so it does not count toward its parent's tree.
 :::
 
 ---
@@ -722,11 +734,12 @@ pattern      ::= identifier
 
 **Value context vs tile context for `if` and `match`**:
 - A tile argument is a tile only as a **positional argument of a builtin that does not read it as content** — every builtin but `text`, `heading`, `markdown`, `code`, `editable`, `label` and `link`. Only a container (`column`, `row`, `card`, `box`, …) renders it; on the others (`button`, `progress`, `image`, …) it is [E0129](./errors.md#e0129-unrendered-arg), tile or value, but it is read as a tile so that any tile parses there. There, `if` and `match` are tile expressions (`TileIf` / `TileMatch`) whose arms return tiles, a builtin's name followed by `(` or `{` is a call to that builtin, and a capitalised name is a user tile.
-- Every other tile argument is a value: the content a value builtin reads from a positional argument, a user tile's input, and **every named argument**, whatever it is called. There, `if` and `match` are value expressions (`IfExpr` / `MatchExpr`) whose arms return values (Text, Int, a variant, …), a call is a call (`Say(label("x"))` passes what the `fn` `label` returns, and a builtin tile's name called where no `fn` has that name is [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier)), and an expression that starts with a capitalised name is an expression (`selected=All == filter`). The one other shape is [§1.7.3](#_1-7-3-event-handler-props)'s: a capitalised name written as an event handler of a builtin that does not read its positional argument as content is a tile call.
+- Every other tile argument is a value: the content a value builtin reads from a positional argument, a user tile's input, and **every named argument**, whatever it is called. There, `if` and `match` are value expressions (`IfExpr` / `MatchExpr`) whose arms return values (Text, Int, a variant, …), a call is a call (`Say(label("x"))` passes what the `fn` `label` returns, and a builtin tile's name called where no `fn` has that name is [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier), or [E0236](./errors.md#e0236-tile-as-content) as a value builtin's content), and an expression that starts with a capitalised name is an expression (`selected=All == filter`). The one other shape is [§1.7.3](#_1-7-3-event-handler-props)'s: a capitalised name written as an event handler of a builtin that does not read its positional argument as content is a tile call.
 - `when` and `for` have no value form, so they are tiles wherever they are written.
 - Example: `text(match m with | A -> "a" | B -> "b")` ← value match
 - Example: `button(text="Save", disabled=if busy then true else false)`, `Row(if wide then 2 else 1)` ← value if
 - Example: `column(match xs with | Loaded(ys) -> ... | None -> spinner())` ← tile match
+- A value builtin's content is a value, and a tile written there is never rendered: a `when` / `for`, a tile's call, or the name of a tile the program defines (`text(column(…))`, `text(Header)`), as the content, in an arm of a value `if` / `match` (`text(if c then Header else "b")`) or as the body of a `let … in`, is [E0236](./errors.md#e0236-tile-as-content). Write the tile as a child of a container — `column(when(c, …))` — or show a value — `text(x.show)`.
 
 ### 1.7.2 Invariants
 

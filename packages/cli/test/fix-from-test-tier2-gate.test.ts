@@ -1,10 +1,17 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { fixFromTest, planTestPatchExplained, runFixFromTest } from "@kumikijs/cli";
+import {
+  fixFromTest,
+  lockDef,
+  planTestPatchExplained,
+  replaceDef,
+  runFixFromTest,
+} from "@kumikijs/cli";
 import { check, lex, parse } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { printed } from "./helpers/console.ts";
 import { seedLines } from "./helpers/files.ts";
+import { asAgent } from "./helpers/op-log.ts";
 
 const gateRunner = vi.hoisted(() => ({
   override: null as null | (() => Promise<TestResult[]>),
@@ -429,15 +436,16 @@ describe("a test whose body throws", () => {
   });
 });
 
-describe("the gate when the runner misbehaves on the patched source", () => {
-  const withRunner = (override: () => Promise<TestResult[]>): typeof runFixFromTest => {
-    gateRunner.override = override;
-    return runFixFromTest;
-  };
-  afterEach(() => {
-    gateRunner.override = null;
-  });
+/** `runFixFromTest`, with the gate's run of the patched source answered by `override`. */
+const withRunner = (override: () => Promise<TestResult[]>): typeof runFixFromTest => {
+  gateRunner.override = override;
+  return runFixFromTest;
+};
+afterEach(() => {
+  gateRunner.override = null;
+});
 
+describe("the gate when the runner misbehaves on the patched source", () => {
   it("reports a runner that throws as test-runner-threw, with its message", async () => {
     const file = seedLines(DIGIT_IN_IDENTIFIER);
     const before = readFileSync(file, "utf8");
@@ -507,5 +515,33 @@ describe("a dry run is not gated", () => {
       expect(outcome.patch.description).toContain("replace 1 with 2");
     }
     expect(readFileSync(file, "utf8")).toBe(before);
+  });
+});
+
+describe("a file edited while the gate runs", () => {
+  it("is not overwritten: the patch planned on the old file is not written", async () => {
+    const file = seedLines(DIGIT_IN_IDENTIFIER);
+    lockDef(file, "agent:a", "tile.*");
+    asAgent("agent:b");
+    // While the gate runs agent:b's patch of `fn.step`, agent:a edits the tile it holds.
+    let owners = "";
+    const run = withRunner(async () => {
+      asAgent("agent:a");
+      replaceDef(file, "tile.Btn1", 'button(text="plus")');
+      owners = readFileSync(file, "utf8");
+      asAgent("agent:b");
+      return [{ name: "inc-adds-two", pass: true }];
+    });
+
+    const outcome = await run(file, "inc-adds-two", true);
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      status: "write-failed",
+      phase: "test",
+      writeError: `${file} changed since the repair was planned; nothing was written. Run fix again.`,
+    });
+    expect(owners).toContain('text="plus"');
+    expect(readFileSync(file, "utf8")).toBe(owners);
   });
 });
