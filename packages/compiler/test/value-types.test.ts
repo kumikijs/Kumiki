@@ -261,8 +261,11 @@ describe("Int literal precision (E0217)", () => {
     ]);
   });
 
-  it("folds one sign into the literal, so `- -N` negates the literal `-N` and is not checked", () => {
-    expect(appCodes("slot s : Int = - -9007199254740993")).toEqual([]);
+  it("folds one sign into the literal, so `- -N` negates the literal `-N`, reported at its sign", () => {
+    const src = withButtonApp("slot s : Int = - -9007199254740993");
+    expect(pointedErrorsOf(src).map(({ code, text }) => ({ code, text }))).toEqual([
+      { code: "E0217", text: "-9007199254740993" },
+    ]);
   });
 
   it("refuses to build a negative literal past the bound", () => {

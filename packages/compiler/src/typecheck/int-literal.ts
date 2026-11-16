@@ -1,5 +1,5 @@
-import type { Pos } from "../ast.ts";
-import type { KumikiError } from "./context.ts";
+import { numberLiteral, type Pos } from "../ast.ts";
+import type { KumikiError, SymbolTable } from "./context.ts";
 
 /** A number literal: the text it is written as, its sign included, and the number it was read as. */
 export type NumberLiteral = { readonly value: number; readonly raw: string };
@@ -29,4 +29,17 @@ function precisionMessage({ value, raw }: NumberLiteral): string {
 function writtenInteger(raw: string): bigint | null {
   const [whole = "", fraction = ""] = raw.split(".");
   return /^0*$/.test(fraction) ? BigInt(whole) : null;
+}
+
+/**
+ * E0217 for each `Int` literal outside the safe range that no declared type read: a `let` value,
+ * an operand, the body of a `fn` with no `->`. Where nothing declares a type the literal's own,
+ * `Int`, is the type of its position. One a declared type read was judged there, once.
+ */
+export function checkUndeclaredIntLiterals(sym: SymbolTable, errors: KumikiError[]): void {
+  for (const e of sym.numberLiterals.met) {
+    const literal = sym.numberLiterals.judged.has(e) ? null : numberLiteral(e);
+    const imprecise = literal ? intLiteralPrecision(literal, e.pos) : null;
+    if (imprecise) errors.push(imprecise);
+  }
 }

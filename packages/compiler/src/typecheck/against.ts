@@ -128,6 +128,7 @@ export function checkAgainst(
     return;
   }
   const literal = numberLiteral(e);
+  if (literal !== null) sym.numberLiterals.judged.add(e);
   const imprecise =
     literal !== null && d.kind === "TypePrim" && d.name === "Int"
       ? intLiteralPrecision(literal, e.pos)
