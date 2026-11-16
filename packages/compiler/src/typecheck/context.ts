@@ -1,16 +1,22 @@
-import type {
-  AppDef,
-  EffectDef,
-  Expr,
-  FnDef,
-  Pos,
-  ReducerDef,
-  SlotDef,
-  TileDef,
-  TypeDef,
-  TypeExpr,
+import {
+  type AppDef,
+  type EffectDef,
+  type Expr,
+  type FnDef,
+  type Pos,
+  type ReducerDef,
+  type SlotDef,
+  type TileDef,
+  type TileExpr,
+  type TileProp,
+  type TypeDef,
+  type TypeExpr,
+  type WrittenProp,
+  writtenProp,
 } from "../ast.ts";
 import { callsBuiltin } from "../builtin-calls.ts";
+import { type NestedScopes, nestedScopes } from "./nested-scopes.ts";
+import type { TileKinds } from "./tile-collect.ts";
 
 export type Severity = "error" | "warning";
 
@@ -26,6 +32,11 @@ export type KumikiError = {
    * `kumiki fix` reads it to skip the rename.
    */
   endedScope?: NestedScopeKind;
+  /**
+   * E0103 only: the kind of nested scope that declares the name and begins after this read;
+   * `kumiki fix` reads it to skip the rename.
+   */
+  laterScope?: NestedScopeKind;
   /** E0218 only: the member whose append alone makes the target a List; `kumiki fix` reads it. */
   accessor?: "keys" | "to-list";
 };
@@ -55,7 +66,7 @@ export type SymbolTable = {
   types: Map<string, TypeDef>;
   slots: Map<string, SlotDef>;
   reducers: Map<string, ReducerDef>;
-  tiles: Map<string, TileDef>;
+  tiles: ReadonlyMap<string, TileDef>;
   fns: Map<string, FnDef>;
   effects: Map<string, EffectDef>;
   /** Names declared by `timer(d, name=N)` triggers — the `stop-timer` namespace. */
@@ -67,6 +78,8 @@ export type SymbolTable = {
   themes: Set<string>;
   iconDomain: Set<string>;
   elementIds: Set<string>;
+  /** The builtin kinds each tile renders, along the edges each check follows. */
+  tileKinds: TileKinds;
   // The program's own tags come first, so a did-you-mean tie goes to one of them.
   constructorTags: ReadonlySet<string>;
   qualifiers: ReadonlySet<string>;
@@ -108,10 +121,33 @@ export type Ctx = {
    * an inner one ended.
    */
   endedScopes: Map<string, EndedScope>;
+  /** Built before the check: a read can come before the scope that declares its name. */
+  nestedScopes: NestedScopes;
+  /**
+   * The expressions checked in this scope are separate entries, fields or sections, so no
+   * `let … in` can be written around reads in two of them.
+   */
+  rootsShareNoExpression?: true;
   /** The effect whose own expressions are checked, when it declares `in=Unit` and so binds no `$1`. */
   noInputEffect?: string;
   oneValueFragment?: { method: string; hides: boolean };
+  /** A tile-test's expected tree, whose lowering reads no `{…}` block. */
+  expectedTree?: boolean;
 };
+
+/** The `{…}` block a call's props are read from: none in an expected tree, as its lowering reads. */
+export function propBlock(t: TileExpr & { kind: "TileCall" }, ctx: Ctx): readonly TileProp[] {
+  return ctx.expectedTree ? [] : t.props;
+}
+
+/** The prop `name` of `t`, read as the lowering reads it in this context. */
+export function propOf(
+  t: TileExpr & { kind: "TileCall" },
+  name: string,
+  ctx: Ctx,
+): WrittenProp | undefined {
+  return writtenProp(t, name, propBlock(t, ctx));
+}
 
 export function bindLocal(
   ctx: Ctx,
@@ -170,12 +206,17 @@ export function checkArms<A>(
   for (const name of ended) ctx.endedScopes.set(name, { kind: "match-expr", sibling: false });
 }
 
-export function pureScope(binds: readonly { name: string; type: TypeExpr }[]): Ctx {
+/** `exprs` are the expressions checked in this scope, whose nested scopes it knows. */
+export function pureScope(
+  binds: readonly { name: string; type: TypeExpr }[],
+  ...exprs: (Expr | undefined)[]
+): Ctx {
   const ctx: Ctx = {
     kind: "slot-init",
     localBinds: new Set(),
     routeBind: "no-payload",
     endedScopes: new Map(),
+    nestedScopes: nestedScopes(...exprs),
     localTypes: new Map(),
     localBinders: new Map(),
   };

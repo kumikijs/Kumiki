@@ -12,6 +12,7 @@ import {
   UI_EVENT_TILE_KINDS,
   UI_LIFTS,
   wrappedUnreached,
+  wrapperNeverReceives,
 } from "../src/ui-lifts.ts";
 import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
@@ -118,6 +119,25 @@ describe("wrappedUnreached", () => {
       { kinds: ["details"], ...DETAILS, bubbles: false, handler: "onFocus" },
     ]);
     expect(wrappedUnreached("focus", ["box", "text", "video"])).toEqual([]);
+  });
+});
+
+describe("wrapperNeverReceives", () => {
+  const WRAPPED = ["check", "radio", "switch", "details"];
+
+  it("answers focus and blur as wrappedUnreached does", () => {
+    for (const ev of ["focus", "blur"] as const) {
+      expect(wrapperNeverReceives(ev, WRAPPED)).toEqual(wrappedUnreached(ev, WRAPPED));
+    }
+  });
+
+  it("answers no other event, key on a details included", () => {
+    const answered = ALL_UI_EVENT_KINDS.filter(
+      (ev) => wrapperNeverReceives(ev, WRAPPED).length > 0,
+    );
+    expect(answered.sort()).toEqual(["blur", "focus"]);
+    expect(wrappedUnreached("key", ["details"])).toHaveLength(1);
+    expect(wrapperNeverReceives("key", ["details"])).toEqual([]);
   });
 });
 
@@ -467,6 +487,65 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
         "W0213",
         "E0005",
       ]);
+    });
+
+    // Whichever tile is asked about first is the one the walk enters the loop by.
+    it("the tiles on a loop, whichever is asked about first", () => {
+      const loop = 'tile A = row(B)\ntile B = column(C)\ntile C = box(A, text("c"))';
+      for (const order of [
+        ["A", "B", "C"],
+        ["B", "C", "A"],
+        ["C", "A", "B"],
+      ]) {
+        const calls = order.map((t) => `${t}() {onClick: bump}`).join(", ");
+        const found = diags(loop, calls);
+        expect(
+          found.map((e) => e.code),
+          calls,
+        ).toEqual(["W0213", "W0213", "W0213", "E0005"]);
+        for (const d of found.slice(0, 3)) {
+          expect(d.message, calls).toContain("observed in body: box, column, row, text");
+        }
+      }
+    });
+
+    // A loop shares one answer, and the tiles it leads to keep their own: asked about first or
+    // after, a tile downstream never takes on what only the tiles above it render.
+    it.each([
+      [
+        "a loop that leads into a second loop",
+        'tile A = row(B)\ntile B = column(A, C)\ntile C = box(D)\ntile D = stack(C, text("d"))',
+        ["E0005", "E0005"],
+      ],
+      [
+        "a loop that leads out of any loop",
+        'tile A = row(B)\ntile B = column(A, C)\ntile C = box(D)\ntile D = stack(text("d"))',
+        ["E0005"],
+      ],
+      [
+        "two paths that meet again, with no loop",
+        'tile A = row(B, C)\ntile B = column(D)\ntile C = box(D)\ntile D = stack(text("d"))',
+        [],
+      ],
+    ])("the tiles of %s, whichever is asked about first", (_, tiles, loops) => {
+      for (const order of [
+        ["A", "C"],
+        ["C", "A"],
+      ]) {
+        const calls = order.map((t) => `${t}() {onClick: bump}`).join(", ");
+        const found = diags(tiles, calls);
+        expect(
+          found.map((e) => e.code),
+          calls,
+        ).toEqual(["W0213", "W0213", ...loops]);
+        const observed = Object.fromEntries(
+          order.map((t, i) => [t, found[i]?.message.match(/observed in body: [^)]*/)?.[0]]),
+        );
+        expect(observed, calls).toEqual({
+          A: "observed in body: box, column, row, stack, text",
+          C: "observed in body: box, stack, text",
+        });
+      }
     });
   });
 });

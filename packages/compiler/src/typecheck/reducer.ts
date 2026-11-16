@@ -5,9 +5,8 @@ import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { refType } from "../stdlib-types.ts";
 import {
   firesUnheardClauses,
-  kindsPhrase,
   UI_EVENT_TILE_KINDS,
-  type WrappedUnreached,
+  wrappedClause,
   wrappedUnreached,
 } from "../ui-lifts.ts";
 import {
@@ -29,8 +28,9 @@ import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
+import { nestedScopes } from "./nested-scopes.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
-import { bindsRoute, namedByHandler, subscribedKinds, subscriptionIds } from "./tile-collect.ts";
+import { bindsRoute, namedByHandler, subscriptionIds } from "./tile-collect.ts";
 
 /** The scope a reducer's statements are checked in. */
 type ReducerCtx = Ctx & {
@@ -47,6 +47,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     capsAvailable: new Set(sym.app?.caps ?? []),
     routeBind: routeBindOf(r, sym),
     endedScopes: new Map(),
+    nestedScopes: nestedScopes(r.do),
     endedInBody: new Set(),
   };
   if (r.on.kind === "EffectEvent") {
@@ -137,7 +138,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     const { ev, selector } = r.on;
     const allowed = UI_EVENT_TILE_KINDS[ev];
     if (allowed != null) {
-      const descendants = subscribedKinds(selector.tile, sym);
+      const descendants = sym.tileKinds.subscribed(selector.tile);
       const hasMatch = [...descendants].some((k) => allowed.has(k));
       if (descendants.size > 0 && !hasMatch) {
         const reason = uiEventMismatchReason(ev, selector.tile, descendants);
@@ -174,16 +175,6 @@ function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet
     return `"${ev}" never reaches a listener in tile "${tile}": ${unreached.join("; ")}`;
   }
   return `tile "${tile}" has no descendant that fires "${ev}"`;
-}
-
-function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
-  const kinds = kindsPhrase(g.kinds);
-  return g.bubbles
-    ? `${kinds} takes no "${ev}" listener on the <${g.wrapper}> around its <${g.focused}>, ` +
-        `since a control in its panel takes the subscription instead — ` +
-        `write ${g.handler}= on the ${g.kinds.join(" / ")} to hear a "${ev}" on its <${g.focused}>`
-    : `the runtime listens for "${ev}" on ${kinds}'s <${g.wrapper}>, ` +
-        `and the "${ev}" its <${g.focused}> fires does not bubble to the <${g.wrapper}>`;
 }
 
 function declaredRoutePatterns(

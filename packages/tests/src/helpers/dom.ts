@@ -1,4 +1,4 @@
-import { type AppShape, mount, renderToString } from "@kumikijs/runtime";
+import { type AppShape, hydrate, mount, renderToString, routing } from "@kumikijs/runtime";
 import { onTestFinished } from "vitest";
 import { loadSource } from "./load.ts";
 
@@ -48,6 +48,28 @@ export async function mountSource(
   });
   await tick(0);
   return { app, root };
+}
+
+/**
+ * Server-render `src` at `route`, then hydrate that HTML with a fresh instance of the app under a
+ * memory router and let the first client render settle. The mount is torn down when the test
+ * finishes.
+ */
+export async function hydrateSource(
+  src: string,
+  route = "/",
+): Promise<{ app: AppShape; root: HTMLElement; html: string }> {
+  const rendered = await renderToString(await loadSource(src), { route, routing });
+  const app = await loadSource(src);
+  const root = freshRoot();
+  root.innerHTML = rendered.html;
+  const handle = hydrate(app, root, rendered, { router: "memory" });
+  onTestFinished(() => {
+    handle.dispose();
+    root.remove();
+  });
+  await tick(0);
+  return { app, root, html: rendered.html };
 }
 
 /** The page `renderToString` serves for `app`, parsed under a detached element. */
