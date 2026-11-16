@@ -24,7 +24,7 @@ export interface PlaygroundToolHost {
 }
 
 const DIAGNOSTIC_SHAPE =
-  'Each diagnostic is {code, kind, message, line, col, severity}, as the @kumikijs/mcp server returns it; severity is "error" (the program does not compile) or "warning" (reported, but it still compiles and previews); codes per spec/errors.md.';
+  'Each diagnostic is {code, kind, message, line, col, severity}, as the @kumikijs/mcp server returns it; severity is "error" (the program does not compile) or "warning" (reported, but it still compiles and previews); codes per spec/errors.md. A program that does not compile lists its warnings, then its errors. When the compiler itself throws, the one diagnostic is an "internal-error" at 1:1.';
 
 export function createPlaygroundToolHost(): PlaygroundToolHost {
   let active: PlaygroundApi | null = null;

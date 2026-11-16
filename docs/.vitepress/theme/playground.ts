@@ -33,20 +33,36 @@ function toDiagnostics(errors: readonly KumikiError[]): Diagnostic[] {
 
 export type PlaygroundBuild = { diagnostics: Diagnostic[]; js: string | null };
 
+// Any throw but a lex or parse error is a fault in the compiler, not a diagnostic of the source.
+// It is still answered in the diagnostics' shape, so the editor shows the source it was given and
+// an agent gets the shape the tools document.
+function internalError(e: unknown): Diagnostic {
+  console.error("[playground] the compiler threw:", e);
+  return {
+    code: "internal-error",
+    kind: "internal-error",
+    message: `Internal compiler error: ${String(e)}`,
+    line: 1,
+    col: 1,
+    severity: "error",
+  };
+}
+
 function buildPlayground(source: string): PlaygroundBuild {
   let result: CompileResult;
   try {
     result = compileToJs(source);
   } catch (e) {
-    // Any other throw is a fault in the compiler, not a diagnostic of the source.
-    if (e instanceof LexError || e instanceof ParseError) {
-      return { diagnostics: toDiagnostics([parseFailure(e)]), js: null };
-    }
-    throw e;
+    const diagnostics =
+      e instanceof LexError || e instanceof ParseError
+        ? toDiagnostics([parseFailure(e)])
+        : [internalError(e)];
+    return { diagnostics, js: null };
   }
+  // Warnings first, as `kumiki_build` lists a failed build's diagnostics.
   return result.kind === "ok"
     ? { diagnostics: toDiagnostics(result.warnings), js: result.js }
-    : { diagnostics: toDiagnostics([...result.errors, ...result.warnings]), js: null };
+    : { diagnostics: toDiagnostics([...result.warnings, ...result.errors]), js: null };
 }
 
 /** What the playground shows: the editor's source, its diagnostics, and the preview ("" for none). */

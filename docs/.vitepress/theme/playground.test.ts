@@ -1,7 +1,18 @@
 import { lex, parse, parseFailure } from "@kumikijs/compiler";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPlayground, type Diagnostic, type PlaygroundView } from "./playground";
-import { examples } from "./preview";
+import { buildSrcdoc, compileToJs, examples } from "./preview";
+
+// Wrapped so a test can make the compiler throw what no source makes it throw.
+vi.mock("./preview", async (importOriginal) => {
+  const preview = await importOriginal<typeof import("./preview")>();
+  return { ...preview, compileToJs: vi.fn(preview.compileToJs) };
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.mocked(compileToJs).mockReset();
+});
 
 const program = (heading: string) => `slot count : Int = 0
 
@@ -18,25 +29,53 @@ app Playground
 
 const CLEAN = program('"Count: " + count.show');
 const WARNING_ONLY = program('fmt("Count: {0} {1}", count.show)');
+const TWO_WARNINGS = program('fmt("Count: {0} {1}", count.show) + fmt(" of {0} {1}", count.show)');
 const WITH_ERROR = program('fmt("Count: {0} {1}", total.show)');
+// The error comes first in the source, and the checker finds it first.
+const ERROR_FIRST = `slot count : Int = 0
 
-const W0214: Diagnostic = {
+tile Total = text(total.show)
+tile App = column(Total, heading(fmt("Count: {0} {1}", count.show)))
+
+app Playground
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+// The compiler's own message and column for the `nth` `code` diagnostic of `source`. The playground
+// relays them unchanged, so a change to the compiler's wording does not fail this suite.
+function relayed(source: string, code: string, nth = 0): Pick<Diagnostic, "message" | "col"> {
+  const result = compileToJs(source);
+  const all = result.kind === "ok" ? result.warnings : [...result.errors, ...result.warnings];
+  const found = all.filter((d) => d.code === code).at(nth);
+  if (!found) throw new Error(`expected ${code} #${nth} in ${JSON.stringify(source)}`);
+  return { message: found.message, col: found.pos.col };
+}
+
+const W0214 = (source: string, line = 6, nth = 0): Diagnostic => ({
   code: "W0214",
   kind: "fmt-placeholder-argument-mismatch",
-  message: "fmt template and arguments disagree: {1} has no argument",
-  line: 6,
-  col: 27,
+  line,
   severity: "warning",
-};
+  ...relayed(source, "W0214", nth),
+});
 
-const E0103: Diagnostic = {
+const E0103 = (source: string, line = 6): Diagnostic => ({
   code: "E0103",
   kind: "undef-ref",
-  message: 'Reference to undefined name "total"',
-  line: 6,
-  col: 49,
+  line,
   severity: "error",
-};
+  ...relayed(source, "E0103"),
+});
+
+// The compiled module of `source`, and the preview document the playground builds from it.
+function compiledJs(source: string): string {
+  const result = compileToJs(source);
+  if (result.kind !== "ok") throw new Error(`expected ${JSON.stringify(source)} to compile`);
+  return result.js;
+}
+const previewOf = (source: string): string => buildSrcdoc(compiledJs(source));
 
 const PARSE_ERROR = "tile = = =";
 const LEX_ERROR = 'slot x : Int = "unterminated';
@@ -77,21 +116,30 @@ describe("playground preview", () => {
   it("previews a program with no diagnostics", () => {
     const { playground, last } = mounted();
     playground.preview(CLEAN);
-    expect(last()).toMatchObject({ source: CLEAN, diagnostics: [] });
-    expect(last()?.srcdoc).toContain('<script type="module">');
+    expect(last()).toEqual({ source: CLEAN, diagnostics: [], srcdoc: previewOf(CLEAN) });
   });
 
   it("previews a program whose only diagnostics are warnings, and lists the warnings", () => {
     const { playground, last } = mounted();
     playground.preview(WARNING_ONLY);
-    expect(last()?.diagnostics).toEqual([W0214]);
-    expect(last()?.srcdoc).toContain('<script type="module">');
+    expect(last()).toEqual({
+      source: WARNING_ONLY,
+      diagnostics: [W0214(WARNING_ONLY)],
+      srcdoc: previewOf(WARNING_ONLY),
+    });
   });
 
-  it("shows no preview for a program with an error, and lists every diagnostic", () => {
+  it.each([
+    { given: "after", source: WITH_ERROR, warningLine: 6, errorLine: 6 },
+    { given: "before", source: ERROR_FIRST, warningLine: 4, errorLine: 3 },
+  ])("shows no preview for a program with an error $given its warning, and lists the warning first", (c) => {
     const { playground, last } = mounted();
-    playground.preview(WITH_ERROR);
-    expect(last()).toEqual({ source: WITH_ERROR, diagnostics: [E0103, W0214], srcdoc: "" });
+    playground.preview(c.source);
+    expect(last()).toEqual({
+      source: c.source,
+      diagnostics: [W0214(c.source, c.warningLine), E0103(c.source, c.errorLine)],
+      srcdoc: "",
+    });
   });
 
   it.each(UNPARSABLE)("reports $given as the compiler's E0000, at its position", (c) => {
@@ -111,7 +159,7 @@ describe("playground preview", () => {
     if (!example) throw new Error("the playground has no examples");
     expect(playground.loadExample(example.name)).toBe(true);
     expect(last()?.source).toBe(example.source);
-    expect(last()?.srcdoc).toContain('<script type="module">');
+    expect(last()?.srcdoc).toBe(previewOf(example.source));
     expect(playground.loadExample("does-not-exist.kumiki")).toBe(false);
     expect(shown).toHaveLength(1);
   });
@@ -120,19 +168,19 @@ describe("playground preview", () => {
 describe("kumiki_compile", () => {
   it.each([
     { given: "no diagnostics", source: CLEAN, diagnostics: [] },
-    { given: "only warnings", source: WARNING_ONLY, diagnostics: [W0214] },
+    { given: "only warnings", source: WARNING_ONLY, diagnostics: [W0214(WARNING_ONLY)] },
   ])("compiles a program with $given and lists them", ({ source, diagnostics }) => {
     expect(mounted().playground.compileSource(source)).toEqual({
       ok: true,
-      jsBytes: expect.any(Number),
+      jsBytes: compiledJs(source).length,
       diagnostics,
     });
   });
 
-  it("fails a program with an error and lists every diagnostic", () => {
-    expect(mounted().playground.compileSource(WITH_ERROR)).toEqual({
+  it("fails a program with an error and lists the warnings, then the errors", () => {
+    expect(mounted().playground.compileSource(ERROR_FIRST)).toEqual({
       ok: false,
-      diagnostics: [E0103, W0214],
+      diagnostics: [W0214(ERROR_FIRST, 4), E0103(ERROR_FIRST, 3)],
     });
   });
 
@@ -154,12 +202,23 @@ describe("kumiki_set_source", () => {
   it.each([
     { given: "no diagnostics", source: CLEAN, headline: "ok", diagnostics: [] },
     {
-      given: "only warnings",
+      given: "a warning",
       source: WARNING_ONLY,
       headline: "ok (1 warning)",
-      diagnostics: [W0214],
+      diagnostics: [W0214(WARNING_ONLY)],
     },
-    { given: "an error", source: WITH_ERROR, headline: null, diagnostics: [E0103, W0214] },
+    {
+      given: "two warnings",
+      source: TWO_WARNINGS,
+      headline: "ok (2 warnings)",
+      diagnostics: [W0214(TWO_WARNINGS, 6, 0), W0214(TWO_WARNINGS, 6, 1)],
+    },
+    {
+      given: "an error",
+      source: ERROR_FIRST,
+      headline: null,
+      diagnostics: [W0214(ERROR_FIRST, 4), E0103(ERROR_FIRST, 3)],
+    },
     {
       given: "a parse error",
       source: PARSE_ERROR,
@@ -170,6 +229,62 @@ describe("kumiki_set_source", () => {
     const { playground, last } = mounted();
     expect(answered(playground.setSource(source))).toEqual({ headline, diagnostics });
     expect(last()?.source).toBe(source);
+  });
+});
+
+describe("a throw from the compiler that is no lex or parse error", () => {
+  const thrown = new TypeError("boom");
+  const INTERNAL: Diagnostic = {
+    code: "internal-error",
+    kind: "internal-error",
+    message: "Internal compiler error: TypeError: boom",
+    line: 1,
+    col: 1,
+    severity: "error",
+  };
+
+  // The next compile throws `thrown`; what the playground logs of it is returned.
+  function compilerThrows() {
+    vi.mocked(compileToJs).mockImplementationOnce(() => {
+      throw thrown;
+    });
+    return vi.spyOn(console, "error").mockImplementation(() => {});
+  }
+
+  it("replaces the last preview with the fault, shows the new source, and logs the throw", () => {
+    const { playground, last } = mounted();
+    playground.preview(CLEAN);
+    const logged = compilerThrows();
+    expect(playground.preview(WARNING_ONLY)).toEqual({ diagnostics: [INTERNAL], js: null });
+    expect(last()).toEqual({ source: WARNING_ONLY, diagnostics: [INTERNAL], srcdoc: "" });
+    expect(logged).toHaveBeenCalledWith(expect.any(String), thrown);
+  });
+
+  it("loads the example into the editor all the same", () => {
+    const { playground, last } = mounted();
+    const example = examples.at(0);
+    if (!example) throw new Error("the playground has no examples");
+    compilerThrows();
+    expect(playground.loadExample(example.name)).toBe(true);
+    expect(last()).toEqual({ source: example.source, diagnostics: [INTERNAL], srcdoc: "" });
+  });
+
+  it("answers kumiki_set_source with the fault, and shows the source", () => {
+    const { playground, last } = mounted();
+    compilerThrows();
+    expect(answered(playground.setSource(CLEAN))).toEqual({
+      headline: null,
+      diagnostics: [INTERNAL],
+    });
+    expect(last()?.source).toBe(CLEAN);
+  });
+
+  it("answers kumiki_compile with the fault", () => {
+    compilerThrows();
+    expect(mounted().playground.compileSource(CLEAN)).toEqual({
+      ok: false,
+      diagnostics: [INTERNAL],
+    });
   });
 });
 
