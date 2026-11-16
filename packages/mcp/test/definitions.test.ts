@@ -1,6 +1,7 @@
 import { appendFileSync, copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CASCADE_HELP, lockDef } from "@kumikijs/cli";
+import { feature } from "@kumikijs/examples";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -10,6 +11,9 @@ import {
   callTool,
   errorMessage,
   FIX_COUNTER_TESTS,
+  FIX_COUNTER_TYPO,
+  FIX_COUNTER_TYPO_WITH_TEST,
+  FIX_FAILING_SINGLE,
   listTools,
   useWorkdir,
   withClient,
@@ -201,6 +205,141 @@ describe("ownership locks", () => {
     expect(existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
   });
 
+  // The repair tools are held to the same check before they write.
+  const lockedBy = (qname: string): Record<string, string> => ({
+    reason: "locked",
+    message: `lock violation: ${qname} is locked by agent:a (pattern "reducer.*"). Set KUMIKI_AUTHOR=agent:a to edit.`,
+  });
+
+  /** A copy of `fixture` with `pattern` locked by agent:a, run as `agent`, and the copy's source. */
+  const lockedCopy = (
+    fixture: string,
+    name: string,
+    { pattern = "reducer.*", agent = "agent:b" } = {},
+  ): { file: string; source: string } => {
+    const file = join(workdir.path, name);
+    copyFileSync(fixture, file);
+    lockDef(file, "agent:a", pattern);
+    process.env.KUMIKI_AUTHOR = agent;
+    return { file, source: readFileSync(file, "utf8") };
+  };
+
+  it("kumiki_fix with apply is refused when the repair changes a locked definition", async () => {
+    const { file, source } = lockedCopy(FIX_COUNTER_TYPO, "typo.kumiki");
+    const res = await callOnce("kumiki_fix", { path: file, apply: true });
+    expect(res.isError).toBe(true);
+    const parsed = JSON.parse(res.body) as {
+      applied: number;
+      remaining: { code: string }[];
+      blocked?: unknown;
+    };
+    expect(parsed.applied).toBe(0);
+    expect(parsed.blocked).toEqual(lockedBy("reducer.inc"));
+    expect(parsed.remaining.map((d) => d.code)).toEqual(["E0103"]);
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
+  it("kumiki_auto_patch with apply is refused when the repair changes a locked definition", {
+    timeout: 30000,
+  }, async () => {
+    const { file, source } = lockedCopy(FIX_COUNTER_TYPO_WITH_TEST, "typo-with-test.kumiki");
+    const res = await callOnce("kumiki_auto_patch", {
+      path: file,
+      testName: "inc-works",
+      apply: true,
+    });
+    expect(res.isError).toBe(true);
+    const parsed = JSON.parse(res.body) as {
+      status: string;
+      compileErrors?: { code: string }[];
+      blocked?: unknown;
+    };
+    expect(parsed.status).toBe("compile-blocked");
+    expect(parsed.blocked).toEqual(lockedBy("reducer.inc"));
+    expect(parsed.compileErrors?.map((d) => d.code)).toEqual(["E0103"]);
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
+  it("kumiki_auto_patch with apply refuses a behavioural patch to a locked definition", {
+    timeout: 30000,
+  }, async () => {
+    const { file, source } = lockedCopy(FIX_FAILING_SINGLE, "failing.kumiki");
+    const res = await callOnce("kumiki_auto_patch", {
+      path: file,
+      testName: "greet-should-say-planet",
+      apply: true,
+    });
+    expect(res.isError).toBe(true);
+    const parsed = JSON.parse(res.body) as { status: string; blocked?: unknown };
+    expect(parsed.status).toBe("test-blocked");
+    expect(parsed.blocked).toEqual(lockedBy("reducer.greet"));
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
+  // A lock refuses only what another agent holds: these are written as with no lock at all.
+  const NOT_REFUSED: [string, { pattern: string; agent: string }][] = [
+    ["for the lock's owner", { pattern: "reducer.*", agent: "agent:a" }],
+    ["under a lock on no definition the repair changes", { pattern: "slot.*", agent: "agent:b" }],
+  ];
+
+  it.each(NOT_REFUSED)("kumiki_fix with apply writes the repair %s", async (_, {
+    pattern,
+    agent,
+  }) => {
+    const { file, source } = lockedCopy(FIX_COUNTER_TYPO, "typo.kumiki", { pattern, agent });
+    const res = await callOnce("kumiki_fix", { path: file, apply: true });
+    expect(res.isError).toBe(false);
+    const parsed = JSON.parse(res.body) as { applied: number; blocked?: unknown };
+    expect(parsed).toMatchObject({ applied: 1 });
+    expect(parsed.blocked).toBeUndefined();
+    expect(readFileSync(file, "utf8")).toBe(source.replace("conut", "count"));
+  });
+
+  it.each(NOT_REFUSED)(
+    "kumiki_auto_patch with apply writes the behavioural patch %s",
+    {
+      timeout: 30000,
+    },
+    async (_, { pattern, agent }) => {
+      const { file, source } = lockedCopy(FIX_FAILING_SINGLE, "failing.kumiki", { pattern, agent });
+      const res = await callOnce("kumiki_auto_patch", {
+        path: file,
+        testName: "greet-should-say-planet",
+        apply: true,
+      });
+      expect(res.isError).toBe(false);
+      expect(JSON.parse(res.body)).toMatchObject({ ok: true, status: "applied" });
+      expect(readFileSync(file, "utf8")).toBe(source.replace(':= "world"', ':= "planet"'));
+    },
+  );
+
+  it("kumiki_fix proposes the same repairs under a lock on everything, on a dry run", async () => {
+    const file = join(workdir.path, "typo.kumiki");
+    copyFileSync(FIX_COUNTER_TYPO, file);
+    const unlocked = await callOnce("kumiki_fix", { path: file });
+    lockDef(file, "agent:a", "*");
+    process.env.KUMIKI_AUTHOR = "agent:b";
+    const locked = await callOnce("kumiki_fix", { path: file });
+    expect(unlocked.body).toContain('replace "conut" with "count"');
+    expect(locked).toEqual(unlocked);
+  });
+
+  it("kumiki_auto_patch proposes the patch under a lock on everything, on a dry run", {
+    timeout: 30000,
+  }, async () => {
+    const { file, source } = lockedCopy(FIX_FAILING_SINGLE, "failing.kumiki", { pattern: "*" });
+    const res = await callOnce("kumiki_auto_patch", {
+      path: file,
+      testName: "greet-should-say-planet",
+    });
+    expect(JSON.parse(res.body)).toMatchObject({
+      ok: true,
+      status: "proposed",
+      patch: { description: expect.stringContaining('replace "world" with "planet"') },
+    });
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
   it("each editing tool refuses a lock file not in the shape `lock` writes, writing nothing", async () => {
     const file = join(workdir.path, "c.kumiki");
     copyFileSync(COUNTER, file);
@@ -228,6 +367,73 @@ describe("ownership locks", () => {
     expect(readFileSync(file, "utf8")).toBe(source);
     expect(readFileSync(locks, "utf8")).toBe(held);
     expect(existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
+  });
+
+  it.each([
+    ["kumiki_fix", FIX_COUNTER_TYPO, { apply: true }],
+    ["kumiki_auto_patch", FIX_COUNTER_TYPO_WITH_TEST, { testName: "inc-works", apply: true }],
+  ] as const)(
+    "%s with apply refuses a lock file not in the shape `lock` writes, writing nothing",
+    {
+      timeout: 30000,
+    },
+    async (tool, fixture, args) => {
+      const file = join(workdir.path, `${tool}.kumiki`);
+      copyFileSync(fixture, file);
+      const locks = `${file}.kumiki-locks.json`;
+      const held = '{"entries":[{"agent":"agent:a","patterns":"slot.*"}]}\n';
+      writeFileSync(locks, held);
+      const source = readFileSync(file, "utf8");
+      const res = await callOnce(tool, { path: file, ...args });
+      expect(res.isError).toBe(true);
+      expect(errorMessage(res.body)).toBe(
+        `Lock file "${locks}" is unreadable: entries[0].patterns is not a list. Fix it to the shape \`lock\` writes, {"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}]}, or delete it to release every lock.`,
+      );
+      expect(JSON.parse(res.body).error.kind).toBe("lock-file");
+      expect(readFileSync(file, "utf8")).toBe(source);
+      expect(readFileSync(locks, "utf8")).toBe(held);
+    },
+  );
+});
+
+describe("a tile's name written as a child, beside a slot of the same name", () => {
+  // `badge` is a slot and a tile: `Shelf` writes it as a child, where it is the tile, and `Notes`
+  // reads it where a value belongs, where it is the slot.
+  const workdir = useWorkdir();
+  let file: string;
+  beforeEach(() => {
+    file = join(workdir.path, "app.kumiki");
+    copyFileSync(feature("290-tile-name-as-child"), file);
+  });
+  const lineOf = (start: string): number =>
+    readFileSync(file, "utf8")
+      .split("\n")
+      .findIndex((line) => line.startsWith(start)) + 1;
+
+  it("is a reference to the tile for kumiki_refs and kumiki_remove", async () => {
+    const shelf = `tile.Shelf @ line ${lineOf("tile Shelf ")}`;
+    const notes = `tile.Notes @ line ${lineOf("tile Notes ")}`;
+    await withClient(async (client) => {
+      expect(await callTool(client, "kumiki_refs", { path: file, name: "tile.badge" })).toBe(shelf);
+      expect(await callTool(client, "kumiki_refs", { path: file, name: "slot.badge" })).toBe(notes);
+      const out = await callTool(client, "kumiki_remove", {
+        path: file,
+        name: "slot.badge",
+        cascade: true,
+      });
+      expect(out).toContain("removed slot.badge");
+      expect(out).toContain("tile.Notes");
+      expect(out).not.toContain("tile.Shelf");
+    });
+  });
+
+  it("is renamed with the tile by kumiki_rename, and the slot's read is not", async () => {
+    await withClient(async (client) => {
+      await callTool(client, "kumiki_rename", { path: file, name: "tile.badge", newName: "twig" });
+      const out = readFileSync(file, "utf8");
+      expect(out).toContain("tile Shelf = column(plain, twig, stamp)");
+      expect(out).toContain(`text("slot: " + badge)`);
+    });
   });
 });
 

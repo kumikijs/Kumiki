@@ -1,12 +1,24 @@
-import type { AppDef, FnDef, Program, TileDef, TypeDef } from "./ast.ts";
+import {
+  type AppDef,
+  type FnDef,
+  isTileExpr,
+  type Program,
+  type TileDef,
+  type TypeDef,
+} from "./ast.ts";
 import {
   aliasTarget,
-  boundaryTarget,
-  expansionTargets,
+  type Expansion,
+  expansionDepths,
   findCycles,
   type GraphEdge,
   nodesOnCycles,
+  type PlacedEdge,
+  type TileExpansion,
+  tileExpansion,
+  treeExpansion,
 } from "./def-graph.ts";
+import { MAX_NESTING_DEPTH } from "./parser.ts";
 import { buildDefIndex, type DefIndex, referencesIn } from "./references.ts";
 import { isReservedTypeName, STDLIB_TYPES } from "./stdlib-types.ts";
 import { constructorTags, qualifierCandidates, unionsByTag } from "./symbols.ts";
@@ -20,7 +32,7 @@ import { routeChainResolver } from "./typecheck/route-chain.ts";
 import { checkSlot } from "./typecheck/slot.ts";
 import { checkTest } from "./typecheck/test.ts";
 import { checkTile } from "./typecheck/tile.ts";
-import { collectElementIds, collectPrefetchTargets } from "./typecheck/tile-collect.ts";
+import { collectElementIds, collectPrefetchTargets, tileKinds } from "./typecheck/tile-collect.ts";
 import { checkTypeDef, reservedTypeName } from "./typecheck/types.ts";
 import { describeDuplicate, findDuplicateDefinitions, findDuplicateNames } from "./uniqueness.ts";
 
@@ -85,11 +97,15 @@ function checkAll(
   iconDomain: Set<string>,
 ): KumikiError[] {
   const errors: KumikiError[] = [];
+  // Registered before anything reads them: the kinds below are worked out once per tile and kept.
+  const tiles: ReadonlyMap<string, TileDef> = new Map(
+    program.defs.flatMap((d) => (d.kind === "TileDef" ? [[d.name, d] as const] : [])),
+  );
   const sym: SymbolTable = {
     types: new Map(STDLIB_TYPES.map((t) => [t.name, t])),
     slots: new Map(),
     reducers: new Map(),
-    tiles: new Map(),
+    tiles,
     fns: new Map(),
     effects: new Map(),
     timerNames: new Set(),
@@ -105,6 +121,7 @@ function checkAll(
     fnResults: new Map(),
     fnLoops: new Set(),
     unionsByTag: unionsByTag(program.defs),
+    tileKinds: tileKinds(tiles),
   };
 
   for (const def of program.defs) {
@@ -129,9 +146,6 @@ function checkAll(
             sym.timerNames.add(def.on.name);
           }
         }
-        break;
-      case "TileDef":
-        sym.tiles.set(def.name, def);
         break;
       case "FnDef":
         sym.fns.set(def.name, def);
@@ -215,15 +229,12 @@ function checkCycles(
   errors: KumikiError[],
 ): void {
   const tiles = program.defs.filter((d): d is TileDef => d.kind === "TileDef");
-  const tileEdges = (name: string): readonly GraphEdge[] => {
-    const def = sym.tiles.get(name);
-    if (!def) return [];
-    const boundary = boundaryTarget(def);
-    const targets = boundary
-      ? [...expansionTargets(def.body), boundary]
-      : expansionTargets(def.body);
-    return targets.filter((e) => sym.tiles.has(e.to));
-  };
+  const tileGraph = new Map<string, TileExpansion>();
+  for (const [name, def] of sym.tiles) {
+    const { depth, edges } = tileExpansion(def);
+    tileGraph.set(name, { depth, edges: edges.filter((e) => sym.tiles.has(e.to)) });
+  }
+  const tileEdges = (name: string): readonly PlacedEdge[] => tileGraph.get(name)?.edges ?? [];
   for (const cycle of findCycles(
     tiles.map((t) => t.name),
     tileEdges,
@@ -235,6 +246,12 @@ function checkCycles(
       pos: cycle.pos,
     });
   }
+  const expectedTrees = program.defs.flatMap((d) =>
+    d.kind === "TestDef" && d.testKind === "tile-test" && d.expect && isTileExpr(d.expect)
+      ? [{ test: d.name, ...treeExpansion(d.expect, d.expectDepth ?? 0) }]
+      : [],
+  );
+  checkTileDepth(tileGraph, expectedTrees, errors);
 
   const fns = program.defs.filter((d): d is FnDef => d.kind === "FnDef");
   for (const cycle of findCycles(
@@ -268,4 +285,91 @@ function checkCycles(
       pos: cycle.pos,
     });
   }
+}
+
+/** A tile-test's expected tree, which code generation builds by inlining tiles as it does a tile's. */
+type ExpectedTree = TileExpansion & { readonly test: string };
+
+// A tree with nothing inlined on its deepest path is one definition, which the parser holds to
+// the bound with room for its boundary, so a report always has a call to point at.
+function checkTileDepth(
+  tileGraph: ReadonlyMap<string, TileExpansion>,
+  expectedTrees: readonly ExpectedTree[],
+  errors: KumikiError[],
+): void {
+  const known = (edges: readonly PlacedEdge[]) => edges.filter((e) => tileGraph.has(e.to));
+  const edgesOf = (name: string): readonly PlacedEdge[] => tileGraph.get(name)?.edges ?? [];
+  const ownDepth = (name: string): number => tileGraph.get(name)?.depth ?? 0;
+  const depths = expansionDepths(tileGraph.keys(), edgesOf, ownDepth);
+  const inside = new Set<string>();
+  for (const name of depths.keys()) for (const e of edgesOf(name)) inside.add(e.to);
+  const over = (name: string): boolean => (depths.get(name)?.depth ?? 0) > MAX_NESTING_DEPTH;
+
+  // Fixing the one report for a tree nothing measured expands into fixes every tree inside it.
+  for (const name of tileGraph.keys()) {
+    const root = depths.get(name);
+    if (!root || root.depth <= MAX_NESTING_DEPTH || inside.has(name)) continue;
+    const where = whereDepthGoesOver(root.via, name, depths, ownDepth);
+    errors.push({
+      code: "E0237",
+      kind: "tile-depth",
+      message: `Tile "${name}" nests ${root.depth} levels deep once the tiles in it are inlined, past the limit of ${MAX_NESTING_DEPTH}; it goes over where ${where.from} expands into "${where.edge.to}"`,
+      pos: where.edge.pos,
+    });
+  }
+
+  // A tile the tree expands into that is over on its own is reported as a tile.
+  for (const tree of expectedTrees) {
+    const edges = known(tree.edges);
+    if (edges.some((e) => !depths.has(e.to) || over(e.to))) continue;
+    const root = deepest(tree.depth, edges, depths);
+    if (root.depth <= MAX_NESTING_DEPTH) continue;
+    const where = whereDepthGoesOver(root.via, null, depths, ownDepth);
+    errors.push({
+      code: "E0237",
+      kind: "tile-depth",
+      message: `The expected tree of tile-test "${tree.test}" nests ${root.depth} levels deep once the tiles in it are inlined, past the limit of ${MAX_NESTING_DEPTH}; it goes over where ${where.from} expands into "${where.edge.to}"`,
+      pos: where.edge.pos,
+    });
+  }
+}
+
+function deepest(
+  own: number,
+  edges: readonly PlacedEdge[],
+  depths: ReadonlyMap<string, Expansion>,
+): Expansion {
+  let best: Expansion = { depth: own, via: null };
+  for (const edge of edges) {
+    const depth = edge.level + (depths.get(edge.to)?.depth ?? 0);
+    if (depth > best.depth) best = { depth, via: edge };
+  }
+  return best;
+}
+
+/**
+ * Down the deepest path from `first`, the first edge whose target's own body reaches past the
+ * bound. `root` is the tile the path starts in, or `null` for a tile-test's expected tree.
+ */
+function whereDepthGoesOver(
+  first: PlacedEdge | null,
+  root: string | null,
+  depths: ReadonlyMap<string, Expansion>,
+  ownDepth: (name: string) => number,
+): { readonly from: string; readonly edge: PlacedEdge } {
+  const label = (name: string | null) => (name === null ? "the expected tree" : `"${name}"`);
+  let base = 0;
+  let from = root;
+  let last: { readonly from: string; readonly edge: PlacedEdge } | null = null;
+  for (let edge = first; edge; edge = depths.get(edge.to)?.via ?? null) {
+    last = { from: label(from), edge };
+    const at = base + edge.level;
+    if (at + ownDepth(edge.to) > MAX_NESTING_DEPTH) return last;
+    base = at;
+    from = edge.to;
+  }
+  if (last) return last;
+  throw new Error(
+    `E0237: ${label(root)} is over the nesting limit with nothing inlined on its deepest path, which the parser should have refused`,
+  );
 }

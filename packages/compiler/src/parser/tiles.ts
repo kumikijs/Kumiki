@@ -11,7 +11,7 @@ function isCapitalised(name: string): boolean {
 
 export class TileParser extends StatementParser {
   protected parseTileExpr(): TileExpr {
-    return this.descend(() => this.parseTileExprNested());
+    return this.descend(() => this.parseTileExprNested(), true);
   }
 
   protected parseTileExprNested(): TileExpr {
@@ -21,7 +21,14 @@ export class TileParser extends StatementParser {
       this.eat("kw", "in");
       const iter = this.parseExpr();
       const body = this.parseTileExpr();
-      return { kind: "TileFor", bind: bindTok.value, iter, body, pos: start.pos };
+      return {
+        kind: "TileFor",
+        bind: bindTok.value,
+        bindPos: bindTok.pos,
+        iter,
+        body,
+        pos: start.pos,
+      };
     }
     if (this.matchKw("when")) {
       const start = this.next();
@@ -48,7 +55,7 @@ export class TileParser extends StatementParser {
   }
 
   protected parseTileCall(): TileExpr {
-    return this.descend(() => this.parseTileCallNested());
+    return this.descend(() => this.parseTileCallNested(), true);
   }
 
   protected parseTileCallNested(): TileExpr {

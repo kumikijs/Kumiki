@@ -41,6 +41,8 @@ export type TestDef = {
   given: Expr;
   /** `expect = { slots, effects }` / `{ panic }` (record) for reducer-test; a tile expression for tile-test; `episode-test` uses a record (`{slots-equal, no-panics, ...}`). */
   expect?: Expr | TileExpr;
+  /** `tile-test` only: how many levels the expected tree nests, counted as `TileDef.depth` is. */
+  expectDepth?: number;
   /** `property-test` only: the `for-all = { name: Type }` generators. */
   forAll?: { name: string; type: TypeExpr; pos: Pos }[];
   /** `property-test` only: the boolean `invariant` expression checked per case. */
@@ -114,6 +116,11 @@ export type TileDef = {
   /** Clauses written more than once — the later one won silently. */
   duplicateClauses?: DuplicateName[];
   body: TileExpr;
+  /**
+   * How many levels the body nests on its own, as the parser counts one definition: its
+   * expressions included, the body's root at level 1 (E0237).
+   */
+  depth: number;
   pos: Pos;
 };
 
@@ -308,10 +315,10 @@ export type UiEventKind =
 
 export type Statement =
   | { kind: "SlotAssign"; lvalue: Lvalue; rhs: Expr; pos: Pos }
-  | { kind: "LetStmt"; name: string; rhs: Expr; pos: Pos }
+  | { kind: "LetStmt"; name: string; namePos: Pos; rhs: Expr; pos: Pos }
   | { kind: "Emit"; effect: string; args: Expr[]; effectPos?: Pos; pos: Pos }
   | { kind: "StopTimer"; name: string; pos: Pos }
-  | { kind: "ForStmt"; bind: string; iter: Expr; body: Statement[]; pos: Pos }
+  | { kind: "ForStmt"; bind: string; bindPos: Pos; iter: Expr; body: Statement[]; pos: Pos }
   | { kind: "IfStmt"; cond: Expr; consequent: Statement[]; alternate: Statement[]; pos: Pos }
   | {
       kind: "MatchStmt";
@@ -393,7 +400,7 @@ type ExprForm =
   | { kind: "Wildcard"; wild: "slot"; slot: string; slotPos: Pos; pos: Pos }
   | { kind: "MatchExpr"; scrutinee: Expr; arms: MatchArm[]; pos: Pos }
   | { kind: "IfExpr"; cond: Expr; consequent: Expr; alternate: Expr; pos: Pos }
-  | { kind: "LetIn"; name: string; value: Expr; body: Expr; pos: Pos }
+  | { kind: "LetIn"; name: string; namePos: Pos; value: Expr; body: Expr; pos: Pos }
   | { kind: "EmitExpr"; effect: string; args: Expr[]; effectPos?: Pos; pos: Pos }
   | { kind: "Variant"; name: string; payload: Expr[]; pos: Pos } // e.g., All, Some(x), Loaded(t)
   | { kind: "TokenRef"; group: string; path: string[]; pos: Pos };
@@ -430,7 +437,7 @@ export type RetryExpr =
 
 export type TileExpr =
   | { kind: "TileCall"; name: string; args: TileArg[]; props: TileProp[]; pos: Pos }
-  | { kind: "TileFor"; bind: string; iter: Expr; body: TileExpr; pos: Pos }
+  | { kind: "TileFor"; bind: string; bindPos: Pos; iter: Expr; body: TileExpr; pos: Pos }
   | { kind: "TileWhen"; cond: Expr; body: TileExpr; pos: Pos }
   | { kind: "TileIf"; cond: Expr; consequent: TileExpr; alternate: TileExpr; pos: Pos }
   | { kind: "TileMatch"; scrutinee: Expr; arms: TileMatchArm[]; pos: Pos };
