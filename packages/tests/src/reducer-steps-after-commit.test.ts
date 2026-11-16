@@ -1,5 +1,5 @@
 import { feature } from "@kumikijs/examples";
-import { createEpisodeLogger, type EpisodeLogger } from "@kumikijs/runtime";
+import { createEpisodeLogger, type EpisodeLogger, type MountedApp } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { mountApp, tick, waitUntil } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
@@ -43,7 +43,7 @@ async function saveOnce(): Promise<Saved> {
   let thrown: unknown;
   try {
     // Straight to the seam a click reaches, so the throw comes back here.
-    app._dispatch?.("save", {});
+    (app as MountedApp)._dispatch("save", {});
   } catch (e) {
     thrown = e;
   }
