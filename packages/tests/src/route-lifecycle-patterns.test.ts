@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFinished } from "vitest";
-import { answer, dialogs } from "./helpers/confirm.ts";
+import { answer, dialogs, removeOverlays } from "./helpers/confirm.ts";
 import { mountSource, navigate, tick } from "./helpers/dom.ts";
 import { answerConfirm, logAfter, navigateTo as nav, stepsAfter } from "./helpers/scenario.ts";
 
@@ -188,9 +188,7 @@ reducer guardS on=route.leave("/s/*")
 `,
     );
     const { app } = await mountSource(src, "/", ["nav.push", "notification.show"]);
-    onTestFinished(() => {
-      for (const el of dialogs()) el.remove();
-    });
+    onTestFinished(removeOverlays);
     await navigate(app, "/s/a");
     await navigate(app, "/s/b");
     expect(dialogs().map((d) => d.textContent)).toEqual([

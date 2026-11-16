@@ -195,6 +195,19 @@ describe("check / switch / radio bind types", () => {
     expect(codes(program(`radio(group="f", value=All, selected=true)`))).not.toContain("W0216");
   });
 
+  it.each([
+    [`radio(group="f", bind=filter) {value: Done}`, []],
+    [`radio(group="f") {bind: filter}`, ["E0225"]],
+    [`radio(group="f", value=X) {bind: filter}`, ["E0216"]],
+    ["check() {bind: name}", ["E0201"]],
+    ["check(bind=flag) {value: true}", ["W0216"]],
+    [`radio(group="f", bind=filter, value=All) {selected: true}`, ["W0216"]],
+  ])("reads bind, value and selected in the {…} block of %s as it reads the arguments", (tile, want) => {
+    const got = codes(program(tile));
+    if (want.length === 0) expect(got).toEqual([]);
+    else expect(got).toEqual(expect.arrayContaining(want));
+  });
+
   it("accepts the bindings the table lists", () => {
     const src = program(
       `column(check(bind=flag), switch(bind=flag), radio(group="f", bind=filter, value=Done))`,
