@@ -180,6 +180,12 @@ slot name : Text where nonempty = ""    # starts invalid — allowed
 reducer clear on=ui.click(Btn) do= name := ""    # rejected — not allowed
 ```
 
+#### What follows a committed batch
+
+Once a batch commits, the reducer's emits are dispatched in the order it emitted them, its `stop-timer`s run, and the page renders what it wrote. Each of these runs whatever the ones before it threw. When one of them throws, such as the dispatch of an emit or a host's episode logger recording the reducer, the later emits are still dispatched, the timers still stop, and the page still renders. A committed batch is never left half-applied.
+
+What threw is then handed on, once the rest has run, as a throw past the reducer's body. On an effect's result each throw is reported as [§10.4.5](#_10-4-5-delivery-of-results) says, and on an `app.error` reducer as its own failure ([lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)). On any other trigger it goes on to whatever ran the reducer, such as the click: the one throw itself, or one `AggregateError` holding each throw in order when several steps threw.
+
 ### 10.3.4 Invariants of DOM Rendering
 
 - **null/undefined child nodes are skipped**. A false branch like `when(false, X)` passes `null` as a child, but `renderTile` ignores it and renders only the siblings
@@ -798,7 +804,7 @@ On effect completion, the result is notified to the runtime as an `<effect-name>
 
 A request delivers **exactly one** result. An invoke that throws is that request's err: on an effect that fails with `Text` ([http.md §6.7](./http.md#_6-7-storage-effects)) its `.err` reducer receives the thrown value's text as that `Text`, and on any other effect the `{message: Text}` of [stdlib.md §2.5](./stdlib.md#_2-5-standard-capabilities).
 
-What throws while that result is being delivered, past the body of a reducer it runs, is not a second result. The dispatch of what the reducer emitted can throw there, and so can a host's episode logger recording the reducer; a tile's own panic in the render after it stays a `tile-render` panic, which the render catches. The request has its one result by then, so its `.err` reducers do not run for it. The throw is an error of the app, reported as a reducer panic is ([lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)): to `console.error`, as a `panic` step on the episode the result belongs to, and to `app.error`, under `category: "effect"` with a `location` naming the effect (`effect "loadNote"`). The page is then rendered with what the reducer wrote, which the throw may have kept from rendering, and a throw from that render is reported the same way. The effect's other reducers on that result still run, as they do after a panic in one's body. A panic inside the body stays a reducer panic, under `category: "reducer"` and `location: reducer "<name>"`.
+What throws while that result is being delivered, past the body of a reducer it runs, is not a second result. The dispatch of what the reducer emitted can throw there, and so can a host's episode logger recording the reducer; a tile's own panic in the render after it stays a `tile-render` panic, which the render catches. The request has its one result by then, so its `.err` reducers do not run for it. The throw is an error of the app, reported as a reducer panic is ([lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)): to `console.error`, as a `panic` step on the episode the result belongs to, and to `app.error`, under `category: "effect"` with a `location` naming the effect (`effect "loadNote"`). Each throw is reported once, a throw from the render after the reducer included, and the page has been rendered with what the reducer wrote by then ([What follows a committed batch](#what-follows-a-committed-batch)). The effect's other reducers on that result still run, as they do after a panic in one's body. A panic inside the body stays a reducer panic, under `category: "reducer"` and `location: reducer "<name>"`.
 
 ### 10.4.6 Implementation of Standard Capabilities
 

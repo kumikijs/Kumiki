@@ -180,6 +180,12 @@ slot name : Text where nonempty = ""    # 不正な値で始まる — 許され
 reducer clear on=ui.click(Btn) do= name := ""    # 拒否される — 許されない
 ```
 
+#### コミットしたバッチの後に続くもの {#what-follows-a-committed-batch}
+
+バッチがコミットされると、reducer の emit は emit した順に dispatch され、その `stop-timer` が実行され、ページは書き込まれた内容を描画する。これらはそれぞれ、それより前のものが throw したかどうかにかかわらず実行される。emit の dispatch や、reducer を記録するホストの episode logger のように、そのどれかが throw しても、後の emit は dispatch され、タイマーは止まり、ページは描画される。コミットしたバッチが中途半端に適用されたまま残ることはない。
+
+throw されたものは、残りがすべて実行された後で、reducer の本体の外の throw として引き渡される。effect の結果では各 throw が [§10.4.5](#_10-4-5-delivery-of-results) のとおりに報告され、`app.error` reducer ではその reducer 自身の失敗として報告される（[lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）。それ以外のトリガーでは、クリックのようにその reducer を実行したものへ渡される。throw した step が 1 つならその throw そのもの、複数ならそれぞれの throw を順に保持する 1 つの `AggregateError` である。
+
 ### 10.3.4 DOM レンダリングの不変条件
 
 - **null/undefined 子ノードは skip される**。`when(false, X)` のような偽分岐は `null` を子に渡すが、`renderTile` はそれを無視して兄弟だけを描画する
@@ -752,7 +758,7 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 
 1 つのリクエストが配送する結果は**ちょうど 1 つ**である。invoke が例外を投げた場合は、それがそのリクエストの err になる。`Text` で失敗する effect（[http.md §6.7](./http.md#_6-7-storage-effects)）では、その `.err` reducer は投げられた値のテキストをその `Text` として受け取り、それ以外の effect では [stdlib.md §2.5](./stdlib.md#_2-5-standard-capabilities) の `{message: Text}` を受け取る。
 
-その結果を配送している最中に、結果が実行する reducer の本体の外で throw されたものは、2 つ目の結果ではない。そこで throw しうるのは、その reducer が emit したものの dispatch や、その reducer を記録するホストの episode logger である。その後の描画でタイル自身が panic した場合は、描画がそれを捕捉し、`tile-render` の panic のままである。リクエストはその時点ですでに 1 つの結果を受け取っているので、そのリクエストに対して `.err` reducer は実行されない。この throw はアプリのエラーであり、reducer の panic と同じように報告される（[lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）。報告先は `console.error`、結果が属する episode の `panic` step、そして `app.error` であり、`category` は `"effect"`、`location` は effect を名指す（`effect "loadNote"`）。その後、reducer が書き込んだ内容でページが描画される。throw によってその描画が行われていなかった場合があるからであり、その描画が throw したものも同じように報告される。その結果に対する effect の他の reducer は、本体の panic の後と同じく、引き続き実行される。本体の中の panic は reducer の panic のままであり、`category` は `"reducer"`、`location` は `reducer "<name>"` となる。
+その結果を配送している最中に、結果が実行する reducer の本体の外で throw されたものは、2 つ目の結果ではない。そこで throw しうるのは、その reducer が emit したものの dispatch や、その reducer を記録するホストの episode logger である。その後の描画でタイル自身が panic した場合は、描画がそれを捕捉し、`tile-render` の panic のままである。リクエストはその時点ですでに 1 つの結果を受け取っているので、そのリクエストに対して `.err` reducer は実行されない。この throw はアプリのエラーであり、reducer の panic と同じように報告される（[lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）。報告先は `console.error`、結果が属する episode の `panic` step、そして `app.error` であり、`category` は `"effect"`、`location` は effect を名指す（`effect "loadNote"`）。各 throw は、reducer の後の描画が throw したものも含めて 1 回ずつ報告され、その時点でページは reducer が書き込んだ内容で描画されている（[コミットしたバッチの後に続くもの](#what-follows-a-committed-batch)）。その結果に対する effect の他の reducer は、本体の panic の後と同じく、引き続き実行される。本体の中の panic は reducer の panic のままであり、`category` は `"reducer"`、`location` は `reducer "<name>"` となる。
 
 ### 10.4.6 標準 capability の実装
 

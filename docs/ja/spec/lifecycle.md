@@ -170,7 +170,7 @@ reducer onPanic
         emit toast({kind: "error", text: "Something went wrong"})
 ```
 
-`app.error` reducer には、1 つの失敗が 1 回だけ伝えられる。その reducer 自身の失敗、つまり本体の中の panic や、それが emit したものの dispatch のような本体の外の throw は、`console.error` と、`category: "reducer"` で自身の `location`（`reducer "onPanic"`）を持つ `panic` step として報告され、もう一度 `app.error` に伝えられることはない。他の `app.error` reducer は引き続き実行され、それらに伝えられた失敗を報告した側の処理も続く。たとえば、ある結果に対する effect の他の reducer がそうである（[runtime.md §10.4.5](./runtime.md#_10-4-5-delivery-of-results)）。
+`app.error` reducer には、1 つの失敗が 1 回だけ伝えられる。その reducer 自身の失敗、つまり本体の中の panic や、それが emit したものの dispatch のような本体の外の throw は、`console.error` と、`category: "reducer"` で自身の `location`（`reducer "onPanic"`）を持つ `panic` step として報告され、もう一度 `app.error` に伝えられることはない。複数の step が throw した場合は、そのそれぞれがこのように報告される（[runtime.md](./runtime.md#what-follows-a-committed-batch)）。他の `app.error` reducer は引き続き実行され、それらに伝えられた失敗を報告した側の処理も続く。たとえば、ある結果に対する effect の他の reducer がそうである（[runtime.md §10.4.5](./runtime.md#_10-4-5-delivery-of-results)）。
 
 `PanicInfo` の型。[標準ライブラリ](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)が提供し、プログラムは名指すだけで宣言はしない（[E0231](./errors.md#e0231-reserved-type-name)）：
 

@@ -392,13 +392,14 @@ export function mountCore(
     inPanicHandler = true;
     try {
       for (const h of handlers) {
+        // A throw past an `app.error` reducer's body, such as the dispatch of what it emitted,
+        // is reported as a panic in its body is: not to `app.error` again, and the other
+        // handlers and whatever reported this failure carry on.
+        const ownFailure = (e: unknown): void => handleLivePanic(`reducer "${h.name}"`, e, h.name);
         try {
-          applyReducer(h, { $event: info });
+          applyReducer(h, { $event: info }, ownFailure);
         } catch (e) {
-          // A throw past an `app.error` reducer's body, such as the dispatch of what it emitted,
-          // is reported as a panic in its body is: not to `app.error` again, and the other
-          // handlers and whatever reported this failure carry on.
-          handleLivePanic(`reducer "${h.name}"`, e, h.name);
+          ownFailure(e);
         }
       }
     } finally {
@@ -426,8 +427,9 @@ export function mountCore(
 
   /**
    * Run `r` on `payload` inside an episode, opening one when none is open. A panic inside the
-   * body is reported by {@link applyReducerBody}. `escaped`, when given, takes what throws past
-   * the body, while that episode is still open; without it the throw goes on to the caller.
+   * body is reported by {@link applyReducerBody}. `escaped`, when given, takes each throw past
+   * the body in turn, while that episode is still open. Without it they go on to the caller: the
+   * one throw, or an `AggregateError` holding each when several steps threw.
    */
   function applyReducer(
     r: ReducerSpec,
@@ -441,39 +443,65 @@ export function mountCore(
       episode.beginTrigger({ kind: t.kind, target: t.target, payload });
     }
     try {
-      applyReducerBody(r, payload);
-    } catch (e) {
-      if (!escaped) throw e;
-      escaped(e);
+      let failed: unknown[];
+      try {
+        failed = applyReducerBody(r, payload);
+      } catch (e) {
+        failed = [e];
+      }
+      if (failed.length === 0) return;
+      if (escaped) {
+        for (const e of failed) escaped(e);
+        return;
+      }
+      throw failed.length === 1
+        ? failed[0]
+        : new AggregateError(failed, `${failed.length} steps after reducer "${r.name}" threw`);
     } finally {
       if (opened) episode?.endTrigger();
     }
   }
 
-  /** {@link applyReducer}'s body, minus the episode bracket it runs inside. */
-  function applyReducerBody(r: ReducerSpec, payload: Record<string, unknown>): void {
+  /**
+   * {@link applyReducer}'s body, minus the episode bracket it runs inside. Once the batch has
+   * committed, each step after it runs whatever the ones before it threw, so a batch is never left
+   * half-applied. What the steps threw is handed back, in order.
+   */
+  function applyReducerBody(r: ReducerSpec, payload: Record<string, unknown>): unknown[] {
     const outcome = withEnvRecord(() => r.apply(slotValues, payload));
     const envReads = outcome.env.reads;
     if (!outcome.ok) {
       handleLivePanic(`reducer "${r.name}"`, outcome.error, r.name, envReads);
-      return;
+      return [];
     }
     const result = outcome.value;
     const { diffs, dirty, rejected } = computeSlotDiffs(slotValues, result, app.slots);
     if (rejected.length > 0) {
       reportRejectedBatch(r.name, rejected);
       episode?.recordReducer(r.name, [], [], envReads);
-      return;
+      return [];
     }
-    episode?.recordReducer(
-      r.name,
-      diffs,
-      result.emits.map((e) => e.effect),
-      envReads,
+    const failed: unknown[] = [];
+    const step = (run: () => void): void => {
+      try {
+        run();
+      } catch (e) {
+        failed.push(e);
+      }
+    };
+    step(() =>
+      episode?.recordReducer(
+        r.name,
+        diffs,
+        result.emits.map((e) => e.effect),
+        envReads,
+      ),
     );
     for (const emit of result.emits) {
-      navigation.noteEmit(emit.effect);
-      dispatcher.dispatch(emit);
+      step(() => {
+        navigation.noteEmit(emit.effect);
+        dispatcher.dispatch(emit);
+      });
     }
     for (const name of result.stopTimers ?? []) {
       const h = namedTimers.get(name);
@@ -482,10 +510,11 @@ export function mountCore(
         namedTimers.delete(name);
       }
     }
-    render();
+    step(() => render());
     if (dirty.length > 0) {
-      episode?.recordSignalUpdate(dirty, Array.from(new Set(lastRenderTouched)));
+      step(() => episode?.recordSignalUpdate(dirty, Array.from(new Set(lastRenderTouched))));
     }
+    return failed;
   }
 
   function handleEffectResult(
@@ -498,20 +527,12 @@ export function mountCore(
     const exitScope = episode?.recordEffectEnd(token, effect, outcome, value);
     // What throws past a reducer's body here, such as the dispatch of what it emitted or the
     // episode logger recording its render, is not another result: the request already has its
-    // one. It is an error of the app, reported as a reducer panic is. `escaped` cannot throw, so
-    // the effect's other reducers still run after it.
+    // one. Each such throw is an error of the app, reported as a reducer panic is. `escaped`
+    // cannot throw, so the effect's other reducers still run after it.
     const location = `effect "${effect}"`;
     const escaped = (e: unknown): void => {
       reportPanic(location, e);
       fireAppError(panicInfo(e, "effect"), location);
-      // The body committed its slots before the throw, which may have skipped the render. What
-      // that render throws in turn, such as a `tile.mount` reducer's emit, is reported the same way.
-      try {
-        render();
-      } catch (again) {
-        reportPanic(location, again);
-        fireAppError(panicInfo(again, "effect"), location);
-      }
     };
     let matched = 0;
     try {
