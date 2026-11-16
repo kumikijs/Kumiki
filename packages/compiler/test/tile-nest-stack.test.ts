@@ -7,8 +7,10 @@ import { scratchRoot } from "./helpers/scratch.ts";
 const TMP = scratchRoot(import.meta.url);
 
 // CI runs on Linux, where V8 parsed the same modules up to 1.3 times as deep as on Windows, so
-// each module is parsed on 77% of V8's default 984 KB stack rather than on the one it inherits.
-const STACK_KB = 757;
+// each module is parsed on 77% of V8's default 984 KB stack rather than on the one it inherits. On
+// Windows the module keeps the default, which is the room the smaller stack stands in for:
+// shrinking it there as well would leave less than any app on Windows gets.
+const STACK_KB = process.platform === "win32" ? 984 : 757;
 
 // Each check starts a `node` process.
 const RUNS = { timeout: 60_000 } as const;
