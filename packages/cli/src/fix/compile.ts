@@ -15,9 +15,10 @@ import {
   typeCandidates,
   variantTagsOf,
 } from "@kumikijs/compiler";
+import { touchedLockViolation } from "../mutate/commit.ts";
 import { listDefs, load, type Store } from "../store.ts";
 import { messageOf } from "../text.ts";
-import { atomicWriteFileSync } from "../write-lock.ts";
+import { atomicWriteFileSync, withWriteLock } from "../write-lock.ts";
 import {
   type AutoPatch,
   type CompilePatch,
@@ -128,6 +129,17 @@ function variantTag(prefix: string, anchored: boolean): Planner {
   });
 }
 
+/**
+ * A read outside the nested scope that declares the name, after it ended or before it begins, is
+ * out of scope, not misspelled: a renamed read can type-check, and the regression gate then counts
+ * it as resolved.
+ */
+function outOfScopeReason(err: KumikiError): Declined | undefined {
+  if (err.endedScope !== undefined) return { reason: "e0103-read-after-scope-ended" };
+  if (err.laterScope !== undefined) return { reason: "e0103-read-before-scope-begins" };
+  return undefined;
+}
+
 // Each kind is repaired from the namespace its diagnostic suggests from: a slot
 // or tile proposed for a callee is E0116 again at the same position.
 const UNDEFINED_NAME: ReadonlyMap<string, Planner> = new Map([
@@ -185,12 +197,7 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   ["E0102", anyDefinition], // undef-reducer
   [
     "E0103", // undef-ref / undef-slot
-    // A read after the scope that declared it ended is out of scope, not misspelled: a renamed
-    // read can type-check, and the regression gate then counts it as resolved.
-    (err, store) =>
-      err.endedScope !== undefined
-        ? { reason: "e0103-read-after-scope-ended" }
-        : anyDefinition(err, store),
+    (err, store) => outOfScopeReason(err) ?? anyDefinition(err, store),
   ],
   ["E0105", undefinedTile], // undef-tile
   ["E0107", anyDefinition], // undef-motion
@@ -432,7 +439,8 @@ export type FixApplyResult = {
   blocked?:
     | { reason: "introduced"; introduced: KumikiError[] }
     | { reason: "resolved-none" }
-    | { reason: "parse-error"; message: string };
+    | { reason: "parse-error"; message: string }
+    | { reason: "locked"; message: string };
   writeError?: string;
   skipped: SkipReason[];
 };
@@ -472,6 +480,15 @@ export function applyFixPlan(
   if (applied === 0) {
     return { ...nothingWritten(plan, before), remaining: plan.errors };
   }
+  // Before the gate: a repair the lock refuses is refused whatever the gate would say, unchecked.
+  const locked = touchedLockViolation(path, before, after);
+  if (locked !== undefined) {
+    return {
+      ...nothingWritten(plan, before),
+      remaining: plan.errors,
+      blocked: { reason: "locked", message: locked },
+    };
+  }
   const gate = gateComposed(plan.errors, after, capabilities);
   if (gate.blocked !== undefined) {
     return {
@@ -482,14 +499,9 @@ export function applyFixPlan(
       ...(gate.blocked.reason === "parse-error" ? { parseError: gate.blocked.message } : {}),
     };
   }
-  try {
-    atomicWriteFileSync(path, after);
-  } catch (e) {
-    return {
-      ...nothingWritten(plan, before, applied),
-      remaining: plan.errors,
-      writeError: messageOf(e),
-    };
+  const refused = writeFix(path, before, after);
+  if (refused !== undefined) {
+    return { ...nothingWritten(plan, before, applied), remaining: plan.errors, ...refused };
   }
   return {
     applied,
@@ -502,9 +514,41 @@ export function applyFixPlan(
   };
 }
 
+/** Why a write `fix` made did not land; each member is the field it becomes on the result. */
+type WriteRefusal =
+  | { blocked: Extract<NonNullable<FixApplyResult["blocked"]>, { reason: "locked" }> }
+  | { writeError: string };
+
+/**
+ * The one place `fix` writes a source. Under the write lock, as the mutators write, so the file
+ * and the ownership lock are read as they are now, not as they were when the repair was planned
+ * on `before`: a file another writer changed since is left as it is, and every repair is held to
+ * the lock.
+ */
+export function writeFix(path: string, before: string, after: string): WriteRefusal | undefined {
+  try {
+    return withWriteLock(path, (): WriteRefusal | undefined => {
+      if (readFileSync(path, "utf8") !== before) {
+        return {
+          writeError: `${path} changed since the repair was planned; nothing was written. Run fix again.`,
+        };
+      }
+      const locked = touchedLockViolation(path, before, after);
+      if (locked !== undefined) return { blocked: { reason: "locked", message: locked } };
+      atomicWriteFileSync(path, after);
+      return undefined;
+    });
+  } catch (e) {
+    return { writeError: messageOf(e) };
+  }
+}
+
 export type GateVerdict =
   | { blocked?: undefined; remaining: KumikiError[]; warnings: KumikiError[] }
-  | { blocked: NonNullable<FixApplyResult["blocked"]>; remaining: KumikiError[] };
+  | {
+      blocked: Exclude<NonNullable<FixApplyResult["blocked"]>, { reason: "locked" }>;
+      remaining: KumikiError[];
+    };
 
 /** Accepts the composed patches only if they resolve something and introduce nothing. */
 export function gateComposed(

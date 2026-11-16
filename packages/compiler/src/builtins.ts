@@ -1,4 +1,5 @@
-import type { TileArg, TileExpr } from "./ast.ts";
+import type { Expr, TileArg, TileExpr } from "./ast.ts";
+import { isTileExpr } from "./ast.ts";
 
 export const BUILTIN_TILES = new Set<string>([
   // Structural
@@ -101,6 +102,20 @@ export const CHILD_RENDERING_BUILTINS: ReadonlySet<string> = new Set([
 // what the checker accepts there as a child is what renders.
 export function positionalIsTile(name: string): boolean {
   return CHILD_RENDERING_BUILTINS.has(name);
+}
+
+// A tile's name at a child position is that tile, whatever else shares the name; the checker and
+// the reference graph read it through here so they agree with codegen.
+export function tileNamedAt<D>(
+  callee: string,
+  arg: TileArg,
+  tileNamed: (name: string) => D | undefined,
+): { readonly ref: Expr & { kind: "Ref" }; readonly def: D } | undefined {
+  const v = arg.value;
+  if (arg.name !== undefined || !positionalIsTile(callee)) return undefined;
+  if (isTileExpr(v) || v.kind !== "Ref") return undefined;
+  const def = tileNamed(v.name);
+  return def === undefined ? undefined : { ref: v, def };
 }
 
 // The parser reads a positional argument as a tile, and a capitalised handler as a tile call, on
