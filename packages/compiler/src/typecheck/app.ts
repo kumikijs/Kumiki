@@ -4,6 +4,7 @@ import { checkAgainst, checkEmitTarget, type LiteralDomain } from "./against.ts"
 import { type Ctx, type KumikiError, pureScope, type SymbolTable } from "./context.ts";
 import { checkExpr } from "./expr.ts";
 import { container, prim } from "./infer.ts";
+import { nestedScopes } from "./nested-scopes.ts";
 import {
   notFoundEntry,
   type RouteChainResolver,
@@ -69,6 +70,8 @@ export function checkApp(
     capsAvailable: new Set(app.caps),
     routeBind: "unbound",
     endedScopes: new Map(),
+    nestedScopes: nestedScopes(...app.init),
+    rootsShareNoExpression: true,
   };
   for (const e of app.init) {
     if (e.kind !== "Call") {
@@ -109,8 +112,9 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
       pos: handler.pos,
     });
   }
-  const fieldCtx = pureScope([]);
-  for (const e of [http.baseUrl, http.headers, http.timeout, http.credentials]) {
+  const fields = [http.baseUrl, http.headers, http.timeout, http.credentials];
+  const fieldCtx: Ctx = { ...pureScope([], ...fields), rootsShareNoExpression: true };
+  for (const e of fields) {
     if (e !== undefined) checkExpr(e, sym, errors, fieldCtx);
   }
   if (http.baseUrl !== undefined)

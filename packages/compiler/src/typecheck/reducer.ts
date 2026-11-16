@@ -28,8 +28,9 @@ import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
+import { nestedScopes } from "./nested-scopes.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
-import { bindsRoute, namedByHandler, subscribedKinds, subscriptionIds } from "./tile-collect.ts";
+import { bindsRoute, namedByHandler, subscriptionIds } from "./tile-collect.ts";
 
 /** The scope a reducer's statements are checked in. */
 type ReducerCtx = Ctx & {
@@ -46,6 +47,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     capsAvailable: new Set(sym.app?.caps ?? []),
     routeBind: routeBindOf(r, sym),
     endedScopes: new Map(),
+    nestedScopes: nestedScopes(r.do),
     endedInBody: new Set(),
   };
   if (r.on.kind === "EffectEvent") {
@@ -136,7 +138,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     const { ev, selector } = r.on;
     const allowed = UI_EVENT_TILE_KINDS[ev];
     if (allowed != null) {
-      const descendants = subscribedKinds(selector.tile, sym);
+      const descendants = sym.tileKinds.subscribed(selector.tile);
       const hasMatch = [...descendants].some((k) => allowed.has(k));
       if (descendants.size > 0 && !hasMatch) {
         const reason = uiEventMismatchReason(ev, selector.tile, descendants);
