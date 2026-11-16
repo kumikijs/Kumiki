@@ -356,8 +356,8 @@ app A
     expect(loweredOf(source(ev, tile))).not.toContain(`${HANDLER[ev]}: _h("hit")`);
   });
 
-  const lifted = (tile: string): number =>
-    loweredOf(source("key", tile)).split(`onKeyDown: _h("hit")`).length - 1;
+  const lifted = (tile: string, ev: UiEv = "key"): number =>
+    loweredOf(source(ev, tile)).split(`${HANDLER[ev]}: _h("hit")`).length - 1;
 
   // A listener on the <details> as well as the control's own would run the
   // reducer twice per key, since the control's keydown bubbles there. A check
@@ -387,6 +387,18 @@ app A
     expect(codesOf(source("key", scroll))).toEqual([]);
     expect(lifted(scroll)).toBeGreaterThan(0);
     expect(lifted(scroll)).toBe(lifted("box(input(bind=note))"));
+  });
+
+  // Focus does not bubble, so the scroll's listener hears its own <div> alone,
+  // and focus in the input runs the reducer once, from the input's listener.
+  it.each([
+    "column(scroll(text(note)), input(bind=note))",
+    "scroll(input(bind=note))",
+  ])("lifts ui.focus on %s onto the scroll and onto the input", (tile) => {
+    const inputAlone = lifted("box(input(bind=note))", "focus");
+    expect(codesOf(source("focus", tile))).toEqual([]);
+    expect(inputAlone).toBeGreaterThan(0);
+    expect(lifted(tile, "focus")).toBe(2 * inputAlone);
   });
 
   it("leaves ui.change on an editable alone, which is the rule rather than the same gap", () => {

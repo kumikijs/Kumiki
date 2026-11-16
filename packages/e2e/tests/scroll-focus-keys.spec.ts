@@ -19,10 +19,10 @@ test("a key on an overflowing scroll and Tab off it run its handlers", async ({ 
   await expect(page.locator("#pane")).toBeFocused();
   await page.keyboard.press("a");
   expect(await log(page)).toBe("pf pk ");
-  // The Tab's own keydown reaches the scroll before focus leaves it.
+  // The Tab's own keydown reaches the scroll before focus leaves it for the input.
   await page.keyboard.press("Tab");
   await expect(page.locator("#note")).toBeFocused();
-  expect(await log(page)).toBe("pf pk pk pb ");
+  expect(await log(page)).toBe("pf pk pk pb lf ");
 });
 
 test("Tab passes over a scroll that holds a control, onto the control", async ({ page }) => {
@@ -32,9 +32,14 @@ test("Tab passes over a scroll that holds a control, onto the control", async ({
   await expect(page.locator("#list")).not.toBeFocused();
 });
 
-test("a key in the input inside a scroll runs ui.key(List) once", async ({ page }) => {
+// Both run once, though each is lifted onto the scroll as well as the input: focus does not
+// bubble to the scroll's <div>, and the scroll takes no key listener.
+test("focus and a key in the input inside a scroll run ui.focus(List) and ui.key(List) once", async ({
+  page,
+}) => {
   await page.locator("#note").focus();
+  expect(await log(page)).toBe("lf ");
   await page.keyboard.press("x");
-  expect(await log(page)).toBe("t ");
+  expect(await log(page)).toBe("lf t ");
   await expect(page.locator("#note")).toHaveValue("x");
 });

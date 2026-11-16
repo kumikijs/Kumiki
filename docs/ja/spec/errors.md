@@ -840,7 +840,7 @@ reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、その subscrip
 
 **E0212 が沈黙する場合（runtime フィルタが権威となる）**:
 
-- subscription が配線される要素に id がない。
+- subscription が配線される要素に id がない。`focus` と `blur` では `scroll` がそうした要素で、id を持つことは少ない：`tile Page = column(scroll(text("x")), input(bind=n) {id: "name"})` に対する `ui.focus(Page#typo)` は何も出ず、`scroll` を `box` に置き換えると E0212 になる。
 - その id の値がリテラル文字列ではない式（`Ref`, method call など） — 実行時の値が check 時にはわからない。
 - ハンドラがその reducer を名指している（どこに書かれていても `onClick=r`）: ハンドラが dispatch する reducer も同じ `#id` でフィルタされ、その対象はハンドラを持つ要素である。
 - tile 配下に `<ev>` を reducer に渡す要素がない — それは [W0212](#w0212-ui-event-tile-mismatch-warning) の扱う場合であり、W0212 は走査が要素を 1 つも見つけられない場合を除いて報告する。
@@ -876,13 +876,19 @@ kind の要素が `<ev>` を発火するのに、そのレンダラがハンド�
 
 > `Reducer "hit" subscribes to ui.click(Label) but "click" never reaches a reducer in tile "Label": a text fires "click", and its renderer never calls onClick (DOM-allowed: button, check, switch, radio; observed in body: text). The handler is silently dropped.`
 
-body に `route-outlet` がある場合、route がそこに表示する tile はアプリの実行時には子孫であり、その要素は `<ev>` を発火しうる。その tile は route が実行時に選び、route の対象として単独で描画するので、subscription はそこへ持ち上げられず、その中の何に対しても reducer は実行されない。メッセージはまずその節を述べ、続けて body にある他の kind について上の節を `; ` でつないで述べる。そのいずれかが包みの節であれば `"<ev>" never reaches a listener` で、そうでなければ `"<ev>" never reaches a reducer` で始まる。`tile Shell sub-routes = {"/s/child" -> Child, "/s" -> Home} = column(text("shell"), route-outlet())` なら:
+body に route が埋める `route-outlet` がある場合、route がそこに表示する tile はアプリの実行時には子孫であり、その要素は `<ev>` を発火しうる。route が outlet を埋めるのは、その tile か、それを描画する tile が `sub-routes` を宣言している場合である（[ルーティング §3.6.2](./routing.md#_3-6-2-child-route-map)）。表示する tile は route が実行時に選び、コード生成はその tile をそれ自身の route の対象としてコンパイルするので、subscription はそこへ持ち上げられず、その中の何に対しても reducer は実行されない。メッセージはまずその節を述べ、続けて `route-outlet` を含む body のすべての kind について上の節を `; ` でつないで述べる。そのいずれかが包みの節であれば `"<ev>" never reaches a listener` で、そうでなければ `"<ev>" never reaches a reducer` で始まる。`tile Shell sub-routes = {"/s/child" -> Child, "/s" -> Home} = column(text("shell"), route-outlet())` なら:
 
-> `Reducer "shellKey" subscribes to ui.key(Shell) but "key" never reaches a reducer in tile "Shell": the tile its route-outlet shows is picked by the route at runtime and rendered on its own, so ui.key(Shell) is not lifted onto it — subscribe to that tile instead (DOM-allowed: …; observed in body: column, route-outlet, text). The handler is silently dropped.`
+> `Reducer "shellKey" subscribes to ui.key(Shell) but "key" never reaches a reducer in tile "Shell": the tile its route-outlet shows is picked by the route at runtime and compiled as its own route target, so ui.key(Shell) is not lifted onto it — subscribe to that tile instead (DOM-allowed: …; observed in body: column, route-outlet, text). The handler is silently dropped.`
 >
-> `Reducer "shellClick" subscribes to ui.click(Shell) but "click" never reaches a reducer in tile "Shell": the tile its route-outlet shows is picked by the route at runtime and rendered on its own, so ui.click(Shell) is not lifted onto it — subscribe to that tile instead; a column / text fires "click", and its renderer never calls onClick (DOM-allowed: button, check, switch, radio; observed in body: column, route-outlet, text). The handler is silently dropped.`
+> `Reducer "shellClick" subscribes to ui.click(Shell) but "click" never reaches a reducer in tile "Shell": the tile its route-outlet shows is picked by the route at runtime and compiled as its own route target, so ui.click(Shell) is not lifted onto it — subscribe to that tile instead; a column / route-outlet / text fires "click", and its renderer never calls onClick (DOM-allowed: button, check, switch, radio; observed in body: column, route-outlet, text). The handler is silently dropped.`
+
+route が埋めない outlet には何も表示されないので、その節は付かない：`T` も `T` を描画する tile も `sub-routes` を宣言しないなら、`tile T = column(text("x"), route-outlet())` に対する `ui.key(T)` は最初の形になる。`sub-routes` を宣言した tile を描画する tile も同じで、その tile 自身の sub-routes はそれが route の対象であるときにだけ働く。
 
 body にそのイベントの行に載る kind もある場合も同じことが成り立ち、そのとき W0212 は出ない：`ui.click(Shell)` は Shell 自身の body にある button では実行され、route された tile の中の button では決して実行されない。route された tile への subscription（`ui.click(Child)`）は、route がそれをどこに表示しても実行される。
+
+`<ev>` が `focus` か `blur` で、body のどの `scroll` も、内容がどう描画されても `check`・`radio`・`switch`・`details` のいずれかを含む場合、行に載る kind として数える scroll はない：含むものがその `<div>` を Tab 順から外し、アプリの中にその `<div>` に focus を移すものはない（下の `scroll` の注記を参照）。メッセージは中の control についての節に続けて、そのための節を述べる：
+
+> `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a listener in tile "<Tile>": the runtime listens for "<ev>" on a check's <label>, and the "<ev>" its <input> fires does not bubble to the <label>; the runtime listens for "<ev>" on a scroll's <div>, which is out of the tab order while it holds an element that takes focus, and the "<ev>" fired inside it does not bubble to the <div> (DOM-allowed: …; observed in body: check, scroll). The handler is silently dropped.`
 
 子孫がイベントを発火しないという最初の形は、要素がそのイベントを発火しない kind に対するメッセージである：`box` への `ui.focus`、`editable` への `ui.change`、`text` への `ui.input`。
 
@@ -913,7 +919,7 @@ body にそのイベントの行に載る kind もある場合も同じことが
 
 Chromium では、`controls` があれば Tab は `<video>` に止まり、`focus` / `blur` は focus がそこに入るとき・出るときに発火する。`<video>` が focus を持つ間に押したキーは `ui.key` の reducer に届く。`controls` が無ければ focusable ではない：Tab は素通りし、`.focus()` やクリックでも focus は移らないので、3 つのどれも発火しない。`video` が `controls` を持つかはインスタンスの性質で、コンパイル時の表には見えないため、行はどちらの場合も `video` を載せる。`disabled` な control も同様で、その kind は載っているが focusable ではない。
 
-`scroll` は `focus` と `blur` に載り、`key` には**載らない**。`scroll` は `overflow: auto` の `<div>` を描画する。Chromium では、その内容があふれていて focusable なものを何も含まないとき、Tab はその `<div>` に止まり、`focus` / `keydown` / `blur` は `<div>` 自身で発火する。`.focus()` でも focus が移る。内容が収まっている scroll は Tab が素通りし、`.focus()` でも focus は移らない。focusable な control を含む、あふれた scroll も Tab は素通りし、その control に止まる。scroll があふれるかはインスタンスの性質で、`video` の `controls` と同じなので、`focus` と `blur` の行はどちらの場合も `scroll` を載せる。中にある tile の `focus` / `blur` は `<div>` へバブルしないので、そこにあるリスナは scroll 自身に対してだけ実行される。`keydown` は、`<details>` の場合と同じく、中にあるすべての tile からそこへバブルし、そこにある control のうち `key` 行に載るものには subscription がすでに持ち上げられているので、`<div>` にもリスナを付けると、その control で押したキーごとに reducer が 2 回実行される。W0212 は `ui.key` についてそう述べる。scroll 自身に書いたハンドラ（`scroll(…, onKeyDown=r)`）は、その `<div>` 上のキーにも中からのすべてのキーにも実行されるので、W0213 は scroll 上の 3 つのどれも報告しない。
+`scroll` は `focus` と `blur` に載り、`key` には**載らない**。`scroll` は `overflow: auto` の `<div>` を描画する。Chromium では、その内容があふれていて focusable なものを何も含まないとき、Tab はその `<div>` に止まり、`focus` / `keydown` / `blur` は `<div>` 自身で発火する。`.focus()` でも focus が移る。内容が収まっている scroll は Tab が素通りし、`.focus()` でも focus は移らない。focusable な control を含む、あふれた scroll も Tab は素通りしてその control に止まる。scroll をクリックしてもどちらの場合も focus は移らず、ランタイムが `.focus()` を呼ぶのは `input`・`textarea`・`select`・`editable` と確認ダイアログのボタンだけなので、そうした scroll の `<div>` にアプリの中で focus を移すものはない。ただしアプリの外のスクリプトがそれに `.focus()` を呼べば focus は移る。W0212 は、内容のどの分岐にも `check`・`radio`・`switch`・`details` のいずれかを含む scroll を数えず、何も含まないことがありうる scroll があれば何も出さない：`when`、`for`、それを含まない分岐、開いている間だけ表示される overlay の内容、`disabled` と書いた control、`error-boundary` のフォールバックが何も含まない tile。`input` など行に載る kind を含む scroll も Tab 順から外れるが、その kind が subscription を自分で受ける。scroll があふれるかはインスタンスの性質で、`video` の `controls` と同じなので、`focus` と `blur` の行はどちらの場合も `scroll` を載せる。中にある tile の `focus` / `blur` は `<div>` へバブルしないので、そこにあるリスナは scroll 自身に対してだけ実行される。`keydown` は、`<details>` の場合と同じく、中にあるすべての tile からそこへバブルし、そこにある control のうち `key` 行に載るものには subscription がすでに持ち上げられているので、`<div>` にもリスナを付けると、その control で押したキーごとに reducer が 2 回実行される。W0212 は `ui.key` についてそう述べる。scroll 自身に書いたハンドラ（`scroll(…, onKeyDown=r)`）は、その `<div>` 上のキーにも中からのすべてのキーにも実行されるので、W0213 は scroll 上の 3 つのどれも報告しない。W0213 は scroll が何を含むかを問わないので、ハンドラが実行されることのない `scroll(check(value=d), onFocus=r)` も報告しない。
 
 ### E0213 `call-arity-mismatch`
 

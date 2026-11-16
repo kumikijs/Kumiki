@@ -8,8 +8,9 @@ export type UiLift = {
   /**
    * Kinds left out of `tiles` whose element fires `ev` but whose renderer never calls `handler`,
    * each mapped to the verb phrase W0212 and W0213 print after "its renderer". A kind named
-   * neither here nor in `WRAPPED_KIND` gets the "no descendant fires it" wording, unless the row
-   * sets `everyElementFires`.
+   * neither here nor in `WRAPPED_KIND` gets no clause of its own unless the row sets
+   * `everyElementFires`, bar a `route-outlet` a route fills, of which W0212 says what the outlet
+   * shows. Where no kind gets a clause, W0212 says no descendant fires `ev`.
    */
   readonly firesUnheard?: Readonly<Record<string, string>>;
   /**
@@ -44,6 +45,15 @@ const WRAPPED_KIND = {
 } as const satisfies Record<string, { wrapper: string; focused: string }>;
 
 type WrappedKind = keyof typeof WRAPPED_KIND;
+
+/**
+ * The kinds whose element wraps another that takes focus. A scroll holding one is out of the tab
+ * order, and nothing in the app focuses its `<div>`. A focusable root (an `input`) keeps it out
+ * too, but takes a `focus` or `blur` subscription itself, so W0212 need not ask the scroll.
+ */
+export const WRAPS_FOCUSED: ReadonlySet<string> = new Set(
+  Object.entries(WRAPPED_KIND).flatMap(([kind, at]) => (at.wrapper === at.focused ? [] : [kind])),
+);
 
 function isWrapped(kind: string): kind is WrappedKind {
   return Object.hasOwn(WRAPPED_KIND, kind);
@@ -164,8 +174,8 @@ export function firesUnheardIn(
   return [...byReason].map(([reason, grouped]) => ({ kinds: grouped, reason }));
 }
 
-// W0212 and W0213 both give these as their reason, so the two say the same of
-// a kind.
+// W0212 and W0213 both give these as their reason, each passing every kind it found, so the two
+// say the same of a kind.
 export function firesUnheardClauses(ev: UiEventKind, kinds: Iterable<string>): string[] {
   return firesUnheardIn(ev, kinds).map(
     (g) => `${kindsPhrase(g.kinds)} fires "${ev}", and its renderer ${g.reason}`,
@@ -192,6 +202,16 @@ export function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
     `${kinds} takes no "${ev}" listener on ${on}, ` +
     `since a control ${holding} takes the subscription instead — ` +
     `write ${g.handler}= on the ${g.kinds.join(" / ")} to hear a "${ev}" on its <${g.focused}>`
+  );
+}
+
+/** W0212's clause for a scroll whose content takes focus, which leaves its `<div>` out of the tab order. */
+export function unfocusedScrollClause(ev: UiEventKind): string {
+  const { wrapper } = WRAPPED_KIND.scroll;
+  return (
+    `the runtime listens for "${ev}" on a scroll's <${wrapper}>, which is out of the tab order ` +
+    `while it holds an element that takes focus, and the "${ev}" fired inside it does not bubble ` +
+    `to the <${wrapper}>`
   );
 }
 

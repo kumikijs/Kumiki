@@ -4,21 +4,25 @@
 #   route-outlet  the route picks the tile an outlet shows at runtime, and
 #                 renders that tile on its own, so a subscription on the tile
 #                 holding the outlet is not lifted onto it. `ui.click(Shell)`
-#                 runs for Shell's own button and not for the button `Child`
-#                 puts in its outlet, which runs `ui.click(Child)`. Without
-#                 Shell's button, `ui.click(Shell)` would be W0212, and the
-#                 message says the routed tile is picked at runtime.
+#                 runs for Shell's own button and not for the button in
+#                 `Child`, which the route shows in Shell's outlet and which
+#                 runs `ui.click(Child)`. Without Shell's button,
+#                 `ui.click(Shell)` would be W0212, and the message says the
+#                 routed tile is picked at runtime.
 #   scroll        Chromium puts an overflowing scroll that holds nothing
 #                 focusable in the tab order, and fires `focus`, `keydown` and
 #                 `blur` on its `<div>`. `ui.focus(Pane)` and `ui.blur(Pane)`
 #                 are lifted onto it. `Fits` holds content that fits, so it
-#                 takes no focus and `ui.focus(Fits)` never runs: whether a
-#                 scroll overflows is a property of the instance, as
-#                 `controls` is of a video. `ui.key` is not lifted: a key in a
-#                 control inside a scroll bubbles to its `<div>`, and the
-#                 control carries the subscription already, so `ui.key(List)`
-#                 runs once for a key in `#note`. `onKeyDown=` written on the
-#                 scroll hears a key on its `<div>`.
+#                 takes no focus and `ui.focus(Fits)` never runs in a browser,
+#                 though the listener is there: whether a scroll overflows is
+#                 a property of the instance, as `controls` is of a video.
+#                 `ui.focus(List)` is lifted onto both its scroll and `#note`,
+#                 and runs once when `#note` takes focus: focus does not bubble
+#                 to the scroll's `<div>`. `ui.key` is not lifted onto a
+#                 scroll: a key in a control inside one bubbles to its
+#                 `<div>`, and the control carries the subscription already,
+#                 so `ui.key(List)` runs once for a key in `#note`.
+#                 `onKeyDown=` written on the scroll hears a key on its `<div>`.
 
 slot note : Text = ""
 slot log  : Text = ""
@@ -30,6 +34,7 @@ reducer paneFocus  on=ui.focus(Pane)  do= log := log + "pf "
 reducer paneBlur   on=ui.blur(Pane)   do= log := log + "pb "
 reducer paneKey    on=ui.key(_)       do= log := log + "pk "
 reducer typed      on=ui.key(List)    do= log := log + "t "
+reducer listFocus  on=ui.focus(List)  do= log := log + "lf "
 
 tile Lines = column(
     text("line 1"), text("line 2"), text("line 3"),
