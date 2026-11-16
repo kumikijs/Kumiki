@@ -27,3 +27,23 @@ export const withRoot = (child: string, defs: string): string =>
 /** A type definition's name as a program writes it as a type: applied to `Int` for each parameter. */
 export const appliedName = (t: { name: string; params: readonly string[] }): string =>
   t.params.length === 0 ? t.name : `${t.name}(${t.params.map(() => "Int").join(", ")})`;
+
+/** The nesting bound in language.md, which E0237 holds a tile tree to once its tiles are inlined. */
+export const NESTING_LIMIT = 256;
+
+/**
+ * `n` tiles from `<name><from>` on, each a column around a call to the next and the last a text:
+ * two levels a link, and three for the text, which the parser counts with its string.
+ */
+export function tileChain(n: number, { from = 0, name = "T" } = {}): string[] {
+  return Array.from({ length: n }, (_, i) => {
+    const at = from + i;
+    return i === n - 1
+      ? `tile ${name}${at} = text("leaf")`
+      : `tile ${name}${at} = column(${name}${at + 1})`;
+  });
+}
+
+/** `lines`, after `head`, completed into a program by an app that routes every path to `T0`. */
+export const routedToT0 = (lines: readonly string[], head = ""): string =>
+  `${head}${lines.join("\n")}\napp M caps=[] routes={"/" -> T0, "/404" -> T0} init=[]\n`;
