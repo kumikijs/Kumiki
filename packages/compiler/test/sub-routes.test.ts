@@ -124,6 +124,13 @@ describe("E0113 reads the tiles the body renders", () => {
     ],
     ["that is the whole body, named bare", `tile Outlet = column(route-outlet())`, `Outlet`],
     ["that is the whole body, called", `tile Outlet = column(route-outlet())`, `Outlet()`],
+    // The bare name is the program's tile, as the build renders it, not the builtin `spinner`.
+    [
+      "named like a builtin, written bare",
+      `slot spinner : Text = "s"
+       tile spinner = column(route-outlet())`,
+      `page(heading("s"), spinner)`,
+    ],
   ])("accepts an outlet in a tile %s", (_, defs, body, routes) => {
     expect(checkSource(program(defs, body, routes))).toEqual([]);
   });
