@@ -10,7 +10,7 @@ exactly representable" and "rounded" to itself:
 
 ```
 $ kumiki check bound.kumiki
-E0217 int-literal-precision at 1:17: Int literal -9007199254740992 is not exactly representable and was rounded to -9007199254740992
+error E0217 int-literal-precision at 1:17: Int literal -9007199254740992 is not exactly representable and was rounded to -9007199254740992
 ```
 
 The bound is unchanged, so ±2^53 is still E0217, but the message now says

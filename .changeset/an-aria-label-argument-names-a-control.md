@@ -11,8 +11,8 @@ in the props block only, so a correctly labelled control was rejected:
 
 ```
 $ kumiki check --strict-a11y aria.kumiki
-E0701 a11y-button at 3:10: button must have a text= argument or aria-label prop
-E0703 a11y-link at 4:10: link must have inner text or aria-label
+error E0701 a11y-button at 3:10: button must have a text= argument or aria-label prop
+error E0703 a11y-link at 4:10: link must have inner text or aria-label
 ```
 
 for `button(aria-label="Close")` and `link(to="/", aria-label="Home")`.

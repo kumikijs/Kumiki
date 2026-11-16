@@ -106,17 +106,17 @@ describe("an effect's map-request is checked in the same scope", () => {
   });
 });
 
-/** A program whose one effect takes `in=${input}` and declares `clauses`. */
-function inputApp(input: string, clauses: string): string {
+/** A program whose one effect, on `cap`, takes `in=${input}` and declares `clauses`. */
+function inputApp(input: string, clauses: string, cap = "http.get"): string {
   return `type UserQuery = {id: Text, size: Int}
 type QueryAlias = UserQuery
 type UserId = nominal Text
 type Shape = Circle(Int) | Square(Int)
-effect load cap=http.get in=${input} out=Result(Text, HttpError)
+effect load cap=${cap} in=${input} out=Result(Text, HttpError)
             ${clauses}
 tile B = button(text="b")
 tile Home = column(B)
-app M caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]`;
+app M caps=[${cap}] routes={"/" -> Home, "/404" -> Home} init=[]`;
 }
 
 /** `inputApp` with `url` as the `map-request`'s url. */
@@ -136,15 +136,17 @@ describe("`$1` in an effect's own expressions has the effect's in= type", () => 
     expect(textAt(source, at)).toMatch(/^\$1\.idd/);
   });
 
+  // An http.get request has no body, so the body row sends with http.post.
   it.each([
-    ["map-request", `map-request={url: "/api/users/" + $1.id, decode: Decoder.Text}`],
-    ["the latest-per-key key", "policy=latest-per-key($1.id)"],
+    ["map-request", `map-request={url: "/api/users/" + $1.id, decode: Decoder.Text}`, "http.get"],
+    ["the latest-per-key key", "policy=latest-per-key($1.id)", "http.get"],
     [
       "map-request's query, headers and body",
       `map-request={url: "/u", query: {"size": $1.size.show}, headers: {"X-Id": $1.id}, body: Json({"id": $1.id}), decode: Decoder.Text}`,
+      "http.post",
     ],
-  ])("accepts a field the in= record has, in %s", (_where, clauses) => {
-    expect(codesOf(inputApp("UserQuery", clauses))).toEqual([]);
+  ])("accepts a field the in= record has, in %s", (_where, clauses, cap) => {
+    expect(codesOf(inputApp("UserQuery", clauses, cap))).toEqual([]);
   });
 
   it.each([

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkSource } from "./helpers/diagnostics.ts";
+import { checkSource, posOf } from "./helpers/diagnostics.ts";
 import { compileOrFail } from "./helpers/module.ts";
 import { withRoot } from "./helpers/programs.ts";
 
@@ -56,6 +56,7 @@ describe("a second spelling of one value is reported, as it is not read", () => 
   it.each([
     ["slider(bind=v, value=7, min=0, max=10)"],
     ["slider(bind=v, min=0, max=10) {value: 7}"],
+    ["slider(value=7, min=0, max=10) {bind: v}"],
   ])("warns W0216 on the value beside a bind in %s", (tile) => {
     expect(warned(tile)).toEqual([
       [
@@ -67,6 +68,18 @@ describe("a second spelling of one value is reported, as it is not read", () => 
         ),
       ],
     ]);
+  });
+
+  it.each([
+    ["check(bind=flag, value=true) {value: false}"],
+    ["switch(bind=flag, value=true) {value: false}"],
+    ["slider(bind=v, value=7, min=0, max=10) {value: 8}"],
+  ])("warns W0216 at each spelling of the value in %s", (tile) => {
+    const src = withRoot(tile, "slot v : Int = 3\nslot flag : Bool = true");
+    const at = checkSource(src)
+      .filter((d) => d.code === "W0216")
+      .map((d) => d.pos);
+    expect(at).toEqual([posOf(src, "value="), posOf(src, "value:")]);
   });
 
   it.each([
