@@ -41,6 +41,8 @@ export type TestDef = {
   given: Expr;
   /** `expect = { slots, effects }` / `{ panic }` (record) for reducer-test; a tile expression for tile-test; `episode-test` uses a record (`{slots-equal, no-panics, ...}`). */
   expect?: Expr | TileExpr;
+  /** `tile-test` only: how many levels the expected tree nests, counted as `TileDef.depth` is. */
+  expectDepth?: number;
   /** `property-test` only: the `for-all = { name: Type }` generators. */
   forAll?: { name: string; type: TypeExpr; pos: Pos }[];
   /** `property-test` only: the boolean `invariant` expression checked per case. */
@@ -114,6 +116,11 @@ export type TileDef = {
   /** Clauses written more than once — the later one won silently. */
   duplicateClauses?: DuplicateName[];
   body: TileExpr;
+  /**
+   * How many levels the body nests on its own, as the parser counts one definition: its
+   * expressions included, the body's root at level 1 (E0237).
+   */
+  depth: number;
   pos: Pos;
 };
 

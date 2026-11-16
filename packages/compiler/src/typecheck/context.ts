@@ -16,6 +16,7 @@ import {
 } from "../ast.ts";
 import { callsBuiltin } from "../builtin-calls.ts";
 import { type NestedScopes, nestedScopes } from "./nested-scopes.ts";
+import type { TileKinds } from "./tile-collect.ts";
 
 export type Severity = "error" | "warning";
 
@@ -65,7 +66,7 @@ export type SymbolTable = {
   types: Map<string, TypeDef>;
   slots: Map<string, SlotDef>;
   reducers: Map<string, ReducerDef>;
-  tiles: Map<string, TileDef>;
+  tiles: ReadonlyMap<string, TileDef>;
   fns: Map<string, FnDef>;
   effects: Map<string, EffectDef>;
   /** Names declared by `timer(d, name=N)` triggers — the `stop-timer` namespace. */
@@ -77,6 +78,8 @@ export type SymbolTable = {
   themes: Set<string>;
   iconDomain: Set<string>;
   elementIds: Set<string>;
+  /** The builtin kinds each tile renders, along the edges each check follows. */
+  tileKinds: TileKinds;
   // The program's own tags come first, so a did-you-mean tie goes to one of them.
   constructorTags: ReadonlySet<string>;
   qualifiers: ReadonlySet<string>;

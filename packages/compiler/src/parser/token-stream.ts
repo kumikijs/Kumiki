@@ -9,7 +9,8 @@ export class ParseError extends Error {
   }
 }
 
-const MAX_NESTING_DEPTH = 256;
+// The typechecker holds a tile tree to this bound too, once its user tiles are inlined (E0237).
+export const MAX_NESTING_DEPTH = 256;
 
 /** A chain the parser is reading with a loop; see `TokenStream.startChain`. */
 export interface Chain {
@@ -32,18 +33,21 @@ export class TokenStream {
 
   constructor(protected tokens: Token[]) {}
 
-  /** The one place the budget is refused, so every caller reports alike. */
-  protected refuseDepth(at: Pos): never {
-    throw new ParseError(
-      `Nesting is deeper than ${MAX_NESTING_DEPTH} levels — extract part of this into a definition of its own`,
-      at,
-    );
+  /**
+   * The one place the budget is refused, so every caller reports alike. A tile node's refusal
+   * says what to change differently: a tile it moves out is inlined back where it is called.
+   */
+  protected refuseDepth(at: Pos, tile = false): never {
+    const change = tile
+      ? "moving part of a tile tree into another tile does not help, since every call to a tile is inlined back (E0237): repeat with a `for` over a collection, and choose between alternatives with `when` or `match`"
+      : "extract part of this into a definition of its own";
+    throw new ParseError(`Nesting is deeper than ${MAX_NESTING_DEPTH} levels — ${change}`, at);
   }
 
   /** Reads a node nested in the one being built: one parse deeper and one level deeper. */
-  protected descend<T>(parseNested: () => T): T {
+  protected descend<T>(parseNested: () => T, tile = false): T {
     if (this.depth >= MAX_NESTING_DEPTH || this.level >= MAX_NESTING_DEPTH) {
-      this.refuseDepth(this.peek().pos);
+      this.refuseDepth(this.peek().pos, tile);
     }
     this.depth += 1;
     this.level += 1;
