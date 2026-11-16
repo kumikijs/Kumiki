@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "label": "nothing is sent at mount",
+      "expect": { "noErrors": true, "domIncludes": ["log=", "app.error x0: "] }
+    },
+    {
+      "label": "one click queues two writes, and both arrive with nothing for app.error",
+      "do": { "click": "#send" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "ab", "crashes": 0, "crash": "" },
+        "domIncludes": ["log=ab", "app.error x0: "]
+      }
+    }
+  ]
+}
