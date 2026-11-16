@@ -70,7 +70,7 @@ describe("compile output snapshots", () => {
     expect(js).toContain("_s.freshId()");
     expect(js).toContain('effect: "saveTodos"');
     expect(js).toMatch(/sortedIds\([^)]+\)\)\s*\|\|\s*\[\]\)\.map\(/);
-    expect(js).not.toMatch(/_s\.loopKeys\(/);
+    expect(js).not.toMatch(/_loop\("/);
   });
 
   it("counter: variant equality stays correct", () => {

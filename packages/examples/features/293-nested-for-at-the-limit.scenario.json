@@ -1,0 +1,24 @@
+{
+  "steps": [
+    {
+      "label": "the 250-deep nest renders its one text",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["leaf"]
+      }
+    },
+    {
+      "label": "renaming the text renders the whole nest again",
+      "do": {
+        "click": "#rename"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "label": "renamed"
+        },
+        "domIncludes": ["renamed"]
+      }
+    }
+  ]
+}

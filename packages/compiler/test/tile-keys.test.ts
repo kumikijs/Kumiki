@@ -76,10 +76,9 @@ describe("stable tile identity (key)", () => {
   }
 
   function implicitKeyOf(js: string, bind: string): string {
-    const m = new RegExp(`\\.map\\(\\(${bind}, (__fi\\w+)\\) =>`).exec(js);
+    const m = new RegExp(`, \\(${bind}, (__fk\\w+)\\) =>`).exec(js);
     if (!m) throw new Error(`no for over ${bind} in the emitted JS`);
-    const index = m[1] as string;
-    return `${index.replace("__fi", "__fk")}[${index}]`;
+    return m[1] as string;
   }
 
   it("lifts an explicit {key: expr} on a builtin tile call to a top-level `key` field", () => {
@@ -189,9 +188,7 @@ describe("stable tile identity (key)", () => {
   });
 
   function loopNamesIn(js: string): string[] {
-    const names = Array.from(js.matchAll(/_s\.loopKeys\(__xs, ("[^"]*")\)/g), (m) =>
-      JSON.parse(m[1] as string),
-    );
+    const names = Array.from(js.matchAll(/_loop\(("[^"]*"), /g), (m) => JSON.parse(m[1] as string));
     return [...new Set(names)];
   }
 
