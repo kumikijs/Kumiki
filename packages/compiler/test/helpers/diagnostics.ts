@@ -30,6 +30,10 @@ export const reservedTypeNameMessage = (name: string, meaning = "the standard li
 export const reservedEffectNameMessage = (name: string): string =>
   `Effect "${name}" collides with the built-in effect ${name}; emits of it never run this effect`;
 
+/** E0240's message, for a record field written under the name the runtime marks a variant with. */
+export const reservedFieldNameMessage =
+  'Record field "_tag" is reserved: the runtime marks a variant with a field of that name, so a record that has one is read as a variant. Name the field something else — "tag"';
+
 /** E0235's message, for a `null` written where an expression goes. */
 export const nullValueMessage =
   "`null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one";
