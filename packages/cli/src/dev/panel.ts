@@ -261,6 +261,12 @@ function formatStep(step: EpisodeStep): string {
         .join(", ");
       return `[reducer] ${step.name}${diffs ? `  ${diffs}` : ""}`;
     }
+    case "bind": {
+      const diffs = step["slot-diffs"]
+        .map((d) => `${d.name}: ${safeStringify(d.before, 0)} → ${safeStringify(d.after, 0)}`)
+        .join(", ");
+      return `[bind] ${step.slot}${diffs ? `  ${diffs}` : ""}`;
+    }
     case "effect-start":
       return `[effect-start] ${step.name}(${safeStringify(step.args, 0)})`;
     case "effect-end":

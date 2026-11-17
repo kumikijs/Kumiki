@@ -1,0 +1,38 @@
+# Feature (runtime.md, testing.md): a write a `bind=` control makes is
+# journalled, so the log of a form someone filled in and submitted replays to
+# where the run ended.
+#
+# Typing "milk" into the bound input writes draft := "milk", and no reducer
+# makes that write. It opens an episode of its own, `ui.input` on `draft`,
+# whose one `bind` step carries the value typed. The submit's `add` then
+# reads draft. Replay makes the bind write again before it runs `add`, so
+# `add` pushes "milk", as it did in the run, not the "" draft starts at.
+#
+# The fixture next to this file was recorded from the scenario with
+# `kumiki run --episode-log`. `replay-bug-report` replays it and expects the
+# slots the log recorded.
+#
+# `packages/tests/src/bind-write-replay.test.ts` records the scenario, replays
+# the log it wrote, and runs `replay-bug-report` over that log and over the
+# fixture.
+
+slot draft : Text       = ""
+slot items : List(Text) = []
+
+reducer add on=ui.submit(AddForm)
+    do= items := items.push(draft)
+        draft := ""
+
+tile AddForm = form(input(bind=draft))
+tile App     = column(AddForm, column(for t in items text(t) {key: t})) {pad: "md", gap: "sm"}
+
+app BindWriteReplay
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+test replay-bug-report =
+    episode-test
+        load   = "287-bind-write-replay.fixture.jsonl"
+        mocks  = {}
+        expect = {slots-equal: from-log, no-panics: true}

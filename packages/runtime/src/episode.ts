@@ -1,3 +1,5 @@
+import { type BindSegment, bindLabel } from "./core/path.ts";
+
 export type EpisodeTrigger = {
   kind: string;
   /** Tile name, lifecycle name, route pattern — interpretation depends on `kind`. */
@@ -30,6 +32,17 @@ export type EpisodeStep =
       "slot-diffs": SlotDiff[];
       emits: string[];
       "env-reads"?: EnvRead[];
+      ts: number;
+    }
+  | {
+      kind: "bind";
+      /** The slot a bound control wrote. */
+      slot: string;
+      /** Where in that slot, for a control bound through a path; absent for the slot itself. */
+      path?: BindSegment[];
+      /** What the control wrote, at `path`. */
+      value: unknown;
+      "slot-diffs": SlotDiff[];
       ts: number;
     }
   | { kind: "effect-start"; name: string; args: unknown; ts: number }
@@ -110,6 +123,12 @@ export type EpisodeLoggerOptions = {
   onEpisode?: (ep: Episode) => void;
 };
 
+/** What {@link EpisodeLogger.recordBind} reads of the app: the slot's value before, and whether it is volatile. */
+export type BindJournalApp = {
+  live?: Record<string, unknown>;
+  slots: Record<string, { value: unknown; volatile?: boolean | undefined } | undefined>;
+};
+
 export type EpisodeLogger = {
   beginTrigger(t: Omit<EpisodeTrigger, "ts"> & { ts?: number }): string;
   endTrigger(): void;
@@ -118,6 +137,19 @@ export type EpisodeLogger = {
     slotDiffs: SlotDiff[],
     emits: string[],
     envReads?: readonly EnvRead[],
+  ): void;
+  /**
+   * Journal a write a bound control is about to make, as an episode of its own: `after` is the
+   * slot's value once it lands, `value` what the control wrote at `path`. A write with no control
+   * behind it, or to a `volatile` slot, is not journalled.
+   */
+  recordBind(
+    control: Element | undefined,
+    app: BindJournalApp,
+    slot: string,
+    after: unknown,
+    path: readonly BindSegment[] | undefined,
+    value: unknown,
   ): void;
   recordEffectStart(name: string, args: unknown): string;
   recordEffectEnd(token: string, name: string, result: "ok" | "err", value: unknown): () => void;
@@ -147,6 +179,14 @@ export type EpisodeLogger = {
   hasOpenEpisode(): boolean;
   currentId(): string | undefined;
 };
+
+/** The event a bound control writes on: `change` for a choice (a select, a box, a radio), `input` for the rest. */
+function bindTrigger(control: Element): "ui.input" | "ui.change" {
+  const type = (control as HTMLInputElement).type;
+  return control.tagName === "SELECT" || type === "checkbox" || type === "radio"
+    ? "ui.change"
+    : "ui.input";
+}
 
 function defaultIdGen(): () => string {
   const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -295,6 +335,28 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
         ...(envReads !== undefined && envReads.length > 0 ? { "env-reads": envReads.slice() } : {}),
         ts: now(),
       });
+    },
+    recordBind(control, app, slot, after, path = [], value) {
+      if (!control || app.slots[slot]?.volatile) return;
+      const ts = now();
+      // Committed as it opens: a bind runs no reducer and emits nothing, so nothing follows it.
+      const ep: Episode = {
+        id: idGen(),
+        trigger: { kind: bindTrigger(control), target: bindLabel(slot, path), ts },
+        steps: [
+          {
+            kind: "bind",
+            slot,
+            ...(path.length > 0 ? { path: [...path] } : {}),
+            value,
+            "slot-diffs": [{ name: slot, before: app.live?.[slot], after }],
+            ts,
+          },
+        ],
+        status: "completed",
+      };
+      open(ep);
+      store(ep);
     },
     recordEffectStart(name, args) {
       const ep = topEpisode();
