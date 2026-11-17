@@ -27,8 +27,19 @@ function validate(
   } catch (e) {
     return { ok: false, message: `Parse/lex failed: ${String(e)}` };
   }
-  const locked = lockViolation(path, touchedDefinitions(before, src));
+  const locked = touchedLockViolation(path, before, src);
   return locked === undefined ? { ok: true } : { ok: false, message: locked };
+}
+
+// Every edit of a source asks this under the write lock, just before it writes — the mutators
+// through `validate`, `fix` in `writeFix` — so a definition is held to its lock whichever way the
+// edit reached it. A write that puts the file back as it was before a failed op asks nothing.
+export function touchedLockViolation(
+  path: string,
+  before: string,
+  after: string,
+): string | undefined {
+  return lockViolation(path, touchedDefinitions(before, after));
 }
 
 function touchedDefinitions(before: string, after: string): string[] {

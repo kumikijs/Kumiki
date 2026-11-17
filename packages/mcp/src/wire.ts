@@ -1,4 +1,10 @@
-import type { AutoPatch, FixFromTestOutcome } from "@kumikijs/cli";
+import {
+  type AutoPatch,
+  type FixApplyResult,
+  type FixFromTestOutcome,
+  type TestPatchBlock,
+  UnreadableLockFileError,
+} from "@kumikijs/cli";
 import { type KumikiError, type Severity, severityOf } from "@kumikijs/compiler";
 import { CapabilityManifestError } from "@kumikijs/compiler/node";
 
@@ -18,12 +24,28 @@ export function text(...parts: string[]) {
   return { content: parts.map((s) => ({ type: "text" as const, text: s })) };
 }
 
-export function failed(s: string) {
-  return { ...text(s), isError: true };
+export function failed(...parts: string[]) {
+  return { ...text(...parts), isError: true };
+}
+
+export const RUN_WARNINGS =
+  "When the compile it runs first succeeds with warnings, a second content item holds them, `warnings:` followed by a JSON list of diagnostics, whether the run then passed or failed; a warning does not fail it. A compile that fails runs nothing: the result is `isError` and its one item is the `{error: {kind, message}}` envelope, whose message lists every diagnostic, the warnings first.";
+
+// A second item rather than a suffix, so the first stays what the tool answers for a file
+// with no warning and a client can use it as it stands: the `includeJs` module, the test report's JSON.
+// The label marks where the first item ends for a client that joins the items into one text.
+export function withWarnings(head: string, warnings: KumikiError[]): string[] {
+  if (warnings.length === 0) return [head];
+  return [head, `warnings:\n${json(toDiagnostics(warnings))}`];
 }
 
 export function errText(e: unknown) {
-  const kind = e instanceof CapabilityManifestError ? "capability-manifest" : "error";
+  const kind =
+    e instanceof CapabilityManifestError
+      ? "capability-manifest"
+      : e instanceof UnreadableLockFileError
+        ? "lock-file"
+        : "error";
   const message = e instanceof Error ? e.message : String(e);
   return failed(JSON.stringify({ error: { kind, message } }, null, 2));
 }
@@ -41,6 +63,15 @@ export function toDiagnostics(errors: KumikiError[]): Diagnostic[] {
     col: e.pos.col,
     severity: severityOf(e),
   }));
+}
+
+/** Each `reason` keeps its own payload, so reading `reason` alone is never misleading. */
+export function blockedWire(
+  b: NonNullable<FixApplyResult["blocked"]> | TestPatchBlock,
+): Record<string, unknown> {
+  return b.reason === "introduced"
+    ? { reason: b.reason, introduced: toDiagnostics(b.introduced) }
+    : b;
 }
 
 export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
@@ -69,12 +100,7 @@ export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unkn
       return {
         ...base,
         compileErrors: toDiagnostics(o.compileErrors),
-        blocked:
-          o.blocked.reason === "introduced"
-            ? { reason: o.blocked.reason, introduced: toDiagnostics(o.blocked.introduced) }
-            : o.blocked.reason === "parse-error"
-              ? { reason: o.blocked.reason, message: o.blocked.message }
-              : { reason: o.blocked.reason },
+        blocked: blockedWire(o.blocked),
       };
     case "compile-remaining":
       return {
@@ -96,18 +122,13 @@ export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unkn
         regressed: o.regressed,
         ...withCompileFixes,
       };
-    case "test-blocked": {
-      const b = o.blocked;
+    case "test-blocked":
       return {
         ...base,
         patch: patchWire(o.patch),
-        blocked:
-          b.reason === "introduced"
-            ? { reason: b.reason, introduced: toDiagnostics(b.introduced) }
-            : b,
+        blocked: blockedWire(o.blocked),
         ...withCompileFixes,
       };
-    }
     case "write-failed":
       return {
         ...base,
