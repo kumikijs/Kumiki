@@ -7,7 +7,7 @@ import { loadApp, loadSource } from "./helpers/load.ts";
 import { failureDetail } from "./helpers/scenario.ts";
 
 const PATTERN = "yyyy-MM-dd HH:mm";
-// What `format(PATTERN)` renders for a value that names no instant (stdlib.md, Time).
+// What `format(PATTERN)` renders for a value that names no instant (stdlib.md, the Time type).
 const NO_INSTANT = "0NaN-NaN-NaN NaN:NaN";
 
 describe("format reads a Time held as text by Time.parse's grammar", () => {
@@ -55,9 +55,9 @@ describe("format reads a Time held as text by Time.parse's grammar", () => {
 
 describe("format on a Time the program keeps in a Set", () => {
   // A Set stores its elements as object keys, which are text; `filter` hands each one back as
-  // the number it was added as, so `format` reads the instant rather than the digits. A failed
-  // parse lands on its own arm instead of on a fallback instant, which `now` would make pass for
-  // the right year whenever the clock reads that year.
+  // the number it was added as, so `format` reads the instant rather than the digits.
+  // No fallback instant: the only other way to make a Time here is `now`, which passes the year
+  // check whenever the clock reads 2026.
   it("keeps an element whose year filter reads through format", async () => {
     const shape = await loadSource(`
 slot days : Set(Time) = {}
@@ -75,6 +75,9 @@ app A
       steps: [{ do: { dispatch: "go" }, expect: { noErrors: true } }],
     });
     expect(report.ok, failureDetail(report)).toBe(true);
-    expect(shape.live?.kept).toBe(1);
+    expect(
+      shape.live?.kept,
+      "-1: reducer never ran, -2: Time.parse failed, 0: Set readback broke",
+    ).toBe(1);
   });
 });
