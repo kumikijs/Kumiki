@@ -3,10 +3,12 @@
 #
 #   prices.fold(0, $1 + $2)     # an Int init, a Float result: $1 : Float
 #   prices.fold(0, addPrice)    # addPrice($1, $2), with $1 : Float
+#   prices.fold(0, if $2 > 2.0 then $1 + $2 else $1)
+#                               # an Int branch beside a Float one: a Float
 #
 # A fragment whose result fits neither way is E0201, at the fragment, or at
-# the fn's name when it is named bare. Each of these would hand its second
-# step a Text where it reads an Int:
+# the fn's name when it is named bare. Each of these answers a Text into an
+# Int accumulator, which the next step is handed:
 #
 #   fn step(acc: Int, x: Int) -> Text = (acc + x).show
 #   counts.fold(0, step)        # E0201 Expected Int but got Text
@@ -23,6 +25,7 @@ slot counts : List(Int)   = [1, 2, 3]
 
 slot total : Float = 0.0
 slot viaFn : Float = 0.0
+slot big   : Float = 0.0
 slot sum   : Int   = 0
 
 fn addPrice(acc: Float, p: Float) -> Float = acc + p
@@ -30,6 +33,7 @@ fn addPrice(acc: Float, p: Float) -> Float = acc + p
 reducer run on=ui.click(Run)
     do= total := prices.fold(0, $1 + $2)
         viaFn := prices.fold(0, addPrice)
+        big   := prices.fold(0, if $2 > 2.0 then $1 + $2 else $1)
         sum   := counts.fold(0, $1 + $2)
 
 tile Run = button(text="run") {id: "run"}
@@ -38,6 +42,7 @@ tile App = column(
   Run,
   text("total: " + total.show),
   text("via fn: " + viaFn.show),
+  text("over 2: " + big.show),
   text("sum: " + sum.show))
 
 app FoldAccumulatorWidens

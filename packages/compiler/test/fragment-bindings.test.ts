@@ -176,14 +176,71 @@ describe("fold's accumulator is the wider of the init's type and the fragment's 
       slotInit: "0",
     },
     {
-      name: "a Float init and an Int result, which is a Float",
+      name: "a Float init and an Int result, which fits it",
       defs: XS,
       rhs: "xs.fold(0.5, $2)",
       res: "Float",
       slotInit: "0.0",
     },
+    {
+      name: "an Int init and an if whose branches are an Int and a Float",
+      defs: PS,
+      rhs: "ps.fold(0, if $2 > 2.0 then $1 + $2 else $1)",
+      res: "Float",
+      slotInit: "0.0",
+    },
+    {
+      name: "an Int init and an if whose branches are a Float and an Int",
+      defs: PS,
+      rhs: "ps.fold(0, if $2 > 2.0 then $1 else $1 + $2)",
+      res: "Float",
+      slotInit: "0.0",
+    },
+    {
+      name: "a record init whose Int field the fn's record widens to a Float",
+      defs: `type Sum = {n: Float}\nfn step(acc: Sum, p: Float) -> Sum = {n: acc.n + p}\n${PS}`,
+      rhs: "ps.fold({n: 0}, step)",
+      res: "Sum",
+      slotInit: "{n: 0.0}",
+    },
+    {
+      name: "a widened record whose next reading widens it again",
+      defs: PS,
+      rhs: "ps.fold({a: 0, b: 0}, let r = $1 in {a: r.b, b: r.a + $2}).a",
+      res: "Float",
+      slotInit: "0.0",
+    },
   ])("accepts $name", ({ defs, rhs, res, slotInit }) => {
     expect(diagnostics(defs, rhs, res, slotInit)).toEqual([]);
+  });
+
+  it.each([
+    {
+      name: "an if answering [] or a push onto a List(Text) init, which stays a List(Text)",
+      defs: `slot names : List(Text) = []\n${XS}`,
+      rhs: "xs.fold(names, if $2 > 0 then [] else $1.push($2))",
+      res: "List(Text)",
+      slotInit: "[]",
+      want: ["E0201 Expected Text but got Int"],
+    },
+    {
+      name: "an if answering None or a Some onto an Option(Text) init, which stays an Option(Text)",
+      defs: `slot o : Option(Text) = None\n${XS}`,
+      rhs: "xs.fold(o, if $2 > 0 then None else Some($2))",
+      res: "Option(Text)",
+      slotInit: "None",
+      want: ["E0201 Expected Text but got Int"],
+    },
+    {
+      name: "the show of a Map init, a Text the Map is not",
+      defs: `slot m : Map(Text, Int) = {"a": 1}\n${XS}`,
+      rhs: "xs.fold(m, $1.show)",
+      res: "Text",
+      slotInit: '""',
+      want: ["E0201 Expected Map(Text, Int) but got Text"],
+    },
+  ])("reports $name", ({ defs, rhs, res, slotInit, want }) => {
+    expect(diagnostics(defs, rhs, res, slotInit)).toEqual(want);
   });
 
   it("reports a result neither type fits, at the fragment or at the fn's name", () => {
@@ -338,6 +395,33 @@ describe("a fn named as the fragment is checked as the call it stands for", () =
       res: "Float",
       slotInit: "0.0",
       want: ["E0201 Expected Int but got Float"],
+    },
+    {
+      name: "fold's fn whose Int parameter a Float init does not narrow to",
+      defs: `fn step(acc: Int, x: Int) -> Int = x\n${XS}`,
+      inline: "xs.fold(0.5, step($1, $2))",
+      bare: "xs.fold(0.5, step)",
+      res: "Int",
+      slotInit: "0",
+      want: ["E0201 Expected Int but got Float"],
+    },
+    {
+      name: "fold's fn answering the List(Int) that fills an empty List init",
+      defs: `fn step(acc: List(Text), x: Int) -> List(Int) = [x]\n${XS}`,
+      inline: "xs.fold([], step($1, $2))",
+      bare: "xs.fold([], step)",
+      res: "List(Int)",
+      slotInit: "[]",
+      want: ["E0201 Expected List(Text) but got List(Int)"],
+    },
+    {
+      name: "fold's fn answering the Option(Int) that fills a None init",
+      defs: `fn step(acc: Option(Text), x: Int) -> Option(Int) = Some(x)\n${XS}`,
+      inline: "xs.fold(None, step($1, $2))",
+      bare: "xs.fold(None, step)",
+      res: "Option(Int)",
+      slotInit: "None",
+      want: ["E0201 Expected Option(Text) but got Option(Int)"],
     },
     {
       name: "fold from an Int into a nominal Int",

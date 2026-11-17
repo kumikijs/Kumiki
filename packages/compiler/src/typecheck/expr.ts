@@ -418,7 +418,8 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             body = fragmentCall(a.name, arity, a.pos);
           }
           const [p1, p2] = fragmentBindings(recvType, e, sym, ctx);
-          // `fold`'s fragment answers the next accumulator, so it is checked against that.
+          // `fold`'s fragment answers the next `$1`, so `$1` and its result share the
+          // accumulator's type.
           const acc =
             fragment.second === "element" ? accumulatorType(p1, p2, body, sym, ctx) : null;
           const inner = innerScope(ctx);

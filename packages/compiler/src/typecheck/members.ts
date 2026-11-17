@@ -139,11 +139,15 @@ export function fragmentBindings(
     : [only, null];
 }
 
+/** How many times `accumulatorType` reads the fragment, each time with the type it widened to. */
+const ACCUMULATOR_READINGS = 4;
+
 /**
- * `fold`'s accumulator: the wider of `init`, the init's type, and what `body` answers with `$1` of
- * that type, so an `Int` init the fragment answers a `Float` from is a `Float` accumulator. A
- * result that fits neither way leaves it the init's, which the result is then checked against. An
- * init with no type leaves it none.
+ * `fold`'s accumulator: the fragment's result type where only the init's type fits it (an `Int`
+ * init answered a `Float`) or where it fills a hole the init's type leaves (`[]` answered a
+ * `List(Int)`), otherwise the init's type, so a tie or a mismatch keeps what the init gives. A
+ * widened type is the next `$1`, so the fragment is read again with it until it answers no wider
+ * one, at most `ACCUMULATOR_READINGS` times. `null` when the init has no type.
  */
 export function accumulatorType(
   init: TypeExpr | null,
@@ -153,12 +157,38 @@ export function accumulatorType(
   ctx: Ctx,
 ): TypeExpr | null {
   if (init === null) return null;
-  const first = innerScope(ctx);
-  bindLocal(first, "$1", init);
-  bindLocal(first, "$2", elem);
-  const result = inferType(body, sym, first);
-  const widens = result !== null && !assignable(result, init, sym) && assignable(init, result, sym);
-  return widens ? result : init;
+  let acc = init;
+  for (let reading = 0; reading < ACCUMULATOR_READINGS; reading++) {
+    const scope = innerScope(ctx);
+    bindLocal(scope, "$1", acc);
+    bindLocal(scope, "$2", elem);
+    const result = inferType(body, sym, scope);
+    if (result === null || !assignable(acc, result, sym)) return acc;
+    const widens = !assignable(result, acc, sym) || holes(result) < holes(acc);
+    if (!widens) return acc;
+    acc = result;
+  }
+  return acc;
+}
+
+/** How many `?` a type leaves undecided. */
+function holes(t: TypeExpr): number {
+  const sum = (ts: readonly TypeExpr[]) => ts.reduce((n, inner) => n + holes(inner), 0);
+  switch (t.kind) {
+    case "TypePrim":
+      return 0;
+    case "TypeRef":
+      return t.name === "?" ? 1 : 0;
+    case "TypeApp":
+      return sum(t.args);
+    case "TypeRecord":
+      return sum(t.fields.map((f) => f.type));
+    case "TypeUnion":
+      return sum(t.variants.flatMap((v) => v.payloads));
+    case "TypeNominal":
+    case "TypeRefinement":
+      return holes(t.inner);
+  }
 }
 
 function fragmentRow(
