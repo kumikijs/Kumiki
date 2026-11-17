@@ -219,7 +219,9 @@ describe("disposing the app with more than one effect to end", () => {
     a.dispose();
 
     expect(seen).toEqual(Array.from({ length: 3 }, () => ({ aborted: [true, true], timers: 0 })));
-    expect(a.committed.map((ep) => ep.trigger.target)).toEqual(["wait", "go", "go"]);
+    // `wait`'s debounced `later` is cancelled first, so its episode commits first; it is handed on
+    // after the two `go`s, which began before it.
+    expect(a.committed.map((ep) => ep.trigger.target)).toEqual(["go", "go", "wait"]);
     for (const ep of a.committed) {
       const started = ep.steps.find((s) => s.kind === "effect-start");
       expect(kinds(ep)).toEqual(["reducer", "effect-start", "effect-cancel"]);

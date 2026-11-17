@@ -62,8 +62,8 @@ export function recordDispatch(app: AppShape, reducer: string): EpisodeLogEntry[
 }
 
 /**
- * An episode logger with a deterministic clock and ids that collects each episode as it commits,
- * then hands it to `onCommit`.
+ * An episode logger with a deterministic clock and ids that collects each episode as `onEpisode`
+ * is handed it, in the order its trigger began, then hands it to `onCommit`.
  */
 export function recordingLogger(onCommit?: (ep: Episode) => void): {
   logger: EpisodeLogger;

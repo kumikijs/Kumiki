@@ -103,6 +103,10 @@ export type EpisodeLoggerOptions = {
   now?: () => number;
   /** Test seam — ULID-shape default. */
   idGen?: () => string;
+  /**
+   * Handed each episode in the order its trigger began, once it and every episode begun before it
+   * have committed.
+   */
   onEpisode?: (ep: Episode) => void;
 };
 
@@ -138,7 +142,7 @@ export type EpisodeLogger = {
     token?: string,
   ): string | undefined;
   ingestBootstrap(ep: Episode): void;
-  /** Snapshot of currently retained episodes (oldest first). */
+  /** Snapshot of currently retained episodes, in the order their triggers began. */
   list(): Episode[];
   hasOpenEpisode(): boolean;
   currentId(): string | undefined;
@@ -193,6 +197,16 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
   const pending = new Map<Episode, number>();
   /** Episodes whose `endTrigger` fired while effects were still in flight. */
   const closedAwaiting = new Set<Episode>();
+  /** How many episodes this logger had opened when each one's trigger began. */
+  const beganAt = new WeakMap<Episode, number>();
+  let opened = 0;
+  /**
+   * Opened episodes `onEpisode` has not been handed yet, in the order their triggers began. One
+   * that commits while an earlier one still waits on an effect waits behind it, so a file appended
+   * from the hook lists the triggers in the order they came without inserting a line.
+   */
+  const unsent: Episode[] = [];
+  const committed = new Set<Episode>();
 
   function topEpisode(): Episode | null {
     return stack.length > 0 ? (stack[stack.length - 1] as Episode) : null;
@@ -213,12 +227,30 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
     }
   }
 
-  function commit(ep: Episode): void {
-    if (ep.status === "ongoing") ep.status = "completed";
-    memory.push(ep);
+  function open(ep: Episode): void {
+    beganAt.set(ep, opened++);
+    unsent.push(ep);
+  }
+
+  function store(ep: Episode): void {
+    const at = beganAt.get(ep) ?? opened;
+    let i = memory.length;
+    while (i > 0 && (beganAt.get(memory[i - 1] as Episode) ?? 0) > at) i--;
+    memory.splice(i, 0, ep);
     while (memory.length > memoryMax) memory.shift();
     persistLocalStorage();
-    opts.onEpisode?.(ep);
+    committed.add(ep);
+    let head = unsent[0];
+    while (head !== undefined && committed.delete(head)) {
+      unsent.shift();
+      opts.onEpisode?.(head);
+      head = unsent[0];
+    }
+  }
+
+  function commit(ep: Episode): void {
+    if (ep.status === "ongoing") ep.status = "completed";
+    store(ep);
   }
 
   function settle(ep: Episode): void {
@@ -239,6 +271,7 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
       if (t.payload !== undefined) trigger.payload = t.payload;
       const ep: Episode = { id: idGen(), trigger, steps: [], status: "ongoing" };
       stack.push(ep);
+      open(ep);
       return ep.id;
     },
     endTrigger() {
@@ -314,10 +347,8 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
       });
     },
     ingestBootstrap(ep) {
-      memory.push(ep);
-      while (memory.length > memoryMax) memory.shift();
-      persistLocalStorage();
-      opts.onEpisode?.(ep);
+      open(ep);
+      store(ep);
     },
     recordPanic(info, token) {
       const ep = (token !== undefined ? inflight.get(token) : undefined) ?? topEpisode();
