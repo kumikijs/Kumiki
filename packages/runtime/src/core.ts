@@ -105,6 +105,7 @@ export {
   type BuiltinInstaller,
   type CapabilityProvider,
   type CapabilityRegistry,
+  type CloseOnDispose,
   type DiagnosticSite,
   type EffectResult,
   type EffectSpec,

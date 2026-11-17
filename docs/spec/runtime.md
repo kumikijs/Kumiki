@@ -435,16 +435,33 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
    renders a list per outer iteration, so each of its nodes is then keyed as a
    list under the outer key, the way item 3 keys a list-bodied call: siblings
    from different outer iterations that share an inner key stay distinct.
+   Each level of the nest adds one element to the array item 3 describes: in
+   `for a in as for b in bs for c in cs text(c)`, each `text` is keyed by the
+   JSON array of three keys, those of the `a`, the `b` and the `c` iteration it
+   sits in, and a nest of any depth is keyed the same way.
 3. **User-tile boundaries** do not propagate the enclosing implicit key into
    the tile's body — the `_wk` wrap sits on the outer boundary node, and the
    body composes its own identity if it iterates internally.
    When the body renders a **list** (its body is a `for`), the call site's key
    — explicit or implicit — names the list, not one node, and one key on every
    node would collapse them onto a single identity. Each node takes the pair
-   of the call site's key and its own key — the one its own `for` gave it,
-   however deeply that `for` nests — or, when it has none, its position in
-   the flattened list, encoded as the JSON array `[callKey, nodeKey]`, so the
-   nodes stay distinct and two pairs never spell the same string. A reorder of
+   of the call site's key and its own key (what its own `for`, or the list
+   one level down, gave it) or, when it has none, its position in the
+   flattened list, encoded as the JSON array `[callKey, nodeKey]`. A node's
+   own key that is itself such an array — the JSON text of an array of two or
+   more elements, spelled exactly as `JSON.stringify` writes it, which is the
+   key a node of a list one level down was given — contributes its elements
+   rather than itself: `[callKey, …nodeKey]`. So a key holds one element per
+   level of list flattened into the same container, and its length grows
+   linearly with the depth. A container between two `for`s starts the count
+   again: in `for a in as column(for b in bs text(b))`, each `text` is keyed
+   within its `column`. Whether a key is such an array is read from the string
+   alone, so an explicit `{key: …}` spelled that way is read as one too. The
+   nodes stay distinct and, provided their own keys differ, two pairs never
+   spell the same string: a pair extended this way has three or more
+   elements, and one that is not has two; and only a key spelled exactly as
+   `JSON.stringify` writes it is split, so its elements give back exactly that
+   one key. A reorder of
    the outer list moves each node's element; a reorder inside the list moves
    them by their own keys. The list's nodes are children of the container the
    call sits in, however deeply the `for`s that produced them nest.
@@ -790,7 +807,7 @@ The one emit with no episode to name is one from `app.init`, dispatched before t
 
 When `retry=...` is specified, retry on an `Err` result that is a 5xx/network error, waiting the intervals the policy names ([http.md §6.5](./http.md#_6-5-retry)).
 
-A request cancelled during the wait between attempts ends the wait at once and makes no further attempt; its `.err` fires right away. Unmounting the app ends the wait too ([http.md §6.5](./http.md#_6-5-retry)).
+A request cancelled during the wait between attempts ends the wait at once and makes no further attempt; its `.err` fires right away. Unmounting the app ends the wait too, as it ends every effect the app launched ([§10.4.7](#_10-4-7-dispose)).
 
 ### 10.4.5 Delivery of Results
 
@@ -815,6 +832,12 @@ The server pass ([§10.6.1](#_10-6-1-ssr)) delivers the result of an effect in t
 | `media.*` | MediaDevices API |
 | `geo.*` | Geolocation API |
 | `socket.*` | WebSocket |
+
+### 10.4.7 Dispose
+
+Disposing the app, which is disposing its last view ([§10.9](#_10-9-runtime-api-for-embedding)), ends every effect the dispatcher still holds. A `debounce` timer that has not fired and a `queue` entry that has not started never launch. An effect already launched is aborted through its signal, whether its invoke is still running or it is waiting between `retry=` attempts ([§10.4.4](#_10-4-4-retry)); so is one that a cancel already aborted but whose result has not come back. Each of these records an `effect-cancel` step (`targetId = <effect-name>`) on the episode that claimed its `effect-start`, and that episode commits, its status unchanged, with no `effect-end`, before `dispose` returns. An invoke that disposes the app during the dispatch that launches it is the exception: its episode is still open, so it commits as that dispatch ends, and nothing the reducer emits after that point launches. If the logger's `onEpisode` throws on one of these commits, the others still commit, and `dispose` rethrows the first throw once they have. The app is unmounted either way, so its shape can be mounted again.
+
+After that, nothing the app launched delivers a result. An invoke that answers once the app is disposed, including one that ignored its abort, reaches no `.ok` / `.err` reducer, records no step, and is not reported as an unhandled error. So when `dispose` returns, the episode of every effect the app launched has committed, each one ending where the app left it: a replay that takes each result from the log ([§10.5.3](#_10-5-3-replay)) finds none for a cancelled effect, and does not deliver one the app never received.
 
 ---
 
@@ -868,10 +891,11 @@ A `panic` step additionally carries:
 - `stack`: the `Error.stack` of the caught throw, when available.
 - `cause`: the flattened `Error.cause` chain, **nearest cause first, root-most last**, each link `{message, stack?}`. Capped at 8 links; self-cycles are broken.
 - `category`: one of `reducer` / `effect` / `capability` / `tile-render` / `hydrate` / `unknown` — where in the runtime the failure was caught, or, for the two the dispatcher reports without anything having thrown, why an emit did not run. `effect` is an emit the dispatcher could not run: one naming no effect in `app.effects` ([§10.4.1](#_10-4-1-acceptance)). `capability` is a known effect refused for its capability ([§10.4.2](#_10-4-2-capability-check)). Emitted by the reducer / tile-render / hydrate / effect / capability sites today; `unknown` is a reserved value so consumers can exhaustive-switch as future callsites are wired in. A capability provider throw surfaces as an `effect-end` with `result: "err"`, NOT as a `panic` step, which is a different thing from either: that effect ran, and failed.
+- `handled`: `true` when an `error-boundary` caught the panic ([lifecycle.md §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)) — the program handled it. It is written when the boundary catches, before the fallback is built, so it does not say the fallback rendered: a panic the fallback throws in turn is one more panic, recorded as a step of its own, and with no other boundary around it nothing handles that one. **Absent** on every other `panic` step, and a step without it is a panic nothing handled. An `app.error` reducer does not make one handled, and neither does a `route.error` reducer: each is told about the panic, which is still reported to the console the verification tiers watch. Whether a panic was handled is what a tool reporting panics asks — the dev server's error overlay opens for an unhandled one and not for a handled one ([§10.7](#_10-7-development-server)) — and `@kumikijs/runtime` exports the rule as `isUnhandledPanic(step)`. The field says it, not the step's `location` or its place among the episode's steps: a caught panic can be an episode's last step, and an unhandled one can be followed by the steps a dispatch records after it.
 
-A `tile-render` step's `location` is `render` for a panic no `error-boundary` caught and `reconcile` for the diff's own safety net. For one a boundary caught it is the `location` the fallback's `PanicInfo` carries — the route target the runtime was building, and the tile that declares the boundary otherwise ([lifecycle.md §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)) — so the step and the fallback name the same place. A caught panic is recorded too — on the episode open around the render, which is the one its fallback's `episode-id` names — and makes that episode `status: "panic"` like any other `panic` step. A step is recorded on every render that catches; nothing is deduplicated. A render with no episode open around it records nothing.
+A `tile-render` step's `location` is `render` for a panic no `error-boundary` caught and `reconcile` for the diff's own safety net. For one a boundary caught it is the `location` the fallback's `PanicInfo` carries — the route target the panic escaped before a boundary caught it, and the tile that declares the boundary otherwise ([lifecycle.md §7.3](./lifecycle.md#_7-3-error-boundaries-per-tile)) — so the step and the fallback name the same place. A caught panic is recorded too — on the episode open around the render, which is the one its fallback's `episode-id` names — with `handled: true`, and makes that episode `status: "panic"` like any other `panic` step: the status says the episode holds a `panic` step, and `handled` says whether anything handled it. A step is recorded on every render that catches; nothing is deduplicated. A render with no episode open around it records nothing.
 
-`stack`, `cause`, and `category` are **optional** for forward compatibility: episode logs written by older runtimes carry only `message` / `location`, and MUST continue to parse and replay unchanged. Readers that don't recognise a field MUST ignore it. The `stack` and the cause **chain** are dev-tooling and stay here: the runtime never splats the `PanicRecord` into a user reducer `$event`. What a program is handed is the `PanicInfo` [lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) declares — `message`, `location`, `category`, the id of this episode as `episode-id`, and `cause` as the **nearest** link's message alone, with no stack on it.
+`stack`, `cause`, `category` and `handled` are **optional** for forward compatibility: episode logs written by older runtimes carry only `message` / `location`, and MUST continue to parse and replay unchanged. Readers that don't recognise a field MUST ignore it. A step without `handled` reads as unhandled, so in a log an older runtime wrote, a panic a boundary caught reads as unhandled too. The `stack` and the cause **chain** are dev-tooling and stay here: the runtime never splats the `PanicRecord` into a user reducer `$event`. What a program is handed is the `PanicInfo` [lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer) declares — `message`, `location`, `category`, the id of this episode as `episode-id`, and `cause` as the **nearest** link's message alone, with no stack on it.
 
 Reserved `trigger.kind` values: `ui.click`, `ui.submit`, `ui.change`, `ui.input`, `lifecycle`, `route.enter`, `timer`, `effect.ok`, `effect.err`, `init`, and **`ssr.hydrate`** (the SSR bootstrap, see [§10.6.2](#_10-6-2-hydration)). `ssr.hydrate` is asymmetric: the server constructs it during `renderToString`, ships it to the client as JSON, and the client logger ingests it directly — the client MUST NOT open an `ssr.hydrate` episode itself via the usual `beginTrigger` path.
 
@@ -890,7 +914,7 @@ The server-side `renderToString` pass collapses the entire `app.init` causal cha
 - `steps` mirror the real server-side execution: each `app.init` emit produces a paired `effect-start` / `effect-end`, the matching `{effect, outcome}` reducer adds a `reducer` step (with `volatile`-filtered `slot-diffs`), and a final `signal-update` lists the non-`volatile` slots that changed. There is no synthesised `ssr.bootstrap` step — the chain stays in the canonical episode grammar so replay tooling works unchanged.
 - Two emits produce no pair. One is an emit the capability check refuses ([§10.4.2](#_10-4-2-capability-check)): the pass records `effect-start`, then a `panic` step carrying the refusal, then `effect-cancel` (`targetId = <effect-name>`), and runs nothing. A reader MUST NOT take that unpaired start as truncation or as an effect still in flight — the episode is complete, and the emit did not run; the `panic` step says why, and makes the episode `status: "panic"`. The live dispatcher writes the same three steps in the same order for a refusal under a deferred policy, which is the case where it too claimed a token; under the default policy it returns before claiming one, so only the `panic` step lands. Either way both sides report the refusal, and `status` is `"panic"` wherever the step is. The other is an emit naming no effect in `app.effects` ([§10.4.1](#_10-4-1-acceptance)): the pass records the `panic` step alone, with no `effect-start` before it and no `effect-cancel` after, because there is no effect to have started — and the live dispatcher writes the same: with no effect there is no policy to defer it.
 - An emit of a standard effect, which the pass does not run ([§10.4.1](#_10-4-1-acceptance)), records no step at all.
-- The render that serves the page is the chain's last step: it runs inside the episode, which commits after it. A render nothing panics in adds nothing. Each panic an `error-boundary` catches in it adds a `panic` step after the chain's (`category: "tile-render"`, `location` the one the fallback is handed — [§10.5.1](#_10-5-1-structure-of-an-episode)), which makes the episode `status: "panic"`, and the fallback served in the HTML carries the bootstrap's id as its `episode-id` ([lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)). A render panic no boundary catches is not recorded here: it escapes `renderToString` as a throw.
+- The render that serves the page is the chain's last step: it runs inside the episode, which commits after it. A render nothing panics in adds nothing. Each panic an `error-boundary` catches in it adds a `panic` step after the chain's (`category: "tile-render"`, `location` the one the fallback is handed, `handled: true` — [§10.5.1](#_10-5-1-structure-of-an-episode)), which makes the episode `status: "panic"`, and the fallback served in the HTML carries the bootstrap's id as its `episode-id` ([lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)). A render panic no boundary catches is not recorded here: it escapes `renderToString` as a throw.
 
 Example:
 
@@ -914,7 +938,7 @@ Example:
 - The most recent M in localStorage (default 20, size limit 5MB)
 - During development, write to a file with `--episode-log /path/to/log.jsonl` (`kumiki run` also takes the path from `KUMIKI_EPISODE_LOG`)
 
-The file `kumiki run` writes is a separate store, not a copy of the in-memory one. It holds every episode the run commits, one JSON object per line, and N does not bound it. The run appends to the file rather than truncating it, so a file that starts empty begins with the run's first episode, which is where replay from slot defaults ([§10.5.3](#_10-5-3-replay)) starts, even for a run that commits more than N. An episode that commits after the scenario has finished, such as one whose effect's invoke runs on past the app's dispose instead of stopping at its abort, is not written ([#942](https://github.com/kumikijs/Kumiki/issues/942)). An effect still waiting in a `retry=` backoff is not one: disposing the app ends that wait ([http.md §6.5](./http.md#_6-5-retry)), so its episode commits before the run returns and is written.
+The file `kumiki run` writes is a separate store, not a copy of the in-memory one. It holds every episode the run commits, one JSON object per line, and N does not bound it. The run appends to the file rather than truncating it, so a file that starts empty begins with the run's first episode, which is where replay from slot defaults ([§10.5.3](#_10-5-3-replay)) starts, even for a run that commits more than N. When the scenario ends, the run disposes the app, which cancels every effect still running or waiting in a `retry=` backoff ([§10.4.7](#_10-4-7-dispose)). Their episodes commit before the run returns, each ending in an `effect-cancel`, so the file holds them too; whatever those effects answer afterwards is not recorded at all.
 
 The bootstrap episode (`trigger.kind = "ssr.hydrate"`) is stored on the same path as any other episode: appended to the in-memory ring and (when localStorage mirroring is enabled) persisted on the same eviction policy. No special pinning — once enough later episodes accrue, the bootstrap eventually falls off the tail like any FIFO entry. Hydration runs `persistLocalStorage()` as part of the ingest so the mirror reflects the bootstrap immediately (an AC for [§10.6.2](#_10-6-2-hydration) verification).
 
@@ -1025,9 +1049,11 @@ kumiki dev --strict-a11y
 Features:
 
 - Hot reload (on code change, slots are retained)
-- error overlay (detailed display on panic)
+- error overlay (detailed display of a panic nothing handled: the first `panic` step of the latest episode that does not carry `handled: true` — [§10.5.1](#_10-5-1-structure-of-an-episode) — wherever it sits among that episode's steps. A panic an `error-boundary` caught raises no overlay; the timeline lists its step, marked handled)
 - episode timeline panel (visualizes recent episodes)
 - inspector (slot values, tile tree, dependency graph)
+
+The dev server compiles through the Vite plugin (§10.8.1) and leaves `@kumikijs/runtime` to the plugin's resolution: the dev client (the page script that mounts the app and the panel) and the compiled app both import it through the plugin, so the page runs one copy — the project's own when the `.kumiki` file's directory resolves the package, the plugin's own dependency otherwise. The dev server adds nothing about the runtime to Vite's dependency pre-bundling, so Vite treats it as in any project using the plugin: the project's own copy is pre-bundled when it is installed under `node_modules` and served from its source when it is linked (a workspace package), and the plugin's own copy is served as it is — the published runtime's entry is one self-contained module.
 
 ---
 

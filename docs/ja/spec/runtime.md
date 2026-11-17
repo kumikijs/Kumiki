@@ -415,18 +415,32 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
    反復ごとにリストを描くので、そのノードは項目 3 のリストを描く呼び出しと
    同じく、外側の key の下のリストとして key が付く。内側の key が同じでも、
    外側の反復が違う兄弟は区別される。
+   入れ子が 1 段深くなるごとに、項目 3 の配列に要素が 1 つ加わる。
+   `for a in as for b in bs for c in cs text(c)` の各 `text` は、それが属する
+   `a`・`b`・`c` の反復の key 3 つを並べた JSON 配列で key 付けされ、どれだけ
+   深い入れ子も同じように key が付く。
 3. **ユーザタイル境界** は外側の暗黙 key を body に持ち込まない。`_wk` は
    境界ノードそのものに巻かれ、body 側の identity は body が反復すれば
    body 自身で組む。
    body が**リスト**を描く（body が `for`）とき、呼び出し側の key — 明示でも
    暗黙でも — は 1 つのノードではなくリストを名指す。全ノードに同じ key を
    付ければ 1 つの identity に潰れてしまう。そこで各ノードは、呼び出し側の key
-   と自身の key — どれだけ深く入れ子でも、そのノード自身の `for` が付けた
-   key — （無ければ平坦化したリスト内の位置）の組を JSON 配列 `[callKey, nodeKey]` として
-   符号化した key を持つ。ノードは互いに区別され、2 つの組が同じ文字列になる
-   ことはない。外側のリストを並べ替えると各ノードの要素が移動し、リスト内の
-   並べ替えはノード自身の key で移動する。リストのノードは、それを生んだ `for`
-   がどれだけ入れ子でも、呼び出しが置かれたコンテナの子になる。
+   と自身の key（そのノード自身の `for`、または 1 段下のリストが付けたもの）
+   （無ければ平坦化したリスト内の位置）の組を JSON 配列 `[callKey, nodeKey]` として
+   符号化した key を持つ。ノード自身の key がそれ自体この形の配列 — 2 要素以上の
+   配列を `JSON.stringify` が書くとおりに綴った JSON テキストで、1 段下のリストの
+   ノードが受け取る key — であるときは、その key 自身ではなく要素を並べる:
+   `[callKey, …nodeKey]`。したがって key は同じコンテナに平坦化されるリスト 1 段に
+   つき要素を 1 つ持ち、その長さは深さに比例する。2 つの `for` の間にコンテナが
+   あると数え直しになる — `for a in as column(for b in bs text(b))` の各 `text` は
+   その `column` の中で key 付けされる。key がこの形の配列かどうかは文字列だけから
+   読むので、そう綴った明示 `{key: …}` も同じく配列として読む。ノードは互いに
+   区別され、ノード自身の key が互いに異なる限り、2 つの組が同じ文字列になることは
+   ない — こうして伸ばした組は 3 要素以上、そうでない組は 2 要素であり、また
+   `JSON.stringify` が書くとおりに綴った key だけを分割するので、その要素からは
+   ちょうどその 1 つの key が戻る。外側のリストを並べ替えると各ノードの要素が
+   移動し、リスト内の並べ替えはノード自身の key で移動する。リストのノードは、
+   それを生んだ `for` がどれだけ入れ子でも、呼び出しが置かれたコンテナの子になる。
 4. **`TileWhen` / `TileIf` / `TileMatch`** は透過。タイルを emit する分岐に
    暗黙 key を素通しで伝える。
 
@@ -744,7 +758,7 @@ step が付く episode は、いま開いている episode ではなく、その
 
 `retry=...` 指定がある場合、`Err` 結果かつ 5xx/network エラーで、policy が定める間隔を待って再試行する（[http.md §6.5](./http.md#_6-5-リトライ)）。
 
-試行間の待機中にキャンセルされたリクエストは、その場で待機を終え、それ以上試行しない。その `.err` は直ちに発火する。アプリのアンマウントも待機を終える（[http.md §6.5](./http.md#_6-5-リトライ)）。
+試行間の待機中にキャンセルされたリクエストは、その場で待機を終え、それ以上試行しない。その `.err` は直ちに発火する。アプリのアンマウントも、アプリが launch したすべての effect を終わらせるのと同じく、待機を終える（[§10.4.7](#_10-4-7-dispose)）。
 
 ### 10.4.5 結果の配送
 
@@ -769,6 +783,12 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 | `media.*` | MediaDevices API |
 | `geo.*` | Geolocation API |
 | `socket.*` | WebSocket |
+
+### 10.4.7 dispose
+
+アプリを dispose する（最後のビューを dispose する、[§10.9](#_10-9-ランタイム-api-埋め込み用)）と、dispatcher がまだ抱えている effect はすべて終わる。まだ発火していない `debounce` タイマーと、まだ始まっていない `queue` のエントリは launch されない。すでに launch された effect は、invoke がまだ走っていても、`retry=` の試行間で待機していても（[§10.4.4](#_10-4-4-retry)）、シグナルを通じて abort される。キャンセルによってすでに abort されたがまだ結果が戻っていない effect も同様である。これらはそれぞれ、自分の `effect-start` を確保した episode に `effect-cancel` step（`targetId = <effect-name>`）を残し、その episode は status を変えずに、`effect-end` なしで、`dispose` が返る前に commit する。例外は、effect を launch する dispatch の最中に invoke がアプリを dispose した場合である。その episode はまだ開いているので、その dispatch が終わるときに commit し、それより後に reducer が emit したものは launch されない。これらの commit のどれかでロガーの `onEpisode` が throw しても、残りは commit し、`dispose` はそれらが commit した後に最初の throw を投げ直す。どちらの場合もアプリはアンマウントされているので、その shape はもう一度 mount できる。
+
+それ以降、アプリが launch したものは結果を届けない。アプリの dispose 後に答えた invoke は、abort を無視したものも含めて、`.ok` / `.err` reducer に届かず、step も残さず、未処理エラーとしても報告されない。したがって `dispose` が返った時点で、アプリが launch したすべての effect の episode は、アプリが止めたところで終わった形で commit 済みである。結果をログから取る replay（[§10.5.3](#_10-5-3-replay)）は、キャンセルされた effect の結果をログに見つけず、アプリが受け取らなかった結果を届けることはない。
 
 ---
 
@@ -809,8 +829,9 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 
 - `name`: 本体が throw した reducer（throw が reducer 由来のとき）。`location` は散文であり、replay には鍵が要る。`render` / `hydrate` の panic では無い。
 - `env-reads`: その本体が throw する前に読んだ値。`reducer` step と同じ形である。throw した reducer は `reducer` step を**残さない**ので、この 2 つが無ければ、ユーザがバグ報告に添える episode — つまりクラッシュしたもの — こそが replay で再現できないものになる：環境を読み直し、別の分岐を通り、最後まで完走してしまう。
+- `handled`: `error-boundary` がその panic を捕捉したとき `true` —— プログラムがそれを処理した（[lifecycle.md §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。境界が捕捉した時点、fallback を組み立てる前に書かれるので、fallback が描画されたことまでは言わない：fallback がさらに throw した panic はもう 1 つの panic であり、それ自身の step として記録され、ほかに囲む境界が無ければ何もそれを処理しない。それ以外の `panic` step には**無く**、これを持たない step は何も処理しなかった panic である。`app.error` reducer は panic を処理済みにせず、`route.error` reducer も同じである：どちらも panic を知らされるだけであり、その panic は検証 tier が監視するコンソールにも報告される。panic が処理済みかどうかは、panic を誰かに報告するツールが問うことである —— 開発サーバの error overlay は未処理の panic で開き、処理済みの panic では開かない（[§10.7](#_10-7-development-server)）—— そして `@kumikijs/runtime` はその規則を `isUnhandledPanic(step)` として export する。それを言うのはこのフィールドであって、step の `location` でも episode の step 列の中での位置でもない：捕捉された panic が episode の最後の step になることもあれば、未処理の panic の後に、dispatch が記録する step が続くこともある。
 
-`category` が `tile-render` の `panic` step の `location` は、どの `error-boundary` も捕捉しなかった panic では `render`、差分処理自身の安全網では `reconcile` である。境界が捕捉したものでは、その fallback の `PanicInfo` が持つ `location` —— runtime が組み立てていた route のターゲット、それ以外は境界を宣言した tile（[lifecycle.md §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）—— であり、step と fallback は同じ場所を名指す。捕捉された panic も記録される —— 描画を囲んで開いている episode、すなわちその fallback の `episode-id` が名指す episode に —— そして他の `panic` step と同じく、その episode を `status: "panic"` にする。step は捕捉した描画のたびに記録され、重複は除かれない。開いている episode に囲まれていない描画は何も記録しない。
+`category` が `tile-render` の `panic` step の `location` は、どの `error-boundary` も捕捉しなかった panic では `render`、差分処理自身の安全網では `reconcile` である。境界が捕捉したものでは、その fallback の `PanicInfo` が持つ `location` —— panic が境界に捕捉される前に抜け出した route のターゲット、それ以外は境界を宣言した tile（[lifecycle.md §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）—— であり、step と fallback は同じ場所を名指す。捕捉された panic も記録される —— 描画を囲んで開いている episode、すなわちその fallback の `episode-id` が名指す episode に、`handled: true` を付けて —— そして他の `panic` step と同じく、その episode を `status: "panic"` にする：status は episode が `panic` step を持つことを言い、`handled` はそれを何かが処理したかを言う。step は捕捉した描画のたびに記録され、重複は除かれない。開いている episode に囲まれていない描画は何も記録しない。
 
 **遅延 policy effect の帰属。** `policy=debounce(d)` と `policy=queue` で emit された effect は、トリガとなった reducer の episode が一旦閉じた *後* に launch する：`debounce` は `setTimeout` が満了したとき、`queue` は先に並ぶエントリが終わったときである。そのため dispatcher は `effect-start` step (とその episode トークン) を *launch 時* ではなく *dispatch 時* に確保し、遅れて届く `effect-end` および `.ok` / `.err` reducer 連鎖が元 episode 上に着地するようにする — 因果連鎖は一本に保たれる。確保された launch が実行前に捨てられると、その episode には `effect-end` の代わりに `effect-cancel` step が残る。いつそうなるかは下の **cancel の帰属** が述べる。`policy=throttle(d)` は先頭呼び出しを同期 `launch` するため (通常の同期パスで `effect-start` が attach される)、window 内の後続 dispatch は黙って抑制される — 元 reducer の `emits` には抑制された effect 名が残るが、続く `effect-start` は出ない。
 
@@ -825,7 +846,7 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 - localStorage に直近 M 件（デフォルト 20、サイズ上限 5MB）
 - 開発時は `--episode-log /path/to/log.jsonl` でファイル書き出し（`kumiki run` は `KUMIKI_EPISODE_LOG` からもパスを受け取る）
 
-`kumiki run` が書くファイルはメモリの store の写しではなく、別の store である。実行が commit した episode をすべて 1 行に 1 つの JSON オブジェクトとして持ち、N には制限されない。実行はファイルを切り詰めずに追記するので、空のファイルから始めれば、N 件を超える episode を commit した実行でも最初の行は実行の最初の episode であり、slot の初期値からの replay（[§10.5.3](#_10-5-3-replay)）はそこから始まる。シナリオが終わった後に commit する episode（invoke が abort で止まらずアプリの dispose 後も走り続ける effect のものなど）は書かれない（[#942](https://github.com/kumikijs/Kumiki/issues/942)）。`retry=` の backoff を待っている effect はこれに当たらない。アプリを dispose するとその待機は終わる（[http.md §6.5](./http.md#_6-5-リトライ)）ので、episode は実行が返る前に commit され、書かれる。
+`kumiki run` が書くファイルはメモリの store の写しではなく、別の store である。実行が commit した episode をすべて 1 行に 1 つの JSON オブジェクトとして持ち、N には制限されない。実行はファイルを切り詰めずに追記するので、空のファイルから始めれば、N 件を超える episode を commit した実行でも最初の行は実行の最初の episode であり、slot の初期値からの replay（[§10.5.3](#_10-5-3-replay)）はそこから始まる。シナリオが終わると、実行はアプリを dispose し、まだ走っている effect や `retry=` の backoff を待っている effect はすべてキャンセルされる（[§10.4.7](#_10-4-7-dispose)）。それらの episode は実行が返る前に、それぞれ `effect-cancel` で終わる形で commit されるので、ファイルにも書かれる。それらの effect がその後に答えたものは一切記録されない。
 
 ### 10.5.3 replay
 
@@ -859,7 +880,7 @@ kumiki replay --until-step 5                # 途中まで
   - 初期 route とは、要求されたパスが**行き着く先**である：静的リダイレクト（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）は、トップレベルのものも、マッチした親の `sub-routes` 内のものも、`renderToString` がルーティングモジュールを渡されたときは `mount` と同じ解決で先に処理され（行き先がさらにリダイレクトされるなら連鎖の終わりまでたどる）、行き着いたパスが描画される。ルーティングモジュールがなければ、パターンが書かれたとおりのパスであるリダイレクトだけが（やはり連鎖をたどって）適用されるので、パラメータ・ワイルドカード・`sub-routes` のリダイレクトは適用されない。描画中の tile が読む `route` も、スナップショットの `route` も、ブートストラップエピソードの `trigger.target`（[§10.5.1](#_10-5-1-structure-of-an-episode)）も、そのパスを指す。
   - 要求されたパスはクエリとハッシュを含んでよい（リクエストの URL をそのまま渡してよい）。サーバーがクライアントと同じ場所に行き着くよう、ブラウザの `location` がその URL を保持するのと同じ形で保持される：`/a/../b` は `/b` になり、空白や ASCII 以外の文字はパーセントエンコードされ（`/ja/概要` は `/ja/%E6%A6%82%E8%A6%81`）、`//foo` はそれ自体のパスのままである。そのうえで、クライアントのルーターがロケーションを読むのと同じ方法で分割される。各リダイレクトの宛先は、クライアントと同じく、そのリダイレクト元のパスに対して解決される（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）。
 - slot 初期値は `app.init` で emit した effect の結果を含めても良い（hydration 時に再実行しない）
-- ページを配信する描画は、`app.init` の因果連鎖をまとめたブートストラップエピソード（`trigger.kind = "ssr.hydrate"`）の最後の段であり、その episode の内側で走って、episode は描画の後に commit される。何も panic しない描画は何も足さない。描画中に `error-boundary` が捕捉した panic は、そのそれぞれが連鎖の step の後に `panic` step（`category: "tile-render"`、`location` は fallback に渡されるもの — [§10.5.1](#_10-5-1-structure-of-an-episode)）を足し、episode を `status: "panic"` にする。HTML に配信される fallback は、そのブートストラップエピソードの id を `episode-id` として持つ（[lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）。どの境界も捕捉しない描画 panic はここには記録されず、`renderToString` から throw として抜ける。
+- ページを配信する描画は、`app.init` の因果連鎖をまとめたブートストラップエピソード（`trigger.kind = "ssr.hydrate"`）の最後の段であり、その episode の内側で走って、episode は描画の後に commit される。何も panic しない描画は何も足さない。描画中に `error-boundary` が捕捉した panic は、そのそれぞれが連鎖の step の後に `panic` step（`category: "tile-render"`、`location` は fallback に渡されるもの、`handled: true` — [§10.5.1](#_10-5-1-structure-of-an-episode)）を足し、episode を `status: "panic"` にする。HTML に配信される fallback は、そのブートストラップエピソードの id を `episode-id` として持つ（[lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）。どの境界も捕捉しない描画 panic はここには記録されず、`renderToString` から throw として抜ける。
 - **配信される HTML は、クライアントが塗るのと同じインラインスタイルを持つ**：tile の要素と、その kind 自身のレイアウト（`column` の flex 軸、`card` のボックス寸法、`grid` のトラック）、および prop が対応付けるプロパティ（`gap` / `align` / `justify` / `pad` / `max-w` / `bg` / `radius` / `style`、テキスト tile では `color` / `size` / `weight` / `strike`）。これが無いと初期描画ではすべてのコンテナがブロックとして並び、hydration が終わった瞬間にページがリフローする — SSR が取り除くはずのレイアウトシフトそのものである。
   - **レスポンシブ**値（`{base, sm, md, …}`）は `base` に畳まれる：ブレークポイントはビューポートについての問いであり、サーバにビューポートは無い。
   - **配信されない**のは、インライン宣言では運べないもの：`transition` と `hover:` / `focus:` / `active:` ブロック、`motion` 層は注入された CSS に紐づくクラスであり、hydration 時にクライアントが付ける。イベントハンドラ・フォーカス状態・解決済みの `icon` SVG も同様 — プレースホルダはレンダラが書くのと同じ要素・同じ属性だが、クライアントがパスを解決するまでは空でサイズも無いので、icon の到着は後続を動かす。テーマのスタイルシートが塗るものも同じ理由で配信されない：`card` の面・境界・影、`button` / `input` / `link` のリングはクライアントがマウント時に注入する規則であり、サーバはそれらを欠いた箱を配信する。
@@ -892,7 +913,7 @@ Cloudflare Workers / Vercel Edge 等での SSR：
 
 ---
 
-## 10.7 開発サーバ
+## 10.7 開発サーバ {#_10-7-development-server}
 
 ```bash
 kumiki dev                          # 開発サーバ起動
@@ -904,9 +925,11 @@ kumiki dev --strict-a11y
 機能：
 
 - ホットリロード（コード変更時、slot は維持）
-- error overlay（panic 時に詳細表示）
+- error overlay（何も処理しなかった panic の詳細表示：最新の episode の `panic` step のうち `handled: true` を持たない最初のもの —— [§10.5.1](#_10-5-1-structure-of-an-episode) —— を、その episode の step 列のどこにあっても表示する。`error-boundary` が捕捉した panic では overlay は開かず、timeline がその step を処理済みとして示す）
 - episode timeline panel（最近の episode を視覚化）
 - inspector（slot 値、tile ツリー、依存グラフ）
+
+開発サーバは Vite プラグイン（§10.8.1）でコンパイルし、`@kumikijs/runtime` の解決はプラグインに任せる。dev クライアント（アプリとパネルをマウントするページのスクリプト）もコンパイル済みアプリもプラグインを通してランタイムを import するので、ページが動かすコピーは 1 つ — `.kumiki` ファイルのディレクトリからパッケージを解決できればプロジェクト自身のもの、できなければプラグイン自身の依存。開発サーバは Vite の依存の事前バンドルにランタイムについて何も加えないので、Vite はプラグインを使う任意のプロジェクトと同じようにそれを扱う：プロジェクト自身のコピーは、`node_modules` にインストールされていれば事前バンドルされ、リンクされている（ワークスペースのパッケージ）ならソースのまま配信される。プラグイン自身のコピーはそのまま配信される — 公開されたランタイムのエントリは自己完結した 1 モジュールである。
 
 ---
 
