@@ -10,7 +10,6 @@ catalog:
   '@happy-dom/global-registrator': ^21.0.4
   '@playwright/test': ^1.61.1
   '@types/node': ^25.9.1
-  '@vitest/browser': ^4.1.7
   esbuild: ^0.28.0
   gpt-tokenizer: ^3.4.0
   happy-dom: ^21.0.4
