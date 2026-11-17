@@ -12,7 +12,8 @@ import { firstChildMappedColumn } from "./fixtures/host-renderers.ts";
 import { appOf, bareApp } from "./helpers/app.ts";
 import { captureConsole } from "./helpers/console.ts";
 import { freshRoot } from "./helpers/dom.ts";
-import { recordingLogger, stripApp } from "./helpers/reconcile-apps.ts";
+import { recordingLogger } from "./helpers/episode-apps.ts";
+import { stripApp } from "./helpers/reconcile-apps.ts";
 
 let root: HTMLElement;
 
