@@ -1,0 +1,31 @@
+{
+  "steps": [
+    {
+      "label": "the page shows the Set of one member and the Map of one entry",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["pick holds 1", "lookup holds 1"]
+      }
+    },
+    {
+      "label": "choosing the other Set writes the Set of two members",
+      "do": { "choose": "#pick", "value": "two" },
+      "expect": { "noErrors": true, "domIncludes": ["pick holds 2"] }
+    },
+    {
+      "label": "choosing the first Set back writes the Set of one member",
+      "do": { "choose": "#pick", "value": "one" },
+      "expect": { "noErrors": true, "domIncludes": ["pick holds 1"] }
+    },
+    {
+      "label": "choosing the other Map writes the Map of two entries",
+      "do": { "choose": "#lookup", "value": "with a" },
+      "expect": { "noErrors": true, "domIncludes": ["lookup holds 2"] }
+    },
+    {
+      "label": "choosing the first Map back writes the Map of one entry",
+      "do": { "choose": "#lookup", "value": "bare" },
+      "expect": { "noErrors": true, "domIncludes": ["lookup holds 1"] }
+    }
+  ]
+}

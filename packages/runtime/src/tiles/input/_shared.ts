@@ -84,6 +84,22 @@ export function tileId(node: { id?: unknown; props?: unknown }): string | undefi
   return raw == null ? undefined : String(raw);
 }
 
+// A variant's name is an identifier, which a Map's text value under "_tag" need not be.
+const VARIANT_NAME = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+/**
+ * A variant: a `_tag` naming one, and no field beside its payload `_0`, `_1`, …. A Set holding
+ * the text "_tag", or a Map with it as a key, has a `_tag` field too, and is not one.
+ */
+function isVariant(v: unknown): v is { _tag: string } & Record<string, unknown> {
+  if (v === null || typeof v !== "object") return false;
+  const t = v as Record<string, unknown>;
+  if (typeof t._tag !== "string" || !VARIANT_NAME.test(t._tag)) return false;
+  let payloads = 0;
+  while (`_${payloads}` in t) payloads++;
+  return Object.keys(t).length === payloads + 1;
+}
+
 /**
  * The key a `select` matches an option by, and the `value` its `<option>` carries on
  * both render paths. Two values `==` calls equal have one key, and two it tells apart
@@ -92,10 +108,9 @@ export function tileId(node: { id?: unknown; props?: unknown }): string | undefi
  * and itself.
  */
 export function valueKey(v: unknown): string {
-  if (v && typeof v === "object" && "_tag" in (v as Record<string, unknown>)) {
-    const t = v as Record<string, unknown>;
-    const parts: string[] = [String(t._tag)];
-    for (let i = 0; `_${i}` in t; i++) parts.push(valueKey(t[`_${i}`]));
+  if (isVariant(v)) {
+    const parts: string[] = [v._tag];
+    for (let i = 0; `_${i}` in v; i++) parts.push(valueKey(v[`_${i}`]));
     return parts.join("|");
   }
   // A record, a List, Bytes or a value holding one: JSON text lists a record's fields in
