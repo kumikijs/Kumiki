@@ -104,11 +104,23 @@ fresh  self  now  null
 - **改行が文区切り**: `do=` 内のみ `;` で複数文
 - **識別子は 32 文字以内**
 - **式・型・パターン・tile の木は 256 段まで**: 超えるとパーサが位置付きのエラーを報告する。examples と benchmarks のどのプログラムも上限に迫らない。
+- **tile の木はユーザー tile を展開した後も 256 段以内**: コード生成はユーザー tile の呼び出しをすべてその場に展開するので、互いを呼ぶ tile の深さは足し合わされる。上限を超えるとチェッカーが、木が上限を超える呼び出しの位置で [E0237](./errors.md#e0237-tile-depth) を報告する。
 - **複数行コメント禁止**
 - **マクロ禁止**
 
 ::: details 256 段は何に対する上限か
 自分自身を含みうる構文——括弧式・リスト・レコード・`if`・文ブロック・tile 呼び出し・タプルパターン・型適用・theme レコード——はこれ以上深く入れ子にできず、左結合の連鎖（`1 + 1 + 1 + …`、`x.trim().trim()…`、`not` や `-` の連続、1 つの型式に連ねた `where`、代入先 path の `.field` / `[index]` のステップ）もこれを超えるノードを作れない。両者は合算される。連鎖の各ステップは、その連鎖がそれまでに読んだものすべてを下に持つノードなので、先に読んだオペランドが含むもの——括弧で囲んだ連鎖、それ自体が添字の連鎖である添字、引数に `where` を持つ型適用——は後に続くステップ 1 つごとに 1 段深くなる。`1 + (1 + … + 1) + 1 + …` では 2 つの連鎖のステップが別々に数えられるのではなく足し合わされる。二項演算子の右オペランドはその演算子の 1 段下にあり、連ねた `where` の最初の 1 つも、後に続くものと同じく、それが付く型を下に持つノードである。括弧はノードを作らないので、括弧で囲んだオペランドは中身の分だけ数えられる。上限が掛かるのは**出来上がった木**であって、パーサがそこへどう到達したかではない。パース以降の全段階はその木を再帰で辿るため、ループで解析された連鎖であっても下流でスタックを使い切るからである。
+:::
+
+::: details 展開後の tile の木の数え方
+パーサが見るのは一度に一つの定義である。コード生成が出力するモジュールは、ユーザー tile の本体をすべてその呼び出し位置に展開した tile の木と同じ深さに入れ子になり、その深さを制限するものはほかに無い：どれも深くない定義の連鎖が、足し合わされて JavaScript エンジンが読み込みを拒むモジュールになる。そこでその木にも同じ上限を掛け、tile の段で数える:
+
+- tile 自身の本体は、パーサが一つの定義に上限を掛けるとき（上記）と同じに数える：呼び出しと `for`・`when`・`if`・`match`、そしてその中に書いた式も数える
+- 裸の識別子で書いた tile（`column(sidebar)`）もその tile の呼び出しとして数える
+- ユーザー tile の本体はその呼び出しの 1 段下にぶら下がり、コード生成がそのまわりに置く包みごとにさらに 1 段下がる：呼び出しが引数を渡すときに 1 段、キーが付くときに 1 段。キーは自分で書いた `{key: …}` によっても、それを描画する `for` によっても付く（間に `when` / `if` / `match` があっても付くが、builtin の子の中へは及ばない）
+- `error-boundary` はそれ自体で 1 段: 宣言した tile の呼び出しをすべて包み、その tile の本体とフォールバックの本体はどちらもその下にある
+
+兄弟は足し合わされない（木の深さは最も深い経路の深さ）。`tile T0 = column(T1)`、`tile T1 = column(T2)`、… という連鎖は 1 リンクあたり 2 段なので、末尾が `text("leaf")` なら 127 リンクまで収まる。引数を渡すキー付きの呼び出しの連鎖は 1 リンクあたり 3 段、`for` が描画し引数を渡す呼び出しの連鎖は 4 段である。`tile-test` の期待する木もテストをコンパイルする場所で展開されるので、同じ上限を掛ける。`sub-routes` の子は展開されない（ルーターが `route-outlet` を通して描画する）ので、親の木には数えない。
 :::
 
 ---
@@ -713,11 +725,12 @@ pattern      ::= identifier
 
 **`if` と `match` の値文脈 vs tile 文脈**:
 - tile 引数が tile になるのは、**位置引数を内容として読まない builtin の位置引数**だけである —— `text`・`heading`・`markdown`・`code`・`editable`・`label`・`link` 以外のすべての builtin。それを描画するのはコンテナ（`column`, `row`, `card`, `box` 等）だけで、それ以外（`button`, `progress`, `image` 等）では tile でも値でも [E0129](./errors.md#e0129-unrendered-arg) になるが、どの tile もそこで構文解析できるように tile として読む。そこでは `if` と `match` は tile 式（`TileIf` / `TileMatch`）で各 arm は tile を返し、`(` か `{` が続く builtin 名はその builtin の呼び出し、大文字始まりの名前は user tile になる。
-- それ以外の tile 引数はすべて値である：値 builtin が位置引数から読む内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：位置引数を内容として読まない builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になる。
+- それ以外の tile 引数はすべて値である：値 builtin が位置引数から読む内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier)、値 builtin の内容では [E0236](./errors.md#e0236-tile-as-content) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：位置引数を内容として読まない builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になる。
 - `when` と `for` には値の形が無いので、どこに書いても tile である。
 - 例: `text(match m with | A -> "a" | B -> "b")` ← 値 match
 - 例: `button(text="Save", disabled=if busy then true else false)`、`Row(if wide then 2 else 1)` ← 値 if
 - 例: `column(match xs with | Loaded(ys) -> ... | None -> spinner())` ← tile match
+- 値 builtin の内容は値であり、そこに書いた tile は決して描画されない：`when` / `for`、tile の呼び出し、プログラムが定義する tile の名前（`text(column(…))`、`text(Header)`）は、内容そのものでも、値の `if` / `match` の腕（`text(if c then Header else "b")`）や `let … in` の本体でも [E0236](./errors.md#e0236-tile-as-content) である。tile はコンテナの子として書く —— `column(when(c, …))` —— か、値を表示する —— `text(x.show)`。
 
 ### 1.7.2 不変条件
 

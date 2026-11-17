@@ -451,9 +451,11 @@ A member of `Decoder`, `EffectId`, `Duration` or `Bytes` written **without paren
 
 The lowering reads `_init` and `_event`, which are bound only inside a trial, so the module a `given` or an `expect` produces dies with `_init is not defined` before a single test reports its result.
 
-A builtin tile's name is not in the set either: a tile is no function, and a call to one is a tile only where a tile renders, as a positional argument of a container ([Language §1.7.1](./language.md#_1-7-1-syntax)); on another builtin that does not read its positional argument as content it is a tile that renders nothing, [E0129](#e0129-unrendered-arg). Called anywhere else where no `fn` has that name — a named argument, a user tile's input, a value builtin's content, any expression — it is an E0116 with a sentence of its own, again because the name is right and the position is wrong:
+A builtin tile's name is not in the set either: a tile is no function, and a call to one is a tile only where a tile renders, as a positional argument of a container ([Language §1.7.1](./language.md#_1-7-1-syntax)); on another builtin that does not read its positional argument as content it is a tile that renders nothing, [E0129](#e0129-unrendered-arg). Called anywhere else where no `fn` has that name — a named argument, a user tile's input, any expression — it is an E0116 with a sentence of its own, again because the name is right and the position is wrong:
 
 > `"<name>" is a tile, and a tile renders only as a positional argument of a container`
+
+As a value builtin's content it is [E0236](#e0236-tile-as-content) instead.
 
 > `Call to undefined function "<name>"`
 
@@ -640,7 +642,7 @@ The first is a value as a positional argument. The second is a value where a who
 
 Codegen drops a value in a positional argument, so `column(text("a"), 42)` rendered only the `text`, `column(text("a"), n)` with `n` a slot put a `null` into the child list, and `column(let x = 42 in Card(x))` mounted an empty root. A `let` hid a tile from the checker as well: `Card`'s argument was not compared with its `in=`, and a builtin under it was looked up as a `fn` (E0116). The diagnostic is at the value, and nothing inside the value is checked — a diagnostic in there, wrong or right (an undefined name), shows once the value is moved where it belongs.
 
-A value where a value belongs is not reported: a value builtin's content (`text(let x = 1 in x.show)`), a user tile's input (`Card(let x = "a" in {label: x})`), a named argument. Where a `tile-expr` is the whole of a body — a tile body, or a `when` / `if` / `for` / `match` arm — a `let` is a parse error instead (`tile Foo = let x = 0 in …`, `when(c, let x = 1 in …)`), and so is any other value that is not a name or a call: a literal (`when(c, 42)`) or a member read (`when(c, total.show)`).
+A value where a value belongs is not reported: a value builtin's content (`text(let x = 1 in x.show)`), a user tile's input (`Card(let x = "a" in {label: x})`), a named argument. A tile as a value builtin's content is [E0236](#e0236-tile-as-content). Where a `tile-expr` is the whole of a body — a tile body, or a `when` / `if` / `for` / `match` arm — a `let` is a parse error instead (`tile Foo = let x = 0 in …`, `when(c, let x = 1 in …)`), and so is any other value that is not a name or a call: a literal (`when(c, 42)`) or a member read (`when(c, total.show)`).
 
 **Fix**: Show the value with a tile — `column(text(n.show))`, `when(c, text(total.show))` — or write it where it is used — `column(Card({label: "a"}))` — or compute it in a `fn` and call that. Write a builtin tile's call where it is named — `column(divider())`.
 
@@ -1233,6 +1235,43 @@ Two places are not this code. Where a record field name goes — `{null = 1}`, `
 
 **Fix**: Declare the type `Option(T)` and write `None` where there is no value and `Some(x)` where there is one — `slot picked : Option(TodoId) = None`. Ask whether there is one with `.is-none` / `.is-some`, `.get-or(d)` or a `match`, not with `== null`.
 
+### E0236 `tile-as-content`
+
+A tile is written as a value builtin's content. A value builtin shows a value as its content ([Language §1.7.1](./language.md#_1-7-1-syntax)) — read from the first positional argument on `text`, `heading`, `markdown` and `code`, from it or `text=` on `link`, `label` and `editable` (and on `link` from the `{text: …}` block entry when neither is written), from `src=` on `image` and from `name=` on `icon` ([E0129](#e0129-unrendered-arg)) — so a tile written there is never rendered: `text(when(c, column(…)))` shows nothing. The mirror, a value where a tile belongs, is [E0128](#e0128-value-as-child).
+
+> ``A tile is not a value: <builtin> shows a value as its content, so this tile is never rendered. Write the tile as a child of a container — `column(when(c, …))` — or show a value — `<content>` ``
+
+`<content>` is the builtin with a value where it reads its content: `text(x.show)`, `image(src=x.show)` / `label(text=x.show)` where the content is written as a named argument, or `link {text: x.show}` where it is written in the `{…}` block.
+
+A tile there is one of:
+
+- a `when` or a `for`, which only a `tile-expr` has;
+- a call of a builtin (`text(column(…))`) or of a tile the program defines (`text(Card({label: "a"}))`, `text(lower())`), or the name of a tile the program defines (`text(Header)`);
+- a tile in an arm of a value `if` / `match` — `text(if c then Header else "b")` — which is what the content is when that arm is taken. Each tile arm is reported;
+- a tile as the body of a `let … in` — `text(let x = 1 in Header)` — which is what the content is.
+
+Only the content itself is looked into, through the arms of a value `if` / `match` and the body of a `let … in`. A tile deeper in an expression (`text(Header + "!")`) is checked as part of that expression.
+
+The content is read as an expression, so a name is first the value it names, even where a tile has that name: a slot, a `let` or loop variable, a `match` binding and a `fn` (`heading(label(x))` with a `fn label`) are values, and so is a capitalised name that a union has as a tag, the standard library's included (`HttpBody`'s `Empty`). A call is a value only where a `fn` has the callee's name: with `slot code`, `text(code("x"))` is still the builtin's call. A builtin's name written without its call (`text(code)`) calls nothing, and is the undefined name it is ([E0103](#e0103-undef-ref-undef-slot)). So is a loop variable of a tile's name read after its loop (`column(for lower in xs text("a"), text(lower))`), whose E0103 says the loop ended. A value `if` / `match` whose arms are values (`text(match m with | A -> "a" | B -> "b")`) is a value.
+
+Each tile is reported where it is written, and nothing else in the content is checked — the tile's own arguments, an `if`'s condition, its other arm: the content is moved whole, into a container or out for a value, and a diagnostic in it shows once it is.
+
+**Fix**: Write the tile as a child of a container — `column(when(c, column(…)))`, `column(Header)`, `column(if c then Header else text("b"))` — or show a value with the builtin — `text(x.show)`.
+
+### E0237 `tile-depth`
+
+A tile's tree nests deeper than 256 levels once the user tiles in it are inlined ([§1.2.3](./language.md#_1-2-3-design-decisions)). Code generation inlines every call to a user tile, so tiles that call each other add their depths up, and the parser — which sees one definition at a time — bounds none of the sum. A chain of definitions each calling the next, none of them deep, reaches a module the JavaScript engine cannot load (V8 runs out of stack parsing it) and, longer still, overflows code generation itself. The bound is the parser's own, held to the tree the module is built from.
+
+> `Tile "<root>" nests <depth> levels deep once the tiles in it are inlined, past the limit of 256; it goes over where "<from>" expands into "<to>"`
+>
+> `The expected tree of tile-test "<test>" nests <depth> levels deep once the tiles in it are inlined, past the limit of 256; it goes over where <from> expands into "<to>"`
+
+The levels are counted as [§1.2.3](./language.md#_1-2-3-design-decisions) describes. A tile's own body counts as the parser counts it against the limit on one definition, the expressions in it included. A user tile's body hangs below its call, one level further down for each wrapper code generation puts around it: one when the call passes an argument, and one when the call is keyed — by a `{key: …}` it writes, or by the `for` that renders it, through any `when` / `if` / `match` between them. An `error-boundary` is one more level, with the fallback's body beneath it beside the tile's own. A chain `tile T0 = column(T1)`, `tile T1 = column(T2)`, … is two levels a link and `text("leaf")` at its end is three, so 127 links fit and the 128th is over. A chain of keyed calls that pass an argument (`tile T0 = T1(0) {key: "k"}`, …) is three levels a link, and one a `for` renders, passing an argument (`tile T0 = for x in xs T1(x)`, …), is four. A tile written where code generation renders nothing — a value position, or the positional argument of a builtin that renders none, as [E0005](#e0005-tile-cycle) describes — is not in the tree and adds no level.
+
+Reported once for each tile that no tile with a depth expands into — a route target, or a tile nothing names — since making that tree shallower makes every tree inside it shallower too. A tile that reaches a loop has no depth and is left to [E0005](#e0005-tile-cycle); a deep tree below it is reported on its own. A `tile-test`'s expected tree is inlined the same way where the test is compiled, so it is held to the same bound and reported for the test (the second message), unless a tile it expands into reaches a loop or is over on its own, which that tile's own report covers. The position is where the tree goes past the limit: following its deepest path down from `<root>` (or from the expected tree), the call (or `error-boundary` clause) in `<from>` whose target's body reaches beyond level 256. In the second message `<from>` is `the expected tree` itself, or `"<tile>"` for a tile inlined into it.
+
+**Fix**: Make the tree shallower. Repetition that a chain of definitions spells out one level at a time belongs in a `for` over a collection, and alternatives in `when` / `match`, each of which costs the same few levels however many items or arms it renders. Moving part of the tree into another tile does not help: it is inlined back where it is called.
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 A handler prop is written on a tile whose renderer never reads it — `row(text("card"), onClick=open)`, `card(...) {onChange: r}` — or on one whose element its event never reaches (`check(onFocus=r)`, below). Only the tiles that own the matching DOM event wire these: `onClick` on `button` / `check` / `radio` / `switch`, `onChange` on the input tiles, `onInput` on the input tiles and `editable`, `onSubmit` on `form`, `onClose` on the overlay tiles. Everything else drops the handler with no trace, so the reducer is dead code.
@@ -1695,7 +1734,7 @@ A `where` refinement names a predicate [§1.3.3](./language.md#_1-3-3-registered
 
 The second message answers a predicate the table does not hold at all. The parser rejects such a name before the checker sees it, so it reaches this code only through an AST built by hand — which is how the compiler's own test drives the diagnostic.
 
-The third is a refinement the toolchain *can* lower, at a position it cannot reach. A predicate written inside a slot's type is checked by a walk of the value, one function per type ([§1.3.3](./language.md#_1-3-3-registered-refinement-predicates)), and a generic that applies itself to a growing argument — `type T(A) = {v: A, next: Option(T(List(A)))}` on `slot t : T(Text where nonempty)` — is a new type at every level. Past 32 levels the lowering stops, and what lies beyond would be a check that silently passes. Unlike the first two, this one is reachable from source; the fix is a type that does not nest itself in a growing argument, or a slot whose type carries no refinement along it.
+The third is a refinement the toolchain *can* lower, at a position it cannot reach. A predicate written inside a slot's type is checked by a walk of the value, which lowers each type it reaches to a check shared by every walk that reaches the same type, and runs a chain of definitions as one loop over their checks ([§1.3.3](./language.md#_1-3-3-registered-refinement-predicates)). A generic that applies itself to a growing argument — `type T(A) = {v: A, next: Option(T(List(A)))}` on `slot t : T(Text where nonempty)` — is a new type at every level, so every level needs a check of its own. Past 32 levels the lowering stops, and what lies beyond would be a check that silently passes. Unlike the first two, this one is reachable from source; the fix is a type that does not nest itself in a growing argument, or a slot whose type carries no refinement along it.
 
 **No predicate is in this state.** The check exists because of what the alternative was: `refinementToJs` used to end in a `default` arm that lowered anything it did not implement to `(_v) => true`, so seven of the twelve registered predicates reached the runtime as a check that cannot fail — `slot n : Int where positive` accepted `-7`, and `error(field=n)` on it rendered nothing. A refinement is specified as a check the value passes on its way into the slot ([Forms §5.6](./forms.md#_5-6-validation-strategy), [Runtime §10.3.3](./runtime.md#_10-3-3-batching)), so a predicate with no lowering is the document promising something the program does not do — and nothing said so. The parser accepts exactly the names the lowering table holds, which is what makes this unreachable from source today; a predicate added to §1.3.3 without one lands here, at build time, instead.
 

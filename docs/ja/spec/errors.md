@@ -414,9 +414,11 @@ outlet は tile 自身の body に書かれている必要はない。ランタ�
 
 lowering が読む `_init` / `_event` は trial の中でしか束縛されないため、`given` や `expect` から生成されたモジュールは、どのテストも結果を出す前に `_init is not defined` で死ぬ。
 
-builtin tile の名前も候補に含まれない。tile は関数ではなく、その呼び出しが tile になるのは tile が描画される位置——コンテナの位置引数（[言語 §1.7.1](./language.md#_1-7-1-構文)）——だけである。位置引数を内容として読まないそれ以外の builtin では、何も描画しない tile であり [E0129](#e0129-unrendered-arg) になる。同名の `fn` が無いところでそれ以外の位置——名前付き引数、user tile の入力、値 builtin の内容、任意の式——で呼ぶと E0116 になり、専用の文面を持つ。ここでも誤っているのは名前ではなく位置だからである：
+builtin tile の名前も候補に含まれない。tile は関数ではなく、その呼び出しが tile になるのは tile が描画される位置——コンテナの位置引数（[言語 §1.7.1](./language.md#_1-7-1-構文)）——だけである。位置引数を内容として読まないそれ以外の builtin では、何も描画しない tile であり [E0129](#e0129-unrendered-arg) になる。同名の `fn` が無いところでそれ以外の位置——名前付き引数、user tile の入力、任意の式——で呼ぶと E0116 になり、専用の文面を持つ。ここでも誤っているのは名前ではなく位置だからである：
 
 > `"<name>" is a tile, and a tile renders only as a positional argument of a container`
+
+値 builtin の内容で呼んだ場合は代わりに [E0236](#e0236-tile-as-content) になる。
 
 > `Call to undefined function "<name>"`
 
@@ -603,7 +605,7 @@ tile が期待される位置に値が書かれている。tile を期待する�
 
 codegen は位置引数の値を捨てる。そのため `column(text("a"), 42)` は `text` だけを描画し、`n` が slot の `column(text("a"), n)` は子のリストに `null` を入れ、`column(let x = 42 in Card(x))` は空のルートをマウントしていた。`let` は tile を検査からも隠していた：`Card` の引数は `in=` と照合されず、その下に書いた builtin は `fn` として探された（E0116）。診断は値の位置に出し、値の中身は検査しない —— その中の診断は、誤ったものも正しいもの（未定義の名前）も、値を本来の位置に移したときに出る。
 
-値の位置にある値は報告しない：値 builtin の内容（`text(let x = 1 in x.show)`）、ユーザー tile の入力（`Card(let x = "a" in {label: x})`）、名前付き引数。`tile-expr` が本体全体である位置 —— tile 本体、`when` / `if` / `for` / `match` の腕 —— では、`let` は代わりにパースエラーになる（`tile Foo = let x = 0 in …`、`when(c, let x = 1 in …)`）。名前でも呼び出しでもない他の値 —— リテラル（`when(c, 42)`）やメンバ読み出し（`when(c, total.show)`）—— も同じくパースエラーになる。
+値の位置にある値は報告しない：値 builtin の内容（`text(let x = 1 in x.show)`）、ユーザー tile の入力（`Card(let x = "a" in {label: x})`）、名前付き引数。値 builtin の内容にある tile は [E0236](#e0236-tile-as-content) である。`tile-expr` が本体全体である位置 —— tile 本体、`when` / `if` / `for` / `match` の腕 —— では、`let` は代わりにパースエラーになる（`tile Foo = let x = 0 in …`、`when(c, let x = 1 in …)`）。名前でも呼び出しでもない他の値 —— リテラル（`when(c, 42)`）やメンバ読み出し（`when(c, total.show)`）—— も同じくパースエラーになる。
 
 **修正**：値を tile で表示する —— `column(text(n.show))`、`when(c, text(total.show))` —— か、値を使う位置に直接書く —— `column(Card({label: "a"}))` —— か、`fn` で計算してそれを呼ぶ。名指した組み込み tile は呼び出しを書く —— `column(divider())`。
 
@@ -1196,6 +1198,43 @@ dispatcher は各リクエストをその key で実行し、同じ key で別�
 
 **修正**：型を `Option(T)` と宣言し、値が無いところには `None`、あるところには `Some(x)` を書く — `slot picked : Option(TodoId) = None`。値があるかどうかは `== null` ではなく、`.is-none` / `.is-some`、`.get-or(d)`、あるいは `match` で問う。
 
+### E0236 `tile-as-content`
+
+値 builtin の内容に tile が書かれている。値 builtin は値を内容として表示する（[言語 §1.7.1](./language.md#_1-7-1-構文)）—— `text`・`heading`・`markdown`・`code` は最初の位置引数から、`link`・`label`・`editable` はそれか `text=` から（`link` はどちらも書かれていなければ `{text: …}` ブロックの項目から）、`image` は `src=` から、`icon` は `name=` から読む（[E0129](#e0129-unrendered-arg)）—— ので、そこに書いた tile は決して描画されない：`text(when(c, column(…)))` は何も表示しない。逆向き、tile の位置にある値は [E0128](#e0128-value-as-child) である。
+
+> ``A tile is not a value: <builtin> shows a value as its content, so this tile is never rendered. Write the tile as a child of a container — `column(when(c, …))` — or show a value — `<content>` ``
+
+`<content>` は、builtin が内容を読む位置に値を書いた形である：`text(x.show)`、内容を名前付き引数で書いた場合は `image(src=x.show)` / `label(text=x.show)`、`{…}` ブロックに書いた場合は `link {text: x.show}`。
+
+そこにある tile とは次のいずれかである：
+
+- `when` か `for`。これらは `tile-expr` にしかない。
+- builtin の呼び出し（`text(column(…))`）か、プログラムが定義する tile の呼び出し（`text(Card({label: "a"}))`、`text(lower())`）、またはプログラムが定義する tile の名前（`text(Header)`）。
+- 値の `if` / `match` の腕にある tile —— `text(if c then Header else "b")`。その腕が選ばれたときの内容はそれである。tile の腕はそれぞれ報告する。
+- `let … in` の本体にある tile —— `text(let x = 1 in Header)`。内容はそれである。
+
+見るのは内容そのものと、値の `if` / `match` の腕、`let … in` の本体だけである。式のさらに内側にある tile（`text(Header + "!")`）は、その式の一部として検査する。
+
+内容は式として読まれるので、名前は、tile がその名前を持つところでも、まずそれが名指す値である：slot、`let` やループ変数、`match` の束縛、`fn`（`fn label` がある場合の `heading(label(x))`）は値であり、union がタグとして持つ大文字の名前も、標準ライブラリのもの（`HttpBody` の `Empty`）を含めて値である。呼び出しが値になるのは、その名前の `fn` があるところだけである：`slot code` があっても `text(code("x"))` は builtin の呼び出しである。呼び出しを書かない builtin の名前（`text(code)`）は何も呼ばず、未定義の名前（[E0103](#e0103-undef-ref-undef-slot)）である。ループの後で読んだ、tile と同じ名前のループ変数（`column(for lower in xs text("a"), text(lower))`）も同じで、その E0103 はループが終わったことを告げる。腕が値である値の `if` / `match`（`text(match m with | A -> "a" | B -> "b")`）は値である。
+
+tile はそれぞれ書かれた位置で報告し、内容のそれ以外 —— tile 自身の引数、`if` の条件、もう一方の腕 —— は検査しない：内容は丸ごと、コンテナの中へ、あるいは値と入れ替えて移すものであり、その中の診断は移したときに出る。
+
+**修正**：tile をコンテナの子として書く —— `column(when(c, column(…)))`、`column(Header)`、`column(if c then Header else text("b"))` —— か、builtin で値を表示する —— `text(x.show)`。
+
+### E0237 `tile-depth`
+
+tile の木が、その中のユーザー tile を展開すると 256 段より深く入れ子になる（[§1.2.3](./language.md#_1-2-3-設計判断)）。コード生成はユーザー tile の呼び出しをすべてインライン展開するので、互いを呼ぶ tile の深さは足し合わされ、一度に一つの定義しか見ないパーサはその和を何も制限しない。次の定義を呼ぶ定義の連鎖は、どの定義も深くないのに、JavaScript エンジンが読み込めないモジュール（V8 はパース中にスタックを使い切る）に達し、さらに長ければコード生成そのものを溢れさせる。上限はパーサ自身のもので、それをモジュールの元になる木に掛ける。
+
+> `Tile "<root>" nests <depth> levels deep once the tiles in it are inlined, past the limit of 256; it goes over where "<from>" expands into "<to>"`
+>
+> `The expected tree of tile-test "<test>" nests <depth> levels deep once the tiles in it are inlined, past the limit of 256; it goes over where <from> expands into "<to>"`
+
+段の数え方は [§1.2.3](./language.md#_1-2-3-設計判断) のとおりである。tile 自身の本体は、パーサが一つの定義に上限を掛けるときと同じに数え、その中の式も含める。ユーザー tile の本体はその呼び出しの下にぶら下がり、コード生成がそのまわりに置く包みごとにさらに 1 段下がる：呼び出しが引数を渡すときに 1 段、呼び出しにキーが付くときに 1 段——自分で書いた `{key: …}` によっても、それを描画する `for` によっても（間に `when` / `if` / `match` があっても）キーは付く。`error-boundary` はさらに 1 段で、フォールバックの本体は tile 自身の本体と並んでその下にある。`tile T0 = column(T1)`、`tile T1 = column(T2)`、… という連鎖は 1 リンクあたり 2 段、末尾の `text("leaf")` が 3 段なので、127 リンクまでは収まり、128 番目のリンクで上限を超える。引数を渡すキー付きの呼び出しの連鎖（`tile T0 = T1(0) {key: "k"}`、…）は 1 リンクあたり 3 段、`for` が描画し引数を渡す呼び出しの連鎖（`tile T0 = for x in xs T1(x)`、…）は 4 段である。コード生成が何も描画しない位置——値の位置、あるいは位置引数を描画しない builtin の位置引数（[E0005](#e0005-tile-cycle) のとおり）——に書かれた tile は木に無く、段を足さない。
+
+深さを持つどの tile も展開しない tile——ルートの対象、あるいはどこからも名指されない tile——ごとに 1 件報告する。その木を浅くすれば、その中のどの木も浅くなるからである。ループに届く tile には深さが無く、[E0005](#e0005-tile-cycle) に任せる。その下にある深い木はそれ自体として報告される。`tile-test` の期待する木も、テストをコンパイルする場所で同じように展開されるので、同じ上限を掛けてテストについて報告する（2 つ目のメッセージ）。ただしその木が展開する tile がループに届くか、それ自体で上限を超えるときは、その tile の報告に任せる。位置は木が上限を超える箇所である：`<root>`（あるいは期待する木）から最も深い経路をたどって下り、対象の本体が 256 段目より下へ届く、`<from>` の中の呼び出し（または `error-boundary` 節）。2 つ目のメッセージの `<from>` は、期待する木そのものなら `the expected tree`、そこへ展開された tile なら `"<tile>"` である。
+
+**修正**：木を浅くする。定義の連鎖で 1 段ずつ書き下している繰り返しはコレクションに対する `for` に、描き分けは `when` / `match` に属し、いずれも描画する要素や分岐がいくつあっても同じ数段で済む。木の一部を別の tile に移しても助けにならない：呼び出された場所へ再びインライン展開される。
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など — か、そのイベントが要素に決して届かないタイルに書かれている（`check(onFocus=r)`、後述）。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。
@@ -1658,7 +1697,7 @@ test inf-has-no-value =
 
 2 つ目のメッセージは、表がそもそも持っていない述語に対するもの。その名前はチェッカーへ届く前にパーサが弾くので、ここへ到達するのは手で組み立てた AST 経由だけである — コンパイラ自身のテストはその経路でこの診断を駆動している。
 
-3 つ目は、ツールチェーンが lowering *できる* refinement が、到達できない位置にある場合である。slot の型の内側に書かれた述語は値をたどる検査として型ごとに 1 つの関数へ lowering される（[§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）が、自分自身を大きくなっていく引数に適用するジェネリック — `slot t : T(Text where nonempty)` に対する `type T(A) = {v: A, next: Option(T(List(A)))}` — は段ごとに新しい型になる。32 段を超えると lowering は止まり、その先は黙って通るチェックになってしまう。前の 2 つと違いこれはソースから到達できる。修正は、大きくなっていく引数で自分自身を入れ子にしない型にするか、それに沿って refinement を持たない型の slot にすることである。
+3 つ目は、ツールチェーンが lowering *できる* refinement が、到達できない位置にある場合である。slot の型の内側に書かれた述語は値をたどる検査で確かめられる。この検査は到達した型ごとに lowering され、同じ型に到達するすべての検査で共有される。定義の連鎖は、それらの検査を 1 つのループでたどる（[§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）。自分自身を大きくなっていく引数に適用するジェネリック — `slot t : T(Text where nonempty)` に対する `type T(A) = {v: A, next: Option(T(List(A)))}` — は段ごとに新しい型になるので、段ごとに専用の検査が要る。32 段を超えると lowering は止まり、その先は黙って通るチェックになってしまう。前の 2 つと違いこれはソースから到達できる。修正は、大きくなっていく引数で自分自身を入れ子にしない型にするか、それに沿って refinement を持たない型の slot にすることである。
 
 **現在この状態にある述語はない。** このチェックが存在するのは、代わりに何が起きていたかによる: `refinementToJs` は実装していないものをすべて `(_v) => true` へ lowering する `default` 分岐で終わっていたため、登録済み 12 述語のうち 7 つが「決して失敗しないチェック」としてランタイムへ届いていた — `slot n : Int where positive` は `-7` を受け入れ、その slot に対する `error(field=n)` は何も表示しなかった。refinement は値が slot へ入る際に通るチェックとして規定されている（[フォーム §5.6](./forms.md#_5-6-バリデーション戦略)、[ランタイム §10.3.3](./runtime.md#_10-3-3-batching)）ので、lowering のない述語はドキュメントがプログラムの実際の挙動と異なる約束をしている状態であり、しかもそれを誰も報告しなかった。パーサが受け付ける名前は lowering テーブルの名前とちょうど一致するため、今日のソースからこの診断へ到達することはない。lowering を伴わずに §1.3.3 へ述語を追加した場合に、実行時ではなくビルド時にここへ落ちる。
 
