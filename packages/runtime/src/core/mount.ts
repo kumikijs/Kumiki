@@ -551,9 +551,7 @@ export function mountCore(
           }
         }
       }
-      // Once the app is unmounted no reducer runs, so an err has nothing to go unhandled by.
-      if (outcome === "err" && matched === 0 && !disposed)
-        reportUnhandledEffectError(effect, value);
+      if (outcome === "err" && matched === 0) reportUnhandledEffectError(effect, value);
     } finally {
       exitScope?.();
     }
@@ -652,6 +650,8 @@ export function mountCore(
     unregisterAppRoot(view.target, app);
     if (views.length > 0) return;
     disposed = true;
+    // Before any host hook below can throw, so the shape can be mounted again whatever happens.
+    mountedShapes.delete(app);
     for (const h of anonTimers) clearInterval(h);
     for (const h of namedTimers.values()) clearInterval(h);
     namedTimers.clear();
@@ -660,7 +660,6 @@ export function mountCore(
     navigation.dispose();
     for (const unsub of lifecycleUnsubs) unsub();
     dispatcher.dispose();
-    mountedShapes.delete(app);
   }
   return {
     dispose: () => disposeView(ownView),
