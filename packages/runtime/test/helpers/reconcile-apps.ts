@@ -1,5 +1,4 @@
-import type { AppShape, Episode, EpisodeLogger, TileNode } from "@kumikijs/runtime";
-import { createEpisodeLogger } from "@kumikijs/runtime";
+import type { AppShape, TileNode } from "@kumikijs/runtime";
 import { bareApp } from "./app.ts";
 import { defined } from "./defined.ts";
 
@@ -48,16 +47,4 @@ export function stripApp(rows: number, withInput = false): AppShape {
     },
   });
   return app;
-}
-
-export function recordingLogger(): { logger: EpisodeLogger; committed: Episode[] } {
-  const committed: Episode[] = [];
-  let t = 1000;
-  let seq = 0;
-  const logger = createEpisodeLogger({
-    now: () => ++t,
-    idGen: () => `ep_${(seq++).toString().padStart(4, "0")}`,
-    onEpisode: (ep) => committed.push(ep),
-  });
-  return { logger, committed };
 }

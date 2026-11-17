@@ -4,6 +4,7 @@ import { checkAgainst } from "./against.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { checkExpr } from "./expr.ts";
 import { inferType } from "./infer.ts";
+import { nestedScopes } from "./nested-scopes.ts";
 import { resolveType } from "./types.ts";
 
 export function currentFnName(ctx: Ctx): string {
@@ -20,6 +21,8 @@ function fnBodyScope(fn: FnDef): Ctx {
     localTypes: new Map(scope.map((b) => [b.name, b.type])),
     localBinders: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
+    nestedScopes: nestedScopes(fn.body),
   };
   (ctx as Ctx & { fnName?: string }).fnName = fn.name;
   return ctx;

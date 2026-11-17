@@ -24,11 +24,13 @@ export const FIX_PROPOSAL_BESIDE_SKIP = fixture("proposal-beside-skip");
 export const FIX_SMOKE_PANICS = fixture("smoke-panics");
 /** `expect-panics` indexes past the end of a list in its `expect`; `inc-works` passes. */
 export const FIX_TEST_THROWS = fixture("test-throws");
+/** `cnt` is closest to the Text slot `cn`, so the one repair breaks `n := cnt + 1` (E0201). */
+export const FIX_REPAIR_INTRODUCES = fixture("repair-introduces");
 export const COUNTER = app("01-counter");
 
 type TextContent = { type: "text"; text: string };
 
-export type ToolResult = { isError: boolean; body: string };
+export type ToolResult = { isError: boolean; body: string; items: string[] };
 
 export async function withClient<T>(fn: (client: Client) => Promise<T>): Promise<T> {
   const server = createServer();
@@ -49,10 +51,8 @@ export async function call(
   args: Record<string, unknown>,
 ): Promise<ToolResult> {
   const res = await client.callTool({ name, arguments: args });
-  return {
-    isError: res.isError === true,
-    body: (res.content as TextContent[]).map((c) => c.text).join("\n"),
-  };
+  const items = (res.content as TextContent[]).map((c) => c.text);
+  return { isError: res.isError === true, body: items.join("\n"), items };
 }
 
 export async function callTool(

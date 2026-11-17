@@ -2,16 +2,17 @@ import { readFileSync } from "node:fs";
 import type { KumikiError } from "@kumikijs/compiler";
 import { check, lex, parse } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
+import { touchedLockViolation } from "../mutate/commit.ts";
 import { runTestsSource, testFile } from "../smoke.ts";
 import { load } from "../store.ts";
 import { messageOf } from "../text.ts";
-import { atomicWriteFileSync } from "../write-lock.ts";
 import {
   advisory,
   applyFixPlan,
   type FixApplyResult,
   planFixesExplained,
   repairable,
+  writeFix,
 } from "./compile.ts";
 import type { AutoPatch, CompilePatch, SkipReason } from "./patch.ts";
 import { planTestPatchExplained, testBodyLineRanges } from "./test-patch.ts";
@@ -92,7 +93,10 @@ type FixFromTestStatus =
     };
 
 export type TestPatchBlock =
-  | Extract<NonNullable<FixApplyResult["blocked"]>, { reason: "parse-error" | "introduced" }>
+  | Extract<
+      NonNullable<FixApplyResult["blocked"]>,
+      { reason: "parse-error" | "introduced" | "locked" }
+    >
   | { reason: "test-runner-threw"; message: string }
   | { reason: "named-test-missing" }
   | { reason: "still-fails"; failingTest: TestResult }
@@ -224,24 +228,56 @@ export async function runFixFromTest(
     return stamp({ ok: true, status: "proposed", patch, ...fixedCount });
   }
   const patched = patch.apply(curSource);
-  const refused = await gateTestPatch(patched, testName, before, path, capabilities);
-  if (refused !== null) {
-    return stamp({ ok: false, status: "test-blocked", patch, blocked: refused, ...fixedCount });
+  // Before the gate, as for a compile fix: a patch the lock refuses is never run.
+  const locked = touchedLockViolation(path, curSource, patched);
+  if (locked !== undefined) {
+    return stamp({
+      ok: false,
+      status: "test-blocked",
+      patch,
+      blocked: { reason: "locked", message: locked },
+      ...fixedCount,
+    });
   }
-  try {
-    atomicWriteFileSync(path, patched);
-  } catch (e) {
+  const gate = await gateTestPatch(patched, testName, before, path, capabilities);
+  if (gate.blocked !== undefined) {
+    return stamp({
+      ok: false,
+      status: "test-blocked",
+      patch,
+      blocked: gate.blocked,
+      ...fixedCount,
+    });
+  }
+  // Written by the compile tier's writer, which asks the lock again as it stands at the write.
+  const unwritten = writeFix(path, curSource, patched);
+  if (unwritten !== undefined && "blocked" in unwritten) {
+    return stamp({
+      ok: false,
+      status: "test-blocked",
+      patch,
+      blocked: unwritten.blocked,
+      ...fixedCount,
+    });
+  }
+  if (unwritten !== undefined) {
     return stamp({
       ok: false,
       status: "write-failed",
       phase: "test",
-      writeError: messageOf(e),
+      writeError: unwritten.writeError,
       patch,
       ...fixedCount,
     });
   }
+  warnings = gate.warnings;
   return stamp({ ok: true, status: "applied", pass: true, patch, regressed: [], ...fixedCount });
 }
+
+/** Why the gate refused a test patch, or the warnings of the source it let through. */
+type TestGateVerdict =
+  | { blocked: Exclude<TestPatchBlock, { reason: "locked" }> }
+  | { blocked?: undefined; warnings: KumikiError[] };
 
 /** Refuses a test patch that breaks the file, leaves the test failing, or fails a passing test. */
 async function gateTestPatch(
@@ -250,28 +286,29 @@ async function gateTestPatch(
   before: readonly TestResult[],
   path: string,
   capabilities: string[],
-): Promise<TestPatchBlock | null> {
+): Promise<TestGateVerdict> {
   let parsed: ReturnType<typeof parse>;
   try {
     parsed = parse(lex(patched));
   } catch (e) {
-    return { reason: "parse-error", message: messageOf(e) };
+    return { blocked: { reason: "parse-error", message: messageOf(e) } };
   }
-  const introduced = repairable(check(parsed, { capabilities }));
-  if (introduced.length > 0) return { reason: "introduced", introduced };
+  const diagnostics = check(parsed, { capabilities });
+  const introduced = repairable(diagnostics);
+  if (introduced.length > 0) return { blocked: { reason: "introduced", introduced } };
   let after: TestResult[];
   try {
     after = await runTestsSource(patched, capabilities, { sourcePath: path });
   } catch (e) {
-    return { reason: "test-runner-threw", message: messageOf(e) };
+    return { blocked: { reason: "test-runner-threw", message: messageOf(e) } };
   }
   const named = after.find((r) => r.name === testName);
-  if (named === undefined) return { reason: "named-test-missing" };
-  if (!named.pass) return { reason: "still-fails", failingTest: named };
+  if (named === undefined) return { blocked: { reason: "named-test-missing" } };
+  if (!named.pass) return { blocked: { reason: "still-fails", failingTest: named } };
   const regressed = before
     .filter((b) => b.pass && after.find((r) => r.name === b.name)?.pass !== true)
     .map((b) => b.name);
-  if (regressed.length === 0) return null;
+  if (regressed.length === 0) return { warnings: advisory(diagnostics) };
   const failingTests = after.filter((r) => regressed.includes(r.name));
-  return { reason: "regressed", regressed, failingTests };
+  return { blocked: { reason: "regressed", regressed, failingTests } };
 }
