@@ -84,6 +84,26 @@ describe("select", () => {
     );
     expect(labels(el)).toEqual(["One"]);
   });
+
+  it("reselects a record option written in another field order, keeping each option", () => {
+    const sizes = () => [
+      { label: "1 x 1", value: { w: 1, h: 1 } },
+      { label: "2 x 3", value: { w: 2, h: 3 } },
+      { label: "4 x 4", value: { w: 4, h: 4 } },
+    ];
+    const before = select(sizes(), { w: 1, h: 1 });
+    const el = defined(inputTiles.select, "select")(before, ctx) as HTMLSelectElement;
+    const kept = Array.from(el.options);
+    defined(inputPatchers.select, "select patcher")(
+      el,
+      before,
+      select(sizes(), { h: 3, w: 2 }),
+      ctx,
+    );
+    expect(labels(el).filter((_, i) => el.options[i]?.selected)).toEqual(["2 x 3"]);
+    expect(el.options).toHaveLength(kept.length);
+    for (const [i, option] of kept.entries()) expect(el.options[i]).toBe(option);
+  });
 });
 
 describe("radio", () => {
