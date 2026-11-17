@@ -168,8 +168,8 @@ catalogs:
       specifier: ^2.4.16
       version: 2.4.16
     '@happy-dom/global-registrator':
-      specifier: ^20.10.2
-      version: 20.10.2
+      specifier: ^21.0.4
+      version: 21.0.4
     '@playwright/test':
       specifier: ^1.61.1
       version: 1.61.1
@@ -180,8 +180,8 @@ catalogs:
       specifier: ^3.4.0
       version: 3.4.0
     happy-dom:
-      specifier: ^20.10.2
-      version: 20.10.2
+      specifier: ^21.0.4
+      version: 21.0.4
     playwright:
       specifier: ^1.61.1
       version: 1.61.1
@@ -253,7 +253,7 @@ importers:
         version: 1.6.4(@algolia/client-search@5.53.0)(@types/node@25.9.1)(lightningcss@1.32.0)(postcss@8.5.28)(search-insights@2.17.3)(typescript@6.0.3)
       vitest:
         specifier: 'catalog:'
-        version: 5.0.3(@types/node@25.9.1)(happy-dom@20.10.2)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
+        version: 5.0.3(@types/node@25.9.1)(happy-dom@21.0.4)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
       vue:
         specifier: ^3.5.35
         version: 3.5.35(typescript@6.0.3)
@@ -262,7 +262,7 @@ importers:
     devDependencies:
       '@happy-dom/global-registrator':
         specifier: 'catalog:'
-        version: 20.10.2
+        version: 21.0.4
       '@kumikijs/cli':
         specifier: workspace:*
         version: link:../cli
@@ -283,13 +283,13 @@ importers:
         version: 6.0.3
       vitest:
         specifier: 'catalog:'
-        version: 5.0.3(@types/node@25.9.1)(happy-dom@20.10.2)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
+        version: 5.0.3(@types/node@25.9.1)(happy-dom@21.0.4)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
 
   packages/cli:
     dependencies:
       '@happy-dom/global-registrator':
         specifier: 'catalog:'
-        version: 20.10.2
+        version: 21.0.4
       '@kumikijs/compiler':
         specifier: workspace:*
         version: link:../compiler
@@ -317,7 +317,7 @@ importers:
         version: 25.9.1
       happy-dom:
         specifier: 'catalog:'
-        version: 20.10.2
+        version: 21.0.4
       tsx:
         specifier: 'catalog:'
         version: 4.23.15
@@ -326,7 +326,7 @@ importers:
         version: 6.0.3
       vitest:
         specifier: 'catalog:'
-        version: 5.0.3(@types/node@25.9.1)(happy-dom@20.10.2)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
+        version: 5.0.3(@types/node@25.9.1)(happy-dom@21.0.4)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
 
   packages/compiler:
     dependencies:
@@ -345,7 +345,7 @@ importers:
         version: 6.0.3
       vitest:
         specifier: 'catalog:'
-        version: 5.0.3(@types/node@25.9.1)(happy-dom@20.10.2)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
+        version: 5.0.3(@types/node@25.9.1)(happy-dom@21.0.4)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
 
   packages/e2e:
     dependencies:
@@ -391,7 +391,7 @@ importers:
         version: 6.0.3
       vitest:
         specifier: 'catalog:'
-        version: 5.0.3(@types/node@25.9.1)(happy-dom@20.10.2)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
+        version: 5.0.3(@types/node@25.9.1)(happy-dom@21.0.4)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
 
   packages/kumiki:
     dependencies:
@@ -429,7 +429,7 @@ importers:
         version: 25.9.1
       happy-dom:
         specifier: 'catalog:'
-        version: 20.10.2
+        version: 21.0.4
       tsx:
         specifier: 'catalog:'
         version: 4.23.15
@@ -438,19 +438,19 @@ importers:
         version: 6.0.3
       vitest:
         specifier: 'catalog:'
-        version: 5.0.3(@types/node@25.9.1)(happy-dom@20.10.2)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
+        version: 5.0.3(@types/node@25.9.1)(happy-dom@21.0.4)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
 
   packages/runtime:
     devDependencies:
       happy-dom:
         specifier: 'catalog:'
-        version: 20.10.2
+        version: 21.0.4
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
       vitest:
         specifier: 'catalog:'
-        version: 5.0.3(@types/node@25.9.1)(happy-dom@20.10.2)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
+        version: 5.0.3(@types/node@25.9.1)(happy-dom@21.0.4)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
 
   packages/syntax:
     devDependencies:
@@ -459,7 +459,7 @@ importers:
         version: 6.0.3
       vitest:
         specifier: 'catalog:'
-        version: 5.0.3(@types/node@25.9.1)(happy-dom@20.10.2)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
+        version: 5.0.3(@types/node@25.9.1)(happy-dom@21.0.4)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
 
   packages/tests:
     devDependencies:
@@ -483,13 +483,13 @@ importers:
         version: 25.9.1
       happy-dom:
         specifier: 'catalog:'
-        version: 20.10.2
+        version: 21.0.4
       typescript:
         specifier: 'catalog:'
         version: 6.0.3
       vitest:
         specifier: 'catalog:'
-        version: 5.0.3(@types/node@25.9.1)(happy-dom@20.10.2)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
+        version: 5.0.3(@types/node@25.9.1)(happy-dom@21.0.4)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
 
   packages/vite:
     dependencies:
@@ -511,7 +511,7 @@ importers:
         version: 8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15)
       vitest:
         specifier: 'catalog:'
-        version: 5.0.3(@types/node@25.9.1)(happy-dom@20.10.2)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
+        version: 5.0.3(@types/node@25.9.1)(happy-dom@21.0.4)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
 
 packages:
 
@@ -1071,8 +1071,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@happy-dom/global-registrator@20.10.2':
-    resolution: {integrity: sha512-/DC0hluanNJDVPUu69cidD46sGwzt8MJATiGx7WgCScn+ZH48fJQ0fvTfMPXY82/ASXWxnNo8P4BdHyU/dI/EA==}
+  '@happy-dom/global-registrator@21.0.4':
+    resolution: {integrity: sha512-Bbr0hW9hhDhBf3Jp0EyDlkCbFgbr0z2jd3BMKYOYW+fOkPM4Nx195GMXyCtRCGEgoNn6i09FabXrSkNFm2ONzg==}
     engines: {node: '>=20.0.0'}
 
   '@hono/node-server@1.19.19':
@@ -2111,8 +2111,8 @@ packages:
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
 
-  happy-dom@20.10.2:
-    resolution: {integrity: sha512-5p9Sxis3eowDJKqx90QCsgbNA02XXqJ59NOHvD4V6cxp+rP4d/xOyVx7uY3hS8hiUbY1VeiFH8lbJ81AyuDVLQ==}
+  happy-dom@21.0.4:
+    resolution: {integrity: sha512-tFm+GaLBgo6o0awHnvHaNoraVo27qJ+2tZEtZ+cIa08hXbeitrxAJajLI05hsUy/2/YTKcUjQYzHe5mCcraLBw==}
     engines: {node: '>=20.0.0'}
 
   has-symbols@1.1.0:
@@ -3554,10 +3554,10 @@ snapshots:
   '@esbuild/win32-x64@0.28.2':
     optional: true
 
-  '@happy-dom/global-registrator@20.10.2':
+  '@happy-dom/global-registrator@21.0.4':
     dependencies:
       '@types/node': 25.9.1
-      happy-dom: 20.10.2
+      happy-dom: 21.0.4
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -4518,7 +4518,7 @@ snapshots:
 
   graceful-fs@4.2.11: {}
 
-  happy-dom@20.10.2:
+  happy-dom@21.0.4:
     dependencies:
       '@types/node': 25.9.1
       '@types/whatwg-mimetype': 3.0.2
@@ -5338,7 +5338,7 @@ snapshots:
       - typescript
       - universal-cookie
 
-  vitest@5.0.3(@types/node@25.9.1)(happy-dom@20.10.2)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15)):
+  vitest@5.0.3(@types/node@25.9.1)(happy-dom@21.0.4)(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15)):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/mocker': 5.0.3(vite@8.0.16(@types/node@25.9.1)(esbuild@0.28.2)(tsx@4.23.15))
@@ -5356,7 +5356,7 @@ snapshots:
       why-is-node-running: 3.2.1
     optionalDependencies:
       '@types/node': 25.9.1
-      happy-dom: 20.10.2
+      happy-dom: 21.0.4
     transitivePeerDependencies:
       - msw
 
