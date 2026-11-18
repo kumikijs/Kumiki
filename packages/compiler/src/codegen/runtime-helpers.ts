@@ -41,9 +41,23 @@ function _wk(node, key) {
   }
   if (Array.isArray(node)) {
     return _children(node).map((n, i) =>
-      _wk(n, JSON.stringify([key, typeof n.key === "string" ? n.key : i])),
+      _wk(n, JSON.stringify([key, ...(typeof n.key === "string" ? _keySegments(n.key) : [i])])),
     );
   }
   return { ...node, key: key };
+}
+// Only a key spelled exactly as _wk spells a list key (an array of two or more,
+// as JSON.stringify writes it) is split, so its elements give back that one key.
+function _keySegments(k) {
+  if (k.charAt(0) !== "[") return [k];
+  let segments;
+  try {
+    segments = JSON.parse(k);
+  } catch {
+    return [k];
+  }
+  return Array.isArray(segments) && segments.length > 1 && JSON.stringify(segments) === k
+    ? segments
+    : [k];
 }
 `;

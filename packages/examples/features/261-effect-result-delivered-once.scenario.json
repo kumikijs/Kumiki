@@ -1,0 +1,32 @@
+{
+  "steps": [
+    {
+      "label": "nothing is loaded at mount",
+      "expect": { "noErrors": true, "domIncludes": ["note: none", "oks=0 errs=0"] }
+    },
+    {
+      "label": "a load that answers .ok runs loaded once and failed not at all",
+      "do": { "click": "#load" },
+      "expect": {
+        "noErrors": true,
+        "state": { "note": "hello", "oks": 1, "errs": 0, "problem": "", "crash": "" },
+        "domIncludes": ["note: hello", "oks=1 errs=0"]
+      }
+    },
+    {
+      "label": "a load that answers .err hands failed the Text the effect declares",
+      "do": { "click": "#load" },
+      "expect": {
+        "noErrors": true,
+        "state": { "oks": 1, "errs": 1, "problem": "SecurityError: storage blocked" },
+        "domIncludes": ["oks=1 errs=1", "problem: SecurityError: storage blocked"]
+      }
+    }
+  ],
+  "effects": {
+    "loadNote": [
+      { "outcome": "ok", "value": { "_tag": "Some", "_0": "hello" } },
+      { "outcome": "err", "value": "SecurityError: storage blocked" }
+    ]
+  }
+}
