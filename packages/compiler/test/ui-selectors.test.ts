@@ -280,6 +280,88 @@ describe("W0212 ui-event-tile-mismatch", () => {
       .map((e) => /Reducer "([^"]+)"/.exec(e.message)?.[1]);
     expect(warned).toEqual(["risky"]);
   });
+
+  it.each([
+    {
+      depth: "the fallback of a nested tile's fallback",
+      chain: `tile FbA in=PanicInfo error-boundary=Last = text("fb " + n.get.show)`,
+    },
+    {
+      depth: "a fallback three tiers down",
+      chain: `tile FbB in=PanicInfo error-boundary=Last = text("fb " + n.get.show)
+tile FbA in=PanicInfo error-boundary=FbB = text("fb " + n.get.show)`,
+    },
+  ])("walks $depth, which renders in the place of the one that panicked", ({ chain }) => {
+    // Only `Last` fires click. It renders in `Card`, where `Widget` is, but outside `FbA`.
+    const src = withApp(`
+slot n : Option(Int) = None
+slot hits : Int = 0
+reducer onCard on=ui.click(Card) do= hits := hits + 1
+reducer onFallback on=ui.click(FbA) do= hits := hits + 1
+tile Last in=PanicInfo = button(text="retry")
+${chain}
+tile Widget error-boundary=FbA = text("w " + n.get.show)
+tile Card = column(text("card"), Widget)
+tile App = column(Card)`);
+    const warned = checkSource(src)
+      .filter((e) => e.code === "W0212")
+      .map((e) => /Reducer "([^"]+)"/.exec(e.message)?.[1]);
+    expect(warned).toEqual(["onFallback"]);
+  });
+
+  it("walks the fallback of a lower-cased tile written as a bare child, which renders in its place", () => {
+    // `column(leaf)` reads `leaf` as a name, and codegen lowers it as the call `leaf()`, boundary and all.
+    const src = withApp(`
+slot leaf : Text = "hello"
+slot n : Option(Int) = None
+slot hits : Int = 0
+reducer onCard on=ui.click(Card) do= hits := hits + 1
+reducer onLeaf on=ui.click(leaf) do= hits := hits + 1
+tile Oops in=PanicInfo = button(text="retry")
+tile leaf error-boundary=Oops = text("w " + n.get.show)
+tile Card = column(text("card"), leaf)
+tile App = column(Card)`);
+    const warned = checkSource(src)
+      .filter((e) => e.code === "W0212")
+      .map((e) => /Reducer "([^"]+)"/.exec(e.message)?.[1]);
+    expect(warned).toEqual(["onLeaf"]);
+  });
+
+  it("walks a tile named like a builtin, written as a bare child, as the program's tile", () => {
+    // `column(spinner)` renders the program's `spinner`, a button, not the builtin, which fires no click.
+    const src = withApp(`
+slot spinner : Text = "x"
+slot hits : Int = 0
+reducer onCard on=ui.click(Card) do= hits := hits + 1
+tile spinner = button(text="go")
+tile Card = column(text("card"), spinner)
+tile App = column(Card)`);
+    expect(checkSource(src).filter((e) => e.code === "W0212")).toEqual([]);
+  });
+
+  it.each([
+    [
+      "a fallback that names itself",
+      "tile Oops in=PanicInfo error-boundary=Oops = text(n.get.show)",
+    ],
+    [
+      "two fallbacks that name each other",
+      `tile Oops in=PanicInfo error-boundary=Mid = text(n.get.show)
+tile Mid in=PanicInfo error-boundary=Oops = text(n.get.show)`,
+    ],
+  ])("ends a chain of fallbacks at %s, which E0005 then reports", (_label, chain) => {
+    // The selector checks run before the cycle check, so they meet the loop first.
+    const src = `
+slot n : Option(Int) = None
+slot hits : Int = 0
+reducer onCard on=ui.click(Card#x) do= hits := hits + 1
+${chain}
+tile Widget error-boundary=Oops = text(n.get.show)
+tile Card = column(Widget)
+tile App = column(Card)
+app A caps=[] routes={"/" -> App, "/w" -> Widget, "/404" -> App} init=[]`;
+    expect(codesOf(src, { strictSelectorId: true })).toContain("E0005");
+  });
 });
 
 describe("W0212 gives the reason that holds when the element fires the event", () => {
@@ -772,6 +854,17 @@ describe("W0212 gives the reason that holds when the element fires the event", (
         );
       });
 
+      it("leaves out the fallback of a tile at the root, which renders without the handler", () => {
+        expect(
+          w0213(
+            "tile Fallback in=PanicInfo = input(bind=note)\n" +
+              "tile Safe error-boundary = Fallback = check(value=done)\n" +
+              "tile Inner = Safe()\n" +
+              "tile D = column(Inner(onFocus=r))",
+          ),
+        ).toContain("(observed at its root: check). ");
+      });
+
       it.each([
         ["onFocus on an input", "input(bind=note, onFocus=r)"],
         ["onClick on a check", "check(value=done, onClick=r)"],
@@ -1157,7 +1250,6 @@ tile App = column(Computed, Missing, Known)`);
     });
 
     it("takes the id a call site writes on a user tile as its root's", () => {
-      // `Three`'s call site writes another prop, which leaves the id to the runtime.
       const src = withApp(`
 slot log : Text = ""
 tile Four  = button(text="four") {id: "four"}
@@ -1171,7 +1263,7 @@ reducer otherProp   on=ui.click(Three#zz)  do= log := log + "x"
 reducer wrapCallSite on=ui.click(Wrap#w5)  do= log := log + "x"
 reducer wrapOwnId   on=ui.click(Wrap#b5)   do= log := log + "x"
 tile App = column(Four(id="five"), Four, Three {variant: "ghost"}, Wrap)`);
-      expect(flagged(src)).toEqual(["neither", "wrapOwnId"]);
+      expect(flagged(src)).toEqual(["neither", "otherProp", "wrapOwnId"]);
       const neither = checkStrict(src).find((d) => d.message.includes("Four#six"));
       expect(neither?.message).toContain('"five" | "four"');
     });
@@ -1203,6 +1295,118 @@ tile App = column(Outer)`);
       expect(checkStrict(src).find((d) => d.code === "E0212")?.message).toContain('"fb" | "r"');
     });
 
+    it("takes the fallback of a nested tile's fallback, which renders in its place", () => {
+      const src = withApp(`
+slot n : Option(Int) = None
+slot log : Text = ""
+tile Last in=PanicInfo = button(text="retry", id="again")
+tile FbA in=PanicInfo error-boundary=Last = text("fb " + n.get.show)
+tile Widget error-boundary=FbA = text("w " + n.get.show)
+tile Card = column(button(text="save", id="save"), Widget)
+reducer cardAgain on=ui.click(Card#again) do= log := log + "x"
+reducer cardBad   on=ui.click(Card#zz)    do= log := log + "x"
+tile App = column(Card)`);
+      expect(flagged(src)).toEqual(["cardBad"]);
+      expect(checkStrict(src).find((d) => d.code === "E0212")?.message).toContain(
+        '"again" | "save"',
+      );
+    });
+
+    it("takes the fallback of a lower-cased tile written as a bare child", () => {
+      const src = withApp(`
+slot leaf : Text = "hello"
+slot n : Option(Int) = None
+slot log : Text = ""
+tile Oops in=PanicInfo = button(text="retry", id="again")
+tile leaf error-boundary=Oops = text("w " + n.get.show)
+tile Card = column(button(text="save", id="save"), leaf)
+reducer cardAgain on=ui.click(Card#again) do= log := log + "x"
+reducer cardBad   on=ui.click(Card#zz)    do= log := log + "x"
+tile App = column(Card)`);
+      expect(flagged(src)).toEqual(["cardBad"]);
+      expect(checkStrict(src).find((d) => d.code === "E0212")?.message).toContain(
+        '"again" | "save"',
+      );
+    });
+
+    it("takes the fallback of a tile named like a builtin, written as a bare child", () => {
+      // The bare name is the program's tile, as the build renders it, not the builtin `spinner`.
+      const src = withApp(`
+slot spinner : Text = "x"
+slot n : Option(Int) = None
+slot log : Text = ""
+tile Oops in=PanicInfo = button(text="retry", id="again")
+tile spinner error-boundary=Oops = row(button(text="in", id="inner"), text("w " + n.get.show))
+tile Card = column(button(text="save", id="save"), spinner)
+reducer cardAgain on=ui.click(Card#again) do= log := log + "x"
+reducer cardInner on=ui.click(Card#inner) do= log := log + "x"
+reducer cardBad   on=ui.click(Card#zz)    do= log := log + "x"
+tile App = column(Card)`);
+      expect(flagged(src)).toEqual(["cardBad"]);
+      expect(checkStrict(src).find((d) => d.code === "E0212")?.message).toContain(
+        '"again" | "inner" | "save"',
+      );
+    });
+
+    it("leaves out the fallback of a tile named like a builtin where a call renders the builtin", () => {
+      // `spinner()` is the builtin, so `Oops` renders nowhere and keeps its own id.
+      const src = withApp(`
+slot n : Option(Int) = None
+slot log : Text = ""
+tile Oops in=PanicInfo = button(text="retry", id="again")
+tile spinner error-boundary=Oops = text("w " + n.get.show)
+tile Wait = spinner()
+reducer oopsOwn on=ui.click(Oops#again) do= log := log + "x"
+reducer oopsBad on=ui.click(Oops#zz)    do= log := log + "x"
+tile App = column(Wait(id="x"))`);
+      expect(flagged(src)).toEqual(["oopsBad"]);
+    });
+
+    it("keeps the own id of the fallback of a lower-cased tile written as a bare child", () => {
+      // `Last` is also called with another id, so only its place as `leaf`'s fallback keeps its own.
+      const src = withApp(`
+slot leaf : Text = "hello"
+slot n : Option(Int) = None
+slot log : Text = ""
+tile Last = button(text="retry", id="again")
+tile leaf error-boundary=Last = text("w " + n.get.show)
+reducer lastOwn    on=ui.click(Last#again) do= log := log + "x"
+reducer lastCalled on=ui.click(Last#x)     do= log := log + "x"
+reducer lastBad    on=ui.click(Last#zz)    do= log := log + "x"
+tile App = column(leaf, Last(id="x"))`);
+      expect(flagged(src)).toEqual(["lastBad"]);
+    });
+
+    // `Last` is also called with another id, so only its place along a chain keeps its own.
+    const LAST = `slot n : Option(Int) = None
+slot log : Text = ""
+tile Last = button(text="retry", id="again")
+tile FbA in=PanicInfo error-boundary=Last = text("fb " + n.get.show)
+tile Risky error-boundary=FbA = text("r " + n.get.show)
+reducer lastOwn    on=ui.click(Last#again) do= log := log + "x"
+reducer lastCalled on=ui.click(Last#x)     do= log := log + "x"
+reducer lastBad    on=ui.click(Last#zz)    do= log := log + "x"`;
+    it.each([
+      {
+        where: "a call site",
+        rest: `tile App = column(Risky, Last(id="x"))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`,
+      },
+      {
+        where: "a route target",
+        rest: `tile App = column(Last(id="x"))
+app A caps=[] routes={"/" -> App, "/r" -> Risky, "/404" -> App} init=[]`,
+      },
+      {
+        where: "a sub-routes target",
+        rest: `tile Shell sub-routes={"/s/r" -> Risky} = column(route-outlet())
+tile App = column(Last(id="x"))
+app A caps=[] routes={"/" -> App, "/s/*" -> Shell, "/404" -> App} init=[]`,
+      },
+    ])("keeps the own id of the fallback of a fallback at $where", ({ rest }) => {
+      expect(flagged(`${LAST}\n${rest}`)).toEqual(["lastBad"]);
+    });
+
     it("leaves a tile with no element that fires the event to W0212", () => {
       const src = withApp(`
 slot log : Text = ""
@@ -1217,7 +1421,7 @@ tile App = column(T)`);
 
     it.each([
       ["a computed id, which leaves it unknown", "Btn(id=name)", []],
-      ["another prop, which leaves it unknown", 'Btn {variant: "ghost"}', []],
+      ["another prop, which leaves it the tile's", 'Btn {variant: "ghost"}', ["r"]],
       ["`key` alone, which leaves it the tile's", "for s in xs Btn {key: s}", ["r"]],
       ["a handler alone, which leaves it the tile's", "Btn(onClick=other)", ["r"]],
     ])("reads a call site that writes %s", (_label, call, expected) => {

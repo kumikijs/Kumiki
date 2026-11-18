@@ -358,6 +358,22 @@ it("names the bound so the message says what to change", () => {
   expect((result as ParseError).message).toContain(String(MAX_DEPTH));
 });
 
+describe("the refusal says what to change", () => {
+  const messageOf = (source: string) => (pipeline(source) as ParseError).message;
+
+  it("tells an expression to move part of it into a definition of its own", () => {
+    expect(messageOf(slot("Int", nest("(", ")", "1", 300)))).toContain(
+      `Nesting is deeper than ${MAX_DEPTH} levels — extract part of this into a definition of its own`,
+    );
+  });
+
+  it("tells a tile tree that a tile it moves out is inlined back", () => {
+    expect(messageOf(program(`tile T = ${nest("column(", ")", 'text("x")', 300)}`))).toContain(
+      `Nesting is deeper than ${MAX_DEPTH} levels — moving part of a tile tree into another tile does not help, since every call to a tile is inlined back (E0237): repeat with a \`for\` over a collection, and choose between alternatives with \`when\` or \`match\``,
+    );
+  });
+});
+
 /** `Id(Id(…Id(Text) where…) where…) where…`, one entry of `wheres` per level, innermost first. */
 const idNest = (wheres: readonly number[]): string =>
   wheres.reduce((inner, n) => `Id(${inner})${WHERE.repeat(n)}`, "Text");
