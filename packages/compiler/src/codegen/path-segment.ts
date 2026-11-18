@@ -7,7 +7,8 @@ export const UNWRAP_SEGMENT: { get: true } = { get: true };
 
 /**
  * A step holds the key's expression because the key is evaluated where the path
- * is: in the reducer for `xs[i] := v`, on every render of the control for `bind=xs[i]`.
+ * is: in the reducer for `xs[i] := v`, on every render of the tile for `bind=xs[i]`
+ * or `error(field=xs[i])`.
  */
 export type PathStep = string | { get: true } | { at: Expr };
 
