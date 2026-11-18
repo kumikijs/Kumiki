@@ -819,6 +819,8 @@ A request delivers **exactly one** result. An invoke that throws is that request
 
 What throws while that result is being delivered, past the body of a reducer it runs, is not a second result. The dispatch of what the reducer emitted can throw there, and so can a host's episode logger recording the reducer; a tile's own panic in the render after it stays a `tile-render` panic, which the render catches. The request has its one result by then, so its `.err` reducers do not run for it. The throw is an error of the app, reported as a reducer panic is ([lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)): to `console.error`, as a `panic` step on the episode the result belongs to, and to `app.error`, under `category: "effect"` with a `location` naming the effect (`effect "loadNote"`). The page is then rendered with what the reducer wrote, which the throw may have kept from rendering, and a throw from that render is reported the same way. The effect's other reducers on that result still run, as they do after a panic in one's body. A panic inside the body stays a reducer panic, under `category: "reducer"` and `location: reducer "<name>"`.
 
+The server pass ([§10.6.1](#_10-6-1-ssr)) delivers the result of an effect in the `app.init` chain the same way: the effect runs under the same `retry` ([§10.4.4](#_10-4-4-retry)), an invoke that throws fails with the same `.err` value, and the matching reducer is handed the same `$value` / `$error` and the same `$key`. Hydration does not run `app.init` again ([§10.6.2](#_10-6-2-hydration)), so what the server computed is what the hydrated page keeps, and it is what a mount computes.
+
 ### 10.4.6 Implementation of Standard Capabilities
 
 | capability | Implementation |
