@@ -80,9 +80,11 @@ const compiled = (src: string) =>
   compile(src, { runtimeSpecifier: "@kumikijs/runtime", capabilities: [] });
 
 // With the same Node, V8 on win32 parsed chains like these 77% to 89% as deep as it does on
-// Linux: a `for` passing an argument ran out at about 119 links there against 154 here. A child
-// given 77% of V8's default 984 KB stack therefore has no more room than Windows does.
-const WINDOWS_LIKE_STACK_KB = 757;
+// Linux: a `for` passing an argument ran out at about 119 links there against 154 here. Off
+// Windows, a child given 77% of V8's default 984 KB stack therefore has no more room than Windows
+// does. On Windows the child keeps the default, which is the room the smaller stack stands in for:
+// shrinking it there as well would leave less than any app on Windows gets.
+const WINDOWS_LIKE_STACK_KB = process.platform === "win32" ? 984 : 757;
 
 describe("a chain of tiles at the inlining limit", () => {
   let mounted: ReturnType<typeof mountApp> | undefined;
