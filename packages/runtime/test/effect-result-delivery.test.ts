@@ -11,9 +11,9 @@ import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { bareApp } from "./helpers/app.ts";
 import { captureConsole } from "./helpers/console.ts";
-import { defined } from "./helpers/defined.ts";
 import { freshRoot } from "./helpers/dom.ts";
 import { type LoggedMount, mountLogged } from "./helpers/episode-apps.ts";
+import { unhandledRejections } from "./helpers/rejections.ts";
 import { tick } from "./helpers/time.ts";
 
 // What each reducer of `load` was handed, and every `PanicInfo` `app.error` was handed.
@@ -188,27 +188,6 @@ async function settled(seen: Seen): Promise<void> {
   while (seen.ok.length + seen.err.length === 0 && Date.now() < deadline) await tick(5);
   // Long enough for a second result, had the request delivered one.
   await tick(30);
-}
-
-// The process the tests run in, which the runtime's own types leave out: the runtime targets a
-// browser.
-type HostProcess = {
-  on(event: "unhandledRejection", listener: (reason: unknown) => void): void;
-  off(event: "unhandledRejection", listener: (reason: unknown) => void): void;
-};
-
-/** Every promise rejection that nothing handles while the test runs. */
-function unhandledRejections(): unknown[] {
-  const host = defined((globalThis as { process?: HostProcess }).process, "the test's process");
-  const seen: unknown[] = [];
-  const note = (reason: unknown): void => {
-    seen.push(reason);
-  };
-  host.on("unhandledRejection", note);
-  onTestFinished(() => {
-    host.off("unhandledRejection", note);
-  });
-  return seen;
 }
 
 describe("a request whose result delivery throws past a reducer body", () => {

@@ -149,6 +149,7 @@ export function mountCore(
       handleEffectResult(effect, outcome, value, key, token);
     },
     handleRefusedEmit,
+    handleLaunchThrow,
     episode ? (effect, input) => episode.recordEffectStart(effect, input) : undefined,
     episode ? (targetId) => episode.recordEffectCancel(targetId) : undefined,
     episode ? (token, name) => episode.cancelPendingEffect(token, name) : undefined,
@@ -409,6 +410,15 @@ export function mountCore(
   function handleRefusedEmit(effect: string, why: EmitRefusal, token?: string): void {
     const rec = reportRefusedEmit(effect, why);
     fireAppError(rec, rec.location, {}, token);
+  }
+
+  // What throws past a request's launch, outside the reducers its result runs, such as a host's
+  // episode logger recording it, is reported as a throw while its result is delivered is, on the
+  // episode that claimed the request.
+  function handleLaunchThrow(effect: string, e: unknown, token?: string): void {
+    const location = `effect "${effect}"`;
+    reportPanic(location, e);
+    fireAppError(panicInfo(e, "effect"), location, {}, token);
   }
 
   function triggerOfReducer(r: ReducerSpec): { kind: string; target: string } {

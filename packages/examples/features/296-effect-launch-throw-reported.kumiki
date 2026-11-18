@@ -1,0 +1,44 @@
+# Feature: a throw past a request's launch is an error of the app, under every
+# policy (runtime.md).
+#
+# `send` queues two writes of `record` under `policy=queue`. `done` appends
+# what each `.ok` hands it to `log`, and `onCrash` counts what `app.error` is
+# told and keeps the last one.
+#
+# Something outside the reducers can throw while a request is launched or its
+# result is recorded, such as a host's episode logger. That is an error of the
+# app, so `app.error` fires with category "effect" and location
+# `effect "record"`, and the write queued behind it still runs.
+#
+# The scenario walks the queue with nothing throwing. An integration test in
+# `packages/tests` mounts this app with an episode logger that throws once,
+# while it closes the first write's result.
+
+slot log     : Text = ""
+slot crashes : Int  = 0
+slot crash   : Text = ""
+
+effect record cap=log.write
+              in=Text
+              out=Unit
+              policy=queue
+
+reducer send    on=ui.click(SendBtn)    do= emit record("a")
+                                           emit record("b")
+reducer done    on=record.ok(_, $sent)  do= log := log + $sent
+reducer failed  on=record.err(_, _)     do= log := log + "!"
+reducer onCrash on=app.error            do= crashes := crashes + 1
+                                           crash   := $event.category + " in " + $event.location
+
+tile SendBtn = button(text="Send", onClick=send) {id: "send"}
+
+tile App = column(
+    SendBtn,
+    text("log=" + log),
+    text("app.error x" + crashes.show + ": " + crash)
+) {pad: "lg", gap: "md"}
+
+app LaunchThrowReported
+    caps   = [log.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

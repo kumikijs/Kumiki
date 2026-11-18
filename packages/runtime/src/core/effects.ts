@@ -76,6 +76,7 @@ export function makeEffectDispatcher(
     token: string,
   ) => void,
   onRefusal: (effect: string, why: EmitRefusal, token?: string) => void,
+  onThrow: (effect: string, e: unknown, token?: string) => void,
   onLaunch?: (effect: string, input: unknown) => string,
   onCancel?: (targetId: string) => void,
   onPolicyCancel?: (token: string, effectName: string) => void,
@@ -128,6 +129,9 @@ export function makeEffectDispatcher(
     }
   };
 
+  // What throws past a launch, outside the reducers its result runs, such as a host's episode
+  // logger recording the request, goes to `onThrow`: a promise nothing handles would drop it, and
+  // under `queue` the next entry would run as its rejection handler and discard it.
   const launch = async (
     eff: EffectSpec,
     input: unknown,
@@ -135,43 +139,48 @@ export function makeEffectDispatcher(
     presetToken?: string,
   ): Promise<void> => {
     if (disposed) return;
-    // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
-    if (eff.cap !== "" && !caps.has(eff.cap)) {
-      settle(id);
-      try {
-        onRefusal(eff.name, { category: "capability", cap: eff.cap }, presetToken);
-      } finally {
-        if (presetToken) onPolicyCancel?.(presetToken, eff.name);
-      }
-      return;
-    }
-    const token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
-    const ctl = new AbortController();
-    const run: Run = { name: eff.name, token, ctl };
-    state.inflight.set(id, ctl);
-    state.runs.add(run);
-    let outcome: "ok" | "err";
-    let value: unknown;
+    let token = presetToken;
     try {
-      // Read inside the try, so a provider that returns no result is an err as well.
-      const res = await runWithRetry(eff, input, caps, ctl.signal);
-      outcome = res.kind;
-      value = res.value;
+      // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
+      if (eff.cap !== "" && !caps.has(eff.cap)) {
+        settle(id);
+        try {
+          onRefusal(eff.name, { category: "capability", cap: eff.cap }, presetToken);
+        } finally {
+          if (presetToken) onPolicyCancel?.(presetToken, eff.name);
+        }
+        return;
+      }
+      token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
+      const ctl = new AbortController();
+      const run: Run = { name: eff.name, token, ctl };
+      state.inflight.set(id, ctl);
+      state.runs.add(run);
+      let outcome: "ok" | "err";
+      let value: unknown;
+      try {
+        // Read inside the try, so a provider that returns no result is an err as well.
+        const res = await runWithRetry(eff, input, caps, ctl.signal);
+        outcome = res.kind;
+        value = res.value;
+      } catch (e) {
+        // An invoke that throws is this request's err: a `Text` for an effect that fails with
+        // `Text`, `{message}` for any other.
+        outcome = "err";
+        value = standInValue(eff, "err", { message: String(e) });
+      }
+      // Released before its result is delivered, so a cancel the `.ok` / `.err` reducers emit
+      // finds a request that is over. Under `latest` a newer request may hold the id by now.
+      if (state.inflight.get(id) === ctl) {
+        state.inflight.delete(id);
+        settle(id);
+      }
+      // Outside the invoke's catch: this is the request's one result, and what its delivery
+      // throws is the app's to report, not a second result.
+      if (state.runs.delete(run)) onResult(eff.name, outcome, value, input, token);
     } catch (e) {
-      // An invoke that throws is this request's err: a `Text` for an effect that fails with
-      // `Text`, `{message}` for any other.
-      outcome = "err";
-      value = standInValue(eff, "err", { message: String(e) });
+      onThrow(eff.name, e, token);
     }
-    // Released before its result is delivered, so a cancel the `.ok` / `.err` reducers emit finds
-    // a request that is over. Under `latest` a newer request may hold the id by now.
-    if (state.inflight.get(id) === ctl) {
-      state.inflight.delete(id);
-      settle(id);
-    }
-    // Outside the catch: this is the request's one result, and what its delivery throws is the
-    // app's to report, not a second result.
-    if (state.runs.delete(run)) onResult(eff.name, outcome, value, input, token);
   };
 
   return {

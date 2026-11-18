@@ -770,6 +770,8 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 
 その結果を配送している最中に、結果が実行する reducer の本体の外で throw されたものは、2 つ目の結果ではない。そこで throw しうるのは、その reducer が emit したものの dispatch や、その reducer を記録するホストの episode logger である。その後の描画でタイル自身が panic した場合は、描画がそれを捕捉し、`tile-render` の panic のままである。リクエストはその時点ですでに 1 つの結果を受け取っているので、そのリクエストに対して `.err` reducer は実行されない。この throw はアプリのエラーであり、reducer の panic と同じように報告される（[lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）。報告先は `console.error`、結果が属する episode の `panic` step、そして `app.error` であり、`category` は `"effect"`、`location` は effect を名指す（`effect "loadNote"`）。その後、reducer が書き込んだ内容でページが描画される。throw によってその描画が行われていなかった場合があるからであり、その描画が throw したものも同じように報告される。その結果に対する effect の他の reducer は、本体の panic の後と同じく、引き続き実行される。本体の中の panic は reducer の panic のままであり、`category` は `"reducer"`、`location` は `reducer "<name>"` となる。
 
+リクエストの起動の中で、その結果が実行する reducer の外で throw されたものも、同じように報告される。報告先は `console.error`、そのリクエストを引き受けた episode の `panic` step、そして `app.error` であり、`category` は `"effect"`、`location` は effect を名指す。そこで throw しうるのは、リクエストの `effect-start` や `effect-end` を記録するとき、あるいはその結果のスコープを閉じるときのホストの episode logger である。これはどの policy（[§10.4.3](#_10-4-3-policy-handling)）でも同じであり、`queue` では後ろに並んだエントリも引き続き実行される。
+
 ### 10.4.6 標準 capability の実装
 
 | capability | 実装 |
