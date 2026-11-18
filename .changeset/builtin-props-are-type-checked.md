@@ -24,10 +24,10 @@ app M
 Before, `check` said `ok`, and the page showed two `<option value="undefined">undefined</option>` entries, an open modal (`"false"` is a non-empty text) and an enabled button (`"true"` is not `true`). After:
 
 ```
-E0201 type-mismatch at 5:31: Expected {label: Text, value} but got Text
-E0201 type-mismatch at 5:40: Expected {label: Text, value} but got Text
-E0201 type-mismatch at 6:34: Expected Bool but got Text
-E0201 type-mismatch at 7:31: Expected Bool but got Text
+error E0201 type-mismatch at 5:31: Expected {label: Text, value} but got Text
+error E0201 type-mismatch at 5:40: Expected {label: Text, value} but got Text
+error E0201 type-mismatch at 6:34: Expected Bool but got Text
+error E0201 type-mismatch at 7:31: Expected Bool but got Text
 ```
 
 The same props written in the `{…}` block of the builtin's own call are reported the same way. The new table in stdlib.md §2.3.11 lists what is checked: the `Bool` and `Text` props of forms.md §5.3 on the input elements (`disabled`, `readonly`, `required`, `auto-focus`, `placeholder`, `auto-complete`), the `form` props of forms.md §5.2.1, `select` `options` (a `List` of records with a `Text` `label` and a `value`; other fields are allowed), `open` on `modal` / `drawer` / `popover` / `details`, `button` `loading`, `input` `multiple`, `check` / `switch` `value`, `radio` `selected`, `link` `external`, `list` `ordered`, `video` `controls` / `autoplay`, and the numbers `heading` `level`, `slider` `value` / `min` / `max` / `step` and `progress` `value` / `max` (an `Int` is accepted wherever a `Float` is). A value written as an `if`, `match` or `let` is judged branch by branch, so `options=if flag then opts else names` is E0201 at `names`. A slot or computed value of the right type (`disabled=draft.is-empty`, `open=n > 3`) and options from a `fn` are accepted. A prop written on a user tile is not checked against the table, and neither is a list built with `.map`, whose type is not inferred.
