@@ -114,15 +114,20 @@ describe.each([
     ["a record holding a File", { note: "hi", avatar: picked("a.txt") }],
     ["a List holding a File", [picked("a.txt"), picked("b.txt")]],
     ["a variant holding a File", { _tag: "Some", _0: picked("a.txt") }],
-    ["a File beside a Bytes", { $k: picked("a.txt"), data: new Uint8Array([7]) }],
-  ])("answers err for %s, naming the key and the file, and stores nothing", async (_, value) => {
+    ["a File two levels in", { doc: { _tag: "FileV", _0: picked("a.txt") } }],
+    ["a List of variants holding a File", { items: [{ _tag: "Some", _0: picked("a.txt") }] }],
+    [
+      "a Map whose `$` key holds a File, beside a Bytes (the tagged form)",
+      { $k: picked("a.txt"), data: new Uint8Array([7]) },
+    ],
+  ])("answers err for %s, naming the key and the first File in it, and stores nothing", async (_, value) => {
     expect(message(await write({ key: "other", value }))).toBe(
       `${cap}: the value for "other" holds the File "a.txt", and ${backend} would keep only its name, size and type, not the file; nothing was stored`,
     );
     expect(snapshot(storage())).toEqual(SEEDED);
   });
 
-  it("writes a File that holds no file, as one decoded from JSON, as its fields", async () => {
+  it("writes a File that holds no file, as one decoded from JSON, as its JSON, `_file: {}` included", async () => {
     const value = { name: "a.txt", size: 2, type: "text/plain", _file: {} };
     expect(await write({ key: "f", value })).toEqual({ kind: "ok", value: null });
     expect(storage().getItem("f")).toBe(JSON.stringify(value));

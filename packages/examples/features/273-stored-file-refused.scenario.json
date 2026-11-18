@@ -36,7 +36,7 @@
       }
     },
     {
-      "label": "Load then finds nothing under the key",
+      "label": "a Load answering None shows nothing stored",
       "do": { "click": "#load" },
       "expect": { "noErrors": true, "domIncludes": ["shown: nothing stored"] }
     }

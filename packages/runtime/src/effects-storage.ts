@@ -1,6 +1,6 @@
 import type { EffectResult } from "./core.ts";
 import { decodeOf, decodeRead } from "./effects-decode.ts";
-import { _stdlibCore } from "./stdlib.ts";
+import { _stdlibCore, isFileValue } from "./stdlib.ts";
 
 type Backend = "localStorage" | "sessionStorage";
 
@@ -132,10 +132,11 @@ function attempt(backend: Backend, call: string, run: (s: Storage) => void): Eff
 }
 
 // A `File` is its fields beside `_file`, the picked file, which JSON writes as `{}`. One with no
-// file in `_file` (decoded from JSON) has nothing to lose and is stored as its fields.
-function heldFile(v: unknown): { name?: unknown } | undefined {
+// file in `_file` (decoded from JSON) has nothing to lose and is stored as its JSON, `_file: {}`
+// included.
+function heldFile(v: unknown): { _file: Blob; name?: unknown } | undefined {
   if (v === null || typeof v !== "object" || v instanceof Uint8Array) return undefined;
-  if (typeof Blob !== "undefined" && (v as { _file?: unknown })._file instanceof Blob) return v;
+  if (isFileValue(v)) return v;
   for (const x of Array.isArray(v) ? v : Object.values(v)) {
     const file = heldFile(x);
     if (file) return file;

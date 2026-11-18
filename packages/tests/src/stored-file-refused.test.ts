@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { feature } from "@kumikijs/examples";
 import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { click, find, mountApp, pickFile, waitUntil } from "./helpers/dom.ts";
+import { click, find, pickFile, waitUntil, withMounted } from "./helpers/dom.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("273-stored-file-refused");
@@ -15,9 +15,8 @@ describe("a write of a picked File is refused, and stores nothing (example 273)"
     ["storage.write", "localStorage", () => loadApp(EXAMPLE), () => localStorage],
     ["session.write", "sessionStorage", sessionApp, () => sessionStorage],
   ] as const)("%s over %s", async (cap, backend, load, storage) => {
-    const { root, handle } = mountApp(await load());
-    const page = () => root.textContent ?? "";
-    try {
+    await withMounted(await load(), async (root) => {
+      const page = () => root.textContent ?? "";
       const file = new File([new Uint8Array([104, 105])], "a.txt", { type: "text/plain" });
       pickFile(find<HTMLInputElement>(root, 'input[type="file"]'), file);
       click(root, "Save");
@@ -29,9 +28,6 @@ describe("a write of a picked File is refused, and stores nothing (example 273)"
 
       click(root, "Load");
       await waitUntil(() => page().includes("shown: nothing stored"));
-    } finally {
-      handle.dispose();
-      root.remove();
-    }
+    });
   });
 });
