@@ -88,8 +88,8 @@ export class TileParser extends StatementParser {
     return { kind: "TileCall", name, args, props, pos: nameTok.pos };
   }
 
-  // Every named argument is a value but a handler, which takes the call form so that
-  // `onClick=Bump {}` parses on every tile.
+  // A handler may be written as `Bump {}`, which is no expression, so it is parsed apart from the
+  // other named arguments.
   protected parseTileArg(callee: string): TileArg {
     const first = this.peek();
     if ((first.kind === "ident" || first.kind === "kw") && this.matchTAt(1, "op", "=")) {
@@ -103,19 +103,33 @@ export class TileParser extends StatementParser {
     return { kind: "TileArg", value: this.parseArgValue(parsesPositionalAsTile(callee)) };
   }
 
-  // A capitalised handler is a tile call on a builtin whose positional argument parses as a tile,
-  // and a variant tag on any other tile, where the call it is written as is that tag when it
-  // carries nothing: `Bump`, `Bump()` and `Bump {}` are one node on every tile.
+  // `Bump`, `Bump()` and `Bump {}` are one node on every tile: a tile call where the positional
+  // argument parses as a tile, and the variant tag elsewhere. Elsewhere only a handler carrying
+  // braces, which is no expression, takes the call form; one carrying arguments or props stays a
+  // tile call for the handler check to refuse.
   protected parseHandlerArg(callee: string): Expr | TileExpr {
     const head = this.peek();
     if (head.kind !== "ident" || !isCapitalised(head.value)) return this.parseArgValue(false);
     if (parsesPositionalAsTile(callee)) return this.parseTileCall();
-    if (!this.matchTAt(1, "op", "(") && !this.matchTAt(1, "op", "{")) {
-      return this.parseArgValue(false);
-    }
+    if (!this.braceFollowsName()) return this.parseArgValue(false);
     const call = this.parseTileCall();
     if (call.kind !== "TileCall" || call.args.length > 0 || call.props.length > 0) return call;
     return { kind: "Variant", name: call.name, payload: [], pos: call.pos };
+  }
+
+  // Whether a `{` follows the name at the cursor, directly or after its parenthesised arguments.
+  private braceFollowsName(): boolean {
+    let at = 1;
+    if (this.matchTAt(at, "op", "(")) {
+      for (let open = 0; ; at++) {
+        const t = this.peek(at);
+        if (t.kind === "eof") return false;
+        if (t.kind === "op" && t.value === "(") open++;
+        if (t.kind === "op" && t.value === ")" && --open === 0) break;
+      }
+      at++;
+    }
+    return this.matchTAt(at, "op", "{");
   }
 
   // `for` and `when` have no expression form, so they are tiles wherever they are written.
