@@ -150,11 +150,18 @@ export function makeEffectDispatcher(
     const run: Run = { name: eff.name, token, ctl };
     state.inflight.set(id, ctl);
     state.runs.add(run);
-    let res: EffectResult;
+    let outcome: "ok" | "err";
+    let value: unknown;
     try {
-      res = await runWithRetry(eff, input, caps, ctl.signal);
+      // Read inside the try, so a provider that returns no result is an err as well.
+      const res = await runWithRetry(eff, input, caps, ctl.signal);
+      outcome = res.kind;
+      value = res.value;
     } catch (e) {
-      res = { kind: "err", value: { message: String(e) } };
+      // An invoke that throws is this request's err: a `Text` for an effect that fails with
+      // `Text`, `{message}` for any other.
+      outcome = "err";
+      value = standInValue(eff, "err", { message: String(e) });
     }
     // Released before its result is delivered, so a cancel the `.ok` / `.err` reducers emit finds
     // a request that is over. Under `latest` a newer request may hold the id by now.
@@ -162,7 +169,9 @@ export function makeEffectDispatcher(
       state.inflight.delete(id);
       settle(id);
     }
-    if (state.runs.delete(run)) onResult(eff.name, res.kind, res.value, input, token);
+    // Outside the catch: this is the request's one result, and what its delivery throws is the
+    // app's to report, not a second result.
+    if (state.runs.delete(run)) onResult(eff.name, outcome, value, input, token);
   };
 
   return {
