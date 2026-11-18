@@ -1,32 +1,41 @@
-import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import {
+  builtSummariesOf,
+  codesOf,
+  locatedSummariesOf,
+  posOf,
+  tileAsPropMessage,
+} from "./helpers/diagnostics.ts";
 
-const program = (home: string) => `type Phase = Idle | Busy
+/** `home` comes first, so a needle is found in it before the definitions. */
+const program = (home: string, more = "") => `tile Home = ${home}
+type Phase = Idle | Busy
 slot phase : Phase = Idle
 slot busy : Bool = false
+slot draft : Text = ""
 slot xs : List(Int) = [1, 2]
 tile Header = text("header")
 tile Btn = button(text="go")
-tile Home = ${home}
-app R
+tile Row in=Text = text($1)
+${more}app R
     caps   = []
     routes = {"/" -> Home, "/404" -> Home}
     init   = []
 `;
 
-const diagnostics = (home: string) =>
-  checkSource(program(home)).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
+const diagnostics = (home: string, more?: string) => locatedSummariesOf(program(home, more));
 
 const codes = (home: string) => codesOf(program(home));
 
-// `tile Home = ` is 12 columns wide on line 7.
-const at = (home: string, tile: string) => `7:${13 + home.indexOf(tile)}`;
+/** The diagnostic `code` reports with `message` at the first `needle` in the program. */
+const at = (home: string, needle: string, code: string, message: string, more?: string) => {
+  const { line, col } = posOf(program(home, more), needle);
+  return `${code} ${line}:${col} ${message}`;
+};
 
-const message = (tile: string, name: string) =>
-  `Named argument "${name}" on tile "${tile}" is a prop, and a prop's value cannot be a tile — ` +
-  `nothing renders it. Write the tile as a positional child of a container — ` +
-  `\`column(when(c, …))\` — or pass a value — \`${tile}(${name}=…)\``;
+/** E0201 at the first `needle` in the program, for a tile as `tile`'s named argument `name`. */
+const tileAsProp = (home: string, needle: string, tile: string, name: string, more?: string) =>
+  at(home, needle, "E0201", tileAsPropMessage(tile, name), more);
 
 const callees: readonly (readonly [string, string, string, (x: string) => string])[] = [
   [
@@ -36,50 +45,107 @@ const callees: readonly (readonly [string, string, string, (x: string) => string
     (x) => `progress(value=1, max=${x})`,
   ],
   ["a container", "box", "header", (x) => `box(header=${x}, text("body"))`],
+  ["a container, under the name an error's field has", "box", "field", (x) => `box(field=${x})`],
   ["a control", "button", "disabled", (x) => `button(text="go", disabled=${x})`],
   ["a value builtin, beside its content", "text", "size", (x) => `text("a", size=${x})`],
   ["a value builtin whose content is named", "image", "alt", (x) => `image(src="a.png", alt=${x})`],
   ["a user tile", "Btn", "header", (x) => `column(Btn(header=${x}))`],
 ];
 
-const tiles: readonly (readonly [string, string, string])[] = [
-  ["a when", `when(busy, text("x"))`, "when"],
-  ["a for", `for x in xs text("x")`, "for"],
+const tiles: readonly (readonly [string, string])[] = [
+  ["a when", `when(busy, text("x"))`],
+  ["a for", `for x in xs text("x")`],
 ];
 
 describe.each(callees)("a tile as a named argument of %s", (_, tile, name, write) => {
-  it.each(tiles)("is E0201 at %s", (_, value, start) => {
+  it.each(tiles)("is E0201 at %s", (_, value) => {
     const home = write(value);
-    expect(diagnostics(home)).toEqual([`E0201 ${at(home, start)} ${message(tile, name)}`]);
+    expect(diagnostics(home)).toEqual([tileAsProp(home, value, tile, name)]);
+  });
+});
+
+describe.each(tiles)("%s as a named argument", (_, value) => {
+  it("is E0201 beside an undefined tile's E0105", () => {
+    const home = `column(Nope(header=${value}))`;
+    expect(diagnostics(home)).toEqual([
+      at(home, "Nope", "E0105", `Reference to undefined tile "Nope"`),
+      tileAsProp(home, value, "Nope", "header"),
+    ]);
+  });
+
+  it("is E0201 beside the arity error of a tile whose input is not written", () => {
+    const home = `column(Row(header=${value}))`;
+    expect(diagnostics(home)).toEqual([
+      at(home, "Row", "E0213", `Tile "Row" expects 1 argument(s) but got 0`),
+      tileAsProp(home, value, "Row", "header"),
+    ]);
+  });
+
+  it("is E0230 alone as an error's field", () => {
+    expect(codes(`column(error(field=${value}))`)).toEqual(["E0230"]);
+  });
+
+  it("is E0201 as the field of an error whose block writes one, which is the field shown", () => {
+    const home = `column(error(field=${value}) {field: draft})`;
+    expect(diagnostics(home)).toEqual([tileAsProp(home, value, "error", "field")]);
+  });
+
+  it("is E0201 as the field of an error in a tile-test's expect, beside its unread block", () => {
+    const test = `test err-field =
+    tile-test Home
+        given  = {slots: {}}
+        expect = error(field=${value}) {field: draft}
+`;
+    const home = "error(field=draft)";
+    expect(diagnostics(home, test)).toEqual([
+      tileAsProp(home, value, "error", "field", test),
+      at(
+        home,
+        "field: draft",
+        "E0230",
+        "error() {field: …} is not read in a tile-test's expect, which compares named arguments " +
+          "only — write error(field=…) (see docs/spec/forms.md)",
+        test,
+      ),
+    ]);
+  });
+
+  it.each([
+    ["text", "content is positional", (x: string) => `text(text=${x})`],
+    ["link", "link renders its positional argument", (x: string) => `link("a", to="/", text=${x})`],
+  ])("is E0129 alone as %s's unrendered text=", (_, says, write) => {
+    const home = `column(${write(value)})`;
+    expect(diagnostics(home)).toEqual([
+      expect.stringMatching(new RegExp(`^${at(home, "text=", "E0129", says)}`)),
+    ]);
+  });
+
+  it.each([
+    ["a builtin", (x: string) => `button(text="go", onClick=${x})`],
+    ["a user tile", (x: string) => `column(Btn(onClick=${x}))`],
+  ])("is reported once as an event handler of %s, by the handler's own check", (_, write) => {
+    const home = write(value);
+    expect(diagnostics(home)).toEqual([
+      at(home, value, "E0201", `Event handler arg "onClick" must be a reducer name`),
+    ]);
   });
 });
 
 describe("a tile as a named argument", () => {
-  it("is refused by build, which lowered it to undefined", () => {
-    const result = compile(program(`column(progress(value=1, max=when(busy, text("x"))))`), {
-      runtimeSpecifier: "@kumikijs/runtime",
-    });
-    expect(result.kind === "fail" && result.errors.map((e) => e.code)).toEqual(["E0201"]);
+  it("is refused by build, which lowered it to nothing", () => {
+    const home = `column(progress(value=1, max=when(busy, text("x"))))`;
+    expect(builtSummariesOf(program(home))).toEqual([
+      `E0201 ${tileAsPropMessage("progress", "max")}`,
+    ]);
   });
 
   it("checks nothing inside it", () => {
     const home = "box(header=when(nope, text(nope)))";
-    expect(diagnostics(home)).toEqual([`E0201 ${at(home, "when")} ${message("box", "header")}`]);
+    expect(diagnostics(home)).toEqual([tileAsProp(home, "when", "box", "header")]);
   });
 
   it("leaves a value builtin's named content to E0236", () => {
     expect(codes("label(text=when(busy, Header))")).toEqual(["E0236"]);
-  });
-
-  it.each(tiles)("leaves %s as an error's field to E0230", (_, value) => {
-    expect(codes(`error(field=${value})`)).toEqual(["E0230"]);
-  });
-
-  it("leaves an event handler to the handler's own check", () => {
-    const home = `button(text="go", onClick=when(busy, text("x")))`;
-    expect(diagnostics(home)).toEqual([
-      `E0201 ${at(home, "when")} Event handler arg "onClick" must be a reducer name`,
-    ]);
   });
 });
 

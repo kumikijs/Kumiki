@@ -44,6 +44,7 @@ import {
   checkInputBindType,
   checkSecondSpelling,
   checkToggleBind,
+  tileAsErrorField,
 } from "./bind.ts";
 import { checkCallee } from "./callee.ts";
 import {
@@ -455,7 +456,11 @@ function alternatives(items: readonly string[]): string {
   return items.length > 1 ? `${items.slice(0, -1).join(", ")} or ${items.at(-1)}` : items.join("");
 }
 
-function checkUnrenderedArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+// Returns the `text=` argument it reports, which is moved or removed whole.
+function checkUnrenderedArgs(
+  t: TileExpr & { kind: "TileCall" },
+  errors: KumikiError[],
+): TileArg | undefined {
   const positional = t.args.filter((a) => a.name === undefined);
   const shown = shownInPlaceOfPositional(t.name);
   if (shown) {
@@ -472,10 +477,10 @@ function checkUnrenderedArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiE
         unrendered: "positional",
       });
     }
-    return;
+    return undefined;
   }
   const reading = contentReading(t.name);
-  if (!reading) return;
+  if (!reading) return undefined;
   positional.slice(1).forEach((a, i) => {
     errors.push({
       code: "E0129",
@@ -489,7 +494,7 @@ function checkUnrenderedArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiE
     });
   });
   const named = t.args.find((a) => a.name === "text");
-  if (!named?.name) return;
+  if (!named?.name) return undefined;
   if (reading.named === "text" && positional.length > 0) {
     errors.push({
       code: "E0129",
@@ -501,9 +506,9 @@ function checkUnrenderedArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiE
       pos: named.namePos,
       unrendered: "text-shadowed",
     });
-    return;
+    return named;
   }
-  if (reading.named !== undefined || positional.length > 0) return;
+  if (reading.named !== undefined || positional.length > 0) return undefined;
   errors.push({
     code: "E0129",
     kind: "unrendered-arg",
@@ -513,6 +518,7 @@ function checkUnrenderedArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiE
     pos: named.namePos,
     unrendered: "text-prop",
   });
+  return named;
 }
 
 // Returns the content when it holds a tile: it is moved whole, so nothing else in it is checked.
@@ -616,8 +622,9 @@ function checkTileCall(
   const userTile = sym.tiles.get(t.name);
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
   checkA11y(t, sym, errors, ctx);
-  checkUnrenderedArgs(t, errors);
+  const unrenderedText = checkUnrenderedArgs(t, errors);
   const tileContent = checkTileAsContent(t, sym, errors, ctx);
+  const errorFieldTile = tileAsErrorField(t, ctx);
   for (const value of renderedText(t, ctx)) {
     refuseRenderedEffectId(value, `${t.name}(...)`, sym, errors, ctx);
   }
@@ -674,10 +681,16 @@ function checkTileCall(
     // checkUnrenderedArgs reports this as E0129, tile or value; it is moved or removed whole, so
     // nothing inside it is checked.
     if (arg.name === undefined && shownInPlaceOfPositional(t.name)) continue;
+    // checkUnrenderedArgs reports this `text=` as E0129; a tile in it is moved or removed whole, so
+    // nothing inside it is checked.
+    if (arg === unrenderedText && isTileExpr(v)) continue;
     // checkTileAsContent reports this as E0236; it is moved whole, so nothing inside it is checked.
     if (arg === tileContent) continue;
-    // E0230 (`checkErrorField`), which says what an error's field names instead.
-    if (t.name === "error" && arg.name === "field" && isTileExpr(v)) continue;
+    // checkErrorField reports this as E0230, whose message says field= names a slot; it is replaced
+    // whole, so nothing inside it is checked.
+    if (v === errorFieldTile) continue;
+    // Past the handler branch, only a `when` or a `for` parses as a tile in a named argument, and a
+    // named argument is a prop.
     if (arg.name !== undefined && isTileExpr(v)) {
       errors.push(tileAsProp(t.name, arg.name, v.pos));
       continue;
@@ -725,7 +738,6 @@ function checkTileCall(
   checkErrorField(t, sym, errors, ctx);
 }
 
-// A named argument is a prop on every tile, and only a `when` or a `for` parses as a tile there.
 function tileAsProp(tile: string, name: string, pos: Pos): KumikiError {
   return {
     code: "E0201",

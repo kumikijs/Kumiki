@@ -40,6 +40,12 @@ export const tileAsContentMessage = (builtin: string, shown: string): string =>
   `rendered. Write the tile as a child of a container — \`column(when(c, …))\` — or show a ` +
   `value — \`${shown}\``;
 
+/** E0201's message, for a tile written as `tile`'s named argument `name`. */
+export const tileAsPropMessage = (tile: string, name: string): string =>
+  `Named argument "${name}" on tile "${tile}" is a prop, and a prop's value cannot be a tile — ` +
+  `nothing renders it. Write the tile as a positional child of a container — ` +
+  `\`column(when(c, …))\` — or pass a value — \`${tile}(${name}=…)\``;
+
 /** Each diagnostic as `"<code> <message>"`. */
 export const summariesOf = (src: string): string[] =>
   checkSource(src).map((e) => `${e.code} ${e.message}`);
