@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
-import { checkSource, codesOf, textAt } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf, messagesOf, textAt } from "./helpers/diagnostics.ts";
 
 describe("sub-routes", () => {
   const nested = (parentPath: string, extra = "") => `
@@ -326,9 +326,9 @@ describe("W0218: a sub-route a more specific sibling takes every path of", () =>
       "/settings",
     ],
   ])("reports a child shadowed by %s", (_, children, routes, sibling) => {
-    const found = checkSource(program(children, routes));
-    expect(found.map((e) => e.code)).toEqual(["W0218"]);
-    expect(found[0]?.message).toContain(`is matched by "${sibling}" in app.routes`);
+    const src = program(children, routes);
+    expect(codesOf(src)).toEqual(["W0218"]);
+    expect(messagesOf(src)[0]).toContain(`is matched by "${sibling}" in app.routes`);
   });
 
   it.each<[string, string, string]>([
@@ -395,14 +395,12 @@ describe("W0218: a sub-route a more specific sibling takes every path of", () =>
   });
 
   it("names both parents of a tile two routes target, when one entry ranks ahead of both", () => {
-    const found = checkSource(
-      program(
-        `"/settings/account" -> Child`,
-        `"/settings/*" -> Layout, "/prefs/*" -> Layout, "/settings/:section" -> Other`,
-      ),
+    const src = program(
+      `"/settings/account" -> Child`,
+      `"/settings/*" -> Layout, "/prefs/*" -> Layout, "/settings/:section" -> Other`,
     );
-    expect(found.map((e) => e.code)).toEqual(["W0218"]);
-    expect(found[0]?.message).toContain(`ranks ahead of its parents "/settings/*", "/prefs/*"`);
+    expect(codesOf(src)).toEqual(["W0218"]);
+    expect(messagesOf(src)[0]).toContain(`ranks ahead of its parents "/settings/*", "/prefs/*"`);
   });
 
   it("names no reducer when a top-level route at the same key still fires it", () => {
@@ -414,14 +412,15 @@ describe("W0218: a sub-route a more specific sibling takes every path of", () =>
       `slot n : Int = 0\n    reducer r on=route.enter("/settings/account") do= n := 1\n    tile Child`,
     );
     expect(codesOf(src)).toEqual(["W0218"]);
-    expect(checkSource(src)[0]?.message).not.toContain("Reducer");
+    expect(messagesOf(src)[0]).not.toContain("Reducer");
   });
 
   it("leaves a misspelt subscription to E0228, and names it nowhere in the warning", () => {
-    const found = checkSource(
-      SHADOWED.replace('route.enter("/settings/account")', 'route.enter("/settings/acount")'),
+    const src = SHADOWED.replace(
+      'route.enter("/settings/account")',
+      'route.enter("/settings/acount")',
     );
-    expect(found.map((e) => e.code).sort()).toEqual(["E0228", "W0218"]);
-    expect(found.find((e) => e.code === "W0218")?.message).not.toContain("Reducer");
+    expect(codesOf(src).sort()).toEqual(["E0228", "W0218"]);
+    expect(checkSource(src).find((e) => e.code === "W0218")?.message).not.toContain("Reducer");
   });
 });
