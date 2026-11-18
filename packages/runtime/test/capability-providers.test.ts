@@ -1,7 +1,8 @@
-import type { AppShape, CapabilityProvider, MountedApp } from "@kumikijs/runtime";
+import type { AppShape, CapabilityProvider, EffectResult, MountedApp } from "@kumikijs/runtime";
 import { mount } from "@kumikijs/runtime";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bareApp } from "./helpers/app.ts";
+import { captureConsole } from "./helpers/console.ts";
 import { freshRoot } from "./helpers/dom.ts";
 import { tick } from "./helpers/time.ts";
 
@@ -9,7 +10,7 @@ const CAP = "telemetry.track";
 
 function makeTrackApp(): AppShape {
   return bareApp({
-    slots: { sent: { value: 0 }, failed: { value: false } },
+    slots: { sent: { value: 0 }, failed: { value: false }, problem: { value: null } },
     caps: [CAP],
     effects: {
       track: {
@@ -38,7 +39,7 @@ function makeTrackApp(): AppShape {
       {
         name: "onFail",
         event: { kind: "effect", effect: "track", outcome: "err" },
-        apply: () => ({ slots: { failed: true }, emits: [] }),
+        apply: (_live, payload) => ({ slots: { failed: true, problem: payload.$1 }, emits: [] }),
       },
     ],
     root: () => ({ kind: "column", children: [] }),
@@ -86,6 +87,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   root.remove();
+  vi.restoreAllMocks();
 });
 
 describe("capability providers", () => {
@@ -130,6 +132,73 @@ describe("capability providers", () => {
     await tick(0);
     expect(seen).toEqual([]);
     expect(app.live?.sent).toBe(0);
+  });
+});
+
+describe("a provider result that is not {kind, value}", () => {
+  const notAResult: [string, unknown, string][] = [
+    ["a record with no kind", { ok: true }, '{"ok":true}'],
+    ["a bare Text", "done", '"done"'],
+    ["a kind other than ok and err", { kind: "success", value: 1 }, '{"kind":"success","value":1}'],
+    ["undefined", undefined, "undefined"],
+    ["null", null, "null"],
+  ];
+  const named = (shown: string): string =>
+    `Error: the ${CAP} provider returned ${shown}, not {kind, value}`;
+
+  it.each(
+    notAResult,
+  )("is the request's err when it is %s, naming it", async (_, returned, shown) => {
+    const app = makeTrackApp();
+    const handle = mount(app, root, {
+      providers: { [CAP]: () => returned as EffectResult },
+    });
+    dispatch(app, "fire");
+    await tick(0);
+    expect(app.live).toMatchObject({ sent: 0, failed: true, problem: { message: named(shown) } });
+    handle.dispose();
+  });
+
+  it.each<[string, unknown[], number]>([
+    ["on the first attempt", [{ ok: true }], 1],
+    [
+      "on an attempt after a retried err",
+      [{ kind: "err", value: { message: "busy" } }, { ok: true }],
+      2,
+    ],
+  ])("is not attempted again under retry= when it comes %s", async (_, answers, attempts) => {
+    const app = makeTrackApp();
+    const track = app.effects.track;
+    if (!track) throw new Error("fixture lost its effect");
+    track.retry = { kind: "linear", n: 3, ms: 1 };
+    let calls = 0;
+    const handle = mount(app, root, {
+      providers: { [CAP]: () => answers[Math.min(calls++, answers.length - 1)] as EffectResult },
+    });
+    dispatch(app, "fire");
+    await tick(20);
+    expect(calls).toBe(attempts);
+    expect(app.live).toMatchObject({
+      sent: 0,
+      failed: true,
+      problem: { message: named('{"ok":true}') },
+    });
+    handle.dispose();
+  });
+
+  it("is reported as an err no .err reducer takes", async () => {
+    const errors = captureConsole();
+    const app = makeTrackApp();
+    app.reducers = app.reducers.filter((r) => r.name !== "onFail");
+    const handle = mount(app, root, {
+      providers: { [CAP]: () => ({ ok: true }) as unknown as EffectResult },
+    });
+    dispatch(app, "fire");
+    await tick(0);
+    expect(errors).toEqual([
+      `[kumiki] effect "track" returned an error with no .err reducer: ${named('{"ok":true}')}`,
+    ]);
+    handle.dispose();
   });
 });
 

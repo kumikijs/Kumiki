@@ -11,6 +11,7 @@ export {
 export {
   abortedHttpError,
   emitId,
+  invokeOnce,
   overridableInvoke,
   readStatus,
   standInValue,

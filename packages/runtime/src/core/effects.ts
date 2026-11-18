@@ -153,13 +153,12 @@ export function makeEffectDispatcher(
     let outcome: "ok" | "err";
     let value: unknown;
     try {
-      // Read inside the try, so a provider that returns no result is an err as well.
       const res = await runWithRetry(eff, input, caps, ctl.signal);
       outcome = res.kind;
       value = res.value;
     } catch (e) {
-      // An invoke that throws is this request's err: a `Text` for an effect that fails with
-      // `Text`, `{message}` for any other.
+      // An invoke that throws, or answers with something that is not a result, is this request's
+      // err: a `Text` for an effect that fails with `Text`, `{message}` for any other.
       outcome = "err";
       value = standInValue(eff, "err", { message: String(e) });
     }
@@ -367,6 +366,36 @@ export function standInValue(
   return outcome === "err" && eff?.errText ? eff.errText(value) : (value ?? null);
 }
 
+/**
+ * One attempt at `eff`'s invoke. A host provider's answer reaches here unchecked, so one that is
+ * not `{kind: "ok" | "err", value}`, a missing one included, is thrown as an error naming it: the
+ * request's err, as a throw from the provider is, and not attempted again.
+ */
+export async function invokeOnce(
+  eff: EffectSpec,
+  input: unknown,
+  caps: CapabilityRegistry,
+  signal?: AbortSignal,
+): Promise<EffectResult> {
+  const res: unknown = await eff.invoke(input, caps, signal);
+  if (isEffectResult(res)) return res;
+  throw new Error(`the ${eff.cap} provider returned ${shownResult(res)}, not {kind, value}`);
+}
+
+function isEffectResult(v: unknown): v is EffectResult {
+  if (typeof v !== "object" || v === null) return false;
+  const kind = (v as { kind?: unknown }).kind;
+  return kind === "ok" || kind === "err";
+}
+
+function shownResult(v: unknown): string {
+  try {
+    return JSON.stringify(v) ?? String(v);
+  } catch {
+    return Object.prototype.toString.call(v);
+  }
+}
+
 async function runWithRetry(
   eff: EffectSpec,
   input: unknown,
@@ -374,8 +403,8 @@ async function runWithRetry(
   signal?: AbortSignal,
 ): Promise<EffectResult> {
   const policy = eff.retry;
-  if (!policy) return eff.invoke(input, caps, signal);
-  let last: EffectResult = await eff.invoke(input, caps, signal);
+  if (!policy) return invokeOnce(eff, input, caps, signal);
+  let last: EffectResult = await invokeOnce(eff, input, caps, signal);
   for (let attempt = 1; attempt < policy.n; attempt++) {
     if (last.kind !== "err" || last.final) return last;
     if (signal?.aborted) return last;
@@ -386,7 +415,7 @@ async function runWithRetry(
     // An abort during the wait has no attempt running to answer it, so the aborted err
     // comes from here.
     if (!(await sleep(delay, signal))) return { kind: "err", value: abortedErr(eff) };
-    last = await eff.invoke(input, caps, signal);
+    last = await invokeOnce(eff, input, caps, signal);
   }
   return last;
 }
