@@ -725,7 +725,7 @@ pattern      ::= identifier
 
 **`if` と `match` の値文脈 vs tile 文脈**:
 - tile 引数が tile になるのは、**位置引数を内容として読まない builtin の位置引数**だけである —— `text`・`heading`・`markdown`・`code`・`editable`・`label`・`link` 以外のすべての builtin。それを描画するのはコンテナ（`column`, `row`, `card`, `box` 等）だけで、それ以外（`button`, `progress`, `image` 等）では tile でも値でも [E0129](./errors.md#e0129-unrendered-arg) になるが、どの tile もそこで構文解析できるように tile として読む。そこでは `if` と `match` は tile 式（`TileIf` / `TileMatch`）で各 arm は tile を返し、`(` か `{` が続く builtin 名はその builtin の呼び出し、大文字始まりの名前は user tile になる。
-- それ以外の tile 引数はすべて値である：値 builtin が位置引数から読む内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier)、値 builtin の内容では [E0236](./errors.md#e0236-tile-as-content) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：位置引数を内容として読まない builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になる。
+- それ以外の tile 引数はすべて値である：値 builtin が位置引数から読む内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier)、値 builtin の内容では [E0236](./errors.md#e0236-tile-as-content) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：位置引数を内容として読まない builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になり、どの tile でも、引数か props を伴う brace 形式で書いたハンドラ（`Bump {x: 1}`、`Bump(1) {}`）もまた tile call であり、[E0201](./errors.md#e0201-type-mismatch) になる。
 - `when` と `for` には値の形が無いので、どこに書いても tile である。
 - 例: `text(match m with | A -> "a" | B -> "b")` ← 値 match
 - 例: `button(text="Save", disabled=if busy then true else false)`、`Row(if wide then 2 else 1)` ← 値 if
@@ -756,7 +756,7 @@ user tile の呼び出し側に書いたデータ prop は、その tile がル�
 
 名前が解決される名前空間は reducer だけであり、これは大文字始まりでも変わらない：`onClick=Bump` は reducer `Bump` を束縛し、どの reducer も指さない名前は [E0102](./errors.md#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。大文字か小文字かが決めるのはパーサが与える形だけであって、どの層を指しているかを言い分ける手段ではない。イベントハンドラ（`onClick=` / `onChange=` 等）として書いた大文字始まりの名前は、位置引数を内容として読まない builtin（`box` / `button` / `check` / `radio` / `column` / `image` 等）では *tile call* に、それ以外——props ブロック、`link` のように位置引数から内容を読む値 builtin、user tile——では variant タグになる。
 
-これらの形は引数を持たないため、裸の名前と引数なしの呼び出しは解析後には同一である — `onClick=Bump` / `onClick=Bump()` / `onClick=Bump {}` は同じノードであり、3 つとも reducer を束縛する。引数を伴う値は名前ではなく、[E0201](./errors.md#e0201-type-mismatch) になる。
+これらの形は引数を持たないため、裸の名前と引数なしの呼び出しは解析後には同一である — `onClick=Bump` / `onClick=Bump()` / `onClick=Bump {}` は同じノードであり、3 つとも reducer を束縛する。これはハンドラを名前付き引数として書くどの tile でも成り立つ：位置引数から内容を読む値 builtin と user tile では、何も伴わない呼び出し形式 `Bump()` / `Bump {}`（あるいは `Bump() {}`）は、そこで `Bump` が表す variant タグである。引数か props を伴う値（`onClick=Some(1)`、`onClick=Bump {x: 1}`）は名前ではなく、[E0201](./errors.md#e0201-type-mismatch) になる。
 
 ### 1.7.4 例
 
