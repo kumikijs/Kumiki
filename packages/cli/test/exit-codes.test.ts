@@ -4,9 +4,18 @@ import { describe, expect, it } from "vitest";
 import { runCli, SPAWN, spawns } from "./helpers/cli.ts";
 import { warningLinesOf } from "./helpers/diagnostics.ts";
 import { NOT_A_FILE, seed, tempDir } from "./helpers/files.ts";
+import { asAgent } from "./helpers/op-log.ts";
 import { tiedCounts } from "./helpers/tie.ts";
 
 const write = (name: string, source: string): string => seed(source, name);
+
+/** Grants `pattern` to agent:a by writing `<file>.kumiki-locks.json` itself, so no CLI run. */
+function lockedByA(file: string, pattern = "slot.*"): string {
+  const locks = `${file}.kumiki-locks.json`;
+  const entries = [{ agent: "agent:a", patterns: [pattern] }];
+  writeFileSync(locks, `${JSON.stringify({ entries }, null, 2)}\n`);
+  return locks;
+}
 
 const CLEAN = `slot count : Int = 0
 tile App = column(heading("Count: " + count.show))
@@ -228,6 +237,99 @@ test inc-works =
     expect(passing.code).toBe(0);
   });
 
+  describe("--apply under an ownership lock", () => {
+    /** `cout` is a typo for `count`, so the one repair rewrites `reducer.inc`. */
+    const TYPO_IN_REDUCER = `slot count : Int = 0
+reducer inc on=ui.click(Btn) do= count := cout + 1
+tile Btn = button(text="+", onClick=inc)
+tile App = column(Btn, text(count.show))
+app C
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+    /** The test wants "planet"; the one repair is to the literal in `reducer.greet`. */
+    const FAILING_GREET = `slot greeting : Text = "hi"
+reducer greet on=ui.click(Btn) do= greeting := "world"
+tile Btn = button(text="click", onClick=greet)
+tile App = column(heading(greeting), Btn)
+app A
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+test greet-says-planet =
+    reducer-test greet
+        given  = {slots: {greeting: "hi"}, event: {type: ui.click, target: Btn}}
+        expect = {slots: {greeting: "planet"}, effects: []}
+`;
+
+    /** The write verbs' refusal for `qname`, held by agent:a through `pattern`. */
+    const refusal = (qname: string, pattern: string): string =>
+      `lock violation: ${qname} is locked by agent:a (pattern "${pattern}"). Set KUMIKI_AUTHOR=agent:a to edit.`;
+
+    it(
+      "exits 1 and writes nothing when the repair changes another agent's definition",
+      SPAWN,
+      () => {
+        const file = write("fix-locked.kumiki", TYPO_IN_REDUCER);
+        lockedByA(file, "*");
+        asAgent("agent:b");
+        const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
+        expect(stdout).toBe(
+          "(auto-patch rolled back — a definition it changes is locked by another agent)\n",
+        );
+        // On stderr, as the write verbs print it, then the error the repair was for.
+        expect(stderr).toBe(
+          `${refusal("reducer.inc", "*")}\nerror E0103 undef-ref at 2:43: Reference to undefined name "cout"\n`,
+        );
+        expect(readFileSync(file, "utf8")).toBe(TYPO_IN_REDUCER);
+        expect(code).toBe(1);
+      },
+    );
+
+    it.each([
+      ["for the lock's owner", { agent: "agent:a", pattern: "*" }],
+      ["when it changes no locked definition", { agent: "agent:b", pattern: "slot.*" }],
+    ])("applies the repair %s", SPAWN, (_, { agent, pattern }) => {
+      const file = write(`fix-locked-${agent.slice(-1)}.kumiki`, TYPO_IN_REDUCER);
+      lockedByA(file, pattern);
+      asAgent(agent);
+      const { stdout, code } = runCli(["fix", file, "--apply"]);
+      expect(stdout).toBe("applied 1 fix(es) — file now clean\n");
+      expect(readFileSync(file, "utf8")).toBe(TYPO_IN_REDUCER.replace("cout", "count"));
+      expect(code).toBe(0);
+    });
+
+    it(
+      "--auto-patch exits 1 and writes nothing when the patch changes another agent's definition",
+      SPAWN,
+      () => {
+        const file = write("auto-locked.kumiki", FAILING_GREET);
+        lockedByA(file, "reducer.*");
+        asAgent("agent:b");
+        const { stdout, stderr, code } = runCli([
+          "fix",
+          file,
+          "--auto-patch",
+          "greet-says-planet",
+          "--apply",
+        ]);
+        expect(stdout).toBe(
+          [
+            'refused fix for "greet-says-planet" — file left unchanged:',
+            '  replace "world" with "planet" (from failing test "greet-says-planet" @ slots.greeting)',
+            "  reason: locked",
+            "",
+          ].join("\n"),
+        );
+        expect(stderr).toBe(`  ${refusal("reducer.greet", "reducer.*")}\n`);
+        expect(readFileSync(file, "utf8")).toBe(FAILING_GREET);
+        expect(code).toBe(1);
+      },
+    );
+  });
+
   // `idx` is one edit from the slot `id`, and the read renamed to `id`
   // type-checks: a rename would leave a clean file that reads another slot.
   const OUT_OF_SCOPE = `slot id    : Int = 0
@@ -265,6 +367,29 @@ app Demo
     const { stdout, code } = runCli(["fix", file, "--apply"]);
     expect(stdout).toContain("applied 1 fix(es) — 1 error(s) remain");
     expect(readFileSync(file, "utf8")).toBe(src.replace("count := cont", "count := count"));
+    expect(code).toBe(1);
+  });
+
+  // The read is before the scope this time: the first `text` reads the `for`'s
+  // variable ahead of the `for`, and renamed to `id` it would read the slot.
+  const BEFORE_SCOPE = `slot id : Int = 0
+slot xs : List(Int) = [1, 2]
+tile App = column(text(idx.show), for idx in xs text(idx.show))
+app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
+`;
+
+  it("exits 1 proposing nothing for a read before the scope that declares it", SPAWN, () => {
+    const { stdout, code } = runCli(["fix", write("before-dry.kumiki", BEFORE_SCOPE)]);
+    expect(stdout).toBe("(no auto-patches available)\n");
+    expect(code).toBe(1);
+  });
+
+  it("exits 1 under --apply with a read before the scope left as written", SPAWN, () => {
+    const file = write("before-apply.kumiki", BEFORE_SCOPE);
+    const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
+    expect(readFileSync(file, "utf8")).toBe(BEFORE_SCOPE);
+    expect(stdout).toBe("(no auto-patches available)\n");
+    expect(stderr).toContain('error E0103 undef-ref at 3:24: Reference to undefined name "idx" — ');
     expect(code).toBe(1);
   });
 
@@ -493,13 +618,6 @@ describe("kumiki run", () => {
 });
 
 describe("kumiki lock / unlock", () => {
-  function lockedByA(file: string): string {
-    const locks = `${file}.kumiki-locks.json`;
-    const entries = [{ agent: "agent:a", patterns: ["slot.*"] }];
-    writeFileSync(locks, `${JSON.stringify({ entries }, null, 2)}\n`);
-    return locks;
-  }
-
   it("lock exits 1 for a pattern another agent's overlaps, and 0 for its holder", spawns(2), () => {
     const file = write("lock.kumiki", CLEAN);
     const locks = lockedByA(file);
@@ -553,6 +671,99 @@ describe("kumiki lock / unlock", () => {
       const released = runCli(["unlock", file, "agent:a"]);
       expect(released).toMatchObject({ stdout: "unlocked agent:a\n", stderr: "", code: 0 });
       expect(JSON.parse(readFileSync(locks, "utf8"))).toEqual({ entries: [] });
+    },
+  );
+});
+
+// Each case runs in a directory of its own, so a file the verb leaves beside the source, or a
+// change to one it was given, shows up.
+describe("a lock file not in the shape lock writes", () => {
+  const SOURCE = `${CLEAN}slot spare : Int = 0\n`;
+  // `patterns` is one string, not a list of one: read a character at a time,
+  // its `*` would lock every definition.
+  const LOCKS = '{"entries":[{"agent":"agent:a","patterns":"slot.*"}]}\n';
+  const OPS = "ops.jsonl";
+  const ADDED = "op_0000000000AAAAAAAAAAAAAAAA";
+  /** An op log in which `ADDED` added `slot.spare`, so it can be reverted. */
+  const LOG = `${JSON.stringify({
+    op: "add",
+    layer: "slot",
+    name: "spare",
+    body: "Int = 0",
+    author: "agent:a",
+    ts: 0,
+    "op-id": ADDED,
+    "parent-ops": [],
+    "depends-on": [],
+  })}\n`;
+
+  /**
+   * A command line for each verb that reads the lock file, given the source file and its directory,
+   * with what its message puts before the refusal.
+   */
+  const CASES: Array<readonly [argv: (file: string, at: string) => string[], prefix: string]> = [
+    [(f) => ["add", f, "slot", "x", "Int", "=", "1"], ""],
+    [(f) => ["replace", f, "tile.App", "column(heading(count.show))"], ""],
+    [(f) => ["remove", f, "slot.spare"], ""],
+    [(f) => ["rename", f, "slot.spare", "extra"], ""],
+    [(f) => ["edit", f, "slot.spare", JSON.stringify({ find: "0", replace: "1" })], ""],
+    [(f, at) => ["patch", "apply", f, join(at, OPS)], "patch apply rejected: "],
+    [(f) => ["patch", "revert", f, ADDED], ""],
+    [(f) => ["lock", f, "agent:b", "tile.*"], ""],
+    [(f) => ["unlock", f, "agent:a"], ""],
+  ];
+
+  const refusal = (locks: string): string =>
+    `Lock file "${locks}" is unreadable: entries[0].patterns is not a list. Fix it to the shape \`lock\` writes, {"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}]}, or delete it to release every lock.`;
+
+  it.each(
+    CASES.map(([argv, prefix]) => [argv("app.kumiki", ".").join(" "), argv, prefix] as const),
+  )(
+    "kumiki %s exits 1 naming the lock file and what is wrong with it, and changes no file",
+    SPAWN,
+    (_label, argv, prefix) => {
+      const at = tempDir();
+      const file = join(at, "app.kumiki");
+      const locks = `${file}.kumiki-locks.json`;
+      const files: Record<string, string> = {
+        "app.kumiki": SOURCE,
+        "app.kumiki.kumiki-locks.json": LOCKS,
+        "app.kumiki.kumiki-ops.jsonl": LOG,
+        [OPS]: `${JSON.stringify({ op: "add", layer: "slot", name: "x", body: "Int = 1" })}\n`,
+      };
+      for (const [name, content] of Object.entries(files)) writeFileSync(join(at, name), content);
+
+      expect(runCli(argv(file, at))).toMatchObject({
+        stdout: "",
+        stderr: `Error: ${prefix}${refusal(locks)}\n`,
+        code: 1,
+      });
+      expect(readdirSync(at).sort()).toEqual(Object.keys(files).sort());
+      for (const [name, content] of Object.entries(files)) {
+        expect(readFileSync(join(at, name), "utf8"), name).toBe(content);
+      }
+    },
+  );
+
+  // A clean file has no repair to write, so `fix` reads the lock file only for one it can repair.
+  it(
+    "kumiki fix --apply exits 1 naming the lock file and what is wrong with it, and changes no file",
+    SPAWN,
+    () => {
+      const at = tempDir();
+      const file = join(at, "app.kumiki");
+      const locks = `${file}.kumiki-locks.json`;
+      writeFileSync(file, FIXABLE);
+      writeFileSync(locks, LOCKS);
+
+      expect(runCli(["fix", file, "--apply"])).toMatchObject({
+        stdout: "",
+        stderr: `Error: ${refusal(locks)}\n`,
+        code: 1,
+      });
+      expect(readdirSync(at).sort()).toEqual(["app.kumiki", "app.kumiki.kumiki-locks.json"]);
+      expect(readFileSync(file, "utf8")).toBe(FIXABLE);
+      expect(readFileSync(locks, "utf8")).toBe(LOCKS);
     },
   );
 });

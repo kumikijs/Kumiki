@@ -26,7 +26,9 @@ function _named(node, name) {
   if (node === null || node === undefined) return node;
   if (Array.isArray(node)) return node.map((n) => _named(n, name));
   if (typeof node !== "object" || typeof node.kind !== "string") return node;
-  return { ...node, props: { ...(node.props || {}), _tile: name } };
+  const inner = node.props && node.props._tile;
+  const tile = inner === undefined ? name : [name].concat(inner);
+  return { ...node, props: { ...(node.props || {}), _tile: tile } };
 }
 function _wk(node, key) {
   if (node === null || node === undefined) return node;
@@ -39,9 +41,23 @@ function _wk(node, key) {
   }
   if (Array.isArray(node)) {
     return _children(node).map((n, i) =>
-      _wk(n, JSON.stringify([key, typeof n.key === "string" ? n.key : i])),
+      _wk(n, JSON.stringify([key, ...(typeof n.key === "string" ? _keySegments(n.key) : [i])])),
     );
   }
   return { ...node, key: key };
+}
+// Only a key spelled exactly as _wk spells a list key (an array of two or more,
+// as JSON.stringify writes it) is split, so its elements give back that one key.
+function _keySegments(k) {
+  if (k.charAt(0) !== "[") return [k];
+  let segments;
+  try {
+    segments = JSON.parse(k);
+  } catch {
+    return [k];
+  }
+  return Array.isArray(segments) && segments.length > 1 && JSON.stringify(segments) === k
+    ? segments
+    : [k];
 }
 `;

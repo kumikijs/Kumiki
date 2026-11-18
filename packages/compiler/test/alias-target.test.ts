@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { unaliasType } from "../src/assignable.ts";
 import type { Program, TypeDef } from "../src/ast.ts";
-import { aliasTarget } from "../src/def-graph.ts";
+import { aliasTarget, forwardedParams } from "../src/def-graph.ts";
 import { lex } from "../src/lexer.ts";
 import { parse } from "../src/parser.ts";
 import { checkSource } from "./helpers/diagnostics.ts";
@@ -13,12 +13,18 @@ const typesOf = (src: string): Map<string, TypeDef> => {
   );
 };
 
+/** `aliasTarget` over `types`, with the forwarding classifier a caller makes once per table. */
+function targetOf(types: ReadonlyMap<string, TypeDef>, def: TypeDef) {
+  const lookup = (n: string) => types.get(n);
+  return aliasTarget(def, lookup, forwardedParams(lookup, "through"));
+}
+
 /** The edge `aliasTarget` gives for `name`, as `"A -> B"` or `"A -> ."`. */
 function edge(src: string, name: string): string {
   const types = typesOf(src);
   const def = types.get(name);
   if (!def) throw new Error(`no type "${name}" in the fixture`);
-  const target = aliasTarget(def, (n) => types.get(n));
+  const target = targetOf(types, def);
   return `${name} -> ${target ? target.to : "."}`;
 }
 
@@ -81,7 +87,7 @@ describe("aliasTarget", () => {
     const types = typesOf(`type Alias(T) = T\ntype A = Alias(A)`);
     const def = types.get("A");
     if (!def) throw new Error("fixture");
-    const target = aliasTarget(def, (n) => types.get(n));
+    const target = targetOf(types, def);
     // The `A` written as the argument, not the one being declared.
     expect(`${target?.pos.line}:${target?.pos.col}`).toBe("2:16");
   });
