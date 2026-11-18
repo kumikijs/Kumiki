@@ -13,4 +13,7 @@ parent, and names the reducers that subscribe to the key when no other entry
 declares it. It follows the router's ranking: static before parameter before
 wildcard, definition order between ties, redirects included. A key that a
 sibling takes only some paths of, such as `"/settings/*"` in the same map, is
-not reported.
+not reported. Nor is the parent's default child, the key at its bare path,
+which renders at every path of the parent no other key matches, unless the
+sibling takes every path of the parent too. A `sub-routes` redirect at a path
+such a sibling takes gets this warning in place of E0010.
