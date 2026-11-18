@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 import { checkSource, codesOf, textAt } from "./helpers/diagnostics.ts";
 
@@ -243,40 +245,28 @@ describe("E0113 reads the tiles the body renders", () => {
 });
 
 describe("W0218: a sub-route a more specific sibling takes every path of", () => {
-  const ISSUE = `slot log : Text = ""
-reducer enterAcc on=route.enter("/settings/account")  do= log := log + "+acc;"
-reducer enterSec on=route.enter("/settings/:section") do= log := log + "+sec;"
-tile Acc = page(heading("Account"))
-tile Sec = page(heading("Section"))
-tile Layout sub-routes = {"/settings/account" -> Acc} = page(route-outlet())
-tile Home = page(heading("Home"))
-tile NotFound = page(heading("404"))
-app P
-    caps   = [nav.push]
-    routes = {"/" -> Home, "/settings/:section" -> Sec, "/settings/*" -> Layout, "/404" -> NotFound}
-    init   = []
-`;
+  const SHADOWED = readFileSync(feature("265-shadowed-sub-route"), "utf8");
 
   it("warns at the key, naming the sibling, the parent and the reducer that never runs", () => {
-    const found = checkSource(ISSUE);
+    const found = checkSource(SHADOWED);
     expect(found.map((e) => [e.code, e.kind, e.severity])).toEqual([
       ["W0218", "shadowed-sub-route", "warning"],
     ]);
-    expect(textAt(ISSUE, found[0]?.pos ?? { line: 0, col: 0 })).toBe(
-      `"/settings/account" -> Acc} = page(route-outlet())`,
+    expect(textAt(SHADOWED, found[0]?.pos ?? { line: 0, col: 0 })).toBe(
+      `"/settings/account" -> Account,`,
     );
     expect(found[0]?.message).toBe(
-      `Sub-route "/settings/account" in tile "Layout" is never matched: every path it matches is matched by "/settings/:section" in app.routes, which ranks ahead of its parent "/settings/*", so the router renders that route there, without the parent. Reducer "enterAcc" subscribes to it and never runs`,
+      `Sub-route "/settings/account" in tile "Layout" is never matched: every path it matches is matched by "/settings/:section" in app.routes, which ranks ahead of its parent "/settings/*", so the router renders that route there, without the parent. Reducer "enterAccount" subscribes to it and never runs`,
     );
   });
 
-  /** `child` is the one sub-route of the tile `routes` reach as `Layout`. */
-  const program = (child: string, routes: string) => `
+  /** `children` are the sub-routes of the tile `routes` reach as `Layout`. */
+  const program = (children: string, routes: string) => `
     tile Child = page(heading("child"))
     tile Other = page(heading("other"))
     tile Home = page(heading("home"))
     tile NotFound = page(heading("404"))
-    tile Layout sub-routes = {${child}} = page(route-outlet())
+    tile Layout sub-routes = {${children}} = page(route-outlet())
     app A caps=[] routes={"/" -> Home, ${routes}, "/404" -> NotFound} init=[]
   `;
 
@@ -323,8 +313,20 @@ app P
       `"/settings/*" -> Layout, "/settings/:section" -> Other`,
       "/settings/:section",
     ],
-  ])("reports a child shadowed by %s", (_, child, routes, sibling) => {
-    const found = checkSource(program(child, routes));
+    [
+      "a sibling that takes every path of a default child's parent",
+      `"/:b" -> Child`,
+      `"/:a/*" -> Other, "/:b/*" -> Layout`,
+      "/:a/*",
+    ],
+    [
+      "a static sibling, over a redirect at the parent's bare path, which is no default child",
+      `"/settings" ->> "/"`,
+      `"/settings" -> Other, "/settings/*" -> Layout`,
+      "/settings",
+    ],
+  ])("reports a child shadowed by %s", (_, children, routes, sibling) => {
+    const found = checkSource(program(children, routes));
     expect(found.map((e) => e.code)).toEqual(["W0218"]);
     expect(found[0]?.message).toContain(`is matched by "${sibling}" in app.routes`);
   });
@@ -360,8 +362,31 @@ app P
       `"/settings/account" -> Child`,
       `"/settings/*" -> Layout, "/:x/*" -> Layout`,
     ],
-  ])("accepts %s", (_, child, routes) => {
-    expect(checkSource(program(child, routes))).toEqual([]);
+    [
+      "a default child at the root, beside a top-level route at its own path",
+      `"/about" -> Other, "/" -> Child`,
+      `"/*" -> Layout`,
+    ],
+    [
+      "a default child beside a static sibling at its own path",
+      `"/settings" -> Child`,
+      `"/settings" -> Other, "/settings/*" -> Layout`,
+    ],
+    [
+      "a default child beside a parameter sibling that matches every path the key does",
+      `"/:x" -> Child`,
+      `"/:y" -> Other, "/:x/*" -> Layout`,
+    ],
+  ])("accepts %s", (_, children, routes) => {
+    expect(checkSource(program(children, routes))).toEqual([]);
+  });
+
+  it("names no reducer on a default child, whose route events fire at its parent's other paths", () => {
+    const src = program(`"/:x" -> Child`, `"/:y" -> Other, "/:x/*" -> Layout`).replace(
+      "tile Child",
+      `slot log : Text = ""\n    reducer r on=route.enter("/:x") do= log := log + "+x;"\n    tile Child`,
+    );
+    expect(checkSource(src)).toEqual([]);
   });
 
   it("reports a child written at /404, which matches no path, as E0001 alone", () => {
@@ -388,14 +413,13 @@ app P
       "tile Child",
       `slot n : Int = 0\n    reducer r on=route.enter("/settings/account") do= n := 1\n    tile Child`,
     );
-    const found = checkSource(src);
-    expect(found.map((e) => e.code)).toEqual(["W0218"]);
-    expect(found[0]?.message).not.toContain("Reducer");
+    expect(codesOf(src)).toEqual(["W0218"]);
+    expect(checkSource(src)[0]?.message).not.toContain("Reducer");
   });
 
   it("leaves a misspelt subscription to E0228, and names it nowhere in the warning", () => {
     const found = checkSource(
-      ISSUE.replace('route.enter("/settings/account")', 'route.enter("/settings/acount")'),
+      SHADOWED.replace('route.enter("/settings/account")', 'route.enter("/settings/acount")'),
     );
     expect(found.map((e) => e.code).sort()).toEqual(["E0228", "W0218"]);
     expect(found.find((e) => e.code === "W0218")?.message).not.toContain("Reducer");

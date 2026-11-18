@@ -205,6 +205,14 @@ describe("E0010: a chain of static redirects reaches a page", () => {
     ]);
   });
 
+  it("leaves a chain in a sub-routes map to W0218 where an app route takes every path of its keys", () => {
+    const src = nested('"/s/a" ->> "/s/b", "/s/b" ->> "/s/a"', '"/s/:x" -> Item');
+    expect(locatedOf(src).map((d) => `${d.code} ${textAt(src, d)}`)).toEqual([
+      'W0218 "/s/a" ->> "/s/b", "/s/b" ->> "/s/a",',
+      'W0218 "/s/b" ->> "/s/a",',
+    ]);
+  });
+
   it("accepts a chain that ends at the path /404 beside a catch-all redirect", () => {
     expect(locatedOf(app('"/gone" ->> "/404", "/*" ->> "/"'))).toEqual([]);
   });

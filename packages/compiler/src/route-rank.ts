@@ -1,6 +1,7 @@
 // The router's match order (docs/spec/routing.md), read off the route table. Which entry owns one
 // URL is the runtime's to decide; when every URL a pattern matches goes to the same entry ahead of
-// another, the table alone says so.
+// another, the table alone says so. `segmentRank` and `compareSpecificity` are the ranking of the
+// runtime's router (packages/runtime/src/router.ts), so a change to one belongs in the other.
 
 import type { RouteMapEntry } from "./redirects.ts";
 
@@ -41,19 +42,30 @@ function matchesEveryPathOf(outer: string, inner: string): boolean {
   }
 }
 
+/** A wildcard parent's pattern without its `/*`: the key of the child it renders by default. */
+function parentBare(pattern: string): string | null {
+  return pattern.endsWith("/*") ? pattern.slice(0, -2) || "/" : null;
+}
+
 /**
- * The entry of `routes` that takes every path `child` matches ahead of each of `parents`, the
+ * The entry of `routes` that takes every path `child` can render at ahead of each of `parents`, the
  * entries that render the tile `child` is a sub-route of; the first in match order when several do.
  * Ties keep definition order, as at run time. A redirect counts: it owns the paths it matches as a
- * rendering route does. The `/404` entry is never matched, and a child written at `/404` matches no
- * path, so neither takes part.
+ * rendering route does, even where its chain loops and the runtime applies none of it. The `/404`
+ * entry is never matched, and a child written at `/404` matches no path, so neither takes part.
  */
 export function shadowingRoute(
-  child: string,
+  child: RouteMapEntry,
   parents: readonly RouteMapEntry[],
   routes: readonly RouteMapEntry[],
 ): RouteMapEntry | null {
-  if (child === "/404" || parents.length === 0) return null;
+  if (child.path === "/404" || parents.length === 0) return null;
+  // A parent's default child, the `->` key at its bare path, renders at every path of the parent
+  // that no other sub-route matches, so only an entry that takes every path of the parent hides it.
+  const reached = [child.path];
+  if (!child.tile.startsWith(">>")) {
+    for (const p of parents) if (parentBare(p.path) === child.path) reached.push(p.path);
+  }
   const ahead = (a: RouteMapEntry, b: RouteMapEntry): boolean => {
     const d = compareSpecificity(a.path, b.path);
     return d < 0 || (d === 0 && routes.indexOf(a) < routes.indexOf(b));
@@ -62,7 +74,7 @@ export function shadowingRoute(
   for (const r of routes) {
     // A parent never ranks ahead of itself, so it is never the one that takes the child's paths.
     if (r.path === "/404" || !parents.every((p) => ahead(r, p))) continue;
-    if (!matchesEveryPathOf(r.path, child)) continue;
+    if (!reached.every((inner) => matchesEveryPathOf(r.path, inner))) continue;
     if (owner === null || ahead(r, owner)) owner = r;
   }
   return owner;

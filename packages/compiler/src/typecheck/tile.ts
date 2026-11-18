@@ -224,11 +224,18 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       pos: dup.pos,
     });
   }
-  // A top-level static route owns its path ahead of the parent's `/*`, so the map never sees it.
-  checkRedirects(subRoutes, errors, staticPaths(sym.app?.routes ?? []));
   const app = sym.app;
+  const routes = app?.routes ?? [];
+  const parents = routes.filter((r) => !r.tile.startsWith(">>") && r.tile === tile.name);
+  const shadowed = shadowedSubRoutes(subRoutes, parents, routes);
+  // A top-level static route owns its path ahead of the parent's `/*`, and so does an entry that
+  // takes every path of a key, so the map never sees those paths.
+  checkRedirects(
+    subRoutes,
+    errors,
+    new Set([...staticPaths(routes), ...staticPaths([...shadowed.keys()])]),
+  );
   if (!app) return;
-  const parents = app.routes.filter((r) => !r.tile.startsWith(">>") && r.tile === tile.name);
   if (parents.length === 0) {
     errors.push({
       code: "E0111",
@@ -248,7 +255,7 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       });
     }
   }
-  checkShadowedSubRoutes(tile, subRoutes, parents, sym, errors);
+  reportShadowedSubRoutes(tile, shadowed, parents, sym, errors);
   // The runtime fills the first outlet anywhere in the tree the tile renders, so an outlet in
   // a layout helper counts, and one a builtin drops does not.
   if (!sym.tileKinds.rendered(tile.name).has("route-outlet")) {
@@ -261,22 +268,33 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
   }
 }
 
-/** A sub-route whose every path an app.routes entry takes ahead of the parent is never reached. */
-function checkShadowedSubRoutes(
-  tile: TileDef,
+/** Each sub-route that an app.routes entry takes every path of ahead of the parent, with that entry. */
+function shadowedSubRoutes(
   subRoutes: readonly RouteMapEntry[],
+  parents: readonly RouteMapEntry[],
+  routes: readonly RouteMapEntry[],
+): Map<RouteMapEntry, RouteMapEntry> {
+  const out = new Map<RouteMapEntry, RouteMapEntry>();
+  for (const sr of subRoutes) {
+    const by = shadowingRoute(sr, parents, routes);
+    if (by) out.set(sr, by);
+  }
+  return out;
+}
+
+/** A sub-route whose every path an app.routes entry takes ahead of the parent is never reached. */
+function reportShadowedSubRoutes(
+  tile: TileDef,
+  shadowed: ReadonlyMap<RouteMapEntry, RouteMapEntry>,
   parents: readonly RouteMapEntry[],
   sym: SymbolTable,
   errors: KumikiError[],
 ): void {
-  const routes = sym.app?.routes ?? [];
   const parentText =
     parents.length === 1
       ? `its parent "${parents[0]?.path}"`
       : `its parents ${parents.map((p) => `"${p.path}"`).join(", ")}`;
-  for (const sr of subRoutes) {
-    const by = shadowingRoute(sr.path, parents, routes);
-    if (!by) continue;
+  for (const [sr, by] of shadowed) {
     const taken = by.tile.startsWith(">>")
       ? "follows that redirect there instead"
       : "renders that route there, without the parent";
