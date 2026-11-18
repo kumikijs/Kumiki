@@ -327,6 +327,18 @@ tile App = column(Card)`);
     expect(warned).toEqual(["onLeaf"]);
   });
 
+  it("walks a tile named like a builtin, written as a bare child, as the program's tile", () => {
+    // `column(spinner)` renders the program's `spinner`, a button, not the builtin, which fires no click.
+    const src = withApp(`
+slot spinner : Text = "x"
+slot hits : Int = 0
+reducer onCard on=ui.click(Card) do= hits := hits + 1
+tile spinner = button(text="go")
+tile Card = column(text("card"), spinner)
+tile App = column(Card)`);
+    expect(checkSource(src).filter((e) => e.code === "W0212")).toEqual([]);
+  });
+
   it.each([
     [
       "a fallback that names itself",
@@ -840,6 +852,17 @@ describe("W0212 gives the reason that holds when the element fires the event", (
             `"blur" on a check / switch's <label>, and the "blur" its <input> fires does not bubble ` +
             `to the <label> (observed at its root: check, switch). `,
         );
+      });
+
+      it("leaves out the fallback of a tile at the root, which renders without the handler", () => {
+        expect(
+          w0213(
+            "tile Fallback in=PanicInfo = input(bind=note)\n" +
+              "tile Safe error-boundary = Fallback = check(value=done)\n" +
+              "tile Inner = Safe()\n" +
+              "tile D = column(Inner(onFocus=r))",
+          ),
+        ).toContain("(observed at its root: check). ");
       });
 
       it.each([
