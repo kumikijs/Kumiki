@@ -3,6 +3,7 @@ import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { fill, find, mountSource, withMounted } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
+import { MAP_KEYS } from "./helpers/map-keys.ts";
 import { withApp } from "./helpers/source.ts";
 
 const example = feature("238-bind-through-index");
@@ -184,41 +185,21 @@ tile App = column(F)`),
     expect(app.live?.sends).toBe(1);
   });
 
-  it.each([
-    ["Text", "", `Map(Text, Row)`, `{"r": {qty: 1}}`, `"r"`, "r"],
-    ["Int", "", `Map(Int, Row)`, `{4: {qty: 1}}`, `4`, "4"],
-    ["Bool", "", `Map(Bool, Row)`, `{true: {qty: 1}}`, `true`, "true"],
-    [
-      "a record",
-      "type Pt = {x: Int, y: Int}",
-      `Map(Pt, Row)`,
-      `{{x: 0, y: 1}: {qty: 1}}`,
-      `{y: 1, x: 0}`,
-      '{"x":0,"y":1}',
-    ],
-    ["a tuple", "", `Map(Tuple(Int, Int), Row)`, `{(0, 1): {qty: 1}}`, `(0, 1)`, "[0,1]"],
-    [
-      "a union",
-      "type Shade = Plain | Tint(Int)",
-      `Map(Shade, Row)`,
-      `{Tint(1): {qty: 1}, Plain: {qty: 1}}`,
-      `Plain`,
-      '{"_tag":"Plain"}',
-    ],
-    [
-      "an Option",
-      "",
-      `Map(Option(Int), Row)`,
-      `{Some(1): {qty: 1}, None: {qty: 1}}`,
-      `None`,
-      '{"_tag":"None"}',
-    ],
-  ])("a Map keyed by %s refuses what the entry fails", async (_kind, decl, type, init, key, stored) => {
+  it.each(
+    MAP_KEYS.map((k) => [k.kind, k] as const),
+  )("a Map keyed by %s refuses what the entry fails", async (_kind, {
+    decl,
+    type,
+    entry,
+    index,
+    stored,
+    other,
+  }) => {
     const { app, root } = await mountSource(
       withApp(`${ROW}
 ${decl}
-slot m : ${type} = ${init}
-tile App = column(input(bind=m[${key}].qty, type="number", id="q"))`),
+slot m : Map(${type}, Row) = {${other}: {qty: 1}, ${entry}: {qty: 1}}
+tile App = column(input(bind=m[${index}].qty, type="number", id="q"))`),
     );
     const before = app.live?.m;
     fill(root, "#q", "50");

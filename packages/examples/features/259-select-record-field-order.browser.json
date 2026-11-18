@@ -1,0 +1,14 @@
+{
+  "steps": [
+    {
+      "label": "each select shows the option its slot's record is equal to, written in another field order",
+      "expect": {
+        "noErrors": true,
+        "elementState": {
+          "#dims": { "selectedIndex": 1 },
+          "#crop": { "selectedIndex": 2 }
+        }
+      }
+    }
+  ]
+}
