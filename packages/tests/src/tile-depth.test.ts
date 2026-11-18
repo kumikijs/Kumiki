@@ -81,8 +81,10 @@ const compiled = (src: string) =>
 
 // With the same Node, V8 on win32 parsed chains like these 77% to 89% as deep as it does on
 // Linux: a `for` passing an argument ran out at about 119 links there against 154 here. A child
-// given 77% of V8's default 984 KB stack therefore has no more room than Windows does.
-const WINDOWS_LIKE_STACK_KB = 757;
+// given 77% of V8's default 984 KB stack therefore has no more room than Windows does. On Windows
+// the child keeps the default, which is the room the smaller stack stands in for: shrinking it
+// there as well would leave less than any app on Windows gets.
+const WINDOWS_LIKE_STACK = process.platform === "win32" ? [] : ["--stack-size=757"];
 
 describe("a chain of tiles at the inlining limit", () => {
   let mounted: ReturnType<typeof mountApp> | undefined;
@@ -113,11 +115,9 @@ describe("a chain of tiles at the inlining limit", () => {
     if (result.kind !== "ok") expect.fail(result.errors.map((e) => e.message).join("\n"));
     const file = join(mkdtempSync(join(TMP_ROOT, "tile-depth-")), "app.mjs");
     writeFileSync(file, result.js);
-    const run = spawnSync(
-      process.execPath,
-      [`--stack-size=${WINDOWS_LIKE_STACK_KB}`, "--check", file],
-      { encoding: "utf8" },
-    );
+    const run = spawnSync(process.execPath, [...WINDOWS_LIKE_STACK, "--check", file], {
+      encoding: "utf8",
+    });
     expect(run.stderr).toBe("");
     expect(run.status).toBe(0);
   });
