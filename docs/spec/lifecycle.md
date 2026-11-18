@@ -170,7 +170,7 @@ reducer onPanic
         emit toast({kind: "error", text: "Something went wrong"})
 ```
 
-An `app.error` reducer is told about each failure once. A failure of its own, a panic in its body or a throw past it such as in the dispatch of what it emitted, is reported to `console.error` and as a `panic` step under `category: "reducer"` with its own `location` (`reducer "onPanic"`), and is not told to `app.error` again. The other `app.error` reducers still run, and so does whatever reported the failure they were told about: the effect's other reducers on a result, for one ([runtime.md §10.4.5](./runtime.md#_10-4-5-delivery-of-results)).
+An `app.error` reducer is told about each failure once. A failure of its own, a panic in its body or a throw past it such as in the dispatch of what it emitted, is reported to `console.error` and as a `panic` step under `category: "reducer"` with its own `location` (`reducer "onPanic"`), and is not told to `app.error` again. When several of its steps throw, each is reported this way ([runtime.md](./runtime.md#what-follows-a-committed-batch)). The other `app.error` reducers still run, and so does whatever reported the failure they were told about: the effect's other reducers on a result, for one ([runtime.md §10.4.5](./runtime.md#_10-4-5-delivery-of-results)).
 
 The `PanicInfo` type, which the [standard library provides](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library) — a program names it and does not declare it ([E0231](./errors.md#e0231-reserved-type-name)):
 
