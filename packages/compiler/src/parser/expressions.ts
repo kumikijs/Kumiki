@@ -6,16 +6,18 @@ import { TypeParser } from "./types.ts";
 /** Stays in step with the AST's spelling of the prefix operators. */
 type UnaryOp = Extract<Expr, { kind: "UnaryOp" }>["op"];
 
-// Being a whole value is what keeps these from naming a record field, so `{true: "on"}` is a Map.
-const VALUE_KEYWORDS: ReadonlyMap<string, (pos: Pos) => Expr> = new Map([
+// Being a whole expression is what keeps these from naming a record field, so `{true: "on"}` is a
+// Map. `null` is no value, but is read here so the checker reports it wherever it is written.
+const EXPRESSION_KEYWORDS: ReadonlyMap<string, (pos: Pos) => Expr> = new Map([
   ["true", (pos: Pos): Expr => ({ kind: "Bool", value: true, pos })],
   ["false", (pos: Pos): Expr => ({ kind: "Bool", value: false, pos })],
   ["now", (pos: Pos): Expr => ({ kind: "Call", callee: "now", args: [], pos })],
+  ["null", (pos: Pos): Expr => ({ kind: "Null", pos })],
 ]);
 
 function fieldNameOf(t: Token): string | undefined {
   if (t.kind === "ident") return t.value;
-  if (t.kind === "kw" && !VALUE_KEYWORDS.has(t.value)) return t.value;
+  if (t.kind === "kw" && !EXPRESSION_KEYWORDS.has(t.value)) return t.value;
   return undefined;
 }
 
@@ -246,10 +248,10 @@ export class ExpressionParser extends TypeParser {
       this.next();
       return { kind: "Str", value: t.value, pos: t.pos };
     }
-    const valueKeyword = t.kind === "kw" ? VALUE_KEYWORDS.get(t.value) : undefined;
-    if (valueKeyword) {
+    const expressionKeyword = t.kind === "kw" ? EXPRESSION_KEYWORDS.get(t.value) : undefined;
+    if (expressionKeyword) {
       this.next();
-      return valueKeyword(t.pos);
+      return expressionKeyword(t.pos);
     }
     if (t.kind === "kw" && t.value === "if") {
       return this.parseIfExpr();
@@ -412,12 +414,19 @@ export class ExpressionParser extends TypeParser {
 
   protected parseLetIn(): Expr {
     const start = this.eat("kw", "let");
-    const name = this.eat("ident").value;
+    const nameTok = this.eat("ident");
     this.eat("op", "=");
     const value = this.parseExpr();
     this.eat("kw", "in");
     const body = this.parseExpr();
-    return { kind: "LetIn", name, value, body, pos: start.pos };
+    return {
+      kind: "LetIn",
+      name: nameTok.value,
+      namePos: nameTok.pos,
+      value,
+      body,
+      pos: start.pos,
+    };
   }
 
   protected parseMatchExpr(): Expr {
@@ -526,7 +535,9 @@ export class ExpressionParser extends TypeParser {
         if (fieldName === undefined) {
           if (keyTok.kind === "kw") {
             throw new ParseError(
-              `\`${keyTok.value}\` is a value, not a record field name`,
+              keyTok.value === "null"
+                ? "`null` is not a record field name, and not a value — Kumiki has no null"
+                : `\`${keyTok.value}\` is a value, not a record field name`,
               keyTok.pos,
             );
           }

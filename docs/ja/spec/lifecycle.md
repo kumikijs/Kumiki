@@ -129,9 +129,13 @@ app TileMountSeveralTiles
 
 各 reducer は対象の tile がマウントされたときに発火する：`Account` を描画すると `seeAccount`、`seeSettings`、続いて `seeProfile` がそれぞれ 1 回ずつ実行される。1 回の描画で複数の tile がマウントされるときは、reducer がどの順で書かれているかに関わらず、それらの reducer はツリー順に発火する：外側の tile がその内側の tile より先、兄弟どうしは前から順に。その描画で複数回描画される tile も 1 つの tile であり、1 回だけ発火する。1 つの tile に対する複数の `tile.mount` reducer はどれもその tile のマウントという 1 つのイベントにマッチするので、定義順で発火する（[§1.6.4](./language.md#_1-6-4-不変条件) Invariant 3）。
 
+`tile.mount` と `tile.unmount` は、その tile が描画されるあらゆる位置で、名前の大文字・小文字にかかわらず発火する。小文字の tile をコンテナの子として名前だけで書いた `column(leaf)` は tile `leaf` を名指し（[§1.7.1](./language.md#_1-7-1-構文)）、`column(Leaf)` が `Leaf` について発火させるのと同じく `tile.mount(leaf)` と `tile.unmount(leaf)` を発火させる。
+
 どちらのイベントもインスタンスごとではなく tile 名ごとに数える。`tile.mount(X)` は画面上に `X` がひとつもないときに `X` が現れると発火し、`tile.unmount(X)` は画面上の最後の `X` が消えたときに発火する。すでにある `X` の横に別の `X` が現れても、2 つのうち 1 つが消えても、何も発火しない。
 
 `error-boundary` の fallback（[§7.3](#_7-3-エラー境界-タイル単位)）は、それを宣言した tile がどこに描画されても、ほかの tile と同じく画面上の tile である。境界が fallback を表示したときに `tile.mount(<fallback>)` が発火し、fallback が消えたとき、つまり宣言した tile が panic せずに描画し直されたとき、あるいは宣言した tile 自体が消えたときに `tile.unmount(<fallback>)` が発火する。上の名前ごとの規則により、2 つの境界が同時に表示している fallback は、どちらの境界も表示しなくなったときに初めて消える。panic が残ったまま fallback が再描画されても、新たに現れたわけではないので何も発火しない。fallback は宣言した tile の本体の代わりに描画されるので、fallback が表示されている間は、宣言した tile もその下のどの tile も `tile.mount` を発火しない。マウント済みの宣言した tile が panic し始めると、その tile と下の tile の `tile.unmount` が発火する。
+
+本体全体が別のユーザー tile である tile —— `tile Outer = Inner` —— は、両方の全体である 1 つのツリーを描画するので、両方が画面上にある。`tile.mount(Outer)` と `tile.mount(Inner)` がともに `Outer` から順に発火し、そのツリーが消えると両方の `tile.unmount` が同じ順で発火する。これは何段でも同じで（`tile A = B` と `tile B = C` なら `A`、`B`、`C` の順に発火する）、本体が、行や分岐そのものが別のユーザー tile である `for`・`when`・`match` である場合も、外側の tile がどこで描画される場合 —— 呼び出し位置、ルートや `sub-routes` のターゲット、`error-boundary` の fallback —— も同じである。上の名前ごとの規則により、単独でも表示されている `Inner` は、どちらかが残っている間はマウントされたままである。`Inner` が `error-boundary` を宣言して fallback を表示しているときは、ツリーは `Outer` と fallback の全体であり、発火するのはその 2 つで `Inner` は発火しない。
 
 ---
 
@@ -166,6 +170,8 @@ reducer onPanic
         emit toast({kind: "error", text: "Something went wrong"})
 ```
 
+`app.error` reducer には、1 つの失敗が 1 回だけ伝えられる。その reducer 自身の失敗、つまり本体の中の panic や、それが emit したものの dispatch のような本体の外の throw は、`console.error` と、`category: "reducer"` で自身の `location`（`reducer "onPanic"`）を持つ `panic` step として報告され、もう一度 `app.error` に伝えられることはない。他の `app.error` reducer は引き続き実行され、それらに伝えられた失敗を報告した側の処理も続く。たとえば、ある結果に対する effect の他の reducer がそうである（[runtime.md §10.4.5](./runtime.md#_10-4-5-delivery-of-results)）。
+
 `PanicInfo` の型。[標準ライブラリ](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)が提供し、プログラムは名指すだけで宣言はしない（[E0231](./errors.md#e0231-reserved-type-name)）：
 
 ```kumiki fragment
@@ -178,7 +184,7 @@ type PanicInfo = {
 }
 ```
 
-`category` は、runtime 側のどこでその失敗を捕捉したかを名指す。現時点で自前の category を出すのは reducer / tile-render / hydrate の経路と、何も throw されていない出来事を報告する 2 つの値である。`effect` は dispatcher が実行できなかった emit — `app.effects` にその名前の effect が無いもの — を指し（[runtime.md §10.4.1](./runtime.md#_10-4-1-acceptance)）、`capability` は capability チェックが拒否した effect を指す（[runtime.md §10.4.2](./runtime.md#_10-4-2-capability-check)）。`unknown` は予約値であり、今後 callsite が配線されていっても、アプリ側のコードが fallthrough なしに網羅的に match できるようにするためにある。
+`category` は、runtime 側のどこでその失敗を捕捉したかを名指す。現時点で自前の category を出すのは reducer / tile-render / hydrate の経路である。2 つの値は、dispatcher が拒否した、何も throw されていない emit を名指す。`effect` は dispatcher が実行できなかった emit — `app.effects` にその名前の effect が無いもの — を指し（[runtime.md §10.4.1](./runtime.md#_10-4-1-acceptance)）、`capability` は capability チェックが拒否した emit を指す（[runtime.md §10.4.2](./runtime.md#_10-4-2-capability-check)）。`effect` はさらに、effect の結果を配送している最中に、結果が実行した reducer の本体の外で起きた throw も名指す。その reducer が emit したものの dispatch がその一例である（[runtime.md §10.4.5](./runtime.md#_10-4-5-delivery-of-results)）。どちらの場合も `location` は `effect "loadNote"` のように effect を名指し、配送中の throw では、その結果が答えたリクエストはそれ以上の結果を受け取らない。`unknown` は予約値であり、今後 callsite が配線されていっても、アプリ側のコードが fallthrough なしに網羅的に match できるようにするためにある。
 
 `episode-id` は panic が起きた episode を名指す（[runtime.md §10.5](./runtime.md#_10-5-episode-loop)）—— ユーザーが見た panic と、`kumiki replay` / `kumiki_episode_tail` が読み戻すものとを繋ぐ結合キーである。`Option(Text)` なのは、episode が常に開いているとは限らないからだ：episode logger を接続していないホストには名指すべき episode が無く、それに対する答えが `None` である。どの dispatch にも属さない場所で発生した panic —— 例えば初回描画で捕捉された描画 panic —— も同じである。
 
@@ -216,9 +222,11 @@ tile ErrorFallback
 
 したがって `$1` を読む fallback は `in=PanicInfo`（または `PanicInfo` が代入可能な型、たとえばその別名）を宣言しなければならない。何を宣言していても `$1` は panic なので、別の `in=` を宣言した fallback、あるいは `in=` を宣言せずに `$1` を読む fallback は [E0220](./errors.md#e0220-boundary-fallback-input) であり、`error-boundary` 句の位置に報告される。`$1` を読まない fallback は `in=` を宣言しなくてよく、そうすれば同じ tile を route や `sub-routes` のターゲットにもできる。
 
-境界が属するのは **tile** であって、それが書かれた場所ではない。したがってその tile が描画されるあらゆる位置で有効であり、route がターゲットとして名指した場合も、`sub-routes` のエントリが名指した場合も含む。
+境界が属するのは **tile** であって、それが書かれた場所ではない。したがってその tile が描画されるあらゆる位置で有効であり、route がターゲットとして名指した場合も、`sub-routes` のエントリが名指した場合も、ほかの tile の fallback として描画される場合も含む。名前の大文字・小文字も関係しない。小文字の tile をコンテナの子として名前だけで書いた `column(leaf)` は tile `leaf` を名指し（[§1.7.1](./language.md#_1-7-1-構文)）、`column(Leaf)` が `Leaf` を描画するのと同じくその境界の下で描画される。
 
-境界はその tile の**配下**で描画されるすべてを覆い、`sub-routes` のエントリがその tile の `route-outlet`（[ルーティング §3.6](./routing.md#_3-6-nested-routes)）に注入する子もその配下にある。したがってシェルに宣言した境界は、子を含むセクション全体に対する 1 つの fallback になる。勝つのは**最も近い**境界である —— 子が自身の境界を宣言していれば、子は outlet の中に自身の fallback を表示し、シェルはそのまま残る。outlet がシェルの描画する tile の中にある場合、その tile の境界は子を覆わない。子はその tile が描画を終えた後で outlet に埋められるので、子の panic は、outlet がシェル自身の body にある場合と同じように捕捉される。fallback に渡る `PanicInfo` の `location` は、runtime が組み立てていた **route のターゲット**（とりわけ outlet の子）を名指し、それ以外は境界を宣言した tile を名指す。ターゲットが自身の body 内で描画する tile は、ターゲットと区別されない。
+したがって自身の `error-boundary` を宣言した fallback は、その境界に覆われる。fallback の描画中の panic は、その fallback 自身の fallback をその位置に表示し、連鎖の先も同様である。その境界は最初の境界を宣言した tile を囲むどの境界よりも近いので、それが勝つ。fallback 自身の fallback には fallback の panic が渡り、その `location` は panic した fallback を名指す。最初の境界を宣言した tile が route のターゲットである場合も同じである。自身の境界を持たない fallback の panic は、その tile を囲む境界に、それも無ければ組み込みのトップレベル表示に委ねられる。すでに連鎖上にある tile へ戻ってくる連鎖 —— 自分自身を名指す fallback（`tile Oops in=PanicInfo error-boundary=Oops`）や、互いを名指す 2 つの fallback —— には終わりが無く、[E0005](./errors.md#e0005-tile-cycle) として `error-boundary` 句の位置に報告される。
+
+境界はその tile の**配下**で描画されるすべてを覆い、`sub-routes` のエントリがその tile の `route-outlet`（[ルーティング §3.6](./routing.md#_3-6-nested-routes)）に注入する子もその配下にある。したがってシェルに宣言した境界は、子を含むセクション全体に対する 1 つの fallback になる。勝つのは**最も近い**境界である —— 子が自身の境界を宣言していれば、子は outlet の中に自身の fallback を表示し、シェルはそのまま残る。outlet がシェルの描画する tile の中にある場合、その tile の境界は子を覆わない。子はその tile が描画を終えた後で outlet に埋められるので、子の panic は、outlet がシェル自身の body にある場合と同じように捕捉される。fallback に渡る `PanicInfo` の `location` は、panic が境界に捕捉される前に抜け出した **route のターゲット**（とりわけ outlet の子）を名指し、それ以外は境界を宣言した tile を名指す。ターゲットが自身の body 内で描画する tile は、ターゲットと区別されない。
 
 境界が受け取るのは **panic** —— [§7.2.2](#_7-2-2-unexpected-errors-panic) が定義する制御されたシグナル —— である。fallback が受け取るのは `PanicInfo` の全体であり、[§7.2.3](#_7-2-3-the-app-error-reducer) の `app.error` reducer が受け取るものと同じ payload である —— 同じコードが組み立てるので、両者が食い違うことはない。境界が捕捉した panic は処理済みであり —— コンソールには報告されず、`app.error` も発火しない —— かつ、描画を囲んで開いている episode があれば記録される：そのときその `episode-id` は、その `panic` step を持つ episode を名指し、その step は `handled: true` を持つ。そうでなければ `None` である —— ただし hydration を締めくくる描画では、bootstrap episode を名指す（[§7.2.3](#_7-2-3-the-app-error-reducer)）。それ以外のものが境界に到達した場合、それはプログラムのエラーではなく生成コードまたは runtime の欠陥であり、トップレベル表示のために再送出される：fallback がそれを吸収すると失敗が描画済みページに置き換わり、`smoke` / `scenario` はエラーチャネルで検証するため、見るべきものが何も残らなくなる。
 

@@ -3,12 +3,21 @@ import {
   type Expr,
   isTileExpr,
   type Pos,
+  type TileArg,
   type TileDef,
   type TileExpr,
+  type TileProp,
   type TypeExpr,
   type UiEventKind,
 } from "../ast.ts";
-import { BUILTIN_TILES, contentArg, contentReading, positionalIsTile } from "../builtins.ts";
+import {
+  BUILTIN_TILES,
+  contentArg,
+  contentReading,
+  positionalIsTile,
+  shownInPlaceOfPositional,
+  tileNamedAt,
+} from "../builtins.ts";
 import {
   type RouteMapEntry,
   redirectCycles,
@@ -36,6 +45,7 @@ import {
   checkSecondSpelling,
   checkToggleBind,
 } from "./bind.ts";
+import { checkCallee } from "./callee.ts";
 import {
   bindLocal,
   type Ctx,
@@ -51,16 +61,18 @@ import {
   checkExpr,
   checkIterationTarget,
   elementTypeOf,
+  letInScope,
   noteShown,
   refuseRenderedEffectId,
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
+import { nestedScopes } from "./nested-scopes.ts";
 import {
-  collectRenderedBuiltinKinds,
-  collectTileBuiltinKinds,
-  collectTileRootKinds,
-} from "./tile-collect.ts";
+  armScope,
+  checkPatternAgainstType,
+  checkPatternBindsAreDistinct,
+  matchedType,
+} from "./patterns.ts";
 import { checkA11y, checkBuiltinProp, checkButtonType, checkIconName } from "./tile-props.ts";
 import { resolveType } from "./types.ts";
 
@@ -72,12 +84,13 @@ export function checkTile(tile: TileDef, sym: SymbolTable, errors: KumikiError[]
     localBinders: new Map(),
     routeBind: "no-payload",
     endedScopes: new Map(),
+    nestedScopes: nestedScopes(tile.body),
   };
   if (tile.in) {
     resolveType(tile.in, sym, errors);
     bindLocal(ctx, "$1", tile.in, "input");
   }
-  checkTileExpr(tile.body, sym, errors, ctx);
+  checkTileExpr(tile.body, sym, errors, ctx, { kind: "body" });
   if (tile.errorBoundary !== undefined && !sym.tiles.has(tile.errorBoundary)) {
     errors.push({
       code: "E0105",
@@ -123,9 +136,11 @@ function readsUndeclaredInput(tile: TileDef, sym: SymbolTable): boolean {
     localBinders: new Map(),
     routeBind: "no-payload",
     endedScopes: new Map(),
+    // No hint from this table would be read: only the input reads are kept.
+    nestedScopes: new Map(),
     undeclaredInputReads: seen,
   };
-  checkTileExpr(tile.body, sym, [], ctx);
+  checkTileExpr(tile.body, sym, [], ctx, { kind: "body" });
   return seen.length > 0;
 }
 
@@ -234,7 +249,7 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
   }
   // The runtime fills the first outlet anywhere in the tree the tile renders, so an outlet in
   // a layout helper counts, and one a builtin drops does not.
-  if (!collectRenderedBuiltinKinds(tile.name, sym).has("route-outlet")) {
+  if (!sym.tileKinds.rendered(tile.name).has("route-outlet")) {
     errors.push({
       code: "E0113",
       kind: "sub-routes-without-outlet",
@@ -244,31 +259,142 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
   }
 }
 
+// `child` is a positional argument of a builtin that renders it only when it is a tile. The others
+// hold a whole tile-expr, where the parser reads any name as a tile call.
+type TilePlace =
+  | { readonly kind: "child"; readonly of: string }
+  | { readonly kind: "arm"; readonly of: "when" | "if" | "for" | "match" }
+  | { readonly kind: "body" }
+  | { readonly kind: "expect" };
+
+type Occupant =
+  | { readonly kind: "tile" }
+  | ValueName
+  | { readonly kind: "uncalled"; readonly name: string }
+  | { readonly kind: "unknown"; readonly name: string };
+
+// `out-of-scope` is a value read after the scope that declares it ends or before it begins: its
+// E0103 says which scope it is.
+type ValueName =
+  | { readonly kind: "value" }
+  | { readonly kind: "out-of-scope"; readonly error: KumikiError };
+
+type NotATile = Exclude<Occupant, { readonly kind: "tile" }>;
+
+// The parser reads every name in an arm or a body as a tile call, so a call of a name no tile has
+// is resolved as a value. In a container it reads a bare lower-cased name as an expression, and a
+// program's tile of that name is taken before this (`tileNamedAt`), so a `Ref` here is a value or
+// nothing; a value of the same name wins over a builtin.
+function occupantOf(v: TileExpr, sym: SymbolTable, ctx: Ctx): Occupant;
+function occupantOf(v: Expr, sym: SymbolTable, ctx: Ctx): NotATile;
+function occupantOf(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): Occupant {
+  if (isTileExpr(v)) {
+    if (v.kind !== "TileCall" || namesTile(v.name, sym)) return { kind: "tile" };
+    return valueNamed(v.name, v.pos, sym, ctx) ?? { kind: "unknown", name: v.name };
+  }
+  if (v.kind !== "Ref") return { kind: "value" };
+  const value = valueNamed(v.name, v.pos, sym, ctx);
+  if (value) return value;
+  if (BUILTIN_TILES.has(v.name)) return { kind: "uncalled", name: v.name };
+  return { kind: "unknown", name: v.name };
+}
+
+function namesTile(name: string, sym: SymbolTable): boolean {
+  return BUILTIN_TILES.has(name) || sym.tiles.has(name);
+}
+
+// Resolved as an expression resolves it, with the diagnostics discarded: E0103 and E0116 are how
+// those say a name names nothing, and null is that answer. The probe drops the collectors a probe
+// further out may have set, so none of them hears of it.
+function valueNamed(name: string, pos: Pos, sym: SymbolTable, ctx: Ctx): ValueName | null {
+  if (name.startsWith("$")) return { kind: "value" };
+  const { routeReadsSeen, fragmentFnCallsSeen, undeclaredInputReads, ...scope } = ctx;
+  const asName: KumikiError[] = [];
+  checkExpr({ kind: "Ref", name, pos }, sym, asName, scope);
+  const undefinedName = asName.find((e) => e.code === "E0103");
+  if (undefinedName === undefined) return { kind: "value" };
+  if (undefinedName.endedScope !== undefined || undefinedName.laterScope !== undefined) {
+    return { kind: "out-of-scope", error: undefinedName };
+  }
+  return callsValue(name, pos, sym, scope) ? { kind: "value" } : null;
+}
+
+// Whether a call of `name` calls what an expression calls, a `fn`: E0116 is how the callee check
+// says nothing of that name is called.
+function callsValue(name: string, pos: Pos, sym: SymbolTable, ctx: Ctx): boolean {
+  const asCall: KumikiError[] = [];
+  checkCallee(name, [], pos, sym, asCall, ctx);
+  return !asCall.some((e) => e.code === "E0116");
+}
+
+function notATile(found: NotATile, place: TilePlace, pos: Pos): KumikiError {
+  if (found.kind === "unknown") return undefinedTile(found.name, pos);
+  if (found.kind === "out-of-scope") return found.error;
+  const rule =
+    place.kind === "child"
+      ? `${place.of} renders a positional argument only when it is a tile, so this one renders nothing`
+      : `${placeName(place)} has to be a tile`;
+  // A `let` is a value only as a child: where a whole tile-expr stands, the parser refuses one. A
+  // positional argument is a `child` place only under a container, so the call suggested here
+  // renders there.
+  const message =
+    found.kind === "uncalled"
+      ? `\`${found.name}\` is a builtin tile named without its call: ${rule}. ` +
+        `Call it — \`${found.name}()\``
+      : `A value is not a tile: ${rule}. Show the value with a tile — \`text(…)\`` +
+        (place.kind === "child"
+          ? " — or, for a `let`, write the value where it is used or compute it in a `fn`"
+          : "");
+  return { code: "E0128", kind: "value-as-child", message, pos };
+}
+
+function placeName(place: Exclude<TilePlace, { kind: "child" }>): string {
+  switch (place.kind) {
+    case "arm":
+      return `${place.of === "if" ? "an" : "a"} \`${place.of}\` arm`;
+    case "body":
+      return "a tile's body";
+    case "expect":
+      return "a tile-test's `expect`";
+  }
+}
+
+function undefinedTile(name: string, pos: Pos): KumikiError {
+  return {
+    code: "E0105",
+    kind: "undef-tile",
+    message: `Reference to undefined tile "${name}"`,
+    pos,
+  };
+}
+
+/** `place` is `null` for an argument no tile is rendered from, where a name is looked up as a tile only. */
 export function checkTileExpr(
   t: TileExpr,
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
+  place: TilePlace | null,
 ): void {
   switch (t.kind) {
     case "TileFor": {
       checkIterationTarget(t.iter, sym, errors, ctx);
       const inner = innerScope(ctx);
       bindLocal(inner, t.bind, elementTypeOf(t.iter, sym, ctx), "for");
-      checkTileExpr(t.body, sym, errors, inner);
+      checkTileExpr(t.body, sym, errors, inner, { kind: "arm", of: "for" });
       endScope("for-expr", inner, ctx);
       return;
     }
     case "TileWhen":
       checkExpr(t.cond, sym, errors, ctx);
       checkCondition(t.cond, inferType(t.cond, sym, ctx), sym, errors, '"when"');
-      checkTileExpr(t.body, sym, errors, ctx);
+      checkTileExpr(t.body, sym, errors, ctx, { kind: "arm", of: "when" });
       return;
     case "TileIf":
       checkExpr(t.cond, sym, errors, ctx);
       checkCondition(t.cond, inferType(t.cond, sym, ctx), sym, errors, '"if"');
-      checkTileExpr(t.consequent, sym, errors, ctx);
-      checkTileExpr(t.alternate, sym, errors, ctx);
+      checkTileExpr(t.consequent, sym, errors, ctx, { kind: "arm", of: "if" });
+      checkTileExpr(t.alternate, sym, errors, ctx, { kind: "arm", of: "if" });
       return;
     case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
@@ -276,12 +402,12 @@ export function checkTileExpr(
       checkArms(t.arms, ctx, (arm, inner) => {
         checkPatternBindsAreDistinct(arm.pattern, errors);
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
-        checkTileExpr(arm.body, sym, errors, inner);
+        checkTileExpr(arm.body, sym, errors, inner, { kind: "arm", of: "match" });
       });
       return;
     }
     case "TileCall":
-      checkTileCall(t, sym, errors, ctx);
+      checkTileCall(t, sym, errors, ctx, place);
       return;
   }
 }
@@ -331,26 +457,44 @@ function checkTileInput(
   checkAgainst(value, def.in, sym, errors, ctx);
 }
 
-function checkContentArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+/** `a`, `a or b`, `a, b or c`: the items as a choice of one. */
+function alternatives(items: readonly string[]): string {
+  return items.length > 1 ? `${items.slice(0, -1).join(", ")} or ${items.at(-1)}` : items.join("");
+}
+
+function checkUnrenderedArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+  const positional = t.args.filter((a) => a.name === undefined);
+  const shown = shownInPlaceOfPositional(t.name);
+  if (shown) {
+    for (const a of positional) {
+      errors.push({
+        code: "E0129",
+        kind: "unrendered-arg",
+        message:
+          `${t.name} renders no positional argument, so this one is never rendered. ` +
+          (shown.length > 0
+            ? `Write it as ${alternatives(shown.map((n) => `\`${n}=\``))}, or show it beside the ${t.name}`
+            : `Show it beside the ${t.name}`),
+        pos: a.value.pos,
+        unrendered: "positional",
+      });
+    }
+    return;
+  }
   const reading = contentReading(t.name);
   if (!reading) return;
-  const positional = t.args.filter((a) => a.name === undefined);
-  const read = reading.positional ? 1 : 0;
-  positional.slice(read).forEach((a, i) => {
+  positional.slice(1).forEach((a, i) => {
     errors.push({
       code: "E0129",
       kind: "unrendered-arg",
-      message: reading.positional
-        ? `${t.name} renders its first positional argument only — positional argument ` +
-          `${i + read + 1} is never rendered. Join the values (\`a + b\`, \`fmt(…)\`) or give ` +
-          `each its own ${t.name}`
-        : `${t.name} takes its ${reading.named} as \`${reading.named}=\` — a positional ` +
-          `argument is never rendered. Write \`${t.name}(${reading.named}=…)\``,
+      message:
+        `${t.name} renders its first positional argument only — positional argument ` +
+        `${i + 2} is never rendered. Join the values (\`a + b\`, \`fmt(…)\`) or give ` +
+        `each its own ${t.name}`,
       pos: a.value.pos,
       unrendered: "positional",
     });
   });
-  if (!reading.positional) return;
   const named = t.args.find((a) => a.name === "text");
   if (!named?.name) return;
   if (reading.named === "text" && positional.length > 0) {
@@ -378,6 +522,72 @@ function checkContentArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiErro
   });
 }
 
+// Returns the content when it holds a tile: it is moved whole, so nothing else in it is checked.
+function checkTileAsContent(
+  t: TileExpr & { kind: "TileCall" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): TileArg | TileProp | undefined {
+  const content = writtenContent(t);
+  if (!content) return undefined;
+  const tiles = tilesInContent(content.value, sym, ctx);
+  const shown =
+    content.kind === "TileProp"
+      ? `${t.name} {${content.name}: x.show}`
+      : content.name === undefined
+        ? `${t.name}(x.show)`
+        : `${t.name}(${content.name}=x.show)`;
+  for (const tile of tiles) {
+    errors.push({
+      code: "E0236",
+      kind: "tile-as-content",
+      message:
+        `A tile is not a value: ${t.name} shows a value as its content, so this tile is never ` +
+        `rendered. Write the tile as a child of a container — \`column(when(c, …))\` — or show a ` +
+        `value — \`${shown}\``,
+      pos: tile.pos,
+    });
+  }
+  return tiles.length > 0 ? content : undefined;
+}
+
+// The content as the lowering reads it: link renders its `{text: …}` when no content is written.
+function writtenContent(t: TileExpr & { kind: "TileCall" }): TileArg | TileProp | undefined {
+  const content = contentArg(t);
+  if (content || t.name !== "link") return content;
+  return t.props.find((p) => p.name === "text");
+}
+
+// The parser reads the content as an expression (but for a `when` or a `for`), so a tile there is
+// told from a value by its name, as an expression resolves it: a call of a builtin or a program
+// tile is a tile unless a `fn` has that name, and a program tile's bare name is a tile unless a
+// value has it. A builtin's bare name stays the undefined name it is. A capitalised name is a
+// variant tag to the parser, and a value when it is a constructor tag.
+function tilesInContent(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): (Expr | TileExpr)[] {
+  if (isTileExpr(v)) return [v];
+  switch (v.kind) {
+    case "IfExpr":
+      return [...tilesInContent(v.consequent, sym, ctx), ...tilesInContent(v.alternate, sym, ctx)];
+    case "MatchExpr": {
+      const scrutType = matchedType(inferType(v.scrutinee, sym, ctx), v.arms, sym);
+      return v.arms.flatMap((arm) =>
+        tilesInContent(arm.body, sym, armScope(arm, scrutType, sym, ctx)),
+      );
+    }
+    case "LetIn":
+      return tilesInContent(v.body, sym, letInScope(v, sym, ctx));
+    case "Call":
+      return namesTile(v.callee, sym) && !callsValue(v.callee, v.pos, sym, ctx) ? [v] : [];
+    case "Ref":
+      return sym.tiles.has(v.name) && valueNamed(v.name, v.pos, sym, ctx) === null ? [v] : [];
+    case "Variant":
+      return sym.tiles.has(v.name) && !sym.constructorTags.has(v.name) ? [v] : [];
+    default:
+      return [];
+  }
+}
+
 /**
  * The values a builtin renders as text, as its lowering reads them: its content, `button`'s `text=`,
  * `link`'s `{text: …}` prop when no content is written, and the value `editable` binds.
@@ -399,20 +609,22 @@ function checkTileCall(
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
+  place: TilePlace | null,
 ): void {
-  const userTile = sym.tiles.get(t.name);
-  const undefinedTile = !BUILTIN_TILES.has(t.name) && !userTile;
-  if (undefinedTile) {
-    errors.push({
-      code: "E0105",
-      kind: "undef-tile",
-      message: `Reference to undefined tile "${t.name}"`,
-      pos: t.pos,
-    });
+  const unknown = !namesTile(t.name, sym);
+  if (place === null) {
+    if (unknown) errors.push(undefinedTile(t.name, t.pos));
+  } else {
+    const found = occupantOf(t, sym, ctx);
+    if (found.kind !== "tile") errors.push(notATile(found, place, t.pos));
+    // A value is reported whole, and an argument or a prop on it is moved with it.
+    if (found.kind === "value" || found.kind === "out-of-scope") return;
   }
+  const userTile = sym.tiles.get(t.name);
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
   checkA11y(t, sym, errors, ctx);
-  checkContentArgs(t, errors);
+  checkUnrenderedArgs(t, errors);
+  const tileContent = checkTileAsContent(t, sym, errors, ctx);
   for (const value of renderedText(t, ctx)) {
     refuseRenderedEffectId(value, `${t.name}(...)`, sym, errors, ctx);
   }
@@ -461,29 +673,37 @@ function checkTileCall(
     const v = arg.value;
     // Whether a positional argument is a tile or a value depends on the tile it is passed to,
     // so an undefined one leaves nothing to check it as.
-    if (undefinedTile && arg.name === undefined) continue;
+    if (unknown && arg.name === undefined) continue;
     if (arg.name !== undefined && HANDLER_NAMES.has(arg.name)) {
       checkHandlerBinding(t.name, arg.name, "arg", v, sym, errors);
       continue;
     }
+    // checkUnrenderedArgs reports this as E0129, tile or value; it is moved or removed whole, so
+    // nothing inside it is checked.
+    if (arg.name === undefined && shownInPlaceOfPositional(t.name)) continue;
+    // checkTileAsContent reports this as E0236; it is moved whole, so nothing inside it is checked.
+    if (arg === tileContent) continue;
+    const place: TilePlace | null =
+      arg.name === undefined && positionalIsTile(t.name) ? { kind: "child", of: t.name } : null;
     if (isTileExpr(v)) {
-      checkTileExpr(v, sym, errors, ctx);
+      checkTileExpr(v, sym, errors, ctx, place);
       continue;
     }
-    if (
-      arg.name === undefined &&
-      positionalIsTile(t.name) &&
-      !(v.kind === "Ref" && sym.tiles.has(v.name))
-    ) {
-      errors.push({
-        code: "E0128",
-        kind: "value-as-child",
-        message:
-          `A value is not a tile: ${t.name} renders a positional argument only when it is a ` +
-          "tile, so this one renders nothing. Show the value with a tile — `text(…)` — or, " +
-          "for a `let`, write the value where it is used or compute it in a `fn`",
-        pos: v.pos,
-      });
+    if (place !== null) {
+      const named = tileNamedAt(t.name, arg, (name) => sym.tiles.get(name));
+      if (named) {
+        const { ref, def } = named;
+        const call: TileExpr & { kind: "TileCall" } = {
+          kind: "TileCall",
+          name: ref.name,
+          args: [],
+          props: [],
+          pos: ref.pos,
+        };
+        checkTileInput(call, def, sym, errors, ctx);
+        continue;
+      }
+      errors.push(notATile(occupantOf(v, sym, ctx), place, v.pos));
       continue;
     }
     if (arg.name !== undefined && checkNamingProp(t.name, arg.name, v, sym, errors, ctx)) continue;
@@ -493,6 +713,8 @@ function checkTileCall(
     if (arg.name !== undefined) checkBuiltinProp(t.name, arg.name, v, sym, errors, ctx);
   }
   for (const prop of t.props) {
+    // checkTileAsContent reports this as E0236; it is moved whole, so nothing inside it is checked.
+    if (prop === tileContent) continue;
     if (HANDLER_NAMES.has(prop.name)) {
       checkHandlerBinding(t.name, prop.name, "prop", prop.value, sym, errors);
     } else if (!checkNamingProp(t.name, prop.name, prop.value, sym, errors, ctx)) {
@@ -650,7 +872,7 @@ function notCalled(
     return because;
   }
   if (!sym.tiles.has(tileName)) return null;
-  const kinds = collectTileBuiltinKinds(tileName, sym);
+  const kinds = sym.tileKinds.handled(tileName);
   if (kinds.size === 0 || [...kinds].some((k) => reach.allowed.has(k))) return null;
   const observed = `(observed in body: ${[...kinds].sort().join(", ")})`;
   const clauses = unheard(kinds);
@@ -674,7 +896,7 @@ function notReceived(
     return missed === undefined ? null : wrappedClause(ev, missed);
   }
   if (!sym.tiles.has(tileName)) return null;
-  const kinds = collectTileRootKinds(tileName, sym);
+  const kinds = sym.tileKinds.root(tileName);
   if (kinds.size === 0 || [...kinds].some((k) => wrapperNeverReceives(ev, [k]).length === 0)) {
     return null;
   }
