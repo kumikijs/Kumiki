@@ -1,6 +1,8 @@
-import { copyFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CASCADE_HELP, lockDef } from "@kumikijs/cli";
+import { feature } from "@kumikijs/examples";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   COUNTER,
@@ -9,6 +11,9 @@ import {
   callTool,
   errorMessage,
   FIX_COUNTER_TESTS,
+  FIX_COUNTER_TYPO,
+  FIX_COUNTER_TYPO_WITH_TEST,
+  FIX_FAILING_SINGLE,
   listTools,
   useWorkdir,
   withClient,
@@ -198,5 +203,412 @@ describe("ownership locks", () => {
     expect(res.body).toMatch(/lock violation: slot\.todosX is locked by agent:a/);
     expect(readFileSync(file, "utf8")).toBe(source);
     expect(existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
+  });
+
+  // The repair tools are held to the same check before they write.
+  const lockedBy = (qname: string): Record<string, string> => ({
+    reason: "locked",
+    message: `lock violation: ${qname} is locked by agent:a (pattern "reducer.*"). Set KUMIKI_AUTHOR=agent:a to edit.`,
+  });
+
+  /** A copy of `fixture` with `pattern` locked by agent:a, run as `agent`, and the copy's source. */
+  const lockedCopy = (
+    fixture: string,
+    name: string,
+    { pattern = "reducer.*", agent = "agent:b" } = {},
+  ): { file: string; source: string } => {
+    const file = join(workdir.path, name);
+    copyFileSync(fixture, file);
+    lockDef(file, "agent:a", pattern);
+    process.env.KUMIKI_AUTHOR = agent;
+    return { file, source: readFileSync(file, "utf8") };
+  };
+
+  it("kumiki_fix with apply is refused when the repair changes a locked definition", async () => {
+    const { file, source } = lockedCopy(FIX_COUNTER_TYPO, "typo.kumiki");
+    const res = await callOnce("kumiki_fix", { path: file, apply: true });
+    expect(res.isError).toBe(true);
+    const parsed = JSON.parse(res.body) as {
+      applied: number;
+      remaining: { code: string }[];
+      blocked?: unknown;
+    };
+    expect(parsed.applied).toBe(0);
+    expect(parsed.blocked).toEqual(lockedBy("reducer.inc"));
+    expect(parsed.remaining.map((d) => d.code)).toEqual(["E0103"]);
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
+  it("kumiki_auto_patch with apply is refused when the repair changes a locked definition", {
+    timeout: 30000,
+  }, async () => {
+    const { file, source } = lockedCopy(FIX_COUNTER_TYPO_WITH_TEST, "typo-with-test.kumiki");
+    const res = await callOnce("kumiki_auto_patch", {
+      path: file,
+      testName: "inc-works",
+      apply: true,
+    });
+    expect(res.isError).toBe(true);
+    const parsed = JSON.parse(res.body) as {
+      status: string;
+      compileErrors?: { code: string }[];
+      blocked?: unknown;
+    };
+    expect(parsed.status).toBe("compile-blocked");
+    expect(parsed.blocked).toEqual(lockedBy("reducer.inc"));
+    expect(parsed.compileErrors?.map((d) => d.code)).toEqual(["E0103"]);
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
+  it("kumiki_auto_patch with apply refuses a behavioural patch to a locked definition", {
+    timeout: 30000,
+  }, async () => {
+    const { file, source } = lockedCopy(FIX_FAILING_SINGLE, "failing.kumiki");
+    const res = await callOnce("kumiki_auto_patch", {
+      path: file,
+      testName: "greet-should-say-planet",
+      apply: true,
+    });
+    expect(res.isError).toBe(true);
+    const parsed = JSON.parse(res.body) as { status: string; blocked?: unknown };
+    expect(parsed.status).toBe("test-blocked");
+    expect(parsed.blocked).toEqual(lockedBy("reducer.greet"));
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
+  // A lock refuses only what another agent holds: these are written as with no lock at all.
+  const NOT_REFUSED: [string, { pattern: string; agent: string }][] = [
+    ["for the lock's owner", { pattern: "reducer.*", agent: "agent:a" }],
+    ["under a lock on no definition the repair changes", { pattern: "slot.*", agent: "agent:b" }],
+  ];
+
+  it.each(NOT_REFUSED)("kumiki_fix with apply writes the repair %s", async (_, {
+    pattern,
+    agent,
+  }) => {
+    const { file, source } = lockedCopy(FIX_COUNTER_TYPO, "typo.kumiki", { pattern, agent });
+    const res = await callOnce("kumiki_fix", { path: file, apply: true });
+    expect(res.isError).toBe(false);
+    const parsed = JSON.parse(res.body) as { applied: number; blocked?: unknown };
+    expect(parsed).toMatchObject({ applied: 1 });
+    expect(parsed.blocked).toBeUndefined();
+    expect(readFileSync(file, "utf8")).toBe(source.replace("conut", "count"));
+  });
+
+  it.each(NOT_REFUSED)(
+    "kumiki_auto_patch with apply writes the behavioural patch %s",
+    {
+      timeout: 30000,
+    },
+    async (_, { pattern, agent }) => {
+      const { file, source } = lockedCopy(FIX_FAILING_SINGLE, "failing.kumiki", { pattern, agent });
+      const res = await callOnce("kumiki_auto_patch", {
+        path: file,
+        testName: "greet-should-say-planet",
+        apply: true,
+      });
+      expect(res.isError).toBe(false);
+      expect(JSON.parse(res.body)).toMatchObject({ ok: true, status: "applied" });
+      expect(readFileSync(file, "utf8")).toBe(source.replace(':= "world"', ':= "planet"'));
+    },
+  );
+
+  it("kumiki_fix proposes the same repairs under a lock on everything, on a dry run", async () => {
+    const file = join(workdir.path, "typo.kumiki");
+    copyFileSync(FIX_COUNTER_TYPO, file);
+    const unlocked = await callOnce("kumiki_fix", { path: file });
+    lockDef(file, "agent:a", "*");
+    process.env.KUMIKI_AUTHOR = "agent:b";
+    const locked = await callOnce("kumiki_fix", { path: file });
+    expect(unlocked.body).toContain('replace "conut" with "count"');
+    expect(locked).toEqual(unlocked);
+  });
+
+  it("kumiki_auto_patch proposes the patch under a lock on everything, on a dry run", {
+    timeout: 30000,
+  }, async () => {
+    const { file, source } = lockedCopy(FIX_FAILING_SINGLE, "failing.kumiki", { pattern: "*" });
+    const res = await callOnce("kumiki_auto_patch", {
+      path: file,
+      testName: "greet-should-say-planet",
+    });
+    expect(JSON.parse(res.body)).toMatchObject({
+      ok: true,
+      status: "proposed",
+      patch: { description: expect.stringContaining('replace "world" with "planet"') },
+    });
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
+  it("each editing tool refuses a lock file not in the shape `lock` writes, writing nothing", async () => {
+    const file = join(workdir.path, "c.kumiki");
+    copyFileSync(COUNTER, file);
+    const locks = `${file}.kumiki-locks.json`;
+    const held = '{"entries":[{"agent":"agent:a","patterns":"slot.*"}]}\n';
+    writeFileSync(locks, held);
+    const source = readFileSync(file, "utf8");
+    const message = `Lock file "${locks}" is unreadable: entries[0].patterns is not a list. Fix it to the shape \`lock\` writes, {"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}]}, or delete it to release every lock.`;
+    const calls: ReadonlyArray<readonly [tool: string, args: Record<string, unknown>]> = [
+      ["kumiki_add", { path: file, layer: "tile", name: "Spare", body: 'text("s")' }],
+      ["kumiki_replace", { path: file, name: "tile.IncBtn", body: 'button(text="++")' }],
+      ["kumiki_remove", { path: file, name: "reducer.reset", cascade: true }],
+      ["kumiki_rename", { path: file, name: "tile.ResetBtn", newName: "ClearBtn" }],
+      ["kumiki_edit", { path: file, name: "tile.IncBtn", patch: { find: '"+"', replace: '"++"' } }],
+    ];
+    await withClient(async (client) => {
+      for (const [tool, args] of calls) {
+        const res = await call(client, tool, args);
+        expect(res.isError, tool).toBe(true);
+        expect(errorMessage(res.body), tool).toBe(message);
+        // Its own kind, so a client tells it from a lock violation or a rejected write.
+        expect(JSON.parse(res.body).error.kind, tool).toBe("lock-file");
+      }
+    });
+    expect(readFileSync(file, "utf8")).toBe(source);
+    expect(readFileSync(locks, "utf8")).toBe(held);
+    expect(existsSync(`${file}.kumiki-ops.jsonl`)).toBe(false);
+  });
+
+  it.each([
+    ["kumiki_fix", FIX_COUNTER_TYPO, { apply: true }],
+    ["kumiki_auto_patch", FIX_COUNTER_TYPO_WITH_TEST, { testName: "inc-works", apply: true }],
+  ] as const)(
+    "%s with apply refuses a lock file not in the shape `lock` writes, writing nothing",
+    {
+      timeout: 30000,
+    },
+    async (tool, fixture, args) => {
+      const file = join(workdir.path, `${tool}.kumiki`);
+      copyFileSync(fixture, file);
+      const locks = `${file}.kumiki-locks.json`;
+      const held = '{"entries":[{"agent":"agent:a","patterns":"slot.*"}]}\n';
+      writeFileSync(locks, held);
+      const source = readFileSync(file, "utf8");
+      const res = await callOnce(tool, { path: file, ...args });
+      expect(res.isError).toBe(true);
+      expect(errorMessage(res.body)).toBe(
+        `Lock file "${locks}" is unreadable: entries[0].patterns is not a list. Fix it to the shape \`lock\` writes, {"entries": [{"agent": "agent:a", "patterns": ["slot.*"]}]}, or delete it to release every lock.`,
+      );
+      expect(JSON.parse(res.body).error.kind).toBe("lock-file");
+      expect(readFileSync(file, "utf8")).toBe(source);
+      expect(readFileSync(locks, "utf8")).toBe(held);
+    },
+  );
+});
+
+describe("a tile's name written as a child, beside a slot of the same name", () => {
+  // `badge` is a slot and a tile: `Shelf` writes it as a child, where it is the tile, and `Notes`
+  // reads it where a value belongs, where it is the slot.
+  const workdir = useWorkdir();
+  let file: string;
+  beforeEach(() => {
+    file = join(workdir.path, "app.kumiki");
+    copyFileSync(feature("290-tile-name-as-child"), file);
+  });
+  const lineOf = (start: string): number =>
+    readFileSync(file, "utf8")
+      .split("\n")
+      .findIndex((line) => line.startsWith(start)) + 1;
+
+  it("is a reference to the tile for kumiki_refs and kumiki_remove", async () => {
+    const shelf = `tile.Shelf @ line ${lineOf("tile Shelf ")}`;
+    const notes = `tile.Notes @ line ${lineOf("tile Notes ")}`;
+    await withClient(async (client) => {
+      expect(await callTool(client, "kumiki_refs", { path: file, name: "tile.badge" })).toBe(shelf);
+      expect(await callTool(client, "kumiki_refs", { path: file, name: "slot.badge" })).toBe(notes);
+      const out = await callTool(client, "kumiki_remove", {
+        path: file,
+        name: "slot.badge",
+        cascade: true,
+      });
+      expect(out).toContain("removed slot.badge");
+      expect(out).toContain("tile.Notes");
+      expect(out).not.toContain("tile.Shelf");
+    });
+  });
+
+  it("is renamed with the tile by kumiki_rename, and the slot's read is not", async () => {
+    await withClient(async (client) => {
+      await callTool(client, "kumiki_rename", { path: file, name: "tile.badge", newName: "twig" });
+      const out = readFileSync(file, "utf8");
+      expect(out).toContain("tile Shelf = column(plain, twig, stamp)");
+      expect(out).toContain(`text("slot: " + badge)`);
+    });
+  });
+});
+
+// A client does not read the server's stderr. The second item is labelled as `withWarnings` labels
+// the compile tools' warnings, and holds the episode tools' warning shape.
+describe("a tool that reads an op log whose last line is torn", () => {
+  const workdir = useWorkdir();
+  let file: string;
+  let log: string;
+  beforeEach(() => {
+    file = join(workdir.path, "counter.kumiki");
+    log = `${file}.kumiki-ops.jsonl`;
+    copyFileSync(COUNTER, file);
+  });
+
+  /** The start of an op-log line, cut off mid-key. */
+  const TORN = '{"op":"replace","layer":"slot","na';
+
+  /** The warnings of an answer from a log whose line `line` was skipped. */
+  const skipped = (line: number) => [
+    {
+      kind: "malformed-jsonl",
+      message: `${log}:${line}: skipped the last line, which is not valid JSON and has no newline after it; the next op logged replaces it`,
+    },
+  ];
+
+  /** The JSON list a `warnings:` item holds. */
+  const warningsIn = (item = ""): unknown => {
+    expect(item.startsWith("warnings:\n")).toBe(true);
+    return JSON.parse(item.slice("warnings:\n".length));
+  };
+
+  /** Log one op, then the start of another cut off. The logged op's id. */
+  const seedTorn = async (client: Client): Promise<string> => {
+    const out = await callTool(client, "kumiki_replace", {
+      path: file,
+      name: "slot.count",
+      body: "N = 1",
+    });
+    appendFileSync(log, TORN);
+    return /\((op_\w+)\)/.exec(out)?.[1] ?? "(no op-id)";
+  };
+
+  it("kumiki_history answers with the complete entries, then the skipped line", async () => {
+    await withClient(async (client) => {
+      const first = await seedTorn(client);
+
+      const res = await call(client, "kumiki_history", { path: file, name: "slot.count" });
+
+      expect(res.isError).toBe(false);
+      expect(res.items).toHaveLength(2);
+      const [entries = "", warnings] = res.items;
+      const ids = (JSON.parse(entries) as Array<{ "op-id": string }>).map((e) => e["op-id"]);
+      expect(ids).toEqual([first]);
+      expect(warningsIn(warnings)).toEqual(skipped(2));
+    });
+  });
+
+  it("kumiki_history of a log that is only the torn line has no history to list", async () => {
+    writeFileSync(log, TORN);
+    await withClient(async (client) => {
+      const res = await call(client, "kumiki_history", { path: file, name: "slot.count" });
+
+      expect(res.isError).toBe(false);
+      expect(res.items).toHaveLength(2);
+      const [answer, warnings] = res.items;
+      expect(answer).toBe("(no history for slot.count)");
+      expect(warningsIn(warnings)).toEqual(skipped(1));
+    });
+  });
+
+  it.each([
+    [
+      "kumiki_add",
+      { layer: "slot", name: "step", body: "Int = 1" },
+      /^added slot\.step {2}\(op_\w+\)$/,
+    ],
+    [
+      "kumiki_replace",
+      { name: "slot.count", body: "N = 5" },
+      /^replaced slot\.count {2}\(op_\w+\)$/,
+    ],
+    [
+      "kumiki_edit",
+      { name: "slot.count", patch: { find: "1", replace: "2" } },
+      /^edited slot\.count {2}\(op_\w+\)$/,
+    ],
+    [
+      "kumiki_rename",
+      { name: "slot.count", newName: "total" },
+      /^renamed slot\.count -> total {2}\(op_\w+\)$/,
+    ],
+    ["kumiki_remove", { name: "app.Counter" }, /^removed app\.Counter {2}\(op_\w+\)$/],
+  ])("%s answers with its edit, then the skipped line", async (tool, args, answer) => {
+    await withClient(async (client) => {
+      await seedTorn(client);
+
+      const res = await call(client, tool, { path: file, ...args });
+
+      expect(res.isError).toBe(false);
+      expect(res.items).toHaveLength(2);
+      const [edit, warnings] = res.items;
+      expect(edit).toMatch(answer);
+      expect(warningsIn(warnings)).toEqual(skipped(2));
+    });
+  });
+
+  it("answers with the error alone when the tool fails before it reads the log", async () => {
+    await withClient(async (client) => {
+      await seedTorn(client);
+
+      const res = await call(client, "kumiki_replace", {
+        path: file,
+        name: "slot.nope",
+        body: "N = 5",
+      });
+
+      expect(res.isError).toBe(true);
+      expect(res.items).toHaveLength(1);
+    });
+  });
+});
+
+describe("a tool that reads an op log with nothing to skip answers with the answer alone", () => {
+  const workdir = useWorkdir();
+  let file: string;
+  let log: string;
+  beforeEach(() => {
+    file = join(workdir.path, "counter.kumiki");
+    log = `${file}.kumiki-ops.jsonl`;
+    copyFileSync(COUNTER, file);
+  });
+
+  /** Lay the log out, before the call, as each case names it. */
+  const layouts: Array<[string, () => Promise<void>]> = [
+    ["with no log", async () => undefined],
+    [
+      "with a log of complete entries",
+      async () => {
+        await callOnce("kumiki_replace", { path: file, name: "slot.count", body: "N = 1" });
+      },
+    ],
+    [
+      "with an empty log",
+      async () => {
+        writeFileSync(log, "");
+      },
+    ],
+  ];
+
+  const tools: Array<[string, Record<string, unknown>, RegExp]> = [
+    ["kumiki_history", { name: "slot.count" }, /^(\(no history for slot\.count\)|\[[\s\S]*\])$/],
+    [
+      "kumiki_add",
+      { layer: "slot", name: "step", body: "Int = 1" },
+      /^added slot\.step {2}\(op_\w+\)$/,
+    ],
+    [
+      "kumiki_replace",
+      { name: "slot.count", body: "N = 5" },
+      /^replaced slot\.count {2}\(op_\w+\)$/,
+    ],
+  ];
+
+  it.each(
+    layouts.flatMap(([where, lay]) =>
+      tools.map(([tool, args, answer]) => [`${tool} ${where}`, lay, tool, args, answer] as const),
+    ),
+  )("%s", async (_, lay, tool, args, answer) => {
+    await lay();
+
+    const res = await callOnce(tool, { path: file, ...args });
+
+    expect(res.isError).toBe(false);
+    expect(res.items).toHaveLength(1);
+    expect(res.items[0]).toMatch(answer);
   });
 });

@@ -12,6 +12,7 @@ import {
   UI_EVENT_TILE_KINDS,
   UI_LIFTS,
   wrappedUnreached,
+  wrapperNeverReceives,
 } from "../src/ui-lifts.ts";
 import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
@@ -63,8 +64,8 @@ describe("UI_LIFTS", () => {
       "video",
     ];
     expect(byEv.get("key")?.tiles).toEqual(new Set([...focusable, "check", "radio", "switch"]));
-    expect(byEv.get("focus")?.tiles).toEqual(new Set(focusable));
-    expect(byEv.get("blur")?.tiles).toEqual(new Set(focusable));
+    expect(byEv.get("focus")?.tiles).toEqual(new Set([...focusable, "scroll"]));
+    expect(byEv.get("blur")?.tiles).toEqual(new Set([...focusable, "scroll"]));
   });
 
   // A listener on an element that holds children hears every key from them too, so it would run
@@ -98,6 +99,16 @@ describe("wrappedUnreached", () => {
     ]);
   });
 
+  // A scroll's <div> is the element that takes focus, so focus and blur fire where the runtime
+  // listens. A key does too, and so does every key from the tiles inside it.
+  it("answers key for a scroll, whose <div> takes focus itself and holds its content too", () => {
+    expect(wrappedUnreached("key", ["scroll"])).toEqual([
+      { kinds: ["scroll"], wrapper: "div", focused: "div", bubbles: true, handler: "onKeyDown" },
+    ]);
+    expect(wrappedUnreached("focus", ["scroll"])).toEqual([]);
+    expect(wrappedUnreached("blur", ["scroll"])).toEqual([]);
+  });
+
   it("answers no other event", () => {
     const answered = ALL_UI_EVENT_KINDS.filter((ev) => wrappedUnreached(ev, WRAPPED).length > 0);
     expect(answered.sort()).toEqual(["blur", "focus", "key"]);
@@ -121,6 +132,32 @@ describe("wrappedUnreached", () => {
   });
 });
 
+describe("wrapperNeverReceives", () => {
+  const WRAPPED = ["check", "radio", "switch", "details"];
+
+  it("answers focus and blur as wrappedUnreached does", () => {
+    for (const ev of ["focus", "blur"] as const) {
+      expect(wrapperNeverReceives(ev, WRAPPED)).toEqual(wrappedUnreached(ev, WRAPPED));
+    }
+  });
+
+  it("answers no other event, key on a details included", () => {
+    const answered = ALL_UI_EVENT_KINDS.filter(
+      (ev) => wrapperNeverReceives(ev, WRAPPED).length > 0,
+    );
+    expect(answered.sort()).toEqual(["blur", "focus"]);
+    expect(wrappedUnreached("key", ["details"])).toHaveLength(1);
+    expect(wrapperNeverReceives("key", ["details"])).toEqual([]);
+  });
+
+  it("answers no event for a scroll, so W0213 reports no handler written on one", () => {
+    const answered = ALL_UI_EVENT_KINDS.filter(
+      (ev) => wrapperNeverReceives(ev, ["scroll"]).length > 0,
+    );
+    expect(answered).toEqual([]);
+  });
+});
+
 describe("firesUnheard / firesUnheardIn", () => {
   it("records only builtin kinds that its row leaves out", () => {
     for (const lift of UI_LIFTS) {
@@ -131,7 +168,7 @@ describe("firesUnheard / firesUnheardIn", () => {
     }
   });
 
-  it("records the absences that are runtime policy: link for click, and kinds for input", () => {
+  it("records the absences whose renderer does something else: link for click, and kinds for input", () => {
     const recorded = Object.fromEntries(
       UI_LIFTS.filter((l) => l.firesUnheard).map((l) => [
         l.ev,
@@ -145,23 +182,36 @@ describe("firesUnheard / firesUnheardIn", () => {
   });
 
   // W0212 gives one reason or the other, so a body could not be given both.
-  it("keeps records off the rows a wrapped kind's focused element leaves unreached", () => {
+  it("answers nothing on the rows a wrapped kind's focused element leaves unreached", () => {
     for (const lift of UI_LIFTS) {
       if (wrappedUnreached(lift.ev, BUILTIN_TILES).length === 0) continue;
-      expect(lift.firesUnheard, `the ${lift.ev} row`).toBeUndefined();
+      expect(firesUnheardIn(lift.ev, BUILTIN_TILES), `the ${lift.ev} row`).toEqual([]);
     }
   });
 
-  it("groups the kinds of a body by what their renderer does instead, with the row's handler", () => {
+  it("groups the kinds of a body by what their renderer does instead, naming the row's handler", () => {
     expect(firesUnheardIn("input", ["text", "switch", "slider", "check"])).toEqual([
-      { kinds: ["check", "switch"], instead: 'listens for "change" instead', handler: "onInput" },
-      { kinds: ["slider"], instead: "listens for it only to write the bind", handler: "onInput" },
+      { kinds: ["check", "switch"], reason: 'listens for "change" instead, never calling onInput' },
+      { kinds: ["slider"], reason: "listens for it only to write the bind, never calling onInput" },
     ]);
   });
 
-  it("answers nothing for a kind the row's record does not name, or a row with no record", () => {
+  it("gives the click row a default for every kind it leaves out, which only click has", () => {
+    expect(UI_LIFTS.filter((l) => l.everyElementFires).map((l) => l.ev)).toEqual(["click"]);
+  });
+
+  it("answers each kind the click row leaves out: link with its own reason, the rest the default", () => {
+    expect(firesUnheardIn("click", ["text", "box", "link", "image", "button"])).toEqual([
+      { kinds: ["box", "image", "text"], reason: "never calls onClick" },
+      { kinds: ["link"], reason: "listens for it only to navigate, never calling onClick" },
+    ]);
+  });
+
+  it("answers nothing for a kind the row neither records nor defaults, a lifted kind, or a row with no record", () => {
     expect(firesUnheardIn("input", ["button", "text"])).toEqual([]);
     expect(firesUnheardIn("change", ["editable"])).toEqual([]);
+    expect(firesUnheardIn("focus", ["box", "text"])).toEqual([]);
+    expect(firesUnheardIn("click", ["button", "check", "radio", "switch"])).toEqual([]);
     expect(firesUnheardIn("focus", ["check"])).toEqual([]);
   });
 });
@@ -454,6 +504,65 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
         "W0213",
         "E0005",
       ]);
+    });
+
+    // Whichever tile is asked about first is the one the walk enters the loop by.
+    it("the tiles on a loop, whichever is asked about first", () => {
+      const loop = 'tile A = row(B)\ntile B = column(C)\ntile C = box(A, text("c"))';
+      for (const order of [
+        ["A", "B", "C"],
+        ["B", "C", "A"],
+        ["C", "A", "B"],
+      ]) {
+        const calls = order.map((t) => `${t}() {onClick: bump}`).join(", ");
+        const found = diags(loop, calls);
+        expect(
+          found.map((e) => e.code),
+          calls,
+        ).toEqual(["W0213", "W0213", "W0213", "E0005"]);
+        for (const d of found.slice(0, 3)) {
+          expect(d.message, calls).toContain("observed in body: box, column, row, text");
+        }
+      }
+    });
+
+    // A loop shares one answer, and the tiles it leads to keep their own: asked about first or
+    // after, a tile downstream never takes on what only the tiles above it render.
+    it.each([
+      [
+        "a loop that leads into a second loop",
+        'tile A = row(B)\ntile B = column(A, C)\ntile C = box(D)\ntile D = stack(C, text("d"))',
+        ["E0005", "E0005"],
+      ],
+      [
+        "a loop that leads out of any loop",
+        'tile A = row(B)\ntile B = column(A, C)\ntile C = box(D)\ntile D = stack(text("d"))',
+        ["E0005"],
+      ],
+      [
+        "two paths that meet again, with no loop",
+        'tile A = row(B, C)\ntile B = column(D)\ntile C = box(D)\ntile D = stack(text("d"))',
+        [],
+      ],
+    ])("the tiles of %s, whichever is asked about first", (_, tiles, loops) => {
+      for (const order of [
+        ["A", "C"],
+        ["C", "A"],
+      ]) {
+        const calls = order.map((t) => `${t}() {onClick: bump}`).join(", ");
+        const found = diags(tiles, calls);
+        expect(
+          found.map((e) => e.code),
+          calls,
+        ).toEqual(["W0213", "W0213", ...loops]);
+        const observed = Object.fromEntries(
+          order.map((t, i) => [t, found[i]?.message.match(/observed in body: [^)]*/)?.[0]]),
+        );
+        expect(observed, calls).toEqual({
+          A: "observed in body: box, column, row, stack, text",
+          C: "observed in body: box, stack, text",
+        });
+      }
     });
   });
 });

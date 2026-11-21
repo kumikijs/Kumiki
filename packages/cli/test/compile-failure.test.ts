@@ -13,7 +13,7 @@ test starts-at-41 =
 `;
 
 const IN_TEST =
-  'E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")';
+  'error E0713 test-shape-invalid at 8:26: `given.slots` must be a record, `{<slot>: …}` (in test "starts-at-41")';
 
 describe("loadApp on a source that does not compile", () => {
   it("names no file when it was given none, and keeps positions and test names", async () => {

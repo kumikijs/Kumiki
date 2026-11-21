@@ -96,6 +96,70 @@ function genForm(
   return `${word(len - 4)}://${word(1)}`;
 }
 
+// Every value in a shape passes the runtime's own check for the form, so a shrunk form stays one.
+const FORM_SHAPES: Record<"email" | "url" | "uuid", readonly RegExp[]> = {
+  email: [/^[a-z]+@[a-z]+\.example\.com$/],
+  url: [/^https:\/\/[a-z]+\.example\.com\/[a-z]+$/],
+  uuid: [/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/],
+};
+
+// The shapes `genForm` builds an email or url in when a length refinement sits beside it. A url
+// takes one of three by its length (up to 8, 9 to 21, from 22), and no value fits two of them.
+const SIZED_FORM_SHAPES: Record<"email" | "url", readonly RegExp[]> = {
+  email: [/^[a-z]+@[a-z]+\.[a-z]{1,3}$/],
+  url: [/^[a-z]{1,4}:\/\/[a-z]$/, /^https:\/\/[a-z]+$/, /^https:\/\/[a-z]+\.example\.com\/[a-z]*$/],
+};
+
+function formShapes(desc: TextDesc): readonly RegExp[] {
+  if (desc.form === undefined) return [];
+  const sized = desc.minLen !== undefined || desc.maxLen !== undefined;
+  return sized && desc.form !== "uuid" ? SIZED_FORM_SHAPES[desc.form] : FORM_SHAPES[desc.form];
+}
+
+// `one-of` names the whole domain, whatever the base type is, so it is answered ahead of the type it refines.
+function choicesOf(desc: GenDesc): (number | string)[] | undefined {
+  return "oneOf" in desc && desc.oneOf && desc.oneOf.length > 0 ? desc.oneOf : undefined;
+}
+
+type TextDesc = Extract<GenDesc, { t: "Text" }>;
+type ScalarDesc = Extract<GenDesc, { t: "Int" | "Float" | "Text" }>;
+
+/**
+ * Whether `v` is in the domain `desc` declares, read from the fields generation builds to. The
+ * spans an unbounded type is sampled from are not part of the domain.
+ */
+function admits(desc: ScalarDesc, v: unknown): boolean {
+  if (desc.t === "Text") {
+    return (
+      typeof v === "string" &&
+      v.length >= (desc.minLen ?? 0) &&
+      v.length <= (desc.maxLen ?? Number.POSITIVE_INFINITY) &&
+      (desc.form === undefined || formShapes(desc).some((shape) => shape.test(v)))
+    );
+  }
+  return (
+    typeof v === "number" &&
+    (desc.t === "Float" || Number.isInteger(v)) &&
+    v >= (desc.min ?? Number.NEGATIVE_INFINITY) &&
+    v <= (desc.max ?? Number.POSITIVE_INFINITY)
+  );
+}
+
+/**
+ * `v` with one of its words (a run of letters) cut to half its length, then with one cut by its
+ * last letter. A form shortens a word this way and keeps its literal parts: halving first takes a
+ * long word down in a few rounds, and there is one candidate per word rather than per character.
+ */
+function shortenedWords(v: string): string[] {
+  const words = [...v.matchAll(/[a-z]+/g)].map((m) => ({
+    start: m.index,
+    end: m.index + m[0].length,
+  }));
+  const cut = (keep: (len: number) => number) =>
+    words.map(({ start, end }) => v.slice(0, start + keep(end - start)) + v.slice(end));
+  return [...cut((len) => Math.floor(len / 2)), ...cut((len) => len - 1)];
+}
+
 /**
  * How many steps into a recursive type generation takes freely. Past it every choice takes the way
  * that ends soonest (a `base` choice, `None`, an empty collection), so the value ends.
@@ -115,10 +179,8 @@ type GenScope = { types: ReadonlyMap<string, GenDesc>; depth: number };
 const GEN_TOP: GenScope = { types: new Map(), depth: 0 };
 
 export function genValue(desc: GenDesc, rng: () => number, scope: GenScope = GEN_TOP): unknown {
-  // `one-of` names the whole domain, whatever the base type is, so it is answered ahead of the type it refines.
-  if ("oneOf" in desc && desc.oneOf && desc.oneOf.length > 0) {
-    return desc.oneOf[Math.floor(rng() * desc.oneOf.length)];
-  }
+  const choices = choicesOf(desc);
+  if (choices) return choices[Math.floor(rng() * choices.length)];
   const gen = (d: GenDesc): unknown => genValue(d, rng, scope);
   const ending = scope.depth >= GEN_DEPTH;
   const size = (): number => {
@@ -216,18 +278,19 @@ export function genValue(desc: GenDesc, rng: () => number, scope: GenScope = GEN
 }
 
 /**
- * Values "simpler" than `v` that are still values of `desc`. A candidate outside the type would be
- * one the generator never produces, which a slot may refuse, so the counterexample reported would
- * be one no generated trial was run on.
+ * Values "simpler" than `v` that are still values of `desc`, simplest first. A candidate outside
+ * the type would be one the generator never produces, which a slot may refuse, so the
+ * counterexample reported would be one no generated trial was run on.
  */
 function shrinkCandidates(
   v: unknown,
   desc: GenDesc,
   types: ReadonlyMap<string, GenDesc>,
 ): unknown[] {
-  if ("oneOf" in desc && desc.oneOf && desc.oneOf.length > 0) {
-    const first = desc.oneOf[0];
-    return v === first ? [] : [first];
+  const choices = choicesOf(desc);
+  if (choices) {
+    const at = choices.indexOf(v as number | string);
+    return at > 0 ? choices.slice(0, at) : [];
   }
   switch (desc.t) {
     case "Int":
@@ -239,16 +302,19 @@ function shrinkCandidates(
       );
       if (v === target) return [];
       const half = target + Math.trunc((v - target) / 2);
-      return half === target ? [target] : [target, half];
+      return (half === target ? [target] : [target, half]).filter((c) => admits(desc, c));
     }
     case "Text": {
-      // A shape (`email`, …) has no shorter instance that is still one.
-      if (typeof v !== "string" || desc.form) return [];
-      const shortest = desc.minLen ?? 0;
-      if (v.length <= shortest) return [];
-      const least = v.slice(0, shortest);
-      const half = v.slice(0, Math.max(shortest, Math.floor(v.length / 2)));
-      return half === least ? [least] : [least, half];
+      if (typeof v !== "string") return [];
+      const out = new Set([
+        v.slice(0, desc.minLen ?? 0),
+        v.slice(0, Math.max(desc.minLen ?? 0, Math.floor(v.length / 2))),
+      ]);
+      if (desc.form) for (const c of shortenedWords(v)) out.add(c);
+      out.delete(v);
+      // A form keeps the one of its shapes it was generated in.
+      const shape = formShapes(desc).find((s) => s.test(v));
+      return [...out].filter((c) => admits(desc, c) && (shape === undefined || shape.test(c)));
     }
     case "List":
       if (!Array.isArray(v) || v.length === 0) return [];
@@ -271,6 +337,7 @@ function shrinkCandidates(
     case "Option":
       return (v as { _tag?: unknown } | null)?._tag === "Some" ? [{ _tag: "None" }] : [];
     case "Record": {
+      if (!v || typeof v !== "object") return [];
       const o = v as Record<string, unknown>;
       return desc.fields.flatMap((f) =>
         shrinkCandidates(o[f.name], f.desc, types).map((c) => ({ ...o, [f.name]: c })),

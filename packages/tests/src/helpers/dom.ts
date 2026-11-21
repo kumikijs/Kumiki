@@ -1,6 +1,7 @@
-import { type AppShape, mount, renderToString } from "@kumikijs/runtime";
-import { onTestFinished } from "vitest";
-import { loadSource } from "./load.ts";
+import { feature } from "@kumikijs/examples";
+import { type AppShape, hydrate, mount, renderToString, routing } from "@kumikijs/runtime";
+import { onTestFinished, vi } from "vitest";
+import { loadApp, loadSource } from "./load.ts";
 
 type MountOptions = NonNullable<Parameters<typeof mount>[2]>;
 type MountHandle = ReturnType<typeof mount>;
@@ -32,6 +33,26 @@ export function mountApp(
 }
 
 /**
+ * Mount the feature example `name` into a fresh root, collecting every `console.error` until the
+ * test ends, when the mount is torn down.
+ */
+export async function mountFeature(name: string): Promise<{ root: HTMLElement; errors: string[] }> {
+  const app = await loadApp(feature(name));
+  const root = freshRoot();
+  const errors: string[] = [];
+  const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    errors.push(args.map(String).join(" "));
+  });
+  const { dispose } = mount(app, root);
+  onTestFinished(() => {
+    dispose();
+    root.remove();
+    spy.mockRestore();
+  });
+  return { root, errors };
+}
+
+/**
  * Compile `src`, mount it under a memory router at `initialPath`, and let the first render settle.
  * The mount is torn down when the test finishes.
  */
@@ -48,6 +69,28 @@ export async function mountSource(
   });
   await tick(0);
   return { app, root };
+}
+
+/**
+ * Server-render `src` at `route`, then hydrate that HTML with a fresh instance of the app under a
+ * memory router and let the first client render settle. The mount is torn down when the test
+ * finishes.
+ */
+export async function hydrateSource(
+  src: string,
+  route = "/",
+): Promise<{ app: AppShape; root: HTMLElement; html: string }> {
+  const rendered = await renderToString(await loadSource(src), { route, routing });
+  const app = await loadSource(src);
+  const root = freshRoot();
+  root.innerHTML = rendered.html;
+  const handle = hydrate(app, root, rendered, { router: "memory" });
+  onTestFinished(() => {
+    handle.dispose();
+    root.remove();
+  });
+  await tick(0);
+  return { app, root, html: rendered.html };
 }
 
 /** The page `renderToString` serves for `app`, parsed under a detached element. */
@@ -94,6 +137,15 @@ export function texts(root: ParentNode): string[] {
   return Array.from(root.querySelectorAll("*"))
     .filter((el) => el.children.length === 0)
     .map((el) => el.textContent ?? "");
+}
+
+/** The element with no child elements whose whole text is `text`. */
+export function byText(root: ParentNode, text: string): Element {
+  const el = Array.from(root.querySelectorAll("*")).find(
+    (e) => e.children.length === 0 && e.textContent === text,
+  );
+  if (!el) throw new Error(`no element reads "${text}"`);
+  return el;
 }
 
 export const tick = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));

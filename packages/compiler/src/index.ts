@@ -43,9 +43,9 @@ export {
   compile,
   type ExtendedCodegenOptions,
   inlineRuntime,
+  parseFailure,
 } from "./compile.ts";
 export { generateDts } from "./dts.ts";
-export type { FieldSegment } from "./error-field.ts";
 export { applyRefine, type GenDescData } from "./for-all-generator.ts";
 export { LexError, lex } from "./lexer.ts";
 export { ParseError, parse } from "./parser.ts";
@@ -59,11 +59,19 @@ export {
 } from "./references.ts";
 export { refinementToJs } from "./refinements.ts";
 export { typeCandidates } from "./stdlib-types.ts";
-export { collectTimerNames, variantTagsOf } from "./symbols.ts";
+export {
+  collectTimerNames,
+  constructorTags,
+  qualifierCandidates,
+  variantTagsOf,
+} from "./symbols.ts";
 export {
   A11Y_CODES,
   check,
   type KumikiError,
   ROUTE_SLOT_FIELDS,
+  type Severity,
   servesNotFound,
+  severityOf,
 } from "./typecheck.ts";
+export { UI_LIFTS, type UiLift } from "./ui-lifts.ts";

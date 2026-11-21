@@ -33,7 +33,7 @@ A `for` over a `Tuple`, which ran as an array, and a reducer `for` over a
 After, both forms are E0218, with a remedy that fits the type:
 
 ```
-E0218 for-over-non-list at 2:28: "for" iterates a List, but this is Option(List(Text)) — iterate its .get-or([]), or match on Some / None
+error E0218 for-over-non-list at 2:28: "for" iterates a List, but this is Option(List(Text)) — iterate its .get-or([]), or match on Some / None
 ```
 
 - `Option(List(T))` / `Result(List(T), E)`: `.get-or([])`, or a `match`

@@ -36,7 +36,7 @@ After:
 
 ```
 $ kumiki check app.kumiki
-E0231 reserved-type-name at 1:1: Type "PanicInfo" collides with the standard library's PanicInfo; uses of it never see this type
+error E0231 reserved-type-name at 1:1: Type "PanicInfo" collides with the standard library's PanicInfo; uses of it never see this type
 ```
 
 **E0231 `reserved-type-name`** is reported at each declaration under one of the

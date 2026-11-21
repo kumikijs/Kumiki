@@ -26,6 +26,7 @@ slot book  : Map(Text, Contact)              = {}
 slot r     : Pair                            = {pair: ("", 0)}
 slot d     : Drawing                         = {shape: Circle(0)}
 slot i     : Int                             = 0
+slot pick  : Text                            = "b"
 slot tags  : Set(Text where email)           = Set.empty
 fn shout(t: Text) -> Text = t
 `;
@@ -34,7 +35,7 @@ const diagnosticsOf = (tile: string): string[][] =>
   checkSource(program(tile)).map((e) => [e.code, e.kind, e.message]);
 const SEE = "(see docs/spec/forms.md)";
 const ROOT_TAIL = "field= names a slot, or a path into one";
-const STEPS = `A path's steps are fields, ".get", and indices with a literal key ${SEE}`;
+const STEPS = `A path's steps are fields, ".get", and indices ${SEE}`;
 const E0230 = (message: string): string[] => ["E0230", "error-field-not-path", message];
 
 describe("a field= that is not a slot or a path into one is E0230", () => {
@@ -125,11 +126,6 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
       `error(field=…) cannot step through ".trim()": a call is not a step of a path. ${STEPS}`,
     ],
     [
-      "an index computed from a value",
-      `tile App = error(field=xs[i])`,
-      `error(field=…) cannot step through an index that is not a literal: a path names one element or entry by a literal key, such as [0] or ["k"] ${SEE}`,
-    ],
-    [
       "an index into a record",
       `tile App = error(field=form[0])`,
       `error(field=…) cannot step through an index into "Contact": a path's index names a List element or a Map entry ${SEE}`,
@@ -145,9 +141,9 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
       `error() names no field, so it has no failure to show: ${ROOT_TAIL} ${SEE}`,
     ],
     [
-      "a field in the props block",
-      `tile App = error() {field: draft.get.title}`,
-      `error() {field: …} is not read: field is a named argument — write error(field=…) ${SEE}`,
+      "a text literal in the props block, which is read as field= is",
+      `tile App = error() {field: "nope"}`,
+      `error(field=…) cannot show the failure of the text literal "nope": a literal is a value, not a slot. ${ROOT_TAIL} ${SEE}`,
     ],
   ])("reports %s, and nothing else", (_label, tile, message) => {
     expect(diagnosticsOf(tile)).toEqual([E0230(message)]);
@@ -164,12 +160,6 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
         `error(field=…) cannot show the failure of this expression: it computes a value, not a slot. ${ROOT_TAIL} ${SEE}`,
       ),
     ]);
-  });
-
-  it("points at an index's key", () => {
-    const tile = `tile App = error(field=rows[i].email)`;
-    const [e] = checkSource(program(tile)).filter((x) => x.code === "E0230");
-    expect(e?.pos.col).toBe(`tile App = error(field=rows[`.length + 1);
   });
 });
 
@@ -191,8 +181,36 @@ describe("a slot, or a path into one, is accepted", () => {
     ["a List element through an Option's payload", `maybe.get[1]`],
     ["an element of an element", `grid[0][1]`],
     ["a field of a Map entry", `book["b"].age`],
+    ["a List element at an index a slot holds", `xs[i]`],
+    ["a field of a List element at a computed index", `rows[i + 1].email`],
+    ["a Map entry at a key a slot holds", `book[pick].age`],
+    ["an element of an element, each at a computed index", `grid[i][i * 2]`],
   ])("accepts %s", (_label, field) => {
     expect(codesOf(program(`tile App = error(field=${field})`))).toEqual([]);
+  });
+
+  it("accepts a Map entry at the key a for binds", () => {
+    expect(
+      codesOf(program(`tile App = column(for k in book.keys error(field=book[k].age))`)),
+    ).toEqual([]);
+  });
+
+  it("reports a field written in the block of a tile-test's expected tree, which reads none", () => {
+    const tile = `tile Err = error(field=form.email)
+tile App = column(Err)
+test err-field =
+    tile-test Err
+        given  = {slots: {}}
+        expect = error() {field: form.email}`;
+    expect(diagnosticsOf(tile)).toEqual([
+      E0230(
+        `error() {field: …} is not read in a tile-test's expect, which compares named arguments only — write error(field=…) ${SEE}`,
+      ),
+    ]);
+  });
+
+  it("accepts a path in the props block", () => {
+    expect(codesOf(program(`tile App = error() {field: draft.get.title}`))).toEqual([]);
   });
 
   it("accepts a path beside a bound control in a form", () => {
@@ -208,6 +226,8 @@ describe("a path another code reports is not E0230 as well", () => {
     ["a name that resolves to nothing", `nope`, "E0103"],
     ["a fn named without a call", `shout`, "E0127"],
     ["a List index that is not an Int", `xs["a"]`, "E0201"],
+    ["a computed List index that is not an Int", `xs[pick]`, "E0201"],
+    ["a computed Map key of another type", `m[i]`, "E0201"],
     ["a Map key of another type", `m[3]`, "E0201"],
     ["an index into a Set", `tags[0]`, "E0232"],
     ["a call to a name no fn defines, such as a tile written as a value", `text("form")`, "E0116"],
@@ -225,6 +245,13 @@ describe("a path another code reports is not E0230 as well", () => {
 });
 
 describe("the error node names its slot and the path into it", () => {
+  const errorNode = async (tile: string) => {
+    const app = await loadApp<{ routes: { tile: () => TileNode }[] }>(
+      program(`tile App = ${tile}`),
+    );
+    return app.routes[0]?.tile() as Extract<TileNode, { kind: "error" }>;
+  };
+
   it.each<[string, string, unknown[]]>([
     ["form", "form", []],
     ["rows[1].email", "rows", [{ at: 1 }, "email"]],
@@ -232,10 +259,23 @@ describe("the error node names its slot and the path into it", () => {
     [`m["a"]`, "m", [{ at: "a" }]],
     ["n[-1]", "n", [{ at: -1 }]],
     ["b[true]", "b", [{ at: true }]],
+    ["rows[i + 2].email", "rows", [{ at: 2 }, "email"]],
+    ["book[pick].age", "book", [{ at: "b" }, "age"]],
   ])("lowers %s to the slot %s and the path %j", async (field, slot, path) => {
-    const src = program(`tile App = error(field=${field})`);
-    const app = await loadApp<{ routes: { tile: () => TileNode }[] }>(src);
-    const node = app.routes[0]?.tile() as Extract<TileNode, { kind: "error" }>;
+    const node = await errorNode(`error(field=${field})`);
+    expect([node.field, node.path]).toEqual([slot, path]);
+  });
+
+  it.each<[string, string, string, unknown[]]>([
+    ["the props block", `error() {field: rows[1].email}`, "rows", [{ at: 1 }, "email"]],
+    [
+      "the props block over the argument",
+      `error(field=form) {field: draft.get.title}`,
+      "draft",
+      [{ get: true }, "title"],
+    ],
+  ])("reads the path from %s", async (_label, tile, slot, path) => {
+    const node = await errorNode(tile);
     expect([node.field, node.path]).toEqual([slot, path]);
   });
 });

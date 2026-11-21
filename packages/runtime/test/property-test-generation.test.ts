@@ -148,11 +148,33 @@ describe("a generated value is a value of its for-all type", () => {
 
 describe("a shrunk counterexample is a value of its for-all type", () => {
   /** The counterexample a property that never holds is shrunk to. */
-  function minimal(vars: Record<string, GenDesc>): unknown {
-    const r = _stdlib.runPropertyTest({ name: "never", vars, trial: () => false, seed: 3 });
+  function minimal(vars: Record<string, GenDesc>, shrink = true): unknown {
+    const r = _stdlib.runPropertyTest({ name: "never", vars, trial: () => false, seed: 3, shrink });
     expect(r.pass).toBe(false);
     return JSON.parse((r.actual ?? "").replace(/^counterexample \(case \d+\/\d+\): /, ""));
   }
+
+  it("shrinks a form to a shorter value of the shape it was generated in", () => {
+    const { e } = minimal({ e: { t: "Text", form: "email" } }) as { e: string };
+    expect(e).toMatch(/^[a-z]@[a-z]\.example\.com$/);
+    const { u } = minimal({ u: { t: "Text", form: "url" } }) as { u: string };
+    expect(u).toMatch(/^https:\/\/[a-z]\.example\.com\/[a-z]$/);
+    const uuid: Record<string, GenDesc> = { id: { t: "Text", form: "uuid" } };
+    expect(minimal(uuid)).toEqual(minimal(uuid, false));
+  });
+
+  it("shrinks a one-of value through the literals listed before it", () => {
+    const vars: Record<string, GenDesc> = { size: { t: "Text", oneOf: ["xs", "sm", "md", "lg"] } };
+    const property = (shrink: boolean) =>
+      _stdlib.runPropertyTest({
+        name: "only-xs",
+        vars,
+        trial: (b) => b.size === "xs",
+        shrink,
+      });
+    expect(property(false).actual).toMatch(/\{"size":"(md|lg)"\}$/);
+    expect(property(true).actual).toMatch(/\{"size":"sm"\}$/);
+  });
 
   it("shrinks a bounded Int toward zero without leaving its bounds", () => {
     expect(minimal({ n: { t: "Int", min: 1, max: 9 } })).toEqual({ n: 1 });
@@ -265,6 +287,150 @@ describe("a trial whose run-reducer batch is rejected fails", () => {
     expect(r.pass).toBe(false);
     expect(r.actual).toMatch(/^counterexample \(case \d+\/100\): \{"n":2\}$/);
   });
+
+  // Refused exactly when `step` is more than `count`.
+  const take: ReducerSpec = {
+    name: "take",
+    event: { kind: "ui", ev: "click" },
+    apply: (live) => ({
+      slots: { count: (live.count as number) - (live.step as number) },
+      emits: [],
+    }),
+  };
+  const takeApp = (): StepApp => {
+    const app = appWith("count", [0, 100], take);
+    app.slots.step = { value: 1 };
+    return app;
+  };
+  /** What `count` is after `take` runs on `count` and `step`; throws when it is refused. */
+  const after = (app: StepApp, count: unknown, step: unknown): number =>
+    _stdlib.runReducerStep(app, { slots: { count, step } }, "take", {}).slots.count as number;
+
+  it("shrinks an invariant failure only through trials in which every step ran", () => {
+    // n in 1..11 commits 0..10 and fails; n = 0 is refused, a failure of another kind.
+    const app = takeApp();
+    const r = _stdlib.runPropertyTest({
+      name: "take-stays-above-ten",
+      vars: { n: { t: "Int", min: 0, max: 100 } },
+      trial: (b) => after(app, b.n, 1) > 10,
+    });
+    expect(r.actual).toMatch(/^counterexample \(case \d+\/100\): \{"n":1\}$/);
+  });
+
+  it("shrinks a refused trial only among trials refused the same way", () => {
+    // The step-1 trial fails too, but with every step run: not the failure the refused case reports.
+    const app = takeApp();
+    const property = (shrink: boolean) =>
+      _stdlib.runPropertyTest({
+        name: "take-from-ten-lands-on-seven",
+        vars: { s: { t: "Int", min: 1, max: 50 } },
+        trial: (b) => after(app, 10, b.s) === 7,
+        shrink,
+      });
+    const generated = /\{"s":(\d+)\}/.exec(property(false).actual ?? "")?.[1];
+    const m = /^counterexample \(case \d+\/100\): \{"s":(\d+)\} — (.*)$/.exec(
+      property(true).actual ?? "",
+    );
+    const s = Number(m?.[1]);
+    expect(s).toBeGreaterThan(10);
+    expect(s).toBeLessThan(Number(generated));
+    expect(m?.[2]).toBe(
+      `reducer "take" was rejected: slot "count" cannot hold ${10 - s} (between(0, 100))`,
+    );
+  });
+
+  // Fixed rather than taken from a name, so renaming a test keeps its case. Each test asserts the
+  // generated case it needs before it shrinks one.
+  const SEED = 4;
+
+  /** Each of `names` as `slot <name> : Int where between(0, 100)`, beside a plain slot `s`. */
+  function percentApp(names: readonly string[], reducers: ReducerSpec[]): StepApp {
+    const between = (v: unknown) => typeof v === "number" && v >= 0 && v <= 100;
+    const slot = { value: 0, refine: between, refineKind: "between", refineArgs: [0, 100] };
+    return {
+      live: {},
+      slots: { ...Object.fromEntries(names.map((n) => [n, slot])), s: { value: 0 } },
+      reducers,
+    };
+  }
+
+  /** A reducer that writes what `write` makes of the slot `s`. */
+  const writing = (name: string, write: (s: number) => Record<string, number>): ReducerSpec => ({
+    name,
+    event: { kind: "ui", ev: "click" },
+    apply: (live) => ({ slots: write(live.s as number), emits: [] }),
+  });
+
+  /**
+   * A property over `s` from 1 to `max` that runs `reducers` in turn and holds whenever they all
+   * commit, so a trial fails only by being refused. Answers the counterexample's `s` and reason.
+   */
+  function refused(
+    app: StepApp,
+    reducers: readonly string[],
+    max: number,
+    opts: { seed: number; shrink: boolean },
+  ): { s: number; reason: string | undefined } {
+    const r = _stdlib.runPropertyTest({
+      name: "refused",
+      vars: { s: { t: "Int", min: 1, max } },
+      trial: (b) => {
+        let state = { slots: { s: b.s } as Record<string, unknown> };
+        for (const name of reducers) state = _stdlib.runReducerStep(app, state, name, {});
+        return true;
+      },
+      ...opts,
+    });
+    const m = /^counterexample \(case \d+\/100\): \{"s":(\d+)\} — (.*)$/.exec(r.actual ?? "");
+    return { s: Number(m?.[1]), reason: m?.[2] };
+  }
+
+  it("does not shrink a refused trial toward one refused for another slot", () => {
+    // `low` refuses s above 10 and `high` s below 20, so every trial is refused by one or both.
+    const app = percentApp(
+      ["low", "high"],
+      [writing("split", (s) => ({ low: 10 - s, high: s - 20 }))],
+    );
+    const run = (shrink: boolean) => refused(app, ["split"], 50, { seed: SEED, shrink });
+    const generated = run(false).s;
+    expect(generated).toBeGreaterThanOrEqual(20);
+    const { s, reason } = run(true);
+    expect(s).toBeGreaterThanOrEqual(20);
+    expect(s).toBeLessThanOrEqual(generated);
+    expect(reason).toBe(
+      `reducer "split" was rejected: slot "low" cannot hold ${10 - s} (between(0, 100))`,
+    );
+  });
+
+  it("keeps every slot that refused the generated case in the case it shrinks to", () => {
+    // `wide` refuses every s and `narrow` s above 30, so below 31 `wide` refuses alone.
+    const app = percentApp(
+      ["wide", "narrow"],
+      [writing("split", (s) => ({ wide: s - 100, narrow: 30 - s }))],
+    );
+    const run = (shrink: boolean) => refused(app, ["split"], 50, { seed: SEED, shrink });
+    expect(run(false).s).toBeGreaterThan(30);
+    const { s, reason } = run(true);
+    expect(s).toBeGreaterThan(30);
+    expect(reason).toBe(
+      `reducer "split" was rejected: slot "wide" cannot hold ${s - 100} (between(0, 100)), slot "narrow" cannot hold ${30 - s} (between(0, 100))`,
+    );
+  });
+
+  it("does not shrink a refused trial toward one another reducer refused", () => {
+    // `a` then `b` write `count`: `a` refuses s = 1 and `b` every s from 2, for the same slot.
+    const app = percentApp(
+      ["count"],
+      [writing("a", (s) => ({ count: s - 2 })), writing("b", (s) => ({ count: s - 25 }))],
+    );
+    const run = (shrink: boolean) => refused(app, ["a", "b"], 24, { seed: SEED, shrink });
+    expect(run(false).s).toBeGreaterThan(1);
+    const { s, reason } = run(true);
+    expect(s).toBeGreaterThan(1);
+    expect(reason).toBe(
+      `reducer "b" was rejected: slot "count" cannot hold ${s - 25} (between(0, 100))`,
+    );
+  });
 });
 
 describe("a trial that throws fails with what it threw", () => {
@@ -291,6 +457,41 @@ describe("a trial that throws fails with what it threw", () => {
     ["a value that is not an error", "boom", "threw: boom"],
   ])("%s", (_, e, reason) => {
     expect(thrown(e)).toBe(`counterexample (case 1/100): {"n":0} — ${reason}`);
+  });
+
+  const panic = (n: number) => new KumikiPanic(`Index ${n} is out of range`);
+  const error = (n: number) => new Error(`Index ${n} is out of range`);
+
+  it.each([
+    ["a panic", "is false", "panicked", panic, undefined],
+    ["a panic", "throws", "panicked", panic, error],
+    ["a throw", "is false", "threw", error, undefined],
+    ["a throw", "panics", "threw", error, panic],
+  ])("shrinks %s, never to a trial that %s", (_fails, _other, kind, from10, under10) => {
+    // n = 0 holds, n from 1 to 9 fails the other way, and from 10 the trial throws `from10`.
+    const property = (shrink: boolean) =>
+      _stdlib.runPropertyTest({
+        name: "fails-from-ten",
+        vars: { n: { t: "Int", min: 0, max: 100 } },
+        trial: (b) => {
+          const n = b.n as number;
+          if (n >= 10) throw from10(n);
+          if (n > 0 && under10) throw under10(n);
+          return n === 0;
+        },
+        shrink,
+      });
+    const reported = (shrink: boolean) =>
+      /^counterexample \(case \d+\/100\): \{"n":(\d+)\} — (.*)$/.exec(
+        property(shrink).actual ?? "",
+      );
+    const generated = Number(reported(false)?.[1]);
+    expect(generated).toBeGreaterThanOrEqual(10);
+    const m = reported(true);
+    const n = Number(m?.[1]);
+    expect(n).toBeGreaterThanOrEqual(10);
+    expect(n).toBeLessThanOrEqual(generated);
+    expect(m?.[2]).toBe(`${kind}: Index ${n} is out of range`);
   });
 
   it("leaves an invariant that is false without a reason", () => {

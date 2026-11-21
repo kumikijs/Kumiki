@@ -25,7 +25,7 @@ Before:
 
 ```
 $ kumiki check app.kumiki
-E0103 undef-ref at 8:18: Reference to undefined name "idx"
+error E0103 undef-ref at 8:18: Reference to undefined name "idx"
 $ kumiki fix app.kumiki --apply
 applied 1 fix(es) — file now clean
 ```
@@ -38,7 +38,7 @@ the repair for that kind, and the diagnostic carries the kind as `endedScope`
 
 ```
 $ kumiki check app.kumiki
-E0103 undef-ref at 8:18: Reference to undefined name "idx" — it was declared in a "for" loop, and a name carries no value out of a loop: move the read into the loop's body, or write the value to a slot there (see docs/spec/language.md)
+error E0103 undef-ref at 8:18: Reference to undefined name "idx" — it was declared in a "for" loop, and a name carries no value out of a loop: move the read into the loop's body, or write the value to a slot there (see docs/spec/language.md)
 $ kumiki fix app.kumiki --apply
 (no auto-patches available)
 ```

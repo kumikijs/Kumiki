@@ -1,0 +1,34 @@
+{
+  "steps": [
+    {
+      "label": "a value that is one option's label takes that option, ahead of another's value",
+      "do": { "choose": "#pick", "value": "\"b\"" },
+      "expect": { "noErrors": true, "state": { "pick": "c" }, "domIncludes": ["pick: c"] }
+    },
+    {
+      "label": "a value no option carries as its label takes the option with that exact value",
+      "do": { "choose": "#pick", "value": "\"a\"" },
+      "expect": { "noErrors": true, "state": { "pick": "a" }, "domIncludes": ["pick: a"] }
+    },
+    {
+      "label": "a label is compared with its whitespace trimmed and collapsed",
+      "do": { "choose": "#pick", "value": "  Bee " },
+      "expect": { "noErrors": true, "state": { "pick": "b" }, "domIncludes": ["pick: b"] }
+    },
+    {
+      "label": "a selector matching the <label> drives the select it is for",
+      "do": { "choose": "#lbl", "value": "Ay" },
+      "expect": { "noErrors": true, "state": { "pick": "a" }, "domIncludes": ["pick: a"] }
+    },
+    {
+      "label": "the disabled placeholder is refused, and the slot keeps its value",
+      "do": { "choose": "#pick", "value": "Pick one" },
+      "expect": {
+        "noErrors": true,
+        "actionErrorIncludes": ["option \"Pick one\" is disabled"],
+        "state": { "pick": "a" },
+        "domIncludes": ["pick: a"]
+      }
+    }
+  ]
+}
