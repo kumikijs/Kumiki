@@ -90,10 +90,10 @@ export type SymbolTable = {
   judgedVariants: WeakSet<Expr>;
   undefinedVariants: Map<KumikiError, Expr>;
   /**
-   * The refinements over a type parameter an application has put over `Int` and held to the safe
-   * range, so that a literal past it is reported once however often its generic is applied.
+   * The refinements over a type parameter an application has put over `Int` and judged as `Int`s,
+   * so that a literal in one is reported once however often its generic is applied.
    */
-  appliedPrecision: WeakSet<Refinement>;
+  appliedIntArgs: WeakSet<Refinement>;
   /** The result of each `fn` declared without `->`, read off its body once per check. */
   fnResults: Map<string, TypeExpr | null>;
   /** The `fn`s that can reach themselves through the `fn`s they call: those E0006 reports. */

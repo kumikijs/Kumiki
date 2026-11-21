@@ -1,0 +1,59 @@
+{
+  "steps": [
+    {
+      "label": "each slot starts inside its bounds",
+      "expect": {
+        "noErrors": true,
+        "state": { "stars": 3, "size": 1, "ratio": 0.25 },
+        "domIncludes": ["stars: 3", "size: 1", "ratio: 0.25"]
+      }
+    },
+    {
+      "label": "a whole number inside between(1, 5) commits",
+      "do": { "click": "#star" },
+      "expect": { "noErrors": true, "state": { "stars": 4 }, "domIncludes": ["stars: 4"] }
+    },
+    {
+      "label": "and so does the upper bound itself",
+      "do": { "click": "#star" },
+      "expect": { "noErrors": true, "state": { "stars": 5 }, "domIncludes": ["stars: 5"] }
+    },
+    {
+      "label": "one past the upper bound is refused, and the slot keeps what it had",
+      "do": { "click": "#star" },
+      "expect": {
+        "noErrors": true,
+        "state": { "stars": 5 },
+        "errorIncludes": ["slot \"stars\" cannot hold 6"]
+      }
+    },
+    {
+      "label": "a value one-of(1, 2, 3) lists commits",
+      "do": { "click": "#size" },
+      "expect": { "noErrors": true, "state": { "size": 2 }, "domIncludes": ["size: 2"] }
+    },
+    {
+      "label": "one it does not list is refused",
+      "do": { "click": "#size" },
+      "expect": {
+        "noErrors": true,
+        "state": { "size": 2 },
+        "errorIncludes": ["slot \"size\" cannot hold 4"]
+      }
+    },
+    {
+      "label": "a Float bound written with a point holds: 0.5 is inside between(0, 0.5)",
+      "do": { "click": "#ratio" },
+      "expect": { "noErrors": true, "state": { "ratio": 0.5 }, "domIncludes": ["ratio: 0.5"] }
+    },
+    {
+      "label": "and 0.75 is past it",
+      "do": { "click": "#ratio" },
+      "expect": {
+        "noErrors": true,
+        "state": { "ratio": 0.5 },
+        "errorIncludes": ["slot \"ratio\" cannot hold 0.75"]
+      }
+    }
+  ]
+}

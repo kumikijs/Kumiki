@@ -547,3 +547,176 @@ describe("a number argument past the safe range where an Int is meant", () => {
     ).toEqual([{ code: "E0804", message }]);
   });
 });
+
+// A bound over an `Int` stands for an `Int`, and a literal is one by how it is written: one written
+// with a point is a `Float` whatever number it is read as, and one past the largest double is read
+// as Infinity, which no bound can be built from.
+describe("a number argument over an Int is judged as an Int literal is, as written", () => {
+  const HUGE = "9".repeat(310);
+  const SAFE = "-9007199254740991 through 9007199254740991";
+  const pointed = (defs: string) => pointedErrorsOf(`${defs}\n${TAIL}`);
+  const reported = (defs: string) => pointed(defs).map(({ code, text }) => ({ code, text }));
+  const withPoint = (i: number, pred: string, raw: string, over = "it is written over Int") =>
+    `Expected Int but got Float: argument ${i} of refinement "${pred}" is ${raw}, written with a point, but ${over}`;
+
+  it.each([
+    ["a bound written with a point", `type T = Int where between(0, 0.5)`, 2, "between", "0.5"],
+    [
+      "a signed bound written with a point",
+      `type T = Int where between(-0.5, 3)`,
+      1,
+      "between",
+      "-0.5",
+    ],
+    [
+      "a whole number written with a point",
+      `type T = Int where between(0, 1.0)`,
+      2,
+      "between",
+      "1.0",
+    ],
+    [
+      "a bound written with a point and read as a whole number",
+      `type T = Int where between(0, 0.99999999999999999)`,
+      2,
+      "between",
+      "0.99999999999999999",
+    ],
+    [
+      "a bound written with a point past the safe range",
+      `type T = Int where between(0, 9007199254740993.5)`,
+      2,
+      "between",
+      "9007199254740993.5",
+    ],
+    [
+      "a literal one-of lists with a point",
+      `type T = Int where one-of(1, 2.5)`,
+      2,
+      "one-of",
+      "2.5",
+    ],
+    [
+      "a bound written with a point over an alias of Int",
+      `type N = Int\ntype T = N where between(0, 0.5)`,
+      2,
+      "between",
+      "0.5",
+    ],
+  ])("reports %s as E0201 at the literal, naming it as written", (_, defs, i, pred, raw) => {
+    expect(pointed(defs)).toEqual([
+      { code: "E0201", message: withPoint(i, pred, raw), text: `${raw}${i === 1 ? ", 3)" : ")"}` },
+    ]);
+  });
+
+  it("reports a generic's bound written with a point where the generic is applied over Int", () => {
+    expect(pointed(`type R(T) = T where between(0, 0.5)\nslot s : R(Int) = 1`)).toEqual([
+      {
+        code: "E0201",
+        message: withPoint(2, "between", "0.5", "R(Int) applies it over Int"),
+        text: "0.5)",
+      },
+    ]);
+  });
+
+  it.each([
+    [
+      "a bound past the largest double",
+      `type T = Int where between(0, ${HUGE})`,
+      `Int literal ${HUGE} is outside the safe range ${SAFE} and was rounded to Infinity`,
+      `${HUGE})`,
+    ],
+    [
+      "a signed bound past the largest double",
+      `type T = Int where between(-${HUGE}, 0)`,
+      `Int literal -${HUGE} is outside the safe range ${SAFE} and was rounded to -Infinity`,
+      `-${HUGE}, 0)`,
+    ],
+  ])("reports %s as E0217 at the literal, naming it as written", (_, defs, message, text) => {
+    expect(pointed(defs)).toEqual([{ code: "E0217", message, text }]);
+  });
+
+  it.each([
+    [
+      "one-of's literal past the largest double",
+      `type T = Int where one-of(1, ${HUGE})`,
+      "E0217",
+      `${HUGE})`,
+    ],
+    [
+      "a generic's bound past the largest double applied over Int",
+      `type R(T) = T where between(0, ${HUGE})\nslot s : R(Int) = 1`,
+      "E0217",
+      `${HUGE})`,
+    ],
+    [
+      "a generic's bound written with a point applied over an alias of Int",
+      `type N = Int\ntype R(T) = T where one-of(1, 2.5)\nslot s : R(N) = 1`,
+      "E0201",
+      "2.5)",
+    ],
+    [
+      "a generic's bound written with a point applied over Int through another generic",
+      `type R(T) = T where between(0, 0.5)\ntype S(U) = R(U)\nslot s : S(Int) = 1`,
+      "E0201",
+      "0.5)",
+    ],
+    [
+      "a generic's bound written with a point applied over Int more than once",
+      `type R(T) = T where between(0, 0.5)\nslot a : R(Int) = 1\nslot b : R(Int) = 2`,
+      "E0201",
+      "0.5)",
+    ],
+    [
+      "a generic's bound over Int written with a point, whatever the generic is applied over",
+      `type R(T) = {v: T, n: Int where between(0, 0.5)}\nslot r : R(Int) = {v: 1, n: 1}`,
+      "E0201",
+      "0.5)}",
+    ],
+  ])("reports %s, once, at the literal", (_, defs, code, text) => {
+    expect(reported(defs)).toEqual([{ code, text }]);
+  });
+
+  it("reports each argument written with a point on its own, and none of them as rounded", () => {
+    expect(reported(`type T = Int where between(-0.5, 9007199254740993.5)`)).toEqual([
+      { code: "E0201", text: "-0.5, 9007199254740993.5)" },
+      { code: "E0201", text: "9007199254740993.5)" },
+    ]);
+  });
+
+  it.each([
+    // Over a Float a bound is a Float, and a point is how one is written.
+    `type T = Float where between(0, 0.5)`,
+    `type T = Float where one-of(0.5, 1.5)`,
+    `type T = Time where between(0, 0.5)`,
+    // A parameter's base is decided where the generic is applied, and these apply it over no Int.
+    `type R(T) = T where between(0, 0.5)`,
+    `type R(T) = T where between(0, 0.5)\nslot s : R(Float) = 1.0`,
+  ])("accepts %s", (defs) => {
+    expect(reported(defs)).toEqual([]);
+  });
+
+  // A refinement E0804 reports is wrong whatever its literals are, and that message names each
+  // literal as written, so the literal is not reported again.
+  it.each([
+    [
+      "a bound over Text",
+      `type T = Text where between(0, 0.5)`,
+      'Refinement "between" tests a number but is written over Text, so no value satisfies it',
+    ],
+    [
+      "bounds the wrong way round",
+      `type T = Int where between(3, 0.5)`,
+      "Refinement between(3, 0.5) has a lower bound above its upper bound, so no value satisfies it",
+    ],
+    [
+      "a generic's bound applied over Text",
+      `type R(T) = T where between(0, 0.5)\nslot s : R(Text) = "a"`,
+      'Refinement "between" tests a number but R(Text) applies it over Text, so no value satisfies it',
+    ],
+  ])("reports %s as E0804 alone", (_, defs, message) => {
+    expect(pointed(defs).map(({ code, message }) => ({ code, message }))).toEqual([
+      { code: "E0804", message },
+    ]);
+  });
+});
