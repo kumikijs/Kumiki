@@ -248,19 +248,20 @@ function argFits(kind: ArgKind, arg: RefinementArg | undefined): boolean {
   }
 }
 
-/** How argument `i` reads in a message — quoted when it is text, as written. */
-const showArg = (r: Refinement, i: number): string => {
+/** How argument `i` of `r` reads in a message: as written, and quoted when it is text. */
+function showArg(r: Refinement, i: number): string {
   const arg = r.args[i];
-  return arg === undefined ? "nothing" : (r.written?.[i]?.raw ?? JSON.stringify(arg));
-};
+  if (arg === undefined) return "nothing";
+  return r.numbers?.find((n) => n.index === i)?.raw ?? JSON.stringify(arg);
+}
 
 /**
  * Whether argument `i` is written with no point, as an `Int` is, since its number cannot tell `7.0`
  * from `7`. One no source wrote has only its number to go by.
  */
 function writtenAsInt(r: Refinement, i: number): boolean {
-  const raw = r.written?.[i]?.raw;
-  return raw === undefined || isIntLiteral({ value: Number(r.args[i]), raw });
+  const written = r.numbers?.find((n) => n.index === i);
+  return written === undefined || isIntLiteral(written);
 }
 
 export function refinementProblem(r: Refinement): RefinementProblem | undefined {
@@ -303,11 +304,11 @@ export function refinementBaseProblem(
 
 function arityProblem(r: Refinement, params: Params): string | undefined {
   const { pred, args } = r;
+  const wrongArg = (i: number, kind: ArgKind): string =>
+    `Refinement "${pred}" takes ${ARG_DESCRIPTION[kind]} but argument ${i + 1} is ${showArg(r, i)}`;
   // A count is an `Int`, so it is written with no point, as an `Int` is anywhere else.
   const fits = (kind: ArgKind, i: number): boolean =>
     argFits(kind, args[i]) && (kind !== "count" || writtenAsInt(r, i));
-  const wrongArg = (i: number, kind: ArgKind): string =>
-    `Refinement "${pred}" takes ${ARG_DESCRIPTION[kind]} but argument ${i + 1} is ${showArg(r, i)}`;
   if ("rest" in params) {
     if (args.length < params.min) {
       return `Refinement "${pred}" needs at least ${params.min} value(s) but got ${args.length}`;

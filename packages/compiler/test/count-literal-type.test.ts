@@ -120,6 +120,10 @@ describe("a whole number a definition takes", () => {
     expect(refusalsOf(site.src(n))).toEqual([site.refusal(n)]);
   });
 
+  it.each(rows(["-1.0"]))("refuses %s written as %s, naming it with its sign", (_, n, site) => {
+    expect(refusalsOf(site.src(n))).toEqual([site.refusal(n)]);
+  });
+
   it.each(rows(["1", "2"]))("takes %s written as %s, with no point", (_, n, site) => {
     expect(refusalsOf(site.src(n))).toEqual([]);
   });
