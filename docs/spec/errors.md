@@ -281,9 +281,13 @@ A name written `count-1` is one name, not a subtraction: `-` continues an identi
 
 > `Reference to undefined name "count-1" — "-" continues an identifier, so this is one name. Write "count - 1" with spaces for subtraction.`
 
-A `filter` / `map` / `find` / `sort-by` fragment handed one value — an element that is not a pair, an `Option`'s value — binds `$1` alone ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), so a `$2` in it says why:
+A `filter` / `map` / `find` / `sort-by` fragment handed one value — an element that is not a pair, an `Option`'s value, a `Set`'s member — binds `$1` alone ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), so a `$2` in it says why:
 
 > `"$2" is not bound here — the .filter fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`
+
+A `Set`'s `filter` hands each member whole, a pair member included, so there the message says that instead of pointing at pairs, and so does [E0213](#e0213-call-arity-mismatch)'s for a `fn` of two named as the fragment (`… .filter on "Set(Tuple(Int, Int))" supplies 1 — a Set's .filter hands each member whole, as "$1"`):
+
+> `"$2" is not bound here — a Set's .filter hands each member whole, as "$1"`
 
 That holds anywhere inside the fragment, a `$2` in another method's argument included (`xs.map($1.min($2))`): only a fragment declares positionals, so such an argument reads the fragment's. Where the scope around the fragment binds a `$2` of its own — a `fn`'s second parameter, an enclosing pair's value — the fragment hides it, and the message says how to reach it:
 
@@ -623,7 +627,7 @@ A name that a local bind ([Language §1.6.7](./language.md#_1-6-7-scoping-and-sh
 
 `xs.map(double)` is `xs.map(double($1))`, and `xs.fold(0, add)` is `xs.fold(0, add($1, $2))`. The named `fn` takes the first of those positionals, as many as it declares, so it must declare at least one and no more than the method binds — otherwise it is [E0213](#e0213-call-arity-mismatch). `fold`'s `fn` declares exactly two, because the element is the second: one of one would fold nothing in. A `filter` / `map` / `find` / `sort-by` `fn` declares two only where the fragment takes each value apart — a Map's filter or map, a pair ([Stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)); over any other receiver whose type the checker can decide, a second parameter would receive nothing, or the JS index or the element again where the lowering falls back, and is E0213 too. Every other argument, including `fold`'s first, is a value and takes this check.
 
-Past the count, the name is checked as the call it stands for, in the scope the fragment binds: each parameter against the positional it is handed, of the type [Language §1.8.6](./language.md#_1-8-6-partial-application-and-higher-order-functions) gives it, and the `fn`'s result wherever the method checks the fragment's — the key of `sort-by`, the new value of `update`. So `xs.map(loud)` with `fn loud(t: Text)` over a `List(Int)` is [E0201](#e0201-type-mismatch) at `loud`, as `xs.map(loud($1))` is at the `$1`; over a `Map(Text, Int)`, `m.filter(keep)` takes `fn keep(k: Text, v: Int)` and reports `fn keep(k: Int, v: Int)`; and `xs.fold(0, f)` checks `f`'s first parameter against `Int`. A positional whose type the checker cannot decide is checked against nothing.
+Past the count, the name is checked as the call it stands for, in the scope the fragment binds: each parameter against the positional it is handed, of the type [Language §1.8.6](./language.md#_1-8-6-partial-application-and-higher-order-functions) gives it, and the `fn`'s result wherever the method checks the fragment's — the key of `sort-by`, the new value of `update`, the next accumulator of `fold`. So `xs.map(loud)` with `fn loud(t: Text)` over a `List(Int)` is [E0201](#e0201-type-mismatch) at `loud`, as `xs.map(loud($1))` is at the `$1`; over a `Map(Text, Int)`, `m.filter(keep)` takes `fn keep(k: Text, v: Int)` and reports `fn keep(k: Int, v: Int)`; and `xs.fold(0, f)` checks `f`'s first parameter against the accumulator: `Int`, or the wider type `f` answers. A positional whose type the checker cannot decide is checked against nothing.
 
 **Fix**: Write the call — `label()`, or `greet(first, last)` with the arguments it declares.
 
