@@ -1,0 +1,35 @@
+{
+  "steps": [
+    {
+      "label": "a variant with no payload reads as itself through the match",
+      "expect": { "noErrors": true, "domIncludes": ["x: unplaced"] }
+    },
+    {
+      "label": "the match writes the variant whole, with the record it carries",
+      "do": { "click": "#right" },
+      "expect": {
+        "noErrors": true,
+        "state": { "p": { "_tag": "Placed", "_0": { "x": 1, "y": 0 } } },
+        "domIncludes": ["x: 1"]
+      }
+    },
+    {
+      "label": "and the arm reads the payload's field to build the next one",
+      "do": { "click": "#right" },
+      "expect": {
+        "noErrors": true,
+        "state": { "p": { "_tag": "Placed", "_0": { "x": 2, "y": 0 } } },
+        "domIncludes": ["x: 2"]
+      }
+    },
+    {
+      "label": "a write of another variant leaves no field behind",
+      "do": { "click": "#lift" },
+      "expect": {
+        "noErrors": true,
+        "state": { "p": { "_tag": "Unplaced" } },
+        "domIncludes": ["x: unplaced"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+# Feature (language.md): a field a variant's payload declares is read in the
+# arm of a match that binds the payload, and written by building the variant
+# again.
+#
+#   p := match p with | Placed(at) -> Placed(at.copy(x=at.x + 1)) | Unplaced -> Placed({x=1, y=0})
+#
+# A step on a union reads the variant the value holds, never its payload, so
+# `Placed`'s record declaring `x` does not make `p.x` a field: read or written,
+# `p.x` is E0108, as a name no payload declares is.
+
+type Pin = Placed({x: Int, y: Int}) | Unplaced
+
+slot p : Pin = Unplaced
+
+reducer right on=ui.click(Right)
+    do= p := match p with | Placed(at) -> Placed(at.copy(x=at.x + 1)) | Unplaced -> Placed({x=1, y=0})
+
+reducer lift on=ui.click(Lift)
+    do= p := Unplaced
+
+tile Right = button(text="right") {id: "right"}
+tile Lift = button(text="lift") {id: "lift"}
+
+tile App = column(
+  row(Right, Lift),
+  text("x: " + match p with | Placed(at) -> at.x.show | Unplaced -> "unplaced"))
+
+app UnionPayloadField
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []
