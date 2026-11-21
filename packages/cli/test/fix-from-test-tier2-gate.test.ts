@@ -1,9 +1,17 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { fixFromTest, planTestPatchExplained, runFixFromTest } from "@kumikijs/cli";
+import {
+  fixFromTest,
+  lockDef,
+  planTestPatchExplained,
+  replaceDef,
+  runFixFromTest,
+} from "@kumikijs/cli";
 import { check, lex, parse } from "@kumikijs/compiler";
 import type { TestResult } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { printed } from "./helpers/console.ts";
 import { seedLines } from "./helpers/files.ts";
+import { asAgent } from "./helpers/op-log.ts";
 
 const gateRunner = vi.hoisted(() => ({
   override: null as null | (() => Promise<TestResult[]>),
@@ -20,6 +28,25 @@ vi.mock("../src/smoke.ts", async (importOriginal) => {
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+/** The test wants 1 where `2 + 3` gives 5; the only `5` is a refinement's bound, which 1 breaks. */
+const PATCH_BREAKS_A_REFINEMENT = [
+  "type Small = nominal Int where between(2, 5)",
+  "slot count : Int = 0",
+  "slot pick : Small = 2",
+  "reducer inc on=ui.click(Btn1) do= count := 2 + 3",
+  'tile Btn1 = button(text="+")',
+  "tile App = column(Btn1)",
+  "",
+  "app A",
+  "    caps   = []",
+  '    routes = {"/" -> App, "/404" -> App}',
+  "    init   = []",
+  "test sets-one =",
+  "    reducer-test inc",
+  "        given  = {slots: {count: 0}, event: {type: ui.click, target: Btn1}}",
+  "        expect = {slots: {count: 1}, effects: []}",
+];
 
 const APP_TAIL = [
   "tile App = column(Btn1)",
@@ -196,18 +223,7 @@ describe("the behavioural write is gated", () => {
   });
 
   it("reports a patch that does not compile as an outcome, and writes nothing", async () => {
-    const file = seedLines([
-      "type Small = nominal Int where between(2, 5)",
-      "slot count : Int = 0",
-      "slot pick : Small = 2",
-      "reducer inc on=ui.click(Btn1) do= count := 2 + 3",
-      'tile Btn1 = button(text="+")',
-      ...APP_TAIL,
-      "test sets-one =",
-      "    reducer-test inc",
-      "        given  = {slots: {count: 0}, event: {type: ui.click, target: Btn1}}",
-      "        expect = {slots: {count: 1}, effects: []}",
-    ]);
+    const file = seedLines(PATCH_BREAKS_A_REFINEMENT);
     const before = readFileSync(file, "utf8");
     const outcome = await runFixFromTest(file, "sets-one", true);
 
@@ -218,6 +234,18 @@ describe("the behavioural write is gated", () => {
     } else {
       expect.unreachable(`expected an introduced refusal, got ${JSON.stringify(outcome)}`);
     }
+  });
+
+  it("prints the diagnostics the refused patch would have introduced, as `kumiki check` does", async () => {
+    const file = seedLines(PATCH_BREAKS_A_REFINEMENT);
+
+    const said = await printed(() => fixFromTest(file, "sets-one", true));
+
+    expect(said.result.status).toBe("test-blocked");
+    expect(said.lines.slice(-2)).toEqual([
+      "  reason: introduced",
+      "error E0804 refinement-args-invalid at 1:32: Refinement between(2, 1) has a lower bound above its upper bound, so no value satisfies it",
+    ]);
   });
 
   it("refuses a patch that makes another passing test fail", async () => {
@@ -266,11 +294,7 @@ describe("the behavioural write is gated", () => {
       ...APP_TAIL,
       ...ADDS_TWO_TEST,
     ]);
-    const lines: string[] = [];
-    vi.spyOn(console, "log").mockImplementation((m: unknown) => void lines.push(String(m)));
-    vi.spyOn(console, "error").mockImplementation((m: unknown) => void lines.push(String(m)));
-
-    await fixFromTest(file, "inc-adds-two", true);
+    const { lines } = await printed(() => fixFromTest(file, "inc-adds-two", true));
 
     const out = lines.join("\n");
     expect(out).toContain('refused fix for "inc-adds-two" — file left unchanged');
@@ -311,11 +335,7 @@ describe("a refusal after the compile tier wrote", () => {
 
   it("says the behavioural patch was not written, not that the file is unchanged", async () => {
     const file = seedLines(TYPO_THEN_STILL_FAILS);
-    const lines: string[] = [];
-    vi.spyOn(console, "log").mockImplementation((m: unknown) => void lines.push(String(m)));
-    vi.spyOn(console, "error").mockImplementation((m: unknown) => void lines.push(String(m)));
-
-    await fixFromTest(file, "inc-adds-two", true);
+    const { lines } = await printed(() => fixFromTest(file, "inc-adds-two", true));
 
     const out = lines.join("\n");
     expect(out).toContain("applied 1 compile fix(es)");
@@ -359,11 +379,9 @@ describe("the gate judges only tests that passed before", () => {
 describe("a test whose body throws", () => {
   it("is a failing test that says what it threw, with no patch planned from it", async () => {
     const file = seedLines([...DIGIT_IN_IDENTIFIER, ...THROWING_TEST]);
-    const lines: string[] = [];
-    vi.spyOn(console, "log").mockImplementation((m: unknown) => void lines.push(String(m)));
-    vi.spyOn(console, "error").mockImplementation((m: unknown) => void lines.push(String(m)));
-
-    const outcome = await fixFromTest(file, "expect-panics", false);
+    const { result: outcome, lines } = await printed(() =>
+      fixFromTest(file, "expect-panics", false),
+    );
 
     expect(outcome.status).toBe("no-patch");
     if (outcome.status === "no-patch") {
@@ -399,12 +417,9 @@ describe("a test whose body throws", () => {
       "        expect = {slots: {count: [0, 1][step()]}, effects: []}",
     ]);
     const before = readFileSync(file, "utf8");
-    const lines: string[] = [];
-    vi.spyOn(console, "log").mockImplementation((m: unknown) => void lines.push(String(m)));
-    vi.spyOn(console, "error").mockImplementation((m: unknown) => void lines.push(String(m)));
     const thrown = "Index 2 is out of range for a List of length 2";
 
-    const outcome = await fixFromTest(file, "inc-adds-two", true);
+    const { result: outcome, lines } = await printed(() => fixFromTest(file, "inc-adds-two", true));
 
     expect(readFileSync(file, "utf8")).toBe(before);
     expect(outcome.status).toBe("test-blocked");
@@ -421,15 +436,16 @@ describe("a test whose body throws", () => {
   });
 });
 
-describe("the gate when the runner misbehaves on the patched source", () => {
-  const withRunner = (override: () => Promise<TestResult[]>): typeof runFixFromTest => {
-    gateRunner.override = override;
-    return runFixFromTest;
-  };
-  afterEach(() => {
-    gateRunner.override = null;
-  });
+/** `runFixFromTest`, with the gate's run of the patched source answered by `override`. */
+const withRunner = (override: () => Promise<TestResult[]>): typeof runFixFromTest => {
+  gateRunner.override = override;
+  return runFixFromTest;
+};
+afterEach(() => {
+  gateRunner.override = null;
+});
 
+describe("the gate when the runner misbehaves on the patched source", () => {
   it("reports a runner that throws as test-runner-threw, with its message", async () => {
     const file = seedLines(DIGIT_IN_IDENTIFIER);
     const before = readFileSync(file, "utf8");
@@ -499,5 +515,33 @@ describe("a dry run is not gated", () => {
       expect(outcome.patch.description).toContain("replace 1 with 2");
     }
     expect(readFileSync(file, "utf8")).toBe(before);
+  });
+});
+
+describe("a file edited while the gate runs", () => {
+  it("is not overwritten: the patch planned on the old file is not written", async () => {
+    const file = seedLines(DIGIT_IN_IDENTIFIER);
+    lockDef(file, "agent:a", "tile.*");
+    asAgent("agent:b");
+    // While the gate runs agent:b's patch of `fn.step`, agent:a edits the tile it holds.
+    let owners = "";
+    const run = withRunner(async () => {
+      asAgent("agent:a");
+      replaceDef(file, "tile.Btn1", 'button(text="plus")');
+      owners = readFileSync(file, "utf8");
+      asAgent("agent:b");
+      return [{ name: "inc-adds-two", pass: true }];
+    });
+
+    const outcome = await run(file, "inc-adds-two", true);
+
+    expect(outcome).toMatchObject({
+      ok: false,
+      status: "write-failed",
+      phase: "test",
+      writeError: `${file} changed since the repair was planned; nothing was written. Run fix again.`,
+    });
+    expect(owners).toContain('text="plus"');
+    expect(readFileSync(file, "utf8")).toBe(owners);
   });
 });

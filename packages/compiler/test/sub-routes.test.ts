@@ -124,6 +124,13 @@ describe("E0113 reads the tiles the body renders", () => {
     ],
     ["that is the whole body, named bare", `tile Outlet = column(route-outlet())`, `Outlet`],
     ["that is the whole body, called", `tile Outlet = column(route-outlet())`, `Outlet()`],
+    // The bare name is the program's tile, as the build renders it, not the builtin `spinner`.
+    [
+      "named like a builtin, written bare",
+      `slot spinner : Text = "s"
+       tile spinner = column(route-outlet())`,
+      `page(heading("s"), spinner)`,
+    ],
   ])("accepts an outlet in a tile %s", (_, defs, body, routes) => {
     expect(checkSource(program(defs, body, routes))).toEqual([]);
   });
@@ -166,13 +173,22 @@ describe("E0113 reads the tiles the body renders", () => {
     ["a helper with no outlet", `tile Helper = column(text("h"))`, `page(Helper)`],
     // Nothing renders a tile written as a named argument.
     ["an outlet in a named argument", ``, `page(column(x=when(true, route-outlet())))`],
-    ["a helper in a named argument", OUTLET, `page(column(x=Outlet))`],
-    // These builtins drop their positional arguments.
+  ])("reports %s as E0113", (_, defs, body) => {
+    expect(codes(defs, body)).toEqual(["E0113"]);
+  });
+
+  // These builtins drop their positional arguments, which E0129 reports at the argument.
+  it.each([
     ["an outlet under a spinner", ``, `page(spinner(route-outlet()))`],
     ["a helper under a spinner", OUTLET, `page(heading("s"), spinner(Outlet))`],
     ["a helper under a button", OUTLET, `page(button(text="go", Outlet))`],
-  ])("reports %s as E0113", (_, defs, body) => {
-    expect(codes(defs, body)).toEqual(["E0113"]);
+  ])("reports %s as E0113, beside the E0129", (_, defs, body) => {
+    expect(codes(defs, body)).toEqual(["E0129", "E0113"]);
+  });
+
+  it("reports a helper in a named argument as E0113, its name as E0116", () => {
+    // Written as a value, a tile's name is a variant tag no union declares.
+    expect(codes(OUTLET, `page(column(x=Outlet))`)).toEqual(["E0116", "E0113"]);
   });
 
   it("reports an outlet only in the sub-route target as E0113", () => {

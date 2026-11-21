@@ -1,8 +1,5 @@
-import type { Pos } from "../ast.ts";
+import type { NumberLiteral, Pos } from "../ast.ts";
 import type { KumikiError } from "./context.ts";
-
-/** A number literal: the text it is written as, its sign included, and the number it was read as. */
-export type NumberLiteral = { readonly value: number; readonly raw: string };
 
 const SAFE_RANGE = `${Number.MIN_SAFE_INTEGER} through ${Number.MAX_SAFE_INTEGER}`;
 

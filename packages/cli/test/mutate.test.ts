@@ -1,5 +1,6 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
+import { dirname, join } from "node:path";
 import { threadId } from "node:worker_threads";
 import {
   addDef,
@@ -9,6 +10,8 @@ import {
   findReferences,
   listDefs,
   load,
+  patchApplyFile,
+  patchRevert,
   readOpLog,
   removeDef,
   renameDef,
@@ -20,7 +23,7 @@ import { app } from "@kumikijs/examples";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addDefs, removeSet } from "../src/mutate/verbs.ts";
 import { writeLockPath } from "../src/write-lock.ts";
-import { renamed, seed, seedCopy } from "./helpers/files.ts";
+import { NOT_A_FILE, renamed, seed, seedCopy } from "./helpers/files.ts";
 
 const COUNTER = app("01-counter");
 const TODOMVC = app("02-todomvc");
@@ -102,6 +105,33 @@ app A caps=[http.get] routes={"/" -> B, "/404" -> B} init=[log("x")]
     const body = viewDef(load(path), "slot.draft");
     expect(body).toContain('Text = ""');
     expect(body).not.toContain("where len-lt");
+  });
+});
+
+describe.each(NOT_A_FILE)("every mutator, given a path that %s", (_what, make) => {
+  /** Each mutator, given the path and an op log beside it. */
+  const WRITES: Array<[string, (path: string, ops: string) => unknown]> = [
+    ["addDef", (p) => addDef(p, "slot", "x", "N = 1")],
+    ["replaceDef", (p) => replaceDef(p, "slot.draft", 'Text = ""')],
+    ["removeDef", (p) => removeDef(p, "slot.draft", false)],
+    ["renameDef", (p) => renameDef(p, "slot.draft", "text")],
+    ["editDef", (p) => editDef(p, "slot.draft", { find: '""', replace: '"x"' })],
+    ["patchApplyFile", (p, ops) => patchApplyFile(p, ops)],
+    ["patchRevert", (p) => patchRevert(p, "op_0000000000AAAAAAAAAAAAAAAA")],
+  ];
+
+  it.each(WRITES)("%s refuses it, naming it and writing nothing beside it", (_name, write) => {
+    const dir = dirname(seedCopy(TODOMVC));
+    const ops = join(dir, "ops.jsonl");
+    writeFileSync(
+      ops,
+      `${JSON.stringify({ op: "add", layer: "slot", name: "x", body: "N = 1" })}\n`,
+    );
+    const path = join(dir, "other.kumiki");
+    make(path);
+    const before = readdirSync(dir).sort();
+    expect(() => write(path, ops)).toThrowError(`File "${path}" not found`);
+    expect(readdirSync(dir).sort()).toEqual(before);
   });
 });
 

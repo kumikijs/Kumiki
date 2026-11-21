@@ -42,6 +42,7 @@ import { applyInitialTheme, maybeReapplyTheme, resolvedThemeName } from "./theme
 import { makeMappingTileCtx, type TileElementMap } from "./tile-ctx.ts";
 import {
   type AppShape,
+  type CloseOnDispose,
   type HoldLeave,
   type MountedApp,
   type MountHandle,
@@ -174,7 +175,7 @@ export function mountCore(
   const ownView = newView(target, options.hydrate === true);
   const views: MountView[] = [ownView];
   const boundaryPanics: RenderPanicSink = (e, site) =>
-    recordRenderPanic(episode, e, site).episodeId;
+    recordRenderPanic(episode, e, site, true).episodeId;
   const attach = (into: HTMLElement): MountHandle => {
     const view = newView(into, false);
     views.push(view);
@@ -526,7 +527,7 @@ export function mountCore(
 
   navigation.start();
 
-  const seams = app as MountedApp & { _holdLeave?: HoldLeave };
+  const seams = app as MountedApp & { _holdLeave?: HoldLeave; _closeOnDispose?: CloseOnDispose };
   seams._rerender = render;
   seams._dispatch = (reducerName, el) => {
     const r = app.reducers.find((x) => x.name === reducerName);
@@ -555,6 +556,11 @@ export function mountCore(
   };
   seams._navigate = (path, replace) => navigation.navigate(path, !!replace);
   seams._holdLeave = navigation.holdLeave;
+  const openDialogs = new Set<() => void>();
+  seams._closeOnDispose = (close) => {
+    openDialogs.add(close);
+    return () => openDialogs.delete(close);
+  };
   seams._submitHeldBy = submitHeldBy;
 
   let lastPanics: RenderPanicSink | undefined;
@@ -599,6 +605,8 @@ export function mountCore(
     for (const h of anonTimers) clearInterval(h);
     for (const h of namedTimers.values()) clearInterval(h);
     namedTimers.clear();
+    // A dialog left open would outlive the app, and answering it would still dispatch.
+    for (const close of openDialogs) close();
     navigation.dispose();
     for (const unsub of lifecycleUnsubs) unsub();
     dispatcher.dispose();
