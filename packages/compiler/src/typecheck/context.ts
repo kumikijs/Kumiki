@@ -3,6 +3,7 @@ import {
   type EffectDef,
   type Expr,
   type FnDef,
+  type FragmentShape,
   type Pos,
   type ReducerDef,
   type SlotDef,
@@ -130,7 +131,8 @@ export type Ctx = {
   rootsShareNoExpression?: true;
   /** The effect whose own expressions are checked, when it declares `in=Unit` and so binds no `$1`. */
   noInputEffect?: string;
-  oneValueFragment?: { method: string; hides: boolean };
+  /** The fragment this scope is the body of, when it is handed one value and binds no `$2`. */
+  oneValueFragment?: { method: string; hides: boolean; shape: FragmentShape };
   /** A tile-test's expected tree, whose lowering reads no `{…}` block. */
   expectedTree?: boolean;
 };
