@@ -46,6 +46,17 @@ export const tileAsPropMessage = (tile: string, name: string): string =>
   `nothing renders it. Write the tile as a positional child of a container — ` +
   `\`column(when(c, …))\` — or pass a value — \`${tile}(${name}=…)\``;
 
+/** The message of the one diagnostic `src` reports under `code`; none, or more than one, throws. */
+export function soleMessageOf(code: string, src: string, opts?: CheckOptions): string {
+  const found = checkSource(src, opts).filter((e) => e.code === code);
+  const [only] = found;
+  if (only === undefined || found.length > 1) {
+    const messages = found.map((e) => e.message).join(" | ");
+    throw new Error(`expected one ${code}, got ${found.length}: ${messages}`);
+  }
+  return only.message;
+}
+
 /** Each diagnostic as `"<code> <message>"`. */
 export const summariesOf = (src: string): string[] =>
   checkSource(src).map((e) => `${e.code} ${e.message}`);
