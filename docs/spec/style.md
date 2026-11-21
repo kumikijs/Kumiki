@@ -109,7 +109,7 @@ tile Card = box(
             }
 ```
 
-`@colors.surface` is resolved from the theme. It is automatically re-rendered when the theme is switched.
+`@colors.surface` is resolved from the theme. It is automatically re-rendered when the theme is switched. A key the active theme leaves out takes the same built-in default as the matching shorthand prop ([§4.3.1](#_4-3-1-shorthand-properties)): `@radius.md` resolves as `radius: "md"` does and `@shadow.sm` as `shadow: "sm"` does, and likewise `@spacing` as `pad`, `@colors` as `bg` and `@typography.size` as `size`.
 
 ### 4.3.1 Shorthand Properties
 

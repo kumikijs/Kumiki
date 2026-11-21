@@ -6,9 +6,6 @@ const ROOT_ATTR = "data-kumiki-root";
 
 const appByRoot = new WeakMap<Element, MountedApp>();
 
-/** Non-null only while a mount's synchronous render pass is running. */
-let renderingApp: MountedApp | null = null;
-
 export function registerAppRoot(target: Element, app: AppShape): void {
   appByRoot.set(target, app as MountedApp);
   target.setAttribute(ROOT_ATTR, "");
@@ -34,7 +31,7 @@ export function resolveApp(el: Element | null | undefined): MountedApp | undefin
     }
     node = shadowHost(node);
   }
-  return renderingApp ?? undefined;
+  return host[RENDERING] ?? undefined;
 }
 
 function shadowHost(el: Element): Element | null {
@@ -44,7 +41,7 @@ function shadowHost(el: Element): Element | null {
 
 /** The app whose synchronous render pass is currently executing, if any. */
 export function getRenderingApp(): MountedApp | undefined {
-  return renderingApp ?? undefined;
+  return host[RENDERING] ?? undefined;
 }
 
 /** Non-null only while one view's render pass is running: that view's host. */
@@ -113,7 +110,14 @@ export function recordRenderPanic(
 // and a module-local would record the panic nowhere. Shared with other runtime copies: keep the
 // signature primitive, and change the key when it changes.
 const PANICS = "__kumikiRenderPanic__";
-const host = globalThis as { [PANICS]?: RenderPanicSink | null | undefined };
+// The same holds for the app a render pass draws: that copy's `_s.token` reads the theme from it.
+// Another copy reads only `AppShape` fields from it (`themes`, `themeName`, `live`), so change the
+// key when what it reads changes. Non-null only while a render pass is running.
+const RENDERING = "__kumikiRenderingApp__";
+const host = globalThis as {
+  [PANICS]?: RenderPanicSink | null | undefined;
+  [RENDERING]?: MountedApp | null | undefined;
+};
 
 export function recordInRenderPass(e: unknown, site: string): RenderPanic {
   const id = host[PANICS]?.(e, site);
@@ -123,14 +127,14 @@ export function recordInRenderPass(e: unknown, site: string): RenderPanic {
 // `panics` is the caller's rather than the app's: `renderToString` renders the same AppShape a
 // mount does, into its own bootstrap log.
 export function withRenderingApp<T>(app: AppShape, panics: RenderPanicSink, fn: () => T): T {
-  const prev = renderingApp;
+  const prev = host[RENDERING];
   const prevPanics = host[PANICS];
-  renderingApp = app as MountedApp;
+  host[RENDERING] = app as MountedApp;
   host[PANICS] = panics;
   try {
     return fn();
   } finally {
-    renderingApp = prev;
+    host[RENDERING] = prev;
     host[PANICS] = prevPanics;
   }
 }

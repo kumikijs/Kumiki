@@ -209,7 +209,9 @@ export function tokenRef(group: string, path: string[]): string {
   if (themed !== undefined) return themed;
   const last = path[path.length - 1] ?? "";
   if (group === "colors") return mapColor(last);
-  if (group === "spacing" || group === "radius") return mapToken(last);
+  if (group === "spacing") return mapToken(last);
+  if (group === "radius") return mapRadius(last);
+  if (group === "shadow") return mapShadow(last);
   if (group === "typography" && path[0] === "size") return mapSize(last);
   return valueAt(currentTheme(), [group, last]) ?? last;
 }
