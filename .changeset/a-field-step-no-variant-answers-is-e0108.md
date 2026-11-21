@@ -42,10 +42,5 @@ member reads it by its tag. Written, such a name other than `.get` is now
 
 > `Cannot assign through ".length": "U" is a union, and a union has no fields — write it whole, as the variant it now holds`
 
-A name a variant's payload declares as a field (a record's, or a `File`'s:
-`p.x` on `type P = A({x: Int}) | Z`, `fv.name` on `FormValue`) is not
-reported, on either side of `:=`. So is a name on a union with a payload
-whose type the checker cannot decide.
-
 **Migration.** Read a payload with a `match`, and write the union whole:
 `u := match u with | A(n) -> A(n + 1) | Z -> A(1)`.
