@@ -7,8 +7,8 @@
 # message gives the literal to write.
 #
 # An expression has unary minus, so `- 1` there is -1. That is why the `down`
-# reducer's `- 1` is a `Sign`, and `cold`'s `- 40.0` lands on the lower bound
-# of `Celsius` rather than past it.
+# reducer's `- 1` is a `Sign`, and `cold`'s `- 40.0` is `-40.0`, the lower
+# bound `between(-40.0, 60.0)` includes.
 
 type Sign    = nominal Int where one-of(-1, 0, 1)
 type Celsius = nominal Float where between(-40.0, 60.0)

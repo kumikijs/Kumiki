@@ -402,6 +402,11 @@ describe("where only a literal stands, a negative number's `-` touches its digit
   const spaced: [string, string, string][] = [
     ["an Int refinement argument", `type Sign = nominal Int where one-of(- 1, 0, 1)${APP}`, "-1"],
     [
+      "a refinement argument after the first",
+      `type Sign = nominal Int where one-of(0, 1, - 1)${APP}`,
+      "-1",
+    ],
+    [
       "a Float refinement argument",
       `type C = nominal Float where between(- 40.0, 60.0)${APP}`,
       "-40.0",
@@ -417,6 +422,8 @@ describe("where only a literal stands, a negative number's `-` touches its digit
     ["a throttle policy", `${EFFECT} policy=throttle(- 1s)${APP}`, "-1"],
     ["a retry count", `${EFFECT} retry=linear(- 1, 100ms)${APP}`, "-1"],
     ["a retry backoff", `${EFFECT} retry=linear(3, - 100ms)${APP}`, "-100"],
+    ["an exponential retry count", `${EFFECT} retry=exponential(- 3, 100ms, 2.0)${APP}`, "-3"],
+    ["an exponential retry backoff", `${EFFECT} retry=exponential(3, - 100ms, 2.0)${APP}`, "-100"],
     ["a retry factor", `${EFFECT} retry=exponential(3, 100ms, - 2.0)${APP}`, "-2.0"],
     [
       "a property-test count",

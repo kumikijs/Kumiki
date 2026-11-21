@@ -24,6 +24,6 @@ literal to write:
 
 That covers a refinement argument, a duration (`timer`, `debounce`,
 `throttle`, a retry backoff), a retry count and factor, a `theme` or `motion`
-value, and a property-test `count`. No spelling changes meaning: `- 1` read
-as `-1` before, and `-1` is still what those positions take. In an
+value, and a property-test `count`. No program that still compiles changes
+meaning: `- 1` read as `-1` before, and `-1` is still what those positions take. In an
 expression, `- 1` stays unary minus applied to `1`.
