@@ -77,13 +77,13 @@ kumiki smoke app.kumiki
 
 ## check が落ちたら
 
-診断はコードと位置を伴う:
+診断は重大度・コード・位置を伴う:
 
 ```
-E0103 undef-ref at 3:39: Reference to undefined name "total"
+error E0103 undef-ref at 3:39: Reference to undefined name "total"
 ```
 
-コードが種類を表す。[エラーカタログ](../spec/errors.md) を引けば、`E0103` は名前がどこにも解決しないこと、つまりほとんどの場合はタイプミスか定義漏れだと分かる。自動修正のあるコードなら `kumiki fix app.kumiki E0103` がパッチを提案する。
+`error` は check を失敗させる。`warning` の行は助言で、`check` はそれを表示したうえで `ok (1 warning)` で終わる。コードが種類を表す。[エラーカタログ](../spec/errors.md) を引けば、`E0103` は名前がどこにも解決しないこと、つまりほとんどの場合はタイプミスか定義漏れだと分かる。自動修正のあるコードなら `kumiki fix app.kumiki E0103` がパッチを提案する。
 
 ## 次へ
 

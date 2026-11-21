@@ -4,11 +4,12 @@ import { checkAgainst, checkEmitTarget, type LiteralDomain } from "./against.ts"
 import { type Ctx, type KumikiError, pureScope, type SymbolTable } from "./context.ts";
 import { checkExpr } from "./expr.ts";
 import { container, prim } from "./infer.ts";
+import { nestedScopes } from "./nested-scopes.ts";
 import {
+  notFoundEntry,
   type RouteChainResolver,
   routeInAppInitMessage,
   routeReachedThroughCalls,
-  servesNotFound,
 } from "./route-chain.ts";
 import { checkRedirects, checkRouteTargetArity } from "./tile.ts";
 
@@ -42,12 +43,23 @@ export function checkApp(
     checkRouteTargetArity(r, `Route "${r.path}"`, sym, errors);
   }
   checkRedirects(app.routes, errors);
-  if (!servesNotFound(app.routes)) {
+  const notFound = notFoundEntry(app.routes);
+  if (notFound === undefined) {
     errors.push({
       code: "E0001",
       kind: "missing-404",
       message: `app.routes must include a "/404" entry`,
       pos: app.pos,
+    });
+  } else if (notFound.tile.startsWith(">>")) {
+    // Not `missing-404`: that asks for a `/404` entry the map already has, and a second is E0008.
+    errors.push({
+      code: "E0001",
+      kind: "404-is-redirect",
+      message:
+        `Route "/404" is a redirect, but "/404" is the fallback for paths no route matches ` +
+        `and has to render a tile — write "/404" -> <Tile>`,
+      pos: notFound.pathPos,
     });
   }
   const initCtx: Ctx = {
@@ -57,6 +69,9 @@ export function checkApp(
     localBinders: new Map(),
     capsAvailable: new Set(app.caps),
     routeBind: "unbound",
+    endedScopes: new Map(),
+    nestedScopes: nestedScopes(...app.init),
+    rootsShareNoExpression: true,
   };
   for (const e of app.init) {
     if (e.kind !== "Call") {
@@ -97,8 +112,9 @@ function checkAppHttp(app: AppDef, sym: SymbolTable, errors: KumikiError[]): voi
       pos: handler.pos,
     });
   }
-  const fieldCtx = pureScope([]);
-  for (const e of [http.baseUrl, http.headers, http.timeout, http.credentials]) {
+  const fields = [http.baseUrl, http.headers, http.timeout, http.credentials];
+  const fieldCtx: Ctx = { ...pureScope([], ...fields), rootsShareNoExpression: true };
+  for (const e of fields) {
     if (e !== undefined) checkExpr(e, sym, errors, fieldCtx);
   }
   if (http.baseUrl !== undefined)

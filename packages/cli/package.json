@@ -59,7 +59,7 @@
     "@kumikijs/runtime": "workspace:*",
     "@kumikijs/vite": "workspace:*",
     "commander": "^15.0.0",
-    "rolldown": "1.0.3",
+    "rolldown": "~1.2.18",
     "vite": "catalog:"
   },
   "devDependencies": {

@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { check, lex, parse } from "@kumikijs/compiler";
+import { check, lex, parse, severityOf } from "@kumikijs/compiler";
 import { loadSource, type Store } from "../store.ts";
 import { messageOf } from "../text.ts";
 import { atomicWriteFileSync } from "../write-lock.ts";
@@ -16,7 +16,7 @@ function validate(
 ): { ok: true } | { ok: false; message: string } {
   try {
     const program = parse(lex(src));
-    const errors = check(program, { requireApp: false }).filter((d) => d.severity !== "warning");
+    const errors = check(program, { requireApp: false }).filter((d) => severityOf(d) === "error");
     if (errors.length > 0) {
       const summary = errors
         .slice(0, 3)
@@ -27,8 +27,19 @@ function validate(
   } catch (e) {
     return { ok: false, message: `Parse/lex failed: ${String(e)}` };
   }
-  const locked = lockViolation(path, touchedDefinitions(before, src));
+  const locked = touchedLockViolation(path, before, src);
   return locked === undefined ? { ok: true } : { ok: false, message: locked };
+}
+
+// Every edit of a source asks this under the write lock, just before it writes — the mutators
+// through `validate`, `fix` in `writeFix` — so a definition is held to its lock whichever way the
+// edit reached it. A write that puts the file back as it was before a failed op asks nothing.
+export function touchedLockViolation(
+  path: string,
+  before: string,
+  after: string,
+): string | undefined {
+  return lockViolation(path, touchedDefinitions(before, after));
 }
 
 function touchedDefinitions(before: string, after: string): string[] {

@@ -27,11 +27,9 @@ The server now keys each option with the same structural key the mounted
 ```
 
 `Some(Backlog)` and `Some(InProgress)` are told apart by their payload, as on
-the client. A record option is matched by its JSON text, fields in the order
-written, so a record whose fields are written in another order matches nothing
-on either path (#941). The placeholder option is served `selected` by the
-client's rule, when the select has no value, so a `Unit` value now selects it
-on the server too.
+the client. The placeholder option is served `selected` by the client's rule,
+when the select has no value, so a `Unit` value now selects it on the server
+too.
 
 A `Text` option's served `value` is now its key as well, `"m"` with the quotes
 where it was `m`, the same as the mounted option's.

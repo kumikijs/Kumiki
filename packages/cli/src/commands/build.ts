@@ -7,6 +7,7 @@ import type { Command } from "commander";
 import { formatDiagnostic } from "../diagnostic.ts";
 import { builtinIconSubset } from "../icons.ts";
 import { capsFor, reportCapabilitySearch } from "./_shared/caps.ts";
+import { sourceFileArg } from "./_shared/source-file.ts";
 import { exitWithUsage } from "./_shared/usage.ts";
 
 const require = createRequire(import.meta.url);
@@ -49,6 +50,9 @@ export type BuildOptions = {
 type Artifacts = { appJs: string; modules: Map<string, string>; html: string };
 
 async function link(artifacts: Artifacts, bundle: boolean): Promise<Artifacts> {
+  // Irregular dependency: the CLI's `rolldown` range is copied by hand from the range its `vite`
+  // declares, because vite exposes no `rolldown()` to link with and any other range installs a
+  // second native toolchain. A vite bump that moves that range must move this one too.
   const { rolldown } = await import("rolldown");
   const stage = mkdtempSync(join(tmpdir(), "kumiki-link-"));
   try {
@@ -89,7 +93,7 @@ export async function buildCmd(
   outdirArg: string,
   options: BuildOptions = {},
 ): Promise<void> {
-  const inputPath = resolve(process.cwd(), inputArg);
+  const inputPath = sourceFileArg(inputArg);
   const outdir = resolve(process.cwd(), outdirArg);
   const source = readFileSync(inputPath, "utf8");
   const caps = capsFor(inputPath);

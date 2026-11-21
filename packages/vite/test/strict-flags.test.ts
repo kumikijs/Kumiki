@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { KumikiPluginOptions } from "../src/index.ts";
 import { transformCode, writeKumiki } from "./helpers/plugin.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
+
+const TMP = scratchRoot(import.meta.url);
 
 const route = (root: string) =>
   `app Strict caps=[] routes={"/" -> ${root}, "/404" -> ${root}} init=[]`;
@@ -38,12 +41,12 @@ ${route("Root")}
 
 describe("strict compile options", () => {
   it.each(VIOLATIONS)("$flag off compiles a source it would reject", async ({ src, marker }) => {
-    expect(await transformCode(src, writeKumiki("strict-off", src))).toContain(marker);
+    expect(await transformCode(src, writeKumiki(TMP, "strict-off", src))).toContain(marker);
   });
 
   it.each(VIOLATIONS)("$flag on fails the transform with $code", async ({ flag, code, src }) => {
     await expect(
-      transformCode(src, writeKumiki("strict-on", src), { [flag]: true }),
+      transformCode(src, writeKumiki(TMP, "strict-on", src), { [flag]: true }),
     ).rejects.toThrow(new RegExp(code));
   });
 
@@ -82,6 +85,6 @@ ${route("Root")}
     src: string;
     expected: RegExp;
   }[])("accepts $name", async ({ opts, src, expected }) => {
-    expect(await transformCode(src, writeKumiki("strict-ok", src), opts)).toMatch(expected);
+    expect(await transformCode(src, writeKumiki(TMP, "strict-ok", src), opts)).toMatch(expected);
   });
 });
