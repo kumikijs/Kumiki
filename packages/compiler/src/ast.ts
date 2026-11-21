@@ -284,11 +284,8 @@ export type Refinement = {
   kind: "Refinement";
   pred: string;
   args: (number | string)[];
-  /**
-   * The text each number argument is written as, at its index, since the number cannot tell `7.0`
-   * from `7`. Absent where no source wrote the refinement, as on a standard library type.
-   */
-  raw?: (string | undefined)[];
+  /** Each of `args` as the source writes it, a number's sign included, and where it starts. */
+  written?: { raw: string; pos: Pos }[];
   pos: Pos;
 };
 

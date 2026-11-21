@@ -235,18 +235,12 @@ const ARG_DESCRIPTION: Record<ArgKind, string> = {
   literal: "a number or text literal",
 };
 
-function argFits(kind: ArgKind, arg: RefinementArg | undefined, raw: string | undefined): boolean {
+function argFits(kind: ArgKind, arg: RefinementArg | undefined): boolean {
   switch (kind) {
     case "number":
       return typeof arg === "number";
     case "count":
-      // Written with no point, as an `Int` is anywhere else.
-      return (
-        typeof arg === "number" &&
-        (raw === undefined || isIntLiteral({ value: arg, raw })) &&
-        Number.isInteger(arg) &&
-        arg >= 0
-      );
+      return typeof arg === "number" && Number.isInteger(arg) && arg >= 0;
     case "text":
       return typeof arg === "string";
     case "literal":
@@ -254,11 +248,20 @@ function argFits(kind: ArgKind, arg: RefinementArg | undefined, raw: string | un
   }
 }
 
-/** How argument `i` reads in a message — quoted when it is text, a number as written. */
+/** How argument `i` reads in a message — quoted when it is text, as written. */
 const showArg = (r: Refinement, i: number): string => {
   const arg = r.args[i];
-  return arg === undefined ? "nothing" : (r.raw?.[i] ?? JSON.stringify(arg));
+  return arg === undefined ? "nothing" : (r.written?.[i]?.raw ?? JSON.stringify(arg));
 };
+
+/**
+ * Whether argument `i` is written with no point, as an `Int` is, since its number cannot tell `7.0`
+ * from `7`. One no source wrote has only its number to go by.
+ */
+function writtenAsInt(r: Refinement, i: number): boolean {
+  const raw = r.written?.[i]?.raw;
+  return raw === undefined || isIntLiteral({ value: Number(r.args[i]), raw });
+}
 
 export function refinementProblem(r: Refinement): RefinementProblem | undefined {
   const entry = REFINEMENTS.get(r.pred);
@@ -300,7 +303,9 @@ export function refinementBaseProblem(
 
 function arityProblem(r: Refinement, params: Params): string | undefined {
   const { pred, args } = r;
-  const fits = (kind: ArgKind, i: number): boolean => argFits(kind, args[i], r.raw?.[i]);
+  // A count is an `Int`, so it is written with no point, as an `Int` is anywhere else.
+  const fits = (kind: ArgKind, i: number): boolean =>
+    argFits(kind, args[i]) && (kind !== "count" || writtenAsInt(r, i));
   const wrongArg = (i: number, kind: ArgKind): string =>
     `Refinement "${pred}" takes ${ARG_DESCRIPTION[kind]} but argument ${i + 1} is ${showArg(r, i)}`;
   if ("rest" in params) {
