@@ -145,6 +145,33 @@ describe("a match with no declared destination has its arms' common type", () =>
     expect(inReducer(`let v = match ou with | Some(id) -> id | None -> p; u := v`)).toEqual([]);
   });
 
+  describe("an Int beside a Float is a Float, the type an Int widens to", () => {
+    const NUMS = `${IDS}\nslot f : Float = 1.5\nslot ns : List(Int) = []\nslot fs : List(Float) = []`;
+
+    it.each([
+      ["an if", "let v = if true then 1 else 1.5; n := v", "Int"],
+      ["an if whose Float comes first", "let v = if true then 1.5 else 1; n := v", "Int"],
+      ["a match", "let v = match ou with | Some(id) -> 1 | None -> 1.5; n := v", "Int"],
+      ["a List literal", "let v = [1, 1.5]; ns := v", "List(Int)"],
+    ])("reports %s of the two landing in an Int", (_, body, into) => {
+      expect(inReducer(body, NUMS)).toEqual([
+        `E0201 Expected ${into} but got ${into.replace("Int", "Float")}`,
+      ]);
+    });
+
+    it.each([
+      ["an if", "let v = if true then 1 else 1.5; f := v"],
+      ["a match", "let v = match ou with | Some(id) -> 1 | None -> 1.5; f := v"],
+      ["a List literal", "let v = [1, 1.5]; fs := v"],
+    ])("accepts %s of the two landing in a Float", (_, body) => {
+      expect(inReducer(body, NUMS)).toEqual([]);
+    });
+
+    it("leaves an Int beside a Text with no type", () => {
+      expect(inReducer(`let v = if true then 1 else "a"; n := v`, NUMS)).toEqual([]);
+    });
+  });
+
   it("has no type when one arm's value is undecidable, rather than the other arm's", () => {
     // `.map` with a fragment answers no type, so the `None` arm is undecidable.
     const undecided = "Some(p).map($1).get-or(p)";
