@@ -248,6 +248,10 @@ reducer 名がどの `reducer` 定義も指していない。名指す箇所は 
 
 > `"$2" is not bound here — the .filter fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`
 
+`Set` の `filter` は各メンバーを、ペアのメンバーも含めて丸ごと渡すので、そこではメッセージはペアを示す代わりにそう述べ、式断片に 2 引数の `fn` を渡したときの [E0213](#e0213-call-arity-mismatch) も同じく述べる（`… .filter on "Set(Tuple(Int, Int))" supplies 1 — a Set's .filter hands each member whole, as "$1"`）：
+
+> `"$2" is not bound here — a Set's .filter hands each member whole, as "$1"`
+
 これはフラグメントの中のどこでも同じで、別のメソッドの引数の中の `$2` も含む（`xs.map($1.min($2))`）：positional を宣言するのはフラグメントだけなので、そうした引数はフラグメントのものを読む。フラグメントを囲むスコープが自分の `$2` — `fn` の第 2 引数、外側のペアの値 — を束縛している場合、フラグメントはそれを隠し、メッセージはそこへの届き方を示す：
 
 > `"$2" is not bound here — the .map fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`

@@ -485,12 +485,15 @@ export function methodCallJs(
 
   const recvJs = jsOfExpr(recv, ctx);
   const takenApart = `const ${p1} = __x[0]; const ${p2} = __x[1];`;
+  const isPair = "(Array.isArray(__x) && __x.length === 2)";
   const binds: Record<FragmentShape, string> = {
     pair: takenApart,
     "key-value": takenApart,
-    key: `const ${p1} = __x[0];`,
+    // `_s.filter` hands a Set held as object keys each `[member, true]` entry, but a Set a host
+    // handed over as an array, such as a provider's value, each element itself.
+    key: `const ${p1} = ${isPair} ? __x[0] : __x;`,
     value: `const ${p1} = __x;`,
-    undecided: `const _isPair = (Array.isArray(__x) && __x.length === 2); const ${p1} = _isPair ? __x[0] : __x; const ${p2} = _isPair ? __x[1] : (__y !== undefined ? __y : __x);`,
+    undecided: `const _isPair = ${isPair}; const ${p1} = _isPair ? __x[0] : __x; const ${p2} = _isPair ? __x[1] : (__y !== undefined ? __y : __x);`,
   };
   const decided = shape ?? "undecided";
   const argFnList = (a: Expr): string =>

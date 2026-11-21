@@ -277,13 +277,15 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         return;
       }
       if (e.name === "$2" && ctx.oneValueFragment !== undefined) {
-        const { method, hides } = ctx.oneValueFragment;
+        const { method, hides, shape } = ctx.oneValueFragment;
         errors.push({
           code: "E0103",
           kind: "undef-ref",
           message: hides
             ? `"$2" is not bound here — the .${method} fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
-            : `"$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
+            : shape === "key"
+              ? `"$2" is not bound here — ${wholeMember(method)}`
+              : `"$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over ${PAIR_BINDERS}`,
           pos: e.pos,
         });
         return;
@@ -489,7 +491,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
           if (shape === "value" || shape === "key") {
             inner.localBinds.delete("$2");
             inner.localTypes.delete("$2");
-            inner.oneValueFragment = { method: e.method, hides: ctx.localBinds.has("$2") };
+            inner.oneValueFragment = { method: e.method, hides: ctx.localBinds.has("$2"), shape };
           } else if (fragmentBinds(fragment) === 2) {
             bindLocal(inner, "$2", p2);
           }
@@ -638,11 +640,24 @@ function checkFragmentFnArity(
   }
   if (n === 2 && (shape === "value" || shape === "key" || shape === null)) {
     const on = receiver ? ` on "${typeToString(receiver)}"` : "";
-    return report(
-      `.${method}${on} supplies 1 — a second positional is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
-    );
+    const why =
+      shape === "key"
+        ? wholeMember(method)
+        : `a second positional is bound only over ${PAIR_BINDERS}`;
+    return report(`.${method}${on} supplies 1 — ${why}`);
   }
   return true;
+}
+
+/** The fragments that bind a second positional, as E0103 and E0213 name them. */
+const PAIR_BINDERS = "a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)";
+
+/**
+ * What a Set's fragment is handed instead of a second positional. A member that is itself a pair
+ * is handed whole too, so pointing at pairs would send the reader the wrong way.
+ */
+function wholeMember(method: string): string {
+  return `a Set's .${method} hands each member whole, as "$1"`;
 }
 
 const COMPARISON_OPS: ReadonlySet<string> = new Set(["<", ">", "<=", ">="]);

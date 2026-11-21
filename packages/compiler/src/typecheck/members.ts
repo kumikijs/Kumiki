@@ -111,8 +111,9 @@ export function keyKindOfReader(
   return rep === "text" || rep === null ? undefined : rep;
 }
 
-// The type parameter each receiver stores as object keys, which its `filter` / `map` hands the
-// fragment as an entry's key: a Map's key, and a Set's member, whose entry's value is `true`.
+// The type parameter each receiver stores as object keys, which a Map's `filter` / `map` and a
+// Set's `filter` hand the fragment as an entry's key: a Map's key, and a Set's member, whose
+// entry's value is `true`.
 const KEYED: ReadonlyMap<string, FragmentPositional> = new Map([
   ["Map", "K"],
   ["Set", "T"],
@@ -209,9 +210,9 @@ function fragmentRow(
 }
 
 /**
- * A key is typed only when it reads back as a value of its type: a type parameter
- * or a `Bytes` key is handed over as the string it is stored under. `{}` as a
- * fold's init infers to nothing, being the empty Map and the empty Set alike.
+ * A Map's key or a Set's member is typed only when it reads back as a value of its type: a type
+ * parameter or a `Bytes` one is handed over as the string it is stored under. `{}` as a fold's
+ * init infers to nothing, being the empty Map and the empty Set alike.
  */
 function positionalType(
   p: FragmentPositional,

@@ -121,15 +121,24 @@ app A
 
 describe("$1 is the member a Set's filter hands its fragment", () => {
   const SET = "slot s : Set(Int) = [10, 20]";
+  const IDS = "type Ids = Set(Int)\nslot ids : Ids = [10, 20]";
+  const PAIRS = "slot p : Set(Tuple(Int, Text)) = []";
+  const WHOLE = 'a Set\'s .filter hands each member whole, as "$1"';
 
-  it("reports a member used as a value it is not", () => {
-    expect(diagnostics(SET, "s.filter($1.size > 0)", "Set(Int)")).toEqual([
+  it.each([
+    { name: "a Set", defs: SET, rhs: "s.filter($1.size > 0)", res: "Set(Int)" },
+    { name: "an alias of a Set", defs: IDS, rhs: "ids.filter($1.size > 0)", res: "Ids" },
+  ])("reports a member of $name used as a value it is not", ({ defs, rhs, res }) => {
+    expect(diagnostics(defs, rhs, res)).toEqual([
       'E0108 Type "Int" has no member ".size" — it is a member of Map / Set',
     ]);
   });
 
-  it("records the fragment as handed an entry's key alone", () => {
-    const ast = parse(lex(program(SET, "s.filter($1 > 15)", "Set(Int)")));
+  it.each([
+    { name: "a Set", defs: SET, rhs: "s.filter($1 > 15)", res: "Set(Int)" },
+    { name: "an alias of a Set", defs: IDS, rhs: "ids.filter($1 > 12)", res: "Ids" },
+  ])("records the fragment over $name as handed an entry's key alone", ({ defs, rhs, res }) => {
+    const ast = parse(lex(program(defs, rhs, res)));
     expect(check(ast)).toEqual([]);
     expect(shapesOf(ast, "filter")).toEqual(["key"]);
   });
@@ -142,16 +151,29 @@ describe("$1 is the member a Set's filter hands its fragment", () => {
       rhs: `p.filter($2 == "a")`,
     },
   ])("binds no second positional beside $name", ({ res, rhs }) => {
-    const defs = `${SET}\nslot p : Set(Tuple(Int, Text)) = []`;
-    expect(diagnostics(defs, rhs, res)).toEqual([
-      'E0103 "$2" is not bound here — the .filter fragment is handed one value, "$1"; "$2" is bound only over a Map\'s filter or map, or a pair (Tuple(A, B), e.g. from .entries)',
+    expect(diagnostics(`${SET}\n${PAIRS}`, rhs, res)).toEqual([
+      `E0103 "$2" is not bound here — ${WHOLE}`,
     ]);
   });
 
-  it("refuses a fn that takes a second positional", () => {
-    const defs = `fn keep(n: Int, b: Bool) -> Bool = b\n${SET}`;
-    expect(diagnostics(defs, "s.filter(keep)", "Set(Int)")).toEqual([
-      'E0213 Function "keep" expects 2 argument(s) but .filter on "Set(Int)" supplies 1 — a second positional is bound only over a Map\'s filter or map, or a pair (Tuple(A, B), e.g. from .entries)',
+  it.each([
+    {
+      name: "a member",
+      defs: SET,
+      params: "n: Int, b: Bool",
+      rhs: "s.filter(keep)",
+      res: "Set(Int)",
+    },
+    {
+      name: "a pair member, which is not taken apart",
+      defs: PAIRS,
+      params: "n: Int, t: Text",
+      rhs: "p.filter(keep)",
+      res: "Set(Tuple(Int, Text))",
+    },
+  ])("refuses a fn that takes a second positional beside $name", ({ defs, params, rhs, res }) => {
+    expect(diagnostics(`fn keep(${params}) -> Bool = true\n${defs}`, rhs, res)).toEqual([
+      `E0213 Function "keep" expects 2 argument(s) but .filter on "${res}" supplies 1 — ${WHOLE}`,
     ]);
   });
 });

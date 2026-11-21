@@ -6,12 +6,12 @@
 # exactly the shape a `.entries` pair has, and it is still one value. Only a
 # `Tuple(A, B)` (what `.entries` produces) is taken apart into `$1` / `$2`,
 # and a Map's filter is handed the key and the value. Everywhere else the
-# fragment is handed one value, so `$2` there is E0103.
+# fragment is handed one value, so `$2` there is E0103. A Set's filter is
+# handed each member as an entry, binds the member as `$1` — a `Text` in
+# `words` below — and binds no `$2`; it keeps the members the predicate keeps.
 #
 # A `fn` named as the fragment binds the same way as the call it stands for:
-# `nested.map(len)` is `nested.map(len($1))`. A Set's filter is handed each
-# element as an entry, and `$1` is the element — a `Text` in `words` below —
-# and it keeps the elements the predicate keeps.
+# `nested.map(len)` is `nested.map(len($1))`.
 
 fn len(xs: List(Int)) -> Int = xs.length
 

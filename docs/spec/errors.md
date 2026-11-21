@@ -285,6 +285,10 @@ A `filter` / `map` / `find` / `sort-by` fragment handed one value — an element
 
 > `"$2" is not bound here — the .filter fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`
 
+A `Set`'s `filter` hands each member whole, a pair member included, so there the message says that instead of pointing at pairs, and so does [E0213](#e0213-call-arity-mismatch)'s for a `fn` of two named as the fragment (`… .filter on "Set(Tuple(Int, Int))" supplies 1 — a Set's .filter hands each member whole, as "$1"`):
+
+> `"$2" is not bound here — a Set's .filter hands each member whole, as "$1"`
+
 That holds anywhere inside the fragment, a `$2` in another method's argument included (`xs.map($1.min($2))`): only a fragment declares positionals, so such an argument reads the fragment's. Where the scope around the fragment binds a `$2` of its own — a `fn`'s second parameter, an enclosing pair's value — the fragment hides it, and the message says how to reach it:
 
 > `"$2" is not bound here — the .map fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
