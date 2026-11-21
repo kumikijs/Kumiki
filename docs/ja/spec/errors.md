@@ -244,9 +244,13 @@ reducer 名がどの `reducer` 定義も指していない。名指す箇所は 
 
 > `Reference to undefined name "count-1" — "-" continues an identifier, so this is one name. Write "count - 1" with spaces for subtraction.`
 
-1 つの値を受け取る `filter` / `map` / `find` / `sort-by` のフラグメント — ペアでない要素、`Option` の値 — は `$1` だけを束縛する（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）ので、その中の `$2` は理由を添えて報告される：
+1 つの値を受け取る `filter` / `map` / `find` / `sort-by` のフラグメント — ペアでない要素、`Option` の値、`Set` のメンバー — は `$1` だけを束縛する（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）ので、その中の `$2` は理由を添えて報告される：
 
 > `"$2" is not bound here — the .filter fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`
+
+`Set` の `filter` は各メンバーを、ペアのメンバーも含めて丸ごと渡すので、そこではメッセージはペアを示す代わりにそう述べ、式断片に 2 引数の `fn` を渡したときの [E0213](#e0213-call-arity-mismatch) も同じく述べる（`… .filter on "Set(Tuple(Int, Int))" supplies 1 — a Set's .filter hands each member whole, as "$1"`）：
+
+> `"$2" is not bound here — a Set's .filter hands each member whole, as "$1"`
 
 これはフラグメントの中のどこでも同じで、別のメソッドの引数の中の `$2` も含む（`xs.map($1.min($2))`）：positional を宣言するのはフラグメントだけなので、そうした引数はフラグメントのものを読む。フラグメントを囲むスコープが自分の `$2` — `fn` の第 2 引数、外側のペアの値 — を束縛している場合、フラグメントはそれを隠し、メッセージはそこへの届き方を示す：
 
@@ -586,7 +590,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 `xs.map(double)` は `xs.map(double($1))` であり、`xs.fold(0, add)` は `xs.fold(0, add($1, $2))` である。名指された `fn` はそれらの positional を先頭から、自身が宣言する数だけ受け取るので、1 つ以上、かつメソッドが束縛する数以下を宣言していなければならない — そうでなければ [E0213](#e0213-call-arity-mismatch) である。`fold` の `fn` はちょうど 2 つを宣言する。要素は 2 番目だからであり、1 つの `fn` は何も畳み込まない。`filter` / `map` / `find` / `sort-by` の `fn` が 2 つを宣言できるのは、フラグメントが各値を分解する場合 — Map の filter と map、ペア（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）— だけである。チェッカが型を決められるそれ以外のレシーバの上では、2 番目のパラメータは何も受け取らないか、lowering がフォールバックする場合は JS のインデックスか要素そのものを再び受け取るので、これも E0213 である。`fold` の 1 番目を含むそれ以外の引数はすべて値であり、このチェックを受ける。
 
-数が合えば、名前は自身が表す呼び出しとして、式断片が束縛するスコープの中で検査される：各パラメータは渡される positional と照合され、その型は [言語 §1.8.6](./language.md#_1-8-6-部分適用と高階関数) が与えるものである。`fn` の結果は、メソッドが式断片の結果を検査する位置で検査される——`sort-by` のキー、`update` の新しい値。したがって `fn loud(t: Text)` に対して `List(Int)` の上の `xs.map(loud)` は `loud` の位置で [E0201](#e0201-type-mismatch) となり、`xs.map(loud($1))` が `$1` の位置でそうなるのと同じである。`Map(Text, Int)` の上の `m.filter(keep)` は `fn keep(k: Text, v: Int)` を受け付け、`fn keep(k: Int, v: Int)` を報告する。`xs.fold(0, f)` は `f` の第 1 パラメータを `Int` と照合する。チェッカが型を決められない positional は何とも照合されない。
+数が合えば、名前は自身が表す呼び出しとして、式断片が束縛するスコープの中で検査される：各パラメータは渡される positional と照合され、その型は [言語 §1.8.6](./language.md#_1-8-6-部分適用と高階関数) が与えるものである。`fn` の結果は、メソッドが式断片の結果を検査する位置で検査される——`sort-by` のキー、`update` の新しい値、`fold` の次のアキュムレータ。したがって `fn loud(t: Text)` に対して `List(Int)` の上の `xs.map(loud)` は `loud` の位置で [E0201](#e0201-type-mismatch) となり、`xs.map(loud($1))` が `$1` の位置でそうなるのと同じである。`Map(Text, Int)` の上の `m.filter(keep)` は `fn keep(k: Text, v: Int)` を受け付け、`fn keep(k: Int, v: Int)` を報告する。`xs.fold(0, f)` は `f` の第 1 パラメータをアキュムレータ——`Int`、または `f` が返すより広い型——と照合する。チェッカが型を決められない positional は何とも照合されない。
 
 **修正**：呼び出しを書く — `label()`、あるいは宣言された引数を渡して `greet(first, last)`。
 
