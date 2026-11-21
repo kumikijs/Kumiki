@@ -1,7 +1,7 @@
 import { check, lex, parse } from "@kumikijs/compiler";
 import { mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { withRoot } from "./helpers/dom.ts";
+import { mountApp, waitUntil, withRoot } from "./helpers/dom.ts";
 import { loadSource } from "./helpers/load.ts";
 import { withApp } from "./helpers/source.ts";
 
@@ -112,6 +112,36 @@ describe("a Set's filter is handed its elements", () => {
     const defs = "slot tags : Set(Int) = [1, 2, 3]";
     expect(await run(program(defs, "Int", "tags.filter($1 > 1).size"))).toBe(2);
   });
+
+  // A host provider's value reaches `.ok` as the host built it, so a Set can arrive as an array.
+  it("keeps the members of a Set a provider hands over as an array", async () => {
+    const source = `slot kept : List(Int) = []
+effect load cap=ids.fetch in=Unit out=Result(Set(Int), Text)
+reducer go on=ui.click(Go) do= emit load()
+reducer got on=load.ok($s, _) do= kept := $s.filter($1 > 15).to-list
+tile Go = button(text="go", onClick=go)
+tile App = column(Go, text("kept: " + kept.show))
+app A
+    caps   = [ids.fetch]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+    const caps = ["ids.fetch"];
+    expect(check(parse(lex(source)), { capabilities: caps })).toEqual([]);
+    const app = await loadSource(source, caps);
+    const { root, handle } = mountApp(app, {
+      providers: { "ids.fetch": async () => ({ kind: "ok", value: [10, 20, 30] }) },
+    });
+    try {
+      root.querySelector("button")?.click();
+      await waitUntil(() => (root.textContent ?? "").includes("kept: [20, 30]")).catch(() => {
+        throw new Error(`wanted "kept: [20, 30]", page shows "${root.textContent}"`);
+      });
+    } finally {
+      handle.dispose();
+      root.remove();
+    }
+  });
 });
 
 describe("a $2 inside another method's argument is the enclosing fragment's", () => {
@@ -216,11 +246,23 @@ describe("a Map's map is handed each entry, the key and the value", () => {
   });
 });
 
-describe("a fn's own $2 inside a fragment handed one value", () => {
-  it("says the fragment hides it and how to reach it", () => {
-    const defs = "fn addK(xs: List(Int), k: Int) -> List(Int) = xs.map($1 + $2)";
-    expect(codes(program(defs, "Int", "0"))).toEqual([
-      `E0103 "$2" is not bound here — the .map fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`,
+describe("an enclosing $2 inside a fragment handed one value", () => {
+  it.each([
+    [
+      "a fn's own second parameter",
+      "fn addK(xs: List(Int), k: Int) -> List(Int) = xs.map($1 + $2)",
+      "0",
+      "map",
+    ],
+    [
+      "the value of a Map's filter around a Set's",
+      'slot m : Map(Text, Int) = {"a": 1}\nslot s : Set(Int) = [1]',
+      "m.filter(s.filter($2 == 1).size > 0).size",
+      "filter",
+    ],
+  ])("says the fragment hides %s and how to reach it", (_what, defs, rhs, method) => {
+    expect(codes(program(defs, "Int", rhs))).toEqual([
+      `E0103 "$2" is not bound here — the .${method} fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`,
     ]);
   });
 });

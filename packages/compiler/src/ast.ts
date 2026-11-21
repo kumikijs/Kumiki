@@ -344,7 +344,17 @@ export type Lvalue =
 
 export type { KeyKind };
 
-export type FragmentShape = "pair" | "key-value" | "value" | "undecided";
+/**
+ * How `$1` / `$2` are bound from what a `filter` / `map` / `find` / `sort-by` fragment is handed,
+ * which the checker reads to type them and the lowering to bind them:
+ * - `pair`: a `Tuple(A, B)` element, taken apart into `$1` and `$2`;
+ * - `key-value`: a Map's entry, its key as `$1` and its value as `$2`;
+ * - `key`: an entry whose key alone is `$1`, as a Set's `filter` is handed `[member, true]`;
+ * - `value`: one value, `$1`, with no `$2`;
+ * - `undecided`: a value whose type the checker cannot decide, taken apart when it is a two-item
+ *   array.
+ */
+export type FragmentShape = "pair" | "key-value" | "key" | "value" | "undecided";
 
 export type { ShowShape };
 
