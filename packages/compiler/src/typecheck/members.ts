@@ -1,6 +1,6 @@
-import { assignable, isOpaque, recordFieldType, unaliasType } from "../assignable.ts";
+import { assignable, isOpaque, recordFieldType, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, KeyKind, Pos, TypeExpr } from "../ast.ts";
-import { FIELD_ACCESS_SHORTCUTS, METHOD_MIN_ARGS } from "../codegen.ts";
+import { FIELD_ACCESS_SHORTCUTS, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
 import { keyRepresentation } from "../key-representation.ts";
 import {
   type FragmentArgument,
@@ -29,12 +29,57 @@ export function classifyMember(raw: TypeExpr | null, field: string, sym: SymbolT
     return UNIVERSAL_MEMBERS.has(field) ? "member" : "unknown";
   }
 
+  if (t.kind === "TypeUnion") return unionMember(t, field, sym);
+
   const receivers = memberReceivers(raw, t, sym);
   if (receivers === null) return "undecidable";
 
   if (t.kind === "TypePrim" && primFieldType(t.name, field) !== null) return "field";
 
   return receivers.some((r) => hasMember(r, field)) ? "member" : "unknown";
+}
+
+/**
+ * A union has no fields, and a member dispatches by name on the variant the value holds (a
+ * program's union may name a variant `Ok` or `Some`, which `.is-ok` / `.get` read by its tag), so a
+ * runtime member name is left undecided. Any other name is a field step no variant answers, except
+ * one a payload may declare, which is left undecided until what such a step answers is settled.
+ */
+function unionMember(
+  t: TypeExpr & { kind: "TypeUnion" },
+  field: string,
+  sym: SymbolTable,
+): MemberClass {
+  if (KNOWN_METHODS.has(field)) return "undecidable";
+  return somePayloadDeclares(t, field, sym) ? "undecidable" : "unknown";
+}
+
+/**
+ * A member is never a step of a path but `.get` (language.md), and a union has no fields, so a
+ * write through a runtime member name on a union has no place to land. A name a payload may
+ * declare is left undecided, as it is on the read side.
+ */
+export function isUnionMemberWrite(raw: TypeExpr | null, field: string, sym: SymbolTable): boolean {
+  const t = unaliasType(raw, sym);
+  if (t?.kind !== "TypeUnion" || field === "get" || !KNOWN_METHODS.has(field)) return false;
+  return !somePayloadDeclares(t, field, sym);
+}
+
+function somePayloadDeclares(
+  t: TypeExpr & { kind: "TypeUnion" },
+  field: string,
+  sym: SymbolTable,
+): boolean {
+  return t.variants.some((v) => v.payloads.some((p) => payloadDeclares(p, field, sym)));
+}
+
+function payloadDeclares(payload: TypeExpr, field: string, sym: SymbolTable): boolean {
+  const t = unaliasType(payload, sym);
+  // A payload whose type is not known could declare anything.
+  if (t === null || t.kind === "TypeRef") return true;
+  // A union declares no fields. Judging one with `classifyMember` would come back here, and on a
+  // union that holds itself (`type T = Node(T) | Leaf`) it would never stop.
+  return t.kind !== "TypeUnion" && classifyMember(payload, field, sym) === "field";
 }
 
 export function memberReceivers(
@@ -81,7 +126,9 @@ export function undefMemberError(
   const head =
     t.kind === "TypeRecord"
       ? `Record type has no field or method ".${field}"`
-      : `Type "${receiverName(raw, t, sym)}" has no member ".${field}"`;
+      : t.kind === "TypeUnion"
+        ? `Type "${typeToString(raw ?? t)}" has no member ".${field}" — a union has no fields; read a variant's payload with a match`
+        : `Type "${receiverName(raw, t, sym)}" has no member ".${field}"`;
   const owners = receiversOf(field);
   return {
     code: "E0108",
@@ -305,7 +352,8 @@ export function classifyFieldAccess(
       return;
 
     case "undecidable":
-      // A union or an opaque type param → leave as shortcut, no diagnostic.
+      // A receiver whose type is not known, or a step on a union that a runtime member or a
+      // payload's field may answer: the name-based shortcut stays, with no diagnostic.
       return;
   }
 }
