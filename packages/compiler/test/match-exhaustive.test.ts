@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { pointedErrorsOf, posOf, summariesOf } from "./helpers/diagnostics.ts";
+import {
+  nonExhaustiveMessage,
+  pointedErrorsOf,
+  posOf,
+  summariesOf,
+} from "./helpers/diagnostics.ts";
 import { loadReducer } from "./helpers/module.ts";
 import { withButtonApp, withReducer } from "./helpers/programs.ts";
 
@@ -28,7 +33,7 @@ const diagnostics = (defs: string) => summariesOf(withButtonApp(`${DEFS}\n${defs
 const inReducer = (body: string) => summariesOf(withReducer(DEFS, body));
 
 const missing = (type: string, witnesses: string) =>
-  `E0227 This match on "${type}" has no arm for ${witnesses}, and a match used as a value has to evaluate to one of its arms. Add the missing arms, or end with \`_ -> …\``;
+  `E0227 ${nonExhaustiveMessage(type, witnesses)}`;
 
 describe("a value match whose arms leave a value out", () => {
   it("names the variant of a union it has no arm for, in a reducer and in a tile", () => {

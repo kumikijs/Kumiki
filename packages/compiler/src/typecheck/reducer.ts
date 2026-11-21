@@ -30,7 +30,12 @@ import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "
 import { inferType, prim } from "./infer.ts";
 import { classifyMember, receiverName, undefMemberError } from "./members.ts";
 import { nestedScopes } from "./nested-scopes.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
+import {
+  checkArmsAfterNestedMatch,
+  checkPatternAgainstType,
+  checkPatternBindsAreDistinct,
+  matchedType,
+} from "./patterns.ts";
 import { bindsRoute, namedByHandler, outletFilled, subscriptionIds } from "./tile-collect.ts";
 
 /** The scope a reducer's statements are checked in. */
@@ -282,14 +287,18 @@ function checkStmt(
   if (s.kind === "MatchStmt") {
     checkExpr(s.scrutinee, sym, errors, ctx);
     const scrutType = matchedType(inferType(s.scrutinee, sym, ctx), s.arms, sym);
+    let patternsFit = true;
     const arms = s.arms.map((arm) => ({
       stmts: arm.body,
       bind: (inner: Ctx) => {
         checkPatternBindsAreDistinct(arm.pattern, errors);
+        const before = errors.length;
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
+        if (errors.length > before) patternsFit = false;
       },
     }));
     checkBodies("match", arms, sym, errors, ctx, writtenRoots);
+    if (patternsFit) checkArmsAfterNestedMatch(s, "statement", scrutType, sym, errors);
     return;
   }
   if (s.kind === "NoopStmt") return;
