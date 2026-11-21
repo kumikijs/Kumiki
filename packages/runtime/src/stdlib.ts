@@ -680,7 +680,7 @@ export const _stdlibCore = {
   },
 };
 
-function isFileValue(v: unknown): v is { size: number; _file: Blob } {
+export function isFileValue(v: unknown): v is { size: number; _file: Blob } {
   return (
     typeof Blob !== "undefined" &&
     !!v &&
