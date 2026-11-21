@@ -1,4 +1,10 @@
-import type { AutoPatch, FixFromTestOutcome } from "@kumikijs/cli";
+import {
+  type AutoPatch,
+  type FixApplyResult,
+  type FixFromTestOutcome,
+  type TestPatchBlock,
+  UnreadableLockFileError,
+} from "@kumikijs/cli";
 import { type KumikiError, type Severity, severityOf } from "@kumikijs/compiler";
 import { CapabilityManifestError } from "@kumikijs/compiler/node";
 
@@ -34,7 +40,12 @@ export function withWarnings(head: string, warnings: KumikiError[]): string[] {
 }
 
 export function errText(e: unknown) {
-  const kind = e instanceof CapabilityManifestError ? "capability-manifest" : "error";
+  const kind =
+    e instanceof CapabilityManifestError
+      ? "capability-manifest"
+      : e instanceof UnreadableLockFileError
+        ? "lock-file"
+        : "error";
   const message = e instanceof Error ? e.message : String(e);
   return failed(JSON.stringify({ error: { kind, message } }, null, 2));
 }
@@ -52,6 +63,15 @@ export function toDiagnostics(errors: KumikiError[]): Diagnostic[] {
     col: e.pos.col,
     severity: severityOf(e),
   }));
+}
+
+/** Each `reason` keeps its own payload, so reading `reason` alone is never misleading. */
+export function blockedWire(
+  b: NonNullable<FixApplyResult["blocked"]> | TestPatchBlock,
+): Record<string, unknown> {
+  return b.reason === "introduced"
+    ? { reason: b.reason, introduced: toDiagnostics(b.introduced) }
+    : b;
 }
 
 export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unknown> {
@@ -80,12 +100,7 @@ export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unkn
       return {
         ...base,
         compileErrors: toDiagnostics(o.compileErrors),
-        blocked:
-          o.blocked.reason === "introduced"
-            ? { reason: o.blocked.reason, introduced: toDiagnostics(o.blocked.introduced) }
-            : o.blocked.reason === "parse-error"
-              ? { reason: o.blocked.reason, message: o.blocked.message }
-              : { reason: o.blocked.reason },
+        blocked: blockedWire(o.blocked),
       };
     case "compile-remaining":
       return {
@@ -107,18 +122,13 @@ export function serialiseFixFromTest(o: FixFromTestOutcome): Record<string, unkn
         regressed: o.regressed,
         ...withCompileFixes,
       };
-    case "test-blocked": {
-      const b = o.blocked;
+    case "test-blocked":
       return {
         ...base,
         patch: patchWire(o.patch),
-        blocked:
-          b.reason === "introduced"
-            ? { reason: b.reason, introduced: toDiagnostics(b.introduced) }
-            : b,
+        blocked: blockedWire(o.blocked),
         ...withCompileFixes,
       };
-    }
     case "write-failed":
       return {
         ...base,
