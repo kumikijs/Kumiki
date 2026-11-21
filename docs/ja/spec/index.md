@@ -77,6 +77,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0115](./errors.md#e0115-reserved-slot-name) | `reserved-slot-name` | slot | コア |
 | [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier) | `undef-call` / `undef-variant` / `undef-qualifier` | fn | コア |
 | [E0117](./errors.md#e0117-undef-type) | `undef-type` | type | コア |
+| [E0241](./errors.md#e0241-tuple-as-type) | `tuple-as-type` | effect | HTTP/Storage |
 | [E0118](./errors.md#e0118-undef-theme) | `undef-theme` | app | スタイル |
 | [E0119](./errors.md#e0119-route-bind-out-of-scope) | `route-bind-out-of-scope` | reducer | ルーティング |
 | [E0120](./errors.md#e0120-route-in-app-init) | `route-in-app-init` | app | ルーティング |
@@ -115,7 +116,6 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0231](./errors.md#e0231-reserved-type-name) | `reserved-type-name` | type | コア |
 | [E0234](./errors.md#e0234-reserved-effect-name) | `reserved-effect-name` | effect | 標準ライブラリ |
 | [E0235](./errors.md#e0235-null-value) | `null-value` | all | コア |
-| [E0241](./errors.md#e0241-tuple-as-type) | `tuple-as-type` | effect | HTTP/Storage |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | フォーム |
