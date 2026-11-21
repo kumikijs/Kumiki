@@ -21,9 +21,8 @@ $ kumiki smoke app.kumiki
 SyntaxError: Unexpected token ':'
 ```
 
-A map literal (`xs.fold({"s": 0}, {"s": $2})`) failed the same way, and so did
-an `Option`'s or a `Result`'s `flat-map` whose fragment is one. Every fragment
-lowered to an arrow body — `fold`, `flat-map`, `Map.update` and
+A map literal (`xs.fold({"s": 0}, {"s": $2})`) failed the same way. Every
+fragment lowered to an arrow body — `fold`, `flat-map`, `Map.update` and
 `Result.map-err` — now holds that body in parentheses, so the click above shows
 `n: 6`. `map`, `filter`, `find` and `sort-by` lower their fragment to a block
 that `return`s it and were not affected. An app picks this up when it is
