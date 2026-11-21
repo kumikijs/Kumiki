@@ -1,0 +1,81 @@
+# Feature (http.md): `HttpBody(T)` and `IndexRange(K)` are standard-library
+# types, so an effect's input can carry a request body and a query range,
+# declared as http.md declares `http-post` and `indexed-query`:
+#
+#   body:  HttpBody(Note)            Json(T) | Form(…) | Multipart(…)
+#                                    | Text(Text) | Bytes(Bytes) | Empty
+#   range: Option(IndexRange(Int))   {lower: Option(K), upper: Option(K),
+#                                     lowerOpen: Bool, upperOpen: Bool}
+#
+# Neither name was a type, so both declarations were E0117, and so was the
+# `List(JsonValue)` http.md gave as `indexed-query`'s answer. That answer is a
+# `List(T)` of the record the program stores, here `List(Note)`.
+#
+# A field declared `HttpBody(T)` takes those six variants and nothing else: a
+# bare record there is E0202, so `send` writes `Json(…)` around its `Note`. A
+# `map-request`'s `body` is not checked for its type, and one that is no
+# variant is still sent as JSON (128-http-body-variants).
+#
+# `find` asks for the notes whose `at` is from 10 up to, but not including, 20.
+# `smoke` sends both posts against `289-request-body-and-range-types.http.json`.
+
+type Note = {id: Text, title: Text, at: Int}
+
+slot status : Text       = "idle"
+slot found  : List(Note) = []
+
+effect http-post cap=http.post
+                 in={
+                   url: Url,
+                   headers: Map(Text, Text),
+                   query: Map(Text, Text),
+                   body: HttpBody(Note),
+                   decode: Decoder
+                 }
+                 out=Result(Text, HttpError)
+
+effect indexed-query cap=indexed.read
+                     in={store: Text, index: Option(Text), range: Option(IndexRange(Int))}
+                     out=Result(List(Note), Text)
+
+reducer send
+    on=ui.click(SendBtn)
+    do= emit http-post({url: "https://api.example.com/notes", headers: {}, query: {},
+                        body: Json({id: "n1", title: "first", at: 10}), decode: Decoder.Text})
+
+reducer ping
+    on=ui.click(PingBtn)
+    do= emit http-post({url: "https://api.example.com/ping", headers: {}, query: {},
+                        body: Empty, decode: Decoder.Text})
+
+reducer find
+    on=ui.click(FindBtn)
+    do= emit indexed-query({store: "notes", index: Some("at"),
+                            range: Some({lower: Some(10), upper: Some(20),
+                                         lowerOpen: false, upperOpen: true})})
+
+reducer sent     on=http-post.ok($r, _)      do= status := "sent " + $r
+reducer sendFail on=http-post.err($e, _)     do= status := "failed: " + $e.message
+reducer listed   on=indexed-query.ok($ns, _) do= found := $ns
+                                                 status := "found " + $ns.length.show
+reducer findFail on=indexed-query.err($e, _) do= status := "failed: " + $e
+
+tile SendBtn = button(text="Send a note") {id: "send"}
+tile PingBtn = button(text="Ping")        {id: "ping"}
+tile FindBtn = button(text="Find 10..20") {id: "find"}
+
+tile App = column(
+             row(SendBtn, PingBtn, FindBtn) {gap: "sm"},
+             text("status: " + status),
+             text("titles: " + found.map($1.title).join(", ")))
+           {pad: "lg", gap: "md"}
+
+app RequestBodyAndRangeTypes
+    caps   = [http.post, indexed.read]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    indexed-db = {
+        name:    "notes-db",
+        version: 1,
+        stores:  [{name: "notes", key: "id", indexes: ["at"]}]
+    }

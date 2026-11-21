@@ -28,6 +28,11 @@ const nominal = (inner: TypeExpr, pred?: string, args: (number | string)[] = [])
   ...(pred ? { refinement: { kind: "Refinement" as const, pred, args, pos: NO_POS } } : {}),
   pos: NO_POS,
 });
+const union = (variants: Record<string, TypeExpr[]>): TypeExpr => ({
+  kind: "TypeUnion",
+  variants: Object.entries(variants).map(([name, payloads]) => ({ name, payloads, pos: NO_POS })),
+  pos: NO_POS,
+});
 const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
   kind: "TypeDef",
   name,
@@ -90,16 +95,39 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   def("FormData", app("Map", prim("Text"), ref("FormValue"))),
   def("PanicInfo", PANIC_INFO_TYPE),
   def("RouteErrorInfo", ROUTE_ERROR_INFO_TYPE),
-  def("FormValue", {
-    kind: "TypeUnion",
-    variants: [
-      { name: "TextV", payloads: [prim("Text")], pos: NO_POS },
-      { name: "NumberV", payloads: [prim("Float")], pos: NO_POS },
-      { name: "BoolV", payloads: [prim("Bool")], pos: NO_POS },
-      { name: "FileV", payloads: [prim("File")], pos: NO_POS },
-    ],
-    pos: NO_POS,
-  }),
+  def(
+    "FormValue",
+    union({
+      TextV: [prim("Text")],
+      NumberV: [prim("Float")],
+      BoolV: [prim("Bool")],
+      FileV: [prim("File")],
+    }),
+  ),
+  // The HTTP handler sends a body by its tag, and a body that has none of these tags as JSON.
+  def(
+    "HttpBody",
+    union({
+      Json: [ref("T")],
+      Form: [app("Map", prim("Text"), prim("Text"))],
+      Multipart: [app("Map", prim("Text"), ref("FormValue"))],
+      Text: [prim("Text")],
+      Bytes: [prim("Bytes")],
+      Empty: [],
+    }),
+    ["T"],
+  ),
+  // The fields are `IDBKeyRange`'s, which the IndexedDB handler builds from them.
+  def(
+    "IndexRange",
+    record({
+      lower: app("Option", ref("K")),
+      upper: app("Option", ref("K")),
+      lowerOpen: prim("Bool"),
+      upperOpen: prim("Bool"),
+    }),
+    ["K"],
+  ),
 ];
 
 // The runtime or the standard library builds or reads values of these, so a
@@ -115,6 +143,8 @@ export const RUNTIME_SUPPLIED_TYPE_NAMES: ReadonlySet<string> = new Set([
   "Duration",
   "FormValue",
   "Decoder",
+  "HttpBody",
+  "IndexRange",
 ]);
 
 // A browser reads a file's bytes only asynchronously, so the record a `change` event
@@ -137,12 +167,11 @@ export const BUILTIN_TYPE_CONSTRUCTORS: ReadonlyMap<string, number | null> = new
   ["Tuple", null],
 ]);
 
-// `Option` and `Result` have no body to read tags from, and `HttpBody` is read
-// by the HTTP runtime by tag alone. `FormValue`'s tags come from its definition.
+// `Option` and `Result` have no body to read tags from. The tags of `FormValue` and `HttpBody`
+// come from their definitions above.
 export const BUILTIN_UNION_TAGS: ReadonlyMap<string, readonly string[]> = new Map([
   ["Option", ["Some", "None"]],
   ["Result", ["Ok", "Err"]],
-  ["HttpBody", ["Json", "Form", "Multipart", "Text", "Bytes", "Empty"]],
 ]);
 
 export const PRIM_TYPE_NAMES: readonly PrimName[] = [
