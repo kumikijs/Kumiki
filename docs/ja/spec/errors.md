@@ -1720,7 +1720,9 @@ test inf-has-no-value =
 > `Refinement "one-of" lists <literal> (argument <i>) but is written over <base>, so no value equals it`
 > `Refinement "<pred>" tests <what> but <G(args)> applies it over <base>, so no value satisfies it`
 
-各述語の引数個数と形は [§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語) の表にある。**どの値も**満たせない refinement は、**あらゆる値が**満たす refinement と同じ欠陥であり — どちらも slot の保証を、それに依存するプログラムから奪う — 述語が取らない形の引数はそのどちらかを生む：`between(5, 1)` と `len-eq(2.5)` はあらゆる値を拒否し、`len-gt(-1)` はあらゆる値を受理し（`v.length > -1` は `""` に対しても真）、`one-of()` は受理する候補を持たない。最も鋭いのは `between(0, "x")` で、生成されるチェックは `v >= 0 && v <= x` となり、その後半は境界との比較ではなく宣言のない名前への参照なので、最初の書き込みか最初の `error(field=…)` 描画で `ReferenceError` を投げていた。`len-lt(0)` は正しい個数を取りながら、0 未満の長さは存在しないので、やはりあらゆるテキストを拒否する。小数点つきで書いた長さは、どの数として読まれても個数ではない：`2.0` は `Float` なので（[language.md](./language.md)）、`len-eq(2.0)` は `len-eq(2.5)` と同じく報告され、メッセージは引数を書かれたとおりに示す（`argument 1 is 2.0`）。
+各述語の引数個数と形は [§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語) の表にある。**どの値も**満たせない refinement は、**あらゆる値が**満たす refinement と同じ欠陥であり — どちらも slot の保証を、それに依存するプログラムから奪う — 述語が取らない形の引数はそのどちらかを生む：`between(5, 1)` と `len-eq(2.5)` はあらゆる値を拒否し、`len-gt(-1)` はあらゆる値を受理し（`v.length > -1` は `""` に対しても真）、`one-of()` は受理する候補を持たない。最も鋭いのは `between(0, "x")` で、生成されるチェックは `v >= 0 && v <= x` となり、その後半は境界との比較ではなく宣言のない名前への参照なので、最初の書き込みか最初の `error(field=…)` 描画で `ReferenceError` を投げていた。`len-lt(0)` は正しい個数を取りながら、0 未満の長さは存在しないので、やはりあらゆるテキストを拒否する。
+
+小数点つきで書いた長さは、どの数として読まれても個数ではない：`2.0` は `Float` なので（[language.md](./language.md)）、`len-eq(2.0)` は `len-eq(2.5)` と同じく報告され、メッセージは引数を書かれたとおりに示す（`argument 1 is 2.0`）。
 
 基底型は同じ規則のもう半分である。各述語は 1 つの形の値を検査し、それ以外には `false` を返す（[§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）。そのため別の形の基底型の上に書かれた述語は**あらゆる**値を拒否する：`slot name : Text where positive` は何も通さず、そこへの書き込みはそのたびに reducer のバッチを破棄する。各述語が必要とするもの：
 

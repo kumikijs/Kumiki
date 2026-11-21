@@ -255,15 +255,6 @@ function showArg(r: Refinement, i: number): string {
   return r.numbers?.find((n) => n.index === i)?.raw ?? JSON.stringify(arg);
 }
 
-/**
- * Whether argument `i` is written with no point, as an `Int` is, since its number cannot tell `7.0`
- * from `7`. One no source wrote has only its number to go by.
- */
-function writtenAsInt(r: Refinement, i: number): boolean {
-  const written = r.numbers?.find((n) => n.index === i);
-  return written === undefined || isIntLiteral(written);
-}
-
 export function refinementProblem(r: Refinement): RefinementProblem | undefined {
   const entry = REFINEMENTS.get(r.pred);
   if (!entry) {
@@ -306,21 +297,35 @@ function arityProblem(r: Refinement, params: Params): string | undefined {
   const { pred, args } = r;
   const wrongArg = (i: number, kind: ArgKind): string =>
     `Refinement "${pred}" takes ${ARG_DESCRIPTION[kind]} but argument ${i + 1} is ${showArg(r, i)}`;
-  // A count is an `Int`, so it is written with no point, as an `Int` is anywhere else.
-  const fits = (kind: ArgKind, i: number): boolean =>
-    argFits(kind, args[i]) && (kind !== "count" || writtenAsInt(r, i));
   if ("rest" in params) {
     if (args.length < params.min) {
       return `Refinement "${pred}" needs at least ${params.min} value(s) but got ${args.length}`;
     }
-    const wrong = args.findIndex((_, i) => !fits(params.rest, i));
+    const wrong = args.findIndex((_, i) => !fitsAt(r, params.rest, i));
     return wrong === -1 ? undefined : wrongArg(wrong, params.rest);
   }
   if (args.length !== params.fixed.length) {
     return `Refinement "${pred}" takes ${params.fixed.length} argument(s) but got ${args.length}`;
   }
   for (const [i, kind] of params.fixed.entries()) {
-    if (!fits(kind, i)) return wrongArg(i, kind);
+    if (!fitsAt(r, kind, i)) return wrongArg(i, kind);
   }
   return undefined;
+}
+
+/**
+ * Whether argument `i` of `r` is what `kind` takes. A count is an `Int`, so it is written with no
+ * point, as an `Int` is anywhere else.
+ */
+function fitsAt(r: Refinement, kind: ArgKind, i: number): boolean {
+  return argFits(kind, r.args[i]) && (kind !== "count" || writtenAsInt(r, i));
+}
+
+/**
+ * Whether argument `i` is written with no point, as an `Int` is, since its number cannot tell `7.0`
+ * from `7`. One no source wrote has only its number to go by.
+ */
+function writtenAsInt(r: Refinement, i: number): boolean {
+  const written = r.numbers?.find((n) => n.index === i);
+  return written === undefined || isIntLiteral(written);
 }
