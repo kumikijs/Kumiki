@@ -298,10 +298,21 @@ ${TAIL}`;
   });
 });
 
-describe("a link's prefetch-args is the Map(Text, Text) its target reads as $route.params", () => {
+describe.each<[string, (args: string) => string, string]>([
+  [
+    "in the block",
+    (args) => `link(to="/items/1") {text: "1", prefetch: load, prefetch-args: ${args}}`,
+    "})",
+  ],
+  [
+    "as arguments",
+    (args) => `link("1", to="/items/1", prefetch=load, prefetch-args=${args})`,
+    "))",
+  ],
+])("a link's prefetch-args written %s is the Map(Text, Text) its target reads as $route.params", (_, link, after) => {
   const linking = (args: string, defs = "") => `slot seen : Text = ""
 ${defs}reducer load on=route.enter("/items/:id") do= seen := $route.params.get-or("id", "?")
-tile App = column(Go, link(to="/items/1") {text: "1", prefetch: load, prefetch-args: ${args}})
+tile App = column(Go, ${link(args)})
 ${TAIL}`;
 
   it("accepts a map of text to text, written out or held in a slot", () => {
@@ -313,13 +324,13 @@ ${TAIL}`;
 
   it("reports a value of another type", () => {
     expect(pointedErrorsOf(linking('{"id": 1}'))).toEqual([
-      { code: "E0201", message: "Expected Text but got Int", text: "1}})" },
+      { code: "E0201", message: "Expected Text but got Int", text: `1}${after}` },
     ]);
   });
 
   it("reports a value that is not a map", () => {
     expect(pointedErrorsOf(linking("5"))).toEqual([
-      { code: "E0201", message: "Expected Map(Text, Text) but got Int", text: "5})" },
+      { code: "E0201", message: "Expected Map(Text, Text) but got Int", text: `5${after}` },
     ]);
   });
 });

@@ -275,7 +275,7 @@ export type DiagnosticSite = {
   tileKind: string;
   /** Same identifier the episode log uses: bind path, else key, else kind. */
   id: string;
-  /** The authored tile this node came from, when it came from one. */
+  /** The authored tile this node came from, the outermost when it is the whole tree of several. */
   tile?: string | undefined;
 };
 
@@ -312,6 +312,12 @@ export type BuiltinInstaller = (app: AppShape, nav: NavContext) => void;
  * the leave guards of a move that is held, so its answer settles no move.
  */
 export type HoldLeave = (close: () => void) => ((outcome: "yes" | "no") => void) | undefined;
+
+/**
+ * A `confirm` modal hands over how to close it unanswered, so disposing the app closes it, and
+ * gets back what to call once it has closed.
+ */
+export type CloseOnDispose = (close: () => void) => () => void;
 
 export type RoutingImpl = {
   createRouter(mode: "history" | "memory" | undefined, initialPath?: string): Router;

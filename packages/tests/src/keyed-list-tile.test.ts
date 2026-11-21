@@ -1,38 +1,9 @@
-import { feature } from "@kumikijs/examples";
-import { mount } from "@kumikijs/runtime";
-import { describe, expect, it, onTestFinished, vi } from "vitest";
-import { click, freshRoot, texts } from "./helpers/dom.ts";
-import { loadApp } from "./helpers/load.ts";
-
-/** The element whose own text is `text`. */
-function byText(root: HTMLElement, text: string): Element {
-  const el = [...root.querySelectorAll("*")].find(
-    (e) => e.children.length === 0 && e.textContent === text,
-  );
-  if (!el) throw new Error(`no element reads "${text}"`);
-  return el;
-}
-
-/** Mount the example, collecting every `console.error` until the test ends. */
-async function mounted(): Promise<{ root: HTMLElement; errors: unknown[] }> {
-  const app = await loadApp(feature("163-keyed-list-tile"));
-  const root = freshRoot();
-  const errors: unknown[] = [];
-  const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
-    errors.push(args);
-  });
-  const { dispose } = mount(app, root);
-  onTestFinished(() => {
-    dispose();
-    root.remove();
-    spy.mockRestore();
-  });
-  return { root, errors };
-}
+import { describe, expect, it } from "vitest";
+import { byText, click, mountFeature, texts } from "./helpers/dom.ts";
 
 describe("a keyed call to a for-bodied tile", () => {
   it("renders each node of the list, with an explicit key and an implicit one", async () => {
-    const { root, errors } = await mounted();
+    const { root, errors } = await mountFeature("163-keyed-list-tile");
     expect(texts(root)).toEqual([
       "tag:a",
       "tag:b",
@@ -95,7 +66,7 @@ describe("a keyed call to a for-bodied tile", () => {
       ["b~1", "b~2", "a~1", "a~2"],
     ],
   ])("moves %s", async (_what, presses, nodes, at, reordered) => {
-    const { root, errors } = await mounted();
+    const { root, errors } = await mountFeature("163-keyed-list-tile");
     const before = nodes.map((t) => byText(root, t));
     for (const label of presses) click(root, label);
     expect(texts(root).slice(at, at + nodes.length)).toEqual(reordered);

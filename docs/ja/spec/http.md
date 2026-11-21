@@ -69,7 +69,7 @@ type HttpBody = Json(JsonValue)
 
 HttpBody の variant でない `body`（レコード・リスト・素の `Text`）は、`Json` と同じく JSON で送られる。`Text` を入力に取る `body: $1` は `x` ではなく `"x"` を送る。生のテキストを送るには `Text($1)` と書く。
 
-`GET` と `HEAD` は `body` が何であっても本文を送らない。
+`GET` と `HEAD` は `body` が何であっても本文を送らない。`http.get` のリクエストには `body` フィールドが無いので、それを書く `map-request` は拒否される（[6.6.1](#_6-6-1-request-fields)）。
 
 ### 6.1.4 Decoder 型
 
@@ -328,7 +328,7 @@ effect loadCritical cap=http.get
 
 リトライは **5xx と接続エラーのみ**対象。4xx はリトライしない（仕様）。本文を読めなかった 2xx（[6.4.1](#_6-4-1-挙動)）、本文が JSON として壊れている 2xx、および decode した値を `T` が拒否した 2xx（[6.1.4](#_6-1-4-decoder-型)）もリトライしない。サーバーはすでにリクエストを受理しているので、リトライは同じ副作用をもう一度起こすだけになる。リクエストを送る前に失敗したリクエストも、`status` は接続エラーと同じ `0` だがリトライしない。送れないリクエスト本文（[6.1.3](#_6-1-3-httpbody-型)）や、どの decoder でもない `decode`（[6.1.4](#_6-1-4-decoder-型)）は、何度試しても同じように失敗する。
 
-試行と試行の間で待機しているリクエストは、キャンセルされるとその場で待機を終える。キャンセルするのは、`http.cancel`（[6.4](#_6-4-cancellation)）、`policy=latest` のもとでの新しい emit、`policy=latest-per-key` のもとでの同じ key への新しい emit である。その `.err` は直ちに発火し、後から emit されたリクエストが自分の結果を届けるより先に届く。それ以上の試行は行わない。`policy=queue` では、次のエントリが残りの間隔を待たずにすぐ始まる。この err は、`http.*` の effect では [6.4.1](#_6-4-1-挙動) の `aborted` な `HttpError`、err が `Text` の capability（[6.7](#_6-7-storage-effects)）では `Text` の `"aborted"`、それ以外の capability では、例外を投げた invoke が届けるのと同じ形の `{message: "aborted"}`（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）である。アプリのアンマウントも待機を終え、それ以上の試行は行わない。アンマウント後は reducer が走らないので、何も届かない。キャンセルもアンマウントもされないリクエストは各間隔を最後まで待つ。
+試行と試行の間で待機しているリクエストは、キャンセルされるとその場で待機を終える。キャンセルするのは、`http.cancel`（[6.4](#_6-4-cancellation)）、`policy=latest` のもとでの新しい emit、`policy=latest-per-key` のもとでの同じ key への新しい emit である。その `.err` は直ちに発火し、後から emit されたリクエストが自分の結果を届けるより先に届く。それ以上の試行は行わない。`policy=queue` では、次のエントリが残りの間隔を待たずにすぐ始まる。この err は、`http.*` の effect では [6.4.1](#_6-4-1-挙動) の `aborted` な `HttpError`、err が `Text` の capability（[6.7](#_6-7-storage-effects)）では `Text` の `"aborted"`、それ以外の capability では、例外を投げた invoke が届けるのと同じ形の `{message: "aborted"}`（[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）である。アプリのアンマウントも待機を終え、それ以上の試行は行わない。リクエストはアプリが launch した他のすべての effect と同じくキャンセルされ、何も届けない（[runtime §10.4.7](./runtime.md#_10-4-7-dispose)）。キャンセルもアンマウントもされないリクエストは各間隔を最後まで待つ。
 
 ---
 
@@ -352,6 +352,29 @@ effect loadUser cap=http.get
 ```
 
 `map-request` はビルトイン effect の入力に変換する純粋関数（式断片）。これにより、高レベル effect 名と実 HTTP リクエストの関係が **1 箇所に集中**する。
+
+### 6.6.1 リクエストのフィールド {#_6-6-1-request-fields}
+
+`map-request` が組み立てるのは、その capability の組み込みハンドラが読むリクエストであり、ハンドラは下表のフィールドだけを読む。これらは [6.1.2](#_6-1-2-standard-effect)・[6.7.2](#_6-7-2-宣言-localstorage)・[6.7.4](#_6-7-4-sessionstorage-indexeddb) が宣言するレコードである：
+
+| capability | リクエストのフィールド |
+|---|---|
+| `http.get` | `url`, `headers`, `query`, `decode` |
+| `http.post`, `http.put`, `http.patch`, `http.delete` | `url`, `headers`, `query`, `body`, `decode` |
+| `storage.read`, `session.read` | `key`, `decode` |
+| `storage.write`, `session.write` | `key`, `value` |
+| `key` を持つ `indexed.read`（`indexed-read`） | `store`, `key`, `decode` |
+| `key` を持たない `indexed.read`（`indexed-query`） | `store`, `index`, `range` |
+| `indexed.write` | `store`, `key`, `value` |
+| `indexed.delete` | `store`, `key` |
+
+`key` を名指す `indexed.read` のリクエストはそのキーでレコードを 1 つ読み、名指さないものは `index` と `range` でクエリを実行する（[6.7.4](#_6-7-4-sessionstorage-indexeddb)）。したがってそのフィールドは、どちらであるかに応じた行のものになる：`key` と並ぶ `index` は読まれず、`key` の無い `decode` も読まれない。
+
+`map-request` が書いたフィールドのうち、その capability の行に無いものは [E0215](./errors.md#e0215-unknown-record-field) になり、そのフィールドの位置に報告される。行に近いフィールドがあればその名前を添え、行が受け付けるフィールドを列挙する：`http.get` の `headrs: {"X": "1"}` は決して送られない header である。メソッドは capability が決め、`timeout` と `credentials` は `app.http` のもの（[6.3.1](#_6-3-1-injecting-global-headers)）なので、3 つともリクエストのフィールドではない。これらの capability に登録したホスト provider（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）も同じリクエストを受け取るので、同じフィールドに従う。
+
+フィールドが検査されるのは、リテラルがそれを名指す位置である：`map-request` のレコードそのもの、または `if` の分岐・`match` の腕・`let` の本体がそこに返すレコード（入れ子の深さは問わない）。テキストをキーに持つ map リテラルも同じオブジェクトになるので、その `Text` のキーも検査される。それ以外の方法で計算されるリクエスト — `fn` が返すもの、slot から読むもの、`$1` そのもの — はフィールドが実行時に決まるので検査されない。
+
+行の無い capability にはリクエストのスキーマが無く、その `map-request` はホスト provider が読むものを何でも組み立ててよい：カスタム capability と、それ以外の標準 capability（`nav.*`・`log.write` など）がこれに当たり、その宣言した effect は provider に届き、組み込みハンドラには届かない。`http.cancel` は `map-request` そのものを取らない（[E0303](./errors.md#e0303-invalid-cancel-target)）。
 
 ---
 

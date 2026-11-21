@@ -53,6 +53,9 @@ function preMountProbe(
     localTypes: new Map(params.map((p) => [p.name, p.type])),
     localBinders: new Map(),
     routeBind: "no-payload",
+    endedScopes: new Map(),
+    // No hint from this table would be read: the probe discards its errors.
+    nestedScopes: new Map(),
     routeReadsSeen: routeReads,
     fragmentFnCallsSeen: fragmentFnCalls,
   };

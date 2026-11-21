@@ -1,7 +1,8 @@
+import { refinementsOf } from "../assignable.ts";
 import type { SlotDef, TypeExpr } from "../ast.ts";
 import { carriesNestedRefinement } from "../refinement-positions.ts";
 import { type GenCtx, makeEvalCtx } from "./context.ts";
-import { refinementJs, refinementsOf, refinementToJs } from "./emit-type.ts";
+import { refinementJs, refinementToJs } from "./emit-type.ts";
 import { jsOfExpr } from "./expr.ts";
 
 export function slotGate(t: TypeExpr, gen: GenCtx): "walk" | "chain" | "none" {

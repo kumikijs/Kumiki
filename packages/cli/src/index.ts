@@ -1,9 +1,11 @@
 export { HEADLESS_ACTION_KEYS } from "@kumikijs/runtime";
 export { type CheckScope, filterByScope } from "./commands/check.ts";
 export { type DevCmdOptions, devCmd, startDevServer } from "./dev.ts";
+export { formatDiagnostic } from "./diagnostic.ts";
 export {
   type AutoPatch,
   applyFixPlan,
+  type CompilePatch,
   type FixApplyResult,
   type FixFromTestOutcome,
   type FixPlan,
@@ -36,11 +38,13 @@ export {
   CASCADE_HELP,
   type DefSpec,
   describeEdit,
+  describeSkipped,
   type EditReport,
   editDef,
   episodeLogPathFor,
   lockDef,
   type OpLogEntry,
+  type OpLogOptions,
   patchApplyFile,
   patchRevert,
   type RemovedNames,
@@ -48,6 +52,8 @@ export {
   removeDef,
   renameDef,
   replaceDef,
+  type SkippedOpLogLine,
+  UnreadableLockFileError,
   unlockDef,
   viewHash,
   viewHistory,
@@ -72,6 +78,7 @@ export {
   LAYERS,
   listDefs,
   load,
+  requireSourceFile,
   type Store,
   viewDef,
   viewWithDeps,

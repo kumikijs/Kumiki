@@ -56,12 +56,14 @@ describe("Decoder.Json reads a Time field's text by Time.parse's grammar", () =>
 describe("format on a Time the program keeps in a Set", () => {
   // A Set stores its elements as object keys, which are text; `filter` hands each one back as
   // the number it was added as, so `format` reads the instant rather than the digits.
+  // No fallback instant: the only other way to make a Time here is `now`, which passes the year
+  // check whenever the clock reads 2026.
   it("keeps an element whose year filter reads through format", async () => {
     const shape = await loadSource(`
 slot days : Set(Time) = {}
 slot kept : Int = -1
 reducer go on=ui.click(Go)
-    do= kept := days.add(Time.parse("2026-03-07T10:00:00Z").get-or(now)).filter($1.format("yyyy") == "2026").size
+    do= kept := match Time.parse("2026-03-07T10:00:00Z") with | Some(t) -> days.add(t).filter($1.format("yyyy") == "2026").size | None -> -2
 tile Go = button(text="go")
 tile App = column(Go)
 app A
@@ -73,6 +75,9 @@ app A
       steps: [{ do: { dispatch: "go" }, expect: { noErrors: true } }],
     });
     expect(report.ok, failureDetail(report)).toBe(true);
-    expect(shape.live?.kept).toBe(1);
+    expect(
+      shape.live?.kept,
+      "-1: reducer never ran, -2: Time.parse failed, 0: Set readback broke",
+    ).toBe(1);
   });
 });

@@ -12,7 +12,8 @@ import { firstChildMappedColumn } from "./fixtures/host-renderers.ts";
 import { appOf, bareApp } from "./helpers/app.ts";
 import { captureConsole } from "./helpers/console.ts";
 import { freshRoot } from "./helpers/dom.ts";
-import { recordingLogger, stripApp } from "./helpers/reconcile-apps.ts";
+import { recordingLogger } from "./helpers/episode-apps.ts";
+import { stripApp } from "./helpers/reconcile-apps.ts";
 
 let root: HTMLElement;
 
@@ -205,9 +206,11 @@ describe("binds-updated when the walk bails", () => {
     app._dispatch("advance", {});
 
     expect(lastBindsUpdated(committed)).toEqual([]);
-    expect(panics(committed.slice(-1))).toMatchObject([
-      { kind: "panic", location: "reconcile", category: "tile-render" },
-    ]);
+    const [panic, ...rest] = panics(committed.slice(-1));
+    expect(rest).toEqual([]);
+    expect(panic).toMatchObject({ kind: "panic", location: "reconcile", category: "tile-render" });
+    // The diff's own safety net, not a boundary: nothing handled it.
+    expect(panic).not.toHaveProperty("handled");
     dispose();
   });
 
