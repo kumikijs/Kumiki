@@ -244,9 +244,13 @@ reducer 名がどの `reducer` 定義も指していない。名指す箇所は 
 
 > `Reference to undefined name "count-1" — "-" continues an identifier, so this is one name. Write "count - 1" with spaces for subtraction.`
 
-1 つの値を受け取る `filter` / `map` / `find` / `sort-by` のフラグメント — ペアでない要素、`Option` の値 — は `$1` だけを束縛する（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）ので、その中の `$2` は理由を添えて報告される：
+1 つの値を受け取る `filter` / `map` / `find` / `sort-by` のフラグメント — ペアでない要素、`Option` の値、`Set` のメンバー — は `$1` だけを束縛する（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）ので、その中の `$2` は理由を添えて報告される：
 
 > `"$2" is not bound here — the .filter fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`
+
+`Set` の `filter` は各メンバーを、ペアのメンバーも含めて丸ごと渡すので、そこではメッセージはペアを示す代わりにそう述べ、式断片に 2 引数の `fn` を渡したときの [E0213](#e0213-call-arity-mismatch) も同じく述べる（`… .filter on "Set(Tuple(Int, Int))" supplies 1 — a Set's .filter hands each member whole, as "$1"`）：
+
+> `"$2" is not bound here — a Set's .filter hands each member whole, as "$1"`
 
 これはフラグメントの中のどこでも同じで、別のメソッドの引数の中の `$2` も含む（`xs.map($1.min($2))`）：positional を宣言するのはフラグメントだけなので、そうした引数はフラグメントのものを読む。フラグメントを囲むスコープが自分の `$2` — `fn` の第 2 引数、外側のペアの値 — を束縛している場合、フラグメントはそれを隠し、メッセージはそこへの届き方を示す：
 
@@ -584,7 +588,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 `xs.map(double)` は `xs.map(double($1))` であり、`xs.fold(0, add)` は `xs.fold(0, add($1, $2))` である。名指された `fn` はそれらの positional を先頭から、自身が宣言する数だけ受け取るので、1 つ以上、かつメソッドが束縛する数以下を宣言していなければならない — そうでなければ [E0213](#e0213-call-arity-mismatch) である。`fold` の `fn` はちょうど 2 つを宣言する。要素は 2 番目だからであり、1 つの `fn` は何も畳み込まない。`filter` / `map` / `find` / `sort-by` の `fn` が 2 つを宣言できるのは、フラグメントが各値を分解する場合 — Map の filter と map、ペア（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）— だけである。チェッカが型を決められるそれ以外のレシーバの上では、2 番目のパラメータは何も受け取らないか、lowering がフォールバックする場合は JS のインデックスか要素そのものを再び受け取るので、これも E0213 である。`fold` の 1 番目を含むそれ以外の引数はすべて値であり、このチェックを受ける。
 
-数が合えば、名前は自身が表す呼び出しとして、式断片が束縛するスコープの中で検査される：各パラメータは渡される positional と照合され、その型は [言語 §1.8.6](./language.md#_1-8-6-部分適用と高階関数) が与えるものである。`fn` の結果は、メソッドが式断片の結果を検査する位置で検査される——`sort-by` のキー、`update` の新しい値。したがって `fn loud(t: Text)` に対して `List(Int)` の上の `xs.map(loud)` は `loud` の位置で [E0201](#e0201-type-mismatch) となり、`xs.map(loud($1))` が `$1` の位置でそうなるのと同じである。`Map(Text, Int)` の上の `m.filter(keep)` は `fn keep(k: Text, v: Int)` を受け付け、`fn keep(k: Int, v: Int)` を報告する。`xs.fold(0, f)` は `f` の第 1 パラメータを `Int` と照合する。チェッカが型を決められない positional は何とも照合されない。
+数が合えば、名前は自身が表す呼び出しとして、式断片が束縛するスコープの中で検査される：各パラメータは渡される positional と照合され、その型は [言語 §1.8.6](./language.md#_1-8-6-部分適用と高階関数) が与えるものである。`fn` の結果は、メソッドが式断片の結果を検査する位置で検査される——`sort-by` のキー、`update` の新しい値、`fold` の次のアキュムレータ。したがって `fn loud(t: Text)` に対して `List(Int)` の上の `xs.map(loud)` は `loud` の位置で [E0201](#e0201-type-mismatch) となり、`xs.map(loud($1))` が `$1` の位置でそうなるのと同じである。`Map(Text, Int)` の上の `m.filter(keep)` は `fn keep(k: Text, v: Int)` を受け付け、`fn keep(k: Int, v: Int)` を報告する。`xs.fold(0, f)` は `f` の第 1 パラメータをアキュムレータ——`Int`、または `f` が返すより広い型——と照合する。チェッカが型を決められない positional は何とも照合されない。
 
 **修正**：呼び出しを書く — `label()`、あるいは宣言された引数を渡して `greet(first, last)`。
 
@@ -842,7 +846,7 @@ reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、その subscrip
 
 **E0212 が沈黙する場合（runtime フィルタが権威となる）**:
 
-- subscription が配線される要素に id がない。
+- subscription が配線される要素に id がない。`focus` と `blur` では `scroll` がそうした要素で、id を持つことは少ない：`tile Page = column(scroll(text("x")), input(bind=n) {id: "name"})` に対する `ui.focus(Page#typo)` は何も出ず、`scroll` を `box` に置き換えると E0212 になる。
 - その id の値がリテラル文字列ではない式（`Ref`, method call など） — 実行時の値が check 時にはわからない。
 - ハンドラがその reducer を名指している（どこに書かれていても `onClick=r`）: ハンドラが dispatch する reducer も同じ `#id` でフィルタされ、その対象はハンドラを持つ要素である。
 - tile 配下に `<ev>` を reducer に渡す要素がない — それは [W0212](#w0212-ui-event-tile-mismatch-warning) の扱う場合であり、W0212 は走査が要素を 1 つも見つけられない場合を除いて報告する。
@@ -866,6 +870,10 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に、`<ev>` が�
 
 > `Reducer "<r>" subscribes to ui.key(<Tile>) but "key" never reaches a listener in tile "<Tile>": a details takes no "key" listener on the <details> around its <summary>, since a control in its panel takes the subscription instead — write onKeyDown= on the details to hear a "key" on its <summary> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
+`<ev>` が `key` で body に `scroll` がある場合、scroll が描画する `<div>` は自身が focus を受ける要素であり、その中にあるすべての tile の `keydown` もそこへバブルしてくる（下の `key` / `focus` / `blur` についての注記を参照）。メッセージはそれについても同じことを、details の節とは別の節で述べる:
+
+> `Reducer "<r>" subscribes to ui.key(<Tile>) but "key" never reaches a listener in tile "<Tile>": a scroll takes no "key" listener on its <div>, since a control inside it takes the subscription instead — write onKeyDown= on the scroll to hear a "key" on its <div> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
 kind の要素が `<ev>` を発火するのに、そのレンダラがハンドラを呼ばない場合 — 要素の性質ではなく runtime の方針である — メッセージはそう述べ、レンダラが代わりにすること（`<instead>`）が記録されていればそれも述べる。どの要素も `click` を発火するので、`click` の行に載らない kind はすべてこれに当たる：`link`（レンダラはナビゲーションのためだけに listen する。下の `link` についての注記を参照）と、レンダラが `onClick` を呼ばないそれ以外のすべての kind である。`input` では次の kind で、その要素はいずれも `input` を発火する：`slider` はレンダラが bind の書き込みのためだけに listen し、`check` / `radio` / `switch` / `select` はレンダラが代わりに `change` を listen する。レンダラが同じことをする kind は ` / ` でつなぎ、先頭の kind に合わせて `a` か `an` を前に置く。異なるものの節は `; ` でつなぐ:
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a reducer in tile "<Tile>": a <kinds> fires "<ev>", and its renderer <instead>, never calling <handler> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
@@ -873,6 +881,20 @@ kind の要素が `<ev>` を発火するのに、そのレンダラがハンド�
 `click` で `<instead>` の無い kind の節は `a <kinds> fires "click", and its renderer never calls onClick` である。`tile Label = text("click me")` なら:
 
 > `Reducer "hit" subscribes to ui.click(Label) but "click" never reaches a reducer in tile "Label": a text fires "click", and its renderer never calls onClick (DOM-allowed: button, check, switch, radio; observed in body: text). The handler is silently dropped.`
+
+body に route が埋める `route-outlet` がある場合、route がそこに表示する tile はアプリの実行時には子孫であり、その要素は `<ev>` を発火しうる。route が outlet を埋めるのは、その tile か、それを描画する tile が `sub-routes` を宣言している場合である（[ルーティング §3.6.2](./routing.md#_3-6-2-child-route-map)）。表示する tile は route が実行時に選び、コード生成はその tile をそれ自身の route の対象としてコンパイルするので、subscription はそこへ持ち上げられず、その中の何に対しても reducer は実行されない。メッセージはまずその節を述べ、続けて `route-outlet` を含む body のすべての kind について上の節を `; ` でつないで述べる。そのいずれかが包みの節であれば `"<ev>" never reaches a listener` で、そうでなければ `"<ev>" never reaches a reducer` で始まる。`tile Shell sub-routes = {"/s/child" -> Child, "/s" -> Home} = column(text("shell"), route-outlet())` なら:
+
+> `Reducer "shellKey" subscribes to ui.key(Shell) but "key" never reaches a reducer in tile "Shell": the tile its route-outlet shows is picked by the route at runtime and compiled as its own route target, so ui.key(Shell) is not lifted onto it — subscribe to that tile instead (DOM-allowed: …; observed in body: column, route-outlet, text). The handler is silently dropped.`
+>
+> `Reducer "shellClick" subscribes to ui.click(Shell) but "click" never reaches a reducer in tile "Shell": the tile its route-outlet shows is picked by the route at runtime and compiled as its own route target, so ui.click(Shell) is not lifted onto it — subscribe to that tile instead; a column / route-outlet / text fires "click", and its renderer never calls onClick (DOM-allowed: button, check, switch, radio; observed in body: column, route-outlet, text). The handler is silently dropped.`
+
+route が埋めない outlet には何も表示されないので、その節は付かない：`T` も `T` を描画する tile も `sub-routes` を宣言しないなら、`tile T = column(text("x"), route-outlet())` に対する `ui.key(T)` は最初の形になる。`sub-routes` を宣言した tile を描画する tile も同じで、その tile 自身の sub-routes はそれが route の対象であるときにだけ働く。
+
+body にそのイベントの行に載る kind もある場合も同じことが成り立ち、そのとき W0212 は出ない：`ui.click(Shell)` は Shell 自身の body にある button では実行され、route された tile の中の button では決して実行されない。route された tile への subscription（`ui.click(Child)`）は、route がそれをどこに表示しても実行される。
+
+`<ev>` が `focus` か `blur` で、body のどの `scroll` も、内容がどう描画されても `check`・`radio`・`switch`・`details` のいずれかを含む場合、行に載る kind として数える scroll はない：含むものがその `<div>` を Tab 順から外し、アプリの中にその `<div>` に focus を移すものはない（下の `scroll` の注記を参照）。メッセージは中の control についての節に続けて、そのための節を述べる：
+
+> `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a listener in tile "<Tile>": the runtime listens for "<ev>" on a check's <label>, and the "<ev>" its <input> fires does not bubble to the <label>; the runtime listens for "<ev>" on a scroll's <div>, which is out of the tab order while it holds an element that takes focus, and the "<ev>" fired inside it does not bubble to the <div> (DOM-allowed: …; observed in body: check, scroll). The handler is silently dropped.`
 
 子孫がイベントを発火しないという最初の形は、要素がそのイベントを発火しない kind に対するメッセージである：`box` への `ui.focus`、`editable` への `ui.change`、`text` への `ui.input`。
 
@@ -885,8 +907,8 @@ kind の要素が `<ev>` を発火するのに、そのレンダラがハンド�
 | `change` | `select`, `input`, `textarea`, `check`, `radio`, `switch`, `slider` |
 | `input`  | `input`, `textarea`, `editable` |
 | `key`    | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video`, `check`, `radio`, `switch` |
-| `focus`  | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video` |
-| `blur`   | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video` |
+| `focus`  | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video`, `scroll` |
+| `blur`   | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video`, `scroll` |
 | `hover`  | 任意の tile |
 
 **修正**: 許容集合に含まれる root を持つ tile にセレクタを切り替えるか、focusable な要素に対して `input(onFocus=r)` のように明示配線する。ワイルドカード `_` セレクタと `ui.hover` は対象外。
@@ -897,11 +919,13 @@ kind の要素が `<ev>` を発火するのに、そのレンダラがハンド�
 
 **`editable` と `change` について**: `editable` は `input` / `key` / `focus` / `blur` に載り、`change` にだけ**載らない**。この 1 つの欠落は漏れではなく規則である。`<div contenteditable="true">` は編集ホストなので `tabindex` 無しで focusable であり、`focus` / `blur` / `keydown` / `input` はいずれもブラウザが発火する。違うのは listen する層だけで、前 3 つは `applyUiEventHandlers`、`input` は `editable` レンダラ自身のリスナである。一方 `change` イベントは一切発火せず、これは表の行では埋められない。したがって `ui.change(<editable の tile>)` の W0212 は理由が正しい警告である — `ui.input` を購読して新しいテキストを直前の値を持つ slot と比較するか、編集の終了を捉えたいなら `ui.blur` を使う。
 
-**`key` / `focus` / `blur` について**: runtime はこの 3 つをレンダラが返した要素そのものに付けるので、載っている kind はいずれもその要素にイベントが届くものである。要素自体が focusable な kind — `input` / `textarea` / `button` / `select` / `slider`（素の `<input type="range">`）/ `editable` / `link` / `video`（`controls` 付きで描画された `<video>`）— は 3 行すべてに載る。`check` / `radio` / `switch` は `key` に載り、`focus` / `blur` には**載らない**。3 つは 1 つのケースに見えるが答えは 2 つに分かれる：いずれも `<input>` を `<label>` で包んで描画し、リスナは label 側にある。`keydown` は focus された input から label へバブルするので `ui.key` は届くが、`focus` / `blur` はバブルしないので label 上のリスナは決して実行されず、それらに W0212 を出すのは正しい。control 自身に `onFocus=` / `onBlur=` を書いても、リスナは同じ `<label>` に付くので、やはり実行されず、[W0213](#w0213-handler-on-inert-tile-warning) が同じ記録から読んだ同じ理由でそれを報告する。そこに書いた `onKeyDown=` は `ui.key` と同じく実行される。
+**`key` / `focus` / `blur` について**: runtime はこの 3 つをレンダラが返した要素そのものに付けるので、載っている kind はいずれもその要素にイベントが届くものである。要素自体が focusable で、中に tile を描画しない kind — `input` / `textarea` / `button` / `select` / `slider`（素の `<input type="range">`）/ `editable` / `link` / `video`（`controls` 付きで描画された `<video>`）— は 3 行すべてに載る。自身が focus を受け、中に tile を描画する `scroll` は `focus` と `blur` にだけ載る（下を参照）。`check` / `radio` / `switch` は `key` に載り、`focus` / `blur` には**載らない**。3 つは 1 つのケースに見えるが答えは 2 つに分かれる：いずれも `<input>` を `<label>` で包んで描画し、リスナは label 側にある。`keydown` は focus された input から label へバブルするので `ui.key` は届くが、`focus` / `blur` はバブルしないので label 上のリスナは決して実行されず、それらに W0212 を出すのは正しい。control 自身に `onFocus=` / `onBlur=` を書いても、リスナは同じ `<label>` に付くので、やはり実行されず、[W0213](#w0213-handler-on-inert-tile-warning) が同じ記録から読んだ同じ理由でそれを報告する。そこに書いた `onKeyDown=` は `ui.key` と同じく実行される。
 
 `details` は 3 行のどれにも載らず、どの空白も規則である。`details` は focus を受ける `<summary>` を `<details>` で包んで描画し、リスナが付くとすれば `<details>` である。summary の `focus` / `blur` は、check の label の場合と同じく、そこへバブルしない。`keydown` はバブルするが、パネルにあるすべての tile の keydown も同じくバブルしてくる。パネルにある control のうち `key` 行に載るものには同じ subscription がすでに持ち上げられているので、`<details>` にもリスナを付けると、その control で押したキーごとに reducer が 2 回実行される。したがって 3 つとも W0212 を出すのは正しく、メッセージはそれぞれの理由を述べる。summary 上のキーは、details 自身に書いたハンドラ（`details(…, onKeyDown=r)`）には届き、そのハンドラはパネルからのキーもすべて受け取るので、W0213 はこれを報告しない。そこに書いた `onFocus=` / `onBlur=` も、上で check について述べたのと同じ理由で実行されず、W0213 が報告する。
 
 Chromium では、`controls` があれば Tab は `<video>` に止まり、`focus` / `blur` は focus がそこに入るとき・出るときに発火する。`<video>` が focus を持つ間に押したキーは `ui.key` の reducer に届く。`controls` が無ければ focusable ではない：Tab は素通りし、`.focus()` やクリックでも focus は移らないので、3 つのどれも発火しない。`video` が `controls` を持つかはインスタンスの性質で、コンパイル時の表には見えないため、行はどちらの場合も `video` を載せる。`disabled` な control も同様で、その kind は載っているが focusable ではない。
+
+`scroll` は `focus` と `blur` に載り、`key` には**載らない**。`scroll` は `overflow: auto` の `<div>` を描画する。Chromium では、その内容があふれていて focusable なものを何も含まないとき、Tab はその `<div>` に止まり、`focus` / `keydown` / `blur` は `<div>` 自身で発火する。`.focus()` でも focus が移る。内容が収まっている scroll は Tab が素通りし、`.focus()` でも focus は移らない。focusable な control を含む、あふれた scroll も Tab は素通りしてその control に止まる。scroll をクリックしてもどちらの場合も focus は移らず、ランタイムが `.focus()` を呼ぶのは `input`・`textarea`・`select`・`editable` と確認ダイアログのボタンだけなので、そうした scroll の `<div>` にアプリの中で focus を移すものはない。ただしアプリの外のスクリプトがそれに `.focus()` を呼べば focus は移る。W0212 は、内容のどの分岐にも `check`・`radio`・`switch`・`details` のいずれかを含む scroll を数えず、何も含まないことがありうる scroll があれば何も出さない：`when`、`for`、それを含まない分岐、開いている間だけ表示される overlay の内容、`disabled` と書いた control、`error-boundary` のフォールバックが何も含まない tile。`input` など行に載る kind を含む scroll も Tab 順から外れるが、その kind が subscription を自分で受ける。scroll があふれるかはインスタンスの性質で、`video` の `controls` と同じなので、`focus` と `blur` の行はどちらの場合も `scroll` を載せる。中にある tile の `focus` / `blur` は `<div>` へバブルしないので、そこにあるリスナは scroll 自身に対してだけ実行される。`keydown` は、`<details>` の場合と同じく、中にあるすべての tile からそこへバブルし、そこにある control のうち `key` 行に載るものには subscription がすでに持ち上げられているので、`<div>` にもリスナを付けると、その control で押したキーごとに reducer が 2 回実行される。W0212 は `ui.key` についてそう述べる。scroll 自身に書いたハンドラ（`scroll(…, onKeyDown=r)`）は、その `<div>` 上のキーにも中からのすべてのキーにも実行されるので、W0213 は scroll 上の 3 つのどれも報告しない。W0213 は scroll が何を含むかを問わないので、ハンドラが実行されることのない `scroll(check(value=d), onFocus=r)` も報告しない。
 
 ### E0213 `call-arity-mismatch`
 
@@ -1250,9 +1274,9 @@ tile の木が、その中のユーザー tile を展開すると 256 段より�
 
 `onFocus` / `onBlur` はタイルが描画した要素にそのまま付くが、`check` / `radio` / `switch` / `details` ではその要素は focus を受ける要素を包むものである：control の `<input>` を包む `<label>`、`<summary>` を包む `<details>`。どちらのイベントも包む要素へはバブルしないので、ハンドラは決して実行されない。理由は W0212 が同じ kind への `ui.focus` / `ui.blur` について述べる節であり、同じ記録から読む（そちらの `key` / `focus` / `blur` についての注記を参照）。移す先として名指すタイルは、その `focus` / `blur` 行に載るものである。同じタイルへの購読は W0212 になるので、勧める購読は自身が focus を受けるタイルへのものである:
 
-> `"onFocus" on check() is dropped — the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label>. Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`
+> `"onFocus" on check() is dropped — the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label>. Put it on button / editable / input / link / scroll / select / slider / textarea / video, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`
 >
-> `"onBlur" on details() is dropped — the runtime listens for "blur" on a details's <details>, and the "blur" its <summary> fires does not bubble to the <details>. Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.blur(<Tile>) on a tile that takes focus itself`
+> `"onBlur" on details() is dropped — the runtime listens for "blur" on a details's <details>, and the "blur" its <summary> fires does not bubble to the <details>. Put it on button / editable / input / link / scroll / select / slider / textarea / video, or subscribe with a reducer's on=ui.blur(<Tile>) on a tile that takes focus itself`
 
 **user tile** にも同じ問いを立て、2 つ目の形で答える。user tile に書かれたハンドラは、その tile が描画するノードにマージされる（[§1.7.3](./language.md#_1-7-3-event-handler-props)）ので、発火するかどうかは何を描画するかで決まる — `tile Inner = box(text("clickme"))` に対する `Inner(onClick=open)` は、描画はされるが何も配線されない。まさにこの警告が存在する理由の失敗である。ほかに気づける層が無い：この警告は非致命なので `check` は 0 で終了し（`ok (1 warning)`）、`build` も emit を出し、`smoke` から見えるのは「正しく描画され、クリックする対象が無い」タイルでしかない。
 
@@ -1268,13 +1292,13 @@ body の kind がイベントを発火するのに、そのレンダラがハン
 
 `tile Inner = check(value=done)` に対する `Inner(onFocus=r)` なら:
 
-> `"onFocus" on Inner() is dropped — Inner renders nothing at its root where "focus" reaches it: the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label> (observed at its root: check). Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`
+> `"onFocus" on Inner() is dropped — Inner renders nothing at its root where "focus" reaches it: the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label> (observed at its root: check). Put it on button / editable / input / link / scroll / select / slider / textarea / video, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`
 
 `<kinds>` は tile の描画ツリーを辿って集めたもので、これは [W0212](#w0212-ui-event-tile-mismatch-warning) が使うのと同じ走査である。ただし本体内で呼ばれた tile の `error-boundary` フォールバックには入らない: そのフォールバックは、呼び出し側に書いたハンドラなしで描画される。報告するのは、そのツリーのどこにもハンドラを呼ぶ種類が無い場合だけ。これは意図的に控えめである：prop が着地するのはその tile の **root** ノードなので、`tile Card = box(button(...))` もハンドラを捨てるが、この検査は root かその下かを問わずツリーのどこかの種類がハンドラを呼ぶかを問うため報告しない。`onFocus` / `onBlur` は root だけに問う。ランタイムはそれらを root の要素に付け、`focus` と `blur` は内側のどこからもそこへバブルしないので、root より下の種類はそれらを実行できない。root のすべての種類が、包む要素にイベントが届かない包まれた control であるとき報告する：`tile Faq = details(summary="Q", text("a"))` は `Faq(onFocus=r)` で報告し、`tile Row = row(check(value=done))` は報告しない。`row` が focus を受けるかは問わないからである（後述）。逆に、報告するものはすべて確実に捨てられる。
 
 走査が種類を 1 つも見つけられなかった場合は報告しない — その tile の root 自体が、builtin でも宣言済み tile でもない名前である場合（`tile Inner = Nope()`、あるいは循環 `tile Inner = Inner()`）で、走査は何も学べていない。W0212 も同じ空の答えを前にして黙る。これらの形にはそれぞれの符号がある（[E0005](#e0005-tile-cycle)、[E0105](#e0105-undef-tile)）。解決できない名前が解決可能な body の**内側**にある場合（`tile Inner = box(Nope())`）は別の話で、その周囲の種類は root についての正しい答えなので、W0213 は解決できない部分を名指す符号と並んで報告される。
 
-`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` は、それ以外では報告しない。ランタイムはタイルが生成した要素にリスナをそのまま付けるので、決め手はイベントがその要素に届くかどうかであり、答えが記録されている kind は上の包まれた control である。`keydown` は `<label>` にも `<details>` にもバブルするので、`onKeyDown` は 4 つすべてで実行され、`details` ではパネルで押したキーもすべて受け取る。フォーカス可能でない kind、つまりコンテナ（`row`）や葉（`text`）では `focus` と `blur` は発火せず、`keydown` がコンテナに届くのはフォーカス可能な子孫がある場合だけである。そこまで報告するにはフォーカス可能性の解析が必要で、この検査は行わない。
+`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` は、それ以外では報告しない。ランタイムはタイルが生成した要素にリスナをそのまま付けるので、決め手はイベントがその要素に届くかどうかであり、答えが記録されている kind は上の包まれた control である。`keydown` は `<label>` にも `<details>` にもバブルするので、`onKeyDown` は 4 つすべてで実行され、`details` ではパネルで押したキーもすべて受け取る。`scroll` でも中で押したキーをすべて受け取る。フォーカス可能でない kind、つまりコンテナ（`row`）や葉（`text`）では `focus` と `blur` は発火せず、`keydown` がコンテナに届くのはフォーカス可能な子孫がある場合だけである。そこまで報告するにはフォーカス可能性の解析が必要で、この検査は行わない。
 
 [W0212](#w0212-ui-event-tile-mismatch-warning) は同じ黙殺を反対側から見たもの — 対象のタイルが `<ev>` をどの reducer にも渡さない `ui.<ev>(Tile)` 購読である。こちらは捕まえられない：コンテナはクリック可能な子孫が 1 つでもあれば通過し、ボタンを含むカードのレイアウトはすべてそれに当たる。
 
