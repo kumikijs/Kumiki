@@ -271,6 +271,8 @@ export type Refinement = {
   kind: "Refinement";
   pred: string;
   args: (number | string)[];
+  /** Each of `args` as the source writes it, a number's sign included, and where it starts. */
+  written?: { raw: string; pos: Pos }[];
   pos: Pos;
 };
 
