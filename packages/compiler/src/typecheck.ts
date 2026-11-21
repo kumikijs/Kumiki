@@ -118,6 +118,7 @@ function checkAll(
     qualifiers: new Set(qualifierCandidates(program)),
     judgedVariants: new WeakSet(),
     undefinedVariants: new Map(),
+    appliedPrecision: new WeakSet(),
     fnResults: new Map(),
     fnLoops: new Set(),
     unionsByTag: unionsByTag(program.defs),

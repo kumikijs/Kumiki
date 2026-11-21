@@ -420,22 +420,34 @@ describe("a predicate over a base type it cannot test is reported", () => {
 // safe range would test a bound other than the one written.
 describe("a number argument past the safe range where an Int is meant", () => {
   const BIG = "9007199254740993";
+  const SAFE = "-9007199254740991 through 9007199254740991";
   const reported = (defs: string) =>
     pointedErrorsOf(`${defs}\n${TAIL}`).map(({ code, text }) => ({ code, text }));
 
-  it("reports between's bound over an Int at the literal, naming it as written", () => {
-    const src = `type T = Int where between(0, ${BIG})\nslot t : T = 1\n${TAIL}`;
-    expect(pointedErrorsOf(src)).toEqual([
-      {
-        code: "E0217",
-        message: `Int literal ${BIG} is outside the safe range -9007199254740991 through 9007199254740991 and was rounded to 9007199254740992`,
-        text: `${BIG})`,
-      },
-    ]);
+  it.each([
+    [
+      "a bound that was rounded",
+      `type T = Int where between(0, ${BIG})`,
+      `Int literal ${BIG} is outside the safe range ${SAFE} and was rounded to 9007199254740992`,
+      `${BIG})`,
+    ],
+    [
+      "a signed bound that was rounded, with its sign",
+      `type T = Int where between(-${BIG}, 0)`,
+      `Int literal -${BIG} is outside the safe range ${SAFE} and was rounded to -9007199254740992`,
+      `-${BIG}, 0)`,
+    ],
+    [
+      "a bound held exactly",
+      `type T = Int where between(0, 9007199254740992)`,
+      `Int literal 9007199254740992 is outside the safe range ${SAFE}: it is held exactly, but an integer next to it is not`,
+      "9007199254740992)",
+    ],
+  ])("reports %s at the literal, naming it as written", (_, defs, message, text) => {
+    expect(pointedErrorsOf(`${defs}\n${TAIL}`)).toEqual([{ code: "E0217", message, text }]);
   });
 
   it.each([
-    ["between's lower bound, signed", `type T = Int where between(-${BIG}, 0)`, `-${BIG}, 0)`],
     ["one-of's literal", `type T = Int where one-of(1, ${BIG})`, `${BIG})`],
     ["a nominal Int's bound", `type T = nominal Int where between(0, ${BIG})`, `${BIG})`],
     ["an alias of Int's bound", `type N = Int\ntype T = N where between(0, ${BIG})`, `${BIG})`],
@@ -443,6 +455,34 @@ describe("a number argument past the safe range where an Int is meant", () => {
     ["len-eq's count, a whole number", `type T = Text where len-eq(${BIG})`, `${BIG})`],
     ["len-lt's count, a whole number", `type T = Text where len-lt(${BIG})`, `${BIG})`],
     ["len-gt's count, a whole number", `type T = Text where len-gt(${BIG})`, `${BIG})`],
+    // A count is a whole number over any base, so a parameter's does not wait for an application.
+    ["a count over a type parameter", `type R(T) = T where len-eq(${BIG})`, `${BIG})`],
+    // Over a parameter a bound is judged where the generic is applied, and reported at the literal.
+    [
+      "a generic's bound applied over Int",
+      `type R(T) = T where between(0, ${BIG})\nslot s : R(Int) = 1`,
+      `${BIG})`,
+    ],
+    [
+      "a generic's literal applied over an alias of Int",
+      `type N = Int\ntype R(T) = T where one-of(1, ${BIG})\nslot s : R(N) = 1`,
+      `${BIG})`,
+    ],
+    [
+      "a generic's bound applied over Int through another generic",
+      `type R(T) = T where between(0, ${BIG})\ntype S(U) = R(U)\nslot s : S(Int) = 1`,
+      `${BIG})`,
+    ],
+    [
+      "a generic's bound applied over Int more than once",
+      `type R(T) = T where between(0, ${BIG})\nslot a : R(Int) = 1\nslot b : R(Int) = 2`,
+      `${BIG})`,
+    ],
+    [
+      "a generic's bound over Int whatever it is applied over",
+      `type R(T) = {v: T, n: Int where between(0, ${BIG})}\nslot r : R(Int) = {v: 1, n: 1}`,
+      `${BIG})}`,
+    ],
   ])("reports %s, once, at the literal", (_, defs, text) => {
     expect(reported(defs)).toEqual([{ code: "E0217", text }]);
   });
@@ -460,7 +500,50 @@ describe("a number argument past the safe range where an Int is meant", () => {
     // Over a Float a bound is a Float, which holds an approximation by nature, as a Float slot does.
     `type T = Float where between(0, ${BIG})`,
     `type T = Float where one-of(0.5, ${BIG})`,
+    `type T = Time where between(0, ${BIG})`,
+    // A parameter's base is decided where the generic is applied, and these apply it over no Int.
+    `type R(T) = T where between(0, ${BIG})`,
+    `type R(T) = T where between(0, ${BIG})\nslot s : R(Float) = 1.0`,
   ])("accepts %s", (defs) => {
     expect(reported(defs)).toEqual([]);
+  });
+
+  // A refinement E0804 reports is wrong whatever its literals are read as, and that message names
+  // the literal as written, so the literal is not reported again.
+  it.each([
+    [
+      "a bound over Text",
+      `type T = Text where between(0, ${BIG})`,
+      'Refinement "between" tests a number but is written over Text, so no value satisfies it',
+    ],
+    [
+      "a count over Int",
+      `type T = Int where len-eq(${BIG})`,
+      'Refinement "len-eq" tests text but is written over Int, so no value satisfies it',
+    ],
+    [
+      "a negative count",
+      `type T = Text where len-eq(-${BIG})`,
+      `Refinement "len-eq" takes a whole number of characters, zero or more but argument 1 is -${BIG}`,
+    ],
+    [
+      "bounds the wrong way round",
+      `type T = Int where between(9007199254740995, ${BIG})`,
+      `Refinement between(9007199254740995, ${BIG}) has a lower bound above its upper bound, so no value satisfies it`,
+    ],
+    [
+      "a number one-of lists over Text",
+      `type T = Text where one-of("a", ${BIG})`,
+      `Refinement "one-of" lists ${BIG} (argument 2) but is written over Text, so no value equals it`,
+    ],
+    [
+      "a generic's bound applied over Text",
+      `type R(T) = T where between(0, ${BIG})\nslot s : R(Text) = "a"`,
+      'Refinement "between" tests a number but R(Text) applies it over Text, so no value satisfies it',
+    ],
+  ])("reports %s as E0804 alone, naming the literal as written", (_, defs, message) => {
+    expect(
+      pointedErrorsOf(`${defs}\n${TAIL}`).map(({ code, message }) => ({ code, message })),
+    ).toEqual([{ code: "E0804", message }]);
   });
 });

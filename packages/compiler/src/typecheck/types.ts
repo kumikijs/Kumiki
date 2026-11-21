@@ -108,9 +108,12 @@ function checkRefinement(
   errors: KumikiError[],
 ): void {
   if (!r) return;
-  checkArgPrecision(r, refinedBase(inner, sym, typeParams), errors);
-  const problem = refinementProblem(r) ?? baseProblem(r, inner, sym, typeParams);
-  if (!problem) return;
+  const base = refinedBase(inner, sym, typeParams);
+  const problem = refinementProblem(r) ?? baseProblem(r, base);
+  if (!problem) {
+    checkArgPrecision(r, base, errors);
+    return;
+  }
   if (problem.kind === "unimplemented-refinement") {
     errors.push({
       code: "E0803",
@@ -128,17 +131,31 @@ function checkRefinement(
   });
 }
 
+const isInt = (t: TypeExpr | null): boolean => t?.kind === "TypePrim" && t.name === "Int";
+
 // A number argument over an `Int` stands for an `Int`, and so does a count over any base: the check
 // is built from the number each literal was read as. Over a `Float` it is a `Float`, which holds an
-// approximation by nature, and over a type parameter its type is not decided.
+// approximation by nature. Over a type parameter it is judged where the generic is applied.
 function checkArgPrecision(r: Refinement, base: TypeExpr | null, errors: KumikiError[]): void {
-  const overInt = base?.kind === "TypePrim" && base.name === "Int";
-  for (const [i, arg] of r.args.entries()) {
-    const at = r.written?.[i];
-    if (typeof arg !== "number" || at === undefined) continue;
-    if (!overInt && !isCountArgument(r.pred, i)) continue;
-    const imprecise = intLiteralPrecision({ value: arg, raw: at.raw }, at.pos);
+  const overInt = isInt(base);
+  for (const n of r.numbers ?? []) {
+    if (!overInt && !isCountArgument(r.pred, n.index)) continue;
+    const imprecise = intLiteralPrecision(n, n.pos);
     if (imprecise) errors.push(imprecise);
+  }
+}
+
+/**
+ * {@link checkArgPrecision} for a refinement an application puts over `Int`, once however often
+ * the generic is applied: the literal is the definition's, reported where it is written.
+ */
+function checkAppliedPrecision(run: AppliedRun, r: Refinement): void {
+  if (run.sym.appliedPrecision.has(r)) return;
+  run.sym.appliedPrecision.add(r);
+  // A count's refinement tests text, so over `Int` it is E0804 and never gets here.
+  for (const n of r.numbers ?? []) {
+    const imprecise = intLiteralPrecision(n, n.pos);
+    if (imprecise) run.imprecise.push(imprecise);
   }
 }
 
@@ -151,14 +168,8 @@ function refinedBase(
   return unaliasType(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
 }
 
-/** {@link refinementBaseProblem} for `r` over `inner`, as a checker problem. */
-function baseProblem(
-  r: Refinement,
-  inner: TypeExpr,
-  sym: SymbolTable,
-  typeParams: ReadonlySet<string>,
-): RefinementProblem | undefined {
-  const base = refinedBase(inner, sym, typeParams);
+/** {@link refinementBaseProblem} for `r` over `base`, as a checker problem. */
+function baseProblem(r: Refinement, base: TypeExpr | null): RefinementProblem | undefined {
   const message = base ? refinementBaseProblem(r, base) : undefined;
   return message ? { kind: "refinement-args-invalid", message } : undefined;
 }
@@ -184,11 +195,13 @@ function checkApplication(
     sym,
     reported: new Map(),
     out: [],
+    imprecise: [],
   };
   appliedBaseProblems(app.name, args, unapplied, run, { entered: null, from: null, walked: null });
   for (const message of run.out) {
     errors.push({ code: "E0804", kind: "refinement-args-invalid", message, pos: app.pos });
   }
+  errors.push(...run.imprecise);
 }
 
 type AppliedRun = {
@@ -196,6 +209,7 @@ type AppliedRun = {
   readonly sym: SymbolTable;
   readonly reported: Map<Refinement, Set<string>>;
   readonly out: string[];
+  readonly imprecise: KumikiError[];
 };
 
 type AppliedScope = {
@@ -299,6 +313,7 @@ function appliedBaseProblems(
             const over = `${run.shown} applies it over ${typeToString(now)}`;
             const message = refinementBaseProblem(r, now, over);
             if (message) reportApplied(run, r, message);
+            else if (isInt(now) && !isInt(was)) checkAppliedPrecision(run, r);
           }
         }
         walk(t.inner);

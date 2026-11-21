@@ -990,7 +990,7 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 
 リテラルは書かれたとおりに示される。1 つ目のメッセージは丸められたリテラルのもので、丸められた先の値をすべての桁で示す。2 つ目は正確に保持されるリテラルのもので、それでも範囲の外にあることに変わりはない。
 
-refinement の数値引数も、`Int` を表す位置では同じ範囲に照らして判定される。`Int` を基底とする `between` と `one-of` の数値引数すべてと、どの基底でも `len-eq` / `len-lt` / `len-gt` の文字数がそれにあたる（[§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）。refinement が組み込まれる検査は、リテラルが読まれた数と比べるので、`Int where between(0, 9007199254740993)` は `v <= 9007199254740992` を判定することになる。リテラルは書かれた位置で報告される。`Float` を基底とする境界は `Float` であり、もともと近似値を持つものなので、`Float` の slot の値と同じく、この範囲には照らさない。
+refinement の数値引数も、`Int` を表す位置では同じ範囲に照らして判定される。`Int` を基底とする `between` と `one-of` の数値引数すべてと、どの基底でも `len-eq` / `len-lt` / `len-gt` の文字数がそれにあたる（[§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）。refinement が組み込まれる検査は、リテラルが読まれた数と比べるので、`Int where between(0, 9007199254740993)` は `v <= 9007199254740992` を判定することになる。リテラルは書かれた位置で報告される。generic の適用で `Int` になる基底も `Int` の基底である。`type R(T) = T where between(0, 9007199254740993)` は `R(Int)` に対してリテラルの位置で報告され、generic が `Int` の上に何度適用されても報告は 1 回で、`R(Float)` に対しては報告されない。`Float` を基底とする境界は `Float` であり、もともと近似値を持つものなので、`Float` の slot の値と同じく、この範囲には照らさない。[E0804](#e0804-refinement-args-invalid) が報告する refinement も、この範囲には照らさない。そのメッセージがリテラルを書かれたとおりに示す。
 
 符号はリテラルの一部である（[§1.2](./language.md#_1-2-字句)）。そのため負のリテラルも、正のリテラルが判定されるすべての位置で同じ範囲に照らして判定され、`-` の位置で、符号付きで報告される。`-9007199254740993` は `-9007199254740992` に丸められたと報告され、`-9007199254740992` は正確に保持されると報告される。
 
@@ -1721,6 +1721,8 @@ test inf-has-no-value =
 > `Refinement "<pred>" tests <text | a number | text or a number> but is written over <base>, so no value satisfies it`
 > `Refinement "one-of" lists <literal> (argument <i>) but is written over <base>, so no value equals it`
 > `Refinement "<pred>" tests <what> but <G(args)> applies it over <base>, so no value satisfies it`
+
+引数は符号を含めて書かれたとおりに示される。`len-eq(-9007199254740993)` は、読まれた数ではなく `-9007199254740993` を示す。
 
 各述語の引数個数と形は [§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語) の表にある。**どの値も**満たせない refinement は、**あらゆる値が**満たす refinement と同じ欠陥であり — どちらも slot の保証を、それに依存するプログラムから奪う — 述語が取らない形の引数はそのどちらかを生む：`between(5, 1)` と `len-eq(2.5)` はあらゆる値を拒否し、`len-gt(-1)` はあらゆる値を受理し（`v.length > -1` は `""` に対しても真）、`one-of()` は受理する候補を持たない。最も鋭いのは `between(0, "x")` で、生成されるチェックは `v >= 0 && v <= x` となり、その後半は境界との比較ではなく宣言のない名前への参照なので、最初の書き込みか最初の `error(field=…)` 描画で `ReferenceError` を投げていた。`len-lt(0)` は正しい個数を取りながら、0 未満の長さは存在しないので、やはりあらゆるテキストを拒否する。
 

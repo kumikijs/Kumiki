@@ -1,21 +1,7 @@
-import type { Pos, Refinement, Token, TypeExpr } from "../ast.ts";
+import type { NumberLiteral, Pos, Refinement, RefinementNumber, TypeExpr } from "../ast.ts";
 import { REFINEMENT_PREDS } from "../refinements.ts";
 import { isPrimTypeName } from "../stdlib-types.ts";
 import { ParseError, TokenStream } from "./token-stream.ts";
-
-/** A token as the source writes it; a text literal is quoted. */
-function tokenText(t: Token): string {
-  switch (t.kind) {
-    case "num":
-      return t.raw;
-    case "str":
-      return JSON.stringify(t.value);
-    case "eof":
-      return "";
-    default:
-      return t.value;
-  }
-}
 
 export class TypeParser extends TokenStream {
   protected parseTypeExpr(): TypeExpr {
@@ -139,22 +125,6 @@ export class TypeParser extends TokenStream {
     return { name: tok.value, type, pos: tok.pos };
   }
 
-  /**
-   * The text and position of each argument of a refinement whose `(` is the token at `open` and
-   * whose `)` was the last one read: the tokens between, split at each `,`.
-   */
-  private writtenArgs(open: number): { raw: string; pos: Pos }[] {
-    if (this.i === open) return [];
-    const parts: Token[][] = [[]];
-    for (const tok of this.tokens.slice(open + 1, this.i - 1)) {
-      if (tok.kind === "op" && tok.value === ",") parts.push([]);
-      else parts.at(-1)?.push(tok);
-    }
-    return parts.flatMap(([first, ...rest]) =>
-      first ? [{ raw: [first, ...rest].map(tokenText).join(""), pos: first.pos }] : [],
-    );
-  }
-
   protected parseRefinement(): Refinement {
     const t = this.eat("ident");
     const name = t.value;
@@ -162,25 +132,35 @@ export class TypeParser extends TokenStream {
       throw new ParseError(`Unknown refinement predicate "${name}"`, t.pos);
     }
     const args: (number | string)[] = [];
-    const open = this.i;
+    const numbers: RefinementNumber[] = [];
+    const parseArg = (): void => {
+      const arg = this.parseRefinementArg();
+      if (typeof arg === "string") {
+        args.push(arg);
+        return;
+      }
+      numbers.push({ ...arg, index: args.length });
+      args.push(arg.value);
+    };
     if (this.matchOp("(")) {
       this.next();
       if (!this.matchOp(")")) {
-        args.push(this.parseRefinementArg());
+        parseArg();
         while (this.matchOp(",")) {
           this.next();
-          args.push(this.parseRefinementArg());
+          parseArg();
         }
       }
       this.eat("op", ")");
     }
-    return { kind: "Refinement", pred: name, args, written: this.writtenArgs(open), pos: t.pos };
+    return { kind: "Refinement", pred: name, args, numbers, pos: t.pos };
   }
 
-  protected parseRefinementArg(): number | string {
-    const n = this.tryEatSignedNumber();
-    if (n !== undefined) return n;
+  /** A text literal, or a number literal as written and where it starts, its sign included. */
+  protected parseRefinementArg(): string | (NumberLiteral & { pos: Pos }) {
     const t = this.peek();
+    const n = this.tryEatSignedNumberLit();
+    if (n !== undefined) return { ...n, pos: t.pos };
     if (t.kind === "str") {
       this.next();
       return t.value;
