@@ -123,8 +123,9 @@ export function typeMemberQualifier(callee: string, argCount: number): string | 
 
 /**
  * The type a `Decoder.Json(T)` argument spells, which parses as a value (`Map(ItemId, Item)` is a
- * `Variant`). Codegen decodes by it, the checker resolves it and the reference walker reads its
- * names as types, so all three take it from here. Each node keeps its source position.
+ * `Variant`). Codegen decodes by it, and the checker and the reference walker read its names as
+ * types through `visitDecodedParts`, so all three take it from here. Each node keeps its source
+ * position.
  */
 export function decodedType(e: Expr | undefined): TypeExpr | undefined {
   if (e?.kind === "Variant") {
@@ -147,9 +148,23 @@ export function decodedType(e: Expr | undefined): TypeExpr | undefined {
   return undefined;
 }
 
-/** The type a call decodes by: `T` of `Decoder.Json(T)`, when its argument spells one. */
-export function callDecodedType(callee: string, args: readonly Expr[]): TypeExpr | undefined {
-  return callee === "Decoder.Json" ? decodedType(args[0]) : undefined;
+/**
+ * Walks a `Decoder.Json(T)` argument in the order it is written, handing `type` each largest part
+ * that spells a type and `value` each part that spells none. An argument that spells a type
+ * throughout is one such part; in `{note: Note, n: 1}`, `Note` is a type and `1` a value.
+ */
+export function visitDecodedParts(
+  e: Expr | undefined,
+  type: (t: TypeExpr) => void,
+  value: (v: Expr) => void,
+): void {
+  if (!e) return;
+  const t = decodedType(e);
+  if (t) type(t);
+  else if (e.kind === "Variant") for (const p of e.payload) visitDecodedParts(p, type, value);
+  else if (e.kind === "RecordLit") {
+    for (const f of e.fields) visitDecodedParts(f.value, type, value);
+  } else value(e);
 }
 
 export function builtinArity(callee: string): BuiltinArity | undefined {

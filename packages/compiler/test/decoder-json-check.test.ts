@@ -1,12 +1,14 @@
 import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
-import { builtSummariesOf, locatedOf, posOf } from "./helpers/diagnostics.ts";
+import { builtSummariesOf, codesOf, locatedOf, posOf } from "./helpers/diagnostics.ts";
 import { compileOrFail, importModule, LOADABLE } from "./helpers/module.ts";
 
 const TYPES = `
 type NoteId = nominal Text where uuid
 type Note   = {id: NoteId, text: Text where nonempty}
 type Plain  = {n: Int, s: Text}
+type Page(T) = {items: List(T), next: Option(Text)}
+type Notes  = List(Note)
 `;
 
 /** A program of `defs` whose app is granted `cap`. */
@@ -66,6 +68,10 @@ describe("Decoder.Json(T) carries T's check to the handler", () => {
   it("a T with no predicate keeps the json sentinel", async () => {
     expect(await decodeOf("Decoder.Json(Plain)")).toBe("json");
     expect(await decodeOf("Decoder.Json(Map(Text, List(Plain)))")).toBe("json");
+  });
+
+  it("an argument with a value inside it spells no T, so it keeps the json sentinel", async () => {
+    expect(await decodeOf("Decoder.Json({note: Note, n: 1})")).toBe("json");
   });
 
   it("a container of a refined record answers the first predicate refused, and where", async () => {
@@ -136,9 +142,12 @@ describe("Decoder.Json(T) resolves T as a type", () => {
   ];
 
   /** One E0117 for `name`, at the one place `src` writes it. */
-  const undefinedAt = (src: string, name: string) => [
-    { code: "E0117", message: `Reference to undefined type "${name}"`, ...posOf(src, name) },
-  ];
+  const undefinedAt = (src: string, name: string) => {
+    expect(src.indexOf(name), `"${name}" is written once`).toBe(src.lastIndexOf(name));
+    return [
+      { code: "E0117", message: `Reference to undefined type "${name}"`, ...posOf(src, name) },
+    ];
+  };
 
   it.each(PLACES)("reports a misspelt Map key in $place at the name", ({ src }) => {
     const written = src("Decoder.Json(Map(NoteIdd, Note))");
@@ -171,8 +180,37 @@ describe("Decoder.Json(T) resolves T as a type", () => {
     "Decoder.Json(Option(Note))",
     "Decoder.Json({note: Note, n: Int})",
     "Decoder.Json(Map(Text, List(Option(Plain))))",
+    "Decoder.Json(Page(Note))",
+    "Decoder.Json(Notes)",
+    "Decoder.Json(Result(Note, Text))",
+    "Decoder.Json(HttpError)",
   ])("reports nothing for %s", (decoder) => {
     expect(locatedOf(program(decoder))).toEqual([]);
+  });
+
+  it.each([
+    { decoder: "Decoder.Json({note: Notte, n: 1})", name: "Notte" },
+    { decoder: "Decoder.Json(List({note: Notte, n: 1}))", name: "Notte" },
+    { decoder: 'Decoder.Json(Map(Text, {note: Notte, s: "s"}))', name: "Notte" },
+  ])("reports $name in $decoder, which also holds a value", ({ decoder, name }) => {
+    const src = program(decoder);
+    expect(locatedOf(src)).toEqual(undefinedAt(src, name));
+  });
+
+  it("reports a part that spells a type and a value beside it, in the order written", () => {
+    const src = program("Decoder.Json(Map(Notte, nowhere))");
+    expect(locatedOf(src).map(({ code, line, col }) => ({ code, line, col }))).toEqual([
+      { code: "E0117", ...posOf(src, "Notte") },
+      { code: "E0103", ...posOf(src, "nowhere") },
+    ]);
+  });
+
+  it("reports nothing for a type beside a value when every name is a type", () => {
+    expect(locatedOf(program("Decoder.Json({note: Note, n: 1})"))).toEqual([]);
+  });
+
+  it("leaves an argument after the first to the count, unresolved", () => {
+    expect(codesOf(program("Decoder.Json(Note, Notte)"))).toEqual(["E0213"]);
   });
 
   it("checks the argument as any type is checked, its arity included", () => {

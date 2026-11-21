@@ -18,10 +18,10 @@ import type {
 } from "./ast.ts";
 import { assertNever, isTileExpr } from "./ast.ts";
 import {
-  callDecodedType,
   callsBuiltin,
   RUN_REDUCER,
   typeMemberQualifier,
+  visitDecodedParts,
 } from "./builtin-calls.ts";
 import { tileNamedAt } from "./builtins.ts";
 import { eventParts, type RecordField, recordFieldsOf, testSections } from "./test-sections.ts";
@@ -211,9 +211,14 @@ class Walker {
           return;
         }
         // Codegen decodes by this argument, so its names are types, though it parses as a value.
-        const decoded = callDecodedType(e.callee, e.args);
-        if (decoded) {
-          this.typeExpr(decoded);
+        if (e.callee === "Decoder.Json") {
+          const [first, ...rest] = e.args;
+          visitDecodedParts(
+            first,
+            (t) => this.typeExpr(t),
+            (v) => this.expr(v, locals),
+          );
+          for (const a of rest) this.expr(a, locals);
           return;
         }
         const qualifier = typeMemberQualifier(e.callee, e.args.length);

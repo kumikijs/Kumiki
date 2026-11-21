@@ -1,7 +1,7 @@
 import { nearestName } from "@kumikijs/runtime/text-distance";
 import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
-import { callDecodedType, isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
+import { isQualifierName, RUN_REDUCER, visitDecodedParts } from "../builtin-calls.ts";
 import { fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
 import { showShapeOf } from "../show-shape.ts";
 import {
@@ -383,13 +383,8 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         reportRunReducerPosition(ctx, e.pos, errors);
         return;
       }
-      // Codegen decodes by this argument, so it is resolved as a type, though it parses as a value.
-      const decoded = callDecodedType(e.callee, e.args);
-      if (decoded) resolveType(decoded, sym, errors);
-      for (const a of decoded ? e.args.slice(1) : e.args) {
-        if (e.callee === "Decoder.Json") checkTypeSpelling(a, sym, errors, ctx);
-        else checkExpr(a, sym, errors, ctx);
-      }
+      if (e.callee === "Decoder.Json") checkDecodedArgs(e.args, sym, errors, ctx);
+      else for (const a of e.args) checkExpr(a, sym, errors, ctx);
       checkCallee(e.callee, e.args, e.pos, sym, errors, ctx);
       for (const a of shownArgs(e)) noteShown(a, sym, ctx);
       return;
@@ -573,19 +568,22 @@ function didYouMean(written: string, candidates: Iterable<string>): string {
   return near === null ? "" : ` — did you mean "${near}"?`;
 }
 
-// `Decoder.Json(T)` takes a type written in expression position, so its
-// capitalised names are a type's and not tags; codegen reads them back as one.
-function checkTypeSpelling(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  if (e.kind === "Variant") {
-    for (const p of e.payload) checkTypeSpelling(p, sym, errors, ctx);
-    return;
-  }
-  if (e.kind === "RecordLit") {
-    for (const f of e.fields) checkTypeSpelling(f.value, sym, errors, ctx);
-    return;
-  }
-  checkExpr(e, sym, errors, ctx);
+// Codegen decodes by the first argument, which parses as a value, so each part of it that spells a
+// type is resolved as one. An argument after the first is E0213: its capitalised names are left
+// unreported rather than read as variant tags.
+function checkDecodedArgs(
+  args: readonly Expr[],
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const [first, ...rest] = args;
+  const value = (v: Expr): void => checkExpr(v, sym, errors, ctx);
+  visitDecodedParts(first, (t) => resolveType(t, sym, errors), value);
+  for (const a of rest) visitDecodedParts(a, leftToTheCount, value);
 }
+
+const leftToTheCount = (): void => undefined;
 
 function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { kind: "Ref" } {
   return (
