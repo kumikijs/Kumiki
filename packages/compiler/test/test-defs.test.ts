@@ -222,6 +222,7 @@ test rt = property-test
       "0.50",
       "-3",
       "-0",
+      "1.0",
     ])("refuses count = %s at the literal, as written", (count) => {
       expect(() => parse(lex(withCount(count)))).toThrow(
         new ParseError(
@@ -231,8 +232,8 @@ test rt = property-test
       );
     });
 
-    it.each(["1", "1.0"])("accepts count = %s, the fewest cases a property can run", (count) => {
-      const src = withCount(count);
+    it("accepts count = 1, the fewest cases a property can run", () => {
+      const src = withCount("1");
       const tests = parse(lex(src)).defs.filter((d): d is TestDef => d.kind === "TestDef");
       expect(tests[0]?.count).toBe(1);
       expect(checkSource(src)).toEqual([]);

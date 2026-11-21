@@ -1,5 +1,5 @@
 import { typeToString } from "./assignable.ts";
-import type { Refinement, TypeExpr } from "./ast.ts";
+import { isIntLiteral, type Refinement, type TypeExpr } from "./ast.ts";
 
 /** A literal a refinement can be written with. */
 export type RefinementArg = number | string;
@@ -235,12 +235,18 @@ const ARG_DESCRIPTION: Record<ArgKind, string> = {
   literal: "a number or text literal",
 };
 
-function argFits(kind: ArgKind, arg: RefinementArg | undefined): boolean {
+function argFits(kind: ArgKind, arg: RefinementArg | undefined, raw: string | undefined): boolean {
   switch (kind) {
     case "number":
       return typeof arg === "number";
     case "count":
-      return typeof arg === "number" && Number.isInteger(arg) && arg >= 0;
+      // Written with no point, as an `Int` is anywhere else.
+      return (
+        typeof arg === "number" &&
+        (raw === undefined || isIntLiteral({ value: arg, raw })) &&
+        Number.isInteger(arg) &&
+        arg >= 0
+      );
     case "text":
       return typeof arg === "string";
     case "literal":
@@ -248,9 +254,11 @@ function argFits(kind: ArgKind, arg: RefinementArg | undefined): boolean {
   }
 }
 
-/** How an argument reads in a message — quoted when it is text, as written. */
-const showArg = (arg: RefinementArg | undefined): string =>
-  arg === undefined ? "nothing" : JSON.stringify(arg);
+/** How argument `i` reads in a message — quoted when it is text, a number as written. */
+const showArg = (r: Refinement, i: number): string => {
+  const arg = r.args[i];
+  return arg === undefined ? "nothing" : (r.raw?.[i] ?? JSON.stringify(arg));
+};
 
 export function refinementProblem(r: Refinement): RefinementProblem | undefined {
   const entry = REFINEMENTS.get(r.pred);
@@ -260,7 +268,7 @@ export function refinementProblem(r: Refinement): RefinementProblem | undefined 
       message: `Refinement "${r.pred}" is not a registered predicate`,
     };
   }
-  const arity = arityProblem(r.pred, entry.params, r.args);
+  const arity = arityProblem(r, entry.params);
   if (arity) return { kind: "refinement-args-invalid", message: arity };
   const combined = entry.combined?.(r.args);
   if (combined) return { kind: "refinement-args-invalid", message: `Refinement ${combined}` };
@@ -284,31 +292,29 @@ export function refinementBaseProblem(
   if (tests === "choice" && shape !== undefined) {
     const wrong = r.args.findIndex((a) => shapeOfArg(a) !== shape);
     if (wrong === -1) return undefined;
-    return `Refinement "${r.pred}" lists ${showArg(r.args[wrong])} (argument ${wrong + 1}) but ${over}, so no value equals it`;
+    return `Refinement "${r.pred}" lists ${showArg(r, wrong)} (argument ${wrong + 1}) but ${over}, so no value equals it`;
   }
   if (shape !== undefined && shape === tests) return undefined;
   return `Refinement "${r.pred}" tests ${TESTS_DESCRIPTION[tests]} but ${over}, so no value satisfies it`;
 }
 
-function arityProblem(
-  pred: string,
-  params: Params,
-  args: readonly RefinementArg[],
-): string | undefined {
+function arityProblem(r: Refinement, params: Params): string | undefined {
+  const { pred, args } = r;
+  const fits = (kind: ArgKind, i: number): boolean => argFits(kind, args[i], r.raw?.[i]);
   const wrongArg = (i: number, kind: ArgKind): string =>
-    `Refinement "${pred}" takes ${ARG_DESCRIPTION[kind]} but argument ${i + 1} is ${showArg(args[i])}`;
+    `Refinement "${pred}" takes ${ARG_DESCRIPTION[kind]} but argument ${i + 1} is ${showArg(r, i)}`;
   if ("rest" in params) {
     if (args.length < params.min) {
       return `Refinement "${pred}" needs at least ${params.min} value(s) but got ${args.length}`;
     }
-    const wrong = args.findIndex((a) => !argFits(params.rest, a));
+    const wrong = args.findIndex((_, i) => !fits(params.rest, i));
     return wrong === -1 ? undefined : wrongArg(wrong, params.rest);
   }
   if (args.length !== params.fixed.length) {
     return `Refinement "${pred}" takes ${params.fixed.length} argument(s) but got ${args.length}`;
   }
   for (const [i, kind] of params.fixed.entries()) {
-    if (!argFits(kind, args[i])) return wrongArg(i, kind);
+    if (!fits(kind, i)) return wrongArg(i, kind);
   }
   return undefined;
 }

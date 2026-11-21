@@ -1,5 +1,5 @@
 import { isPositiveInt } from "@kumikijs/runtime/positive-int";
-import type { MotionDef, ThemeValue } from "../ast.ts";
+import { isIntLiteral, type MotionDef, type ThemeValue } from "../ast.ts";
 import type { KumikiError } from "./context.ts";
 
 const MOTION_KEYFRAME_PROPS = new Set(["opacity", "translate-x", "translate-y", "scale", "rotate"]);
@@ -79,8 +79,13 @@ export function checkMotion(def: MotionDef, errors: KumikiError[]): void {
       });
     }
   }
+  // A positive Int written with no point, as an `Int` is anywhere else.
+  const isCount = (key: string): boolean => {
+    const written = def.numbers.get(key);
+    return written !== undefined && isIntLiteral(written) && isPositiveInt(written.value);
+  };
   const dur = body.duration;
-  if (dur !== undefined && !(isPositiveInt(dur) || MOTION_DURATION_TOKENS.has(String(dur)))) {
+  if (dur !== undefined && !(isCount("duration") || MOTION_DURATION_TOKENS.has(String(dur)))) {
     errors.push({
       code: "E0402",
       kind: "motion-invalid-timing",
@@ -98,7 +103,7 @@ export function checkMotion(def: MotionDef, errors: KumikiError[]): void {
     });
   }
   const iter = body.iteration;
-  if (iter !== undefined && !(isPositiveInt(iter) || iter === "infinite")) {
+  if (iter !== undefined && !(isCount("iteration") || iter === "infinite")) {
     errors.push({
       code: "E0402",
       kind: "motion-invalid-timing",

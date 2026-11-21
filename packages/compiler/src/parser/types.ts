@@ -1,4 +1,4 @@
-import type { Pos, Refinement, TypeExpr } from "../ast.ts";
+import type { NumberLiteral, Pos, Refinement, TypeExpr } from "../ast.ts";
 import { REFINEMENT_PREDS } from "../refinements.ts";
 import { isPrimTypeName } from "../stdlib-types.ts";
 import { ParseError, TokenStream } from "./token-stream.ts";
@@ -132,22 +132,28 @@ export class TypeParser extends TokenStream {
       throw new ParseError(`Unknown refinement predicate "${name}"`, t.pos);
     }
     const args: (number | string)[] = [];
+    const raw: (string | undefined)[] = [];
+    const eatArg = (): void => {
+      const arg = this.parseRefinementArg();
+      args.push(typeof arg === "string" ? arg : arg.value);
+      raw.push(typeof arg === "string" ? undefined : arg.raw);
+    };
     if (this.matchOp("(")) {
       this.next();
       if (!this.matchOp(")")) {
-        args.push(this.parseRefinementArg());
+        eatArg();
         while (this.matchOp(",")) {
           this.next();
-          args.push(this.parseRefinementArg());
+          eatArg();
         }
       }
       this.eat("op", ")");
     }
-    return { kind: "Refinement", pred: name, args, pos: t.pos };
+    return { kind: "Refinement", pred: name, args, raw, pos: t.pos };
   }
 
-  protected parseRefinementArg(): number | string {
-    const n = this.tryEatSignedNumber();
+  protected parseRefinementArg(): NumberLiteral | string {
+    const n = this.tryEatSignedNumberLit();
     if (n !== undefined) return n;
     const t = this.peek();
     if (t.kind === "str") {

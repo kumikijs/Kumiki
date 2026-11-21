@@ -74,6 +74,11 @@ export type MotionDef = {
   kind: "MotionDef";
   name: string;
   body: { [k: string]: ThemeValue };
+  /**
+   * The body's top-level entries that are numbers, as written: `duration` and `iteration` take an
+   * `Int`, and the number in the body cannot tell `300.0` from `300`.
+   */
+  numbers: ReadonlyMap<string, NumberLiteral>;
   /** Keys seen more than once in the body, at any nesting depth. */
   duplicateKeys?: DuplicateName[];
   pos: Pos;
@@ -254,6 +259,14 @@ export function assertNever(node: never): void {
 export type NumberLiteral = { readonly value: number; readonly raw: string };
 
 /**
+ * Whether a number literal is an `Int`: language.md's `int`, written with no point. The number it
+ * is read as cannot tell, since `0.99999999999999999` is read as 1.
+ */
+export function isIntLiteral(literal: NumberLiteral): boolean {
+  return !literal.raw.includes(".");
+}
+
+/**
  * The sign is part of a number literal (language.md), but the lexer emits it as
  * its own operator, so `-1` reaches the AST as a negation of `1`. One leading `-`
  * is folded in: `- -1` is the negation of the literal `-1`, so it is `null` here.
@@ -271,6 +284,11 @@ export type Refinement = {
   kind: "Refinement";
   pred: string;
   args: (number | string)[];
+  /**
+   * The text each number argument is written as, at its index, since the number cannot tell `7.0`
+   * from `7`. Absent where no source wrote the refinement, as on a standard library type.
+   */
+  raw?: (string | undefined)[];
   pos: Pos;
 };
 

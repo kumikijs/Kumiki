@@ -1,0 +1,54 @@
+# Feature (language.md): a whole number a definition takes is written with no
+# point, as an `Int` is anywhere else.
+#
+# An effect's `retry=` count, a `property-test`'s `count`, a `motion`'s
+# `duration` and `iteration`, and the length `len-eq` / `len-lt` / `len-gt`
+# take are each an `int`. `1.0` is a `float`, though it is read as 1, and so is
+# `0.99999999999999999`. Written with a point, a count is refused where `0.5`
+# is: `retry=linear(2.0, 300ms)` and `count = 1.0` are parse errors at the
+# literal, `duration: 300.0` is E0402, and `len-lt(7.0)` is E0804. A keyframe
+# value is a number of any kind, so `opacity: 0.5` stays as written.
+
+type Quote = {text: Text}
+type Name  = Text where len-lt(7)
+
+slot name   : Name = "ada"
+slot quote  : Text = "none"
+slot clicks : Int  = 0
+
+effect loadQuote cap=http.get
+                 in=Unit
+                 out=Result(Quote, HttpError)
+                 retry=linear(2, 300ms)
+                 map-request={url: "/quote", decode: Decoder.Json(Quote)}
+
+motion Pulse = {
+    keyframes: {from: {opacity: 0.5}, to: {opacity: 1}},
+    duration:  300,
+    iteration: 2
+}
+
+reducer inc    on=ui.click(IncBtn)     do= clicks := clicks + 1
+                                           emit loadQuote()
+reducer loaded on=loadQuote.ok($q, _)  do= quote := $q.text
+
+tile IncBtn = button(text="+1") {id: "inc", motion: "Pulse"}
+
+tile App = column(
+    IncBtn,
+    text("clicks: " + clicks.show),
+    text("quote: " + quote),
+    text("name: " + name)
+) {pad: "lg", gap: "md"}
+
+app CountsAreInts
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+test once =
+    property-test
+        for-all   = {n: Int}
+        given     = {slots: {clicks: n}, event: {type: ui.click, target: IncBtn}}
+        invariant = run-reducer(inc).slots.clicks == n + 1
+        count     = 1
