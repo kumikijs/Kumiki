@@ -304,6 +304,36 @@ export function fragmentBinds(fragment: FragmentArgument): 1 | 2 {
   return fragment.second === undefined ? 1 : 2;
 }
 
+/**
+ * `Bool` is a predicate's answer. `container` is the receiver's own type with its value left to the
+ * fragment: what `flat-map` hands back on a `Some` / `Ok` is the answer itself, so it has to be the
+ * next `Option`, or the next `Result` with the receiver's error type.
+ */
+export type FragmentAnswer = "Bool" | "container";
+
+type AnswerRow<M extends string> = {
+  readonly [R in Receiver as M extends MemberOf<R> ? R : never]?: FragmentAnswer;
+};
+
+// What each method's fragment has to answer, on the receivers whose signature in stdlib.md fixes
+// it. A row is keyed only by a receiver that has the method; `Map.update`'s answer, the entry's
+// new value, is its parameter in `RECEIVER_PARAMS` instead.
+export const FRAGMENT_ANSWERS = {
+  filter: { List: "Bool", Option: "Bool", Map: "Bool", Set: "Bool" },
+  "flat-map": { Option: "container", Result: "container" },
+} as const satisfies { readonly [M in FragmentMethod]?: AnswerRow<M> };
+
+const ANSWER_ROWS: ReadonlyMap<
+  string,
+  Readonly<Record<string, FragmentAnswer | undefined>>
+> = new Map(Object.entries(FRAGMENT_ANSWERS));
+
+/** What `receiver.method`'s fragment has to answer, or `undefined` when nothing holds it to one. */
+export function fragmentAnswer(receiver: string, method: string): FragmentAnswer | undefined {
+  const row = ANSWER_ROWS.get(method);
+  return row !== undefined && Object.hasOwn(row, receiver) ? row[receiver] : undefined;
+}
+
 const PARAM_ROWS = new Map<string, ReadonlyMap<string, readonly (ReceiverParam | null)[]>>(
   Object.entries(RECEIVER_PARAMS).map(([r, row]) => [r, new Map(Object.entries(row))]),
 );

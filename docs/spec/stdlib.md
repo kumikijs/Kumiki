@@ -213,6 +213,8 @@ fn norm() -> List(Todo) = todos.reverse       # same as above
 
 **`sort` orders the elements themselves the same way when they are all numbers or all `Text`**, judged by each element's runtime type with the absent ones left out: a `List(Int)`, `List(Float)` or `List(Time)` numerically, and a `List(Text)` in UTF-16 code-unit order, so `[3, 1, 2, 10].sort` is `[1, 2, 3, 10]` and `["9", "10"].sort` is `["10", "9"]`. An absent element sorts after every other, keeping its order, as an absent key does in `sort-by`. Non-finite `Float` values — what the functions of [§2.2.7](#_2-2-7-int-float) give outside their domain, and what `/` gives for a zero divisor ([language §1.9.4](./language.md#_1-9-4-operator-types)) — are numbers like any other: `-Infinity` sorts before every finite value and `Infinity` after, so `[10.0, 9.0, 1.5, 1.0 / 0.0].sort` is `[1.5, 9.0, 10.0, Infinity]`. `NaN`, which `<` orders against nothing, sorts after every other element, `Infinity` included, as a `NaN` key does in `sort-by`: `[(-1.0).sqrt, 2.0, 1.0].sort` is `[1.0, 2.0, NaN]`. A list holding both numbers and `Text` — a `List(Float)` some of whose values arrived as `Text`, say — is ordered by each element's text instead, absent elements still last, because `<` between a number and a `Text` is no order: such a list holding `10`, `"9"` and `2` sorts as `10`, `2`, `"9"`, where `sort-by` on the same keys gives `2`, `"9"`, `10`.
 
+**A `filter` predicate answers a `Bool`**, over a `List`, an `Option`, a `Map` and a `Set` alike: an element is kept when it holds. A predicate that answers anything else is [E0201](./errors.md#e0201-type-mismatch) at the predicate — over a `List(Int)`, `xs.filter($1 + 1)` is `Expected Bool but got Int`, and so is `xs.filter(f)` for `fn f(n: Int) -> Int` — and one whose answer the checker cannot type is checked against nothing.
+
 ### 2.2.4 Option(T)
 
 ```
@@ -241,6 +243,8 @@ flat-map(expr)              : Result(T', E)
 or(other)                   : Result(T, E)
 to-option                   : Option(T)
 ```
+
+**A `flat-map` fragment answers the receiver's own container.** On a `Some` / `Ok`, the call's result is what the fragment answers, as it is, so over an `Option(T)` the fragment answers an `Option`, and over a `Result(T, E)` a `Result` whose error is an `E`; the value inside is the fragment's to choose. `Some(…)`, `None`, `Ok(…)`, `Err(…)`, a `fn` whose `->` is one of those, and an `if` or a `match` whose every branch is one, all are. Any other answer is [E0201](./errors.md#e0201-type-mismatch) where it is written: over an `Option(Int)`, `o.flat-map($1 + 1)` is `Expected Option(?) but got Int` and `o.flat-map({n: $1})` is `Expected Option(?) but got {n: Int}`, where `o.flat-map(Some($1 + 1))` is right, and over a `Result(Int, Text)`, `r.flat-map(Err($1))` is `Expected Text but got Int`. A fragment whose answer the checker cannot type — a `fn` with no `->` whose body's type is not decided — is checked against nothing.
 
 > **Panic semantics.** `Option.get` / `Result.get` (the polymorphic unwrap, also written paren-free as `value.get`) panic on the empty case (`None` / `Err`); `Result.get-err` panics on `Ok`. All raise the one controlled panic signal handled by the live runtime — see [Error Handling](./lifecycle.md#_7-2-error-handling). Prefer `get-or(default)` outside a reducer.
 

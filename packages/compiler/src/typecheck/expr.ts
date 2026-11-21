@@ -41,6 +41,7 @@ import {
   wildcardText,
 } from "./context.ts";
 import { currentFnName } from "./fn.ts";
+import { fragmentAnswerType } from "./fragment-answer.ts";
 import {
   arithmeticResult,
   inferType,
@@ -499,7 +500,10 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
           if (e.method === "sort-by" && i === 0) {
             checkSortKey(inferType(body, sym, inner), a.pos, recvType, sym, errors);
           }
-          const declared = acc ?? memberArgType(recvType, e.method, i, e.args.length, sym);
+          const declared =
+            acc ??
+            memberArgType(recvType, e.method, i, e.args.length, sym) ??
+            fragmentAnswerType(recvType, e.method, sym);
           if (declared !== null) checkAgainst(body, declared, sym, errors, inner);
         }
       }

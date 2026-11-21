@@ -675,6 +675,8 @@ builtin に、決して描画されない引数が書かれている。値 built
 
 `.get-or` のフォールバックはレシーバではなく**呼び出しが返す型**と照合する：空のケースで呼び出しが返す値そのものだから、結果型を担うのはフォールバックである。その結果型はレシーバの型引数から出る — `Option(T)` と `Result(T, E)` は `T`、`Map(K, V)` は `V` — ものであり、だからこそ `Option(S)` の slot に対する `opt := opt.get-or(None)` は 2 回報告される：フォールバックが `S` でないこと、そして `S` は `Option(S)` ではないこと。2 つの読みのどちらを取るかは引数の個数が決める（[Runtime §10.3.7](./runtime.md#_10-3-7-polymorphic-collection-methods)）。したがってレシーバに合わない個数の呼び出しは**ここでは**解決せず、照合する相手も持たない。ただし下げは行われる — 与えられたレシーバに対し、個数が名指す方の読みで — ので、これは沈黙ではなくそれ自体が欠陥である。
 
+式断片が返す値は、メソッドのシグネチャがそれを定める位置で照合される。`filter` の述語は `Bool` を返し（[stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)）、`flat-map` の式断片は受け手自身のコンテナ——`Option`、またはエラーの型が受け手と同じ `Result`——を返す（[stdlib §2.2.5](./stdlib.md#_2-2-5-result-t-e)）。中の値は式断片が決めてよく、メッセージはそれを `?` と示す：`Option(Int)` 上の `o.flat-map($1 + 1)` は `$1 + 1` で `Expected Option(?) but got Int` になり、`Result(Int, Text)` 上の `r.flat-map($1 + 1)` は `Expected Result(?, Text) but got Int` になる。
+
 代入可能性は構造的で、暗黙変換は 1 つだけ — `Int` は `Float` の位置へ流れ、その逆は流れない。別名と generic の具体化は辿り、`where` の refinement は透過する：この検査が refinement を評価することはない。`type Volume = nominal Int where between(0, 11)` に対する `volume := 50` はこのエラーではなく、値が範囲内かどうかはバリデーションが決める（[Forms §5.6](./forms.md#_5-6-バリデーション戦略)を参照）。
 
 `Tuple` の長さは型の一部である（[stdlib §2.1.2](./stdlib.md#_2-1-2-汎化型)）：`Tuple(Int, Text)` と `Tuple(Int, Text, Int)` は、どの深さでも —— `List` / `Map` / `Option` / レコード / 別のタプルの内側でも同じく —— どちらの向きにも互いを拒否する。タプルパターンは自身と同じ長さの値にしか一致しないので（[E0207](#e0207-pat-arity-mismatch)）、3 要素の位置に置かれたペアは 3 要素のアームをすべて素通りすることになる。長さの異なるタプルリテラルはリテラルの位置で 1 回だけ — `Expected Tuple(Int, Text, Int) but got a tuple of 2 item(s)` — 報告され、長さが合うものは要素ごとに検査される。
