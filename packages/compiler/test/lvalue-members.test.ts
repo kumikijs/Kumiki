@@ -117,14 +117,18 @@ describe("a field step on a union", () => {
   // Neither `A`, whose payload is a positional Int, nor `Z`, which has none, has a field `a`. And
   // `p.x` steps into the variant `p` holds, not into the record `A` carries.
   it.each([
-    [`u.a := "x"`, UNION, "U"],
-    [`u.a["k"] := "x"`, UNION, "U"],
-    [`u.a[0] := "x"`, UNION, "U"],
-    [`p.x["k"] := "x"`, PAYLOAD, "P"],
-    [`p.x[0] := "x"`, PAYLOAD, "P"],
-  ])("is E0108 at the field, and alone, in %s", (body, decls, written) => {
+    [`u.a := "x"`, UNION, "U", "a"],
+    [`u.a["k"] := "x"`, UNION, "U", "a"],
+    [`u.a[0] := "x"`, UNION, "U", "a"],
+    [`p.x["k"] := "x"`, PAYLOAD, "P", "x"],
+    [`p.x[0] := "x"`, PAYLOAD, "P", "x"],
+  ])("is E0108 at the field, and alone, in %s", (body, decls, written, field) => {
     expect(pointedErrorsOf(withBody(decls, body))).toEqual([
-      { code: "E0108", message: E0108_UNION(written, body[2]), text: body.slice(2) },
+      {
+        code: "E0108",
+        message: E0108_UNION(written, field),
+        text: body.slice(body.indexOf(field)),
+      },
     ]);
   });
 
