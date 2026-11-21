@@ -104,11 +104,23 @@ fresh  self  now  null
 - **改行が文区切り**: `do=` 内のみ `;` で複数文
 - **識別子は 32 文字以内**
 - **式・型・パターン・tile の木は 256 段まで**: 超えるとパーサが位置付きのエラーを報告する。examples と benchmarks のどのプログラムも上限に迫らない。
+- **tile の木はユーザー tile を展開した後も 256 段以内**: コード生成はユーザー tile の呼び出しをすべてその場に展開するので、互いを呼ぶ tile の深さは足し合わされる。上限を超えるとチェッカーが、木が上限を超える呼び出しの位置で [E0237](./errors.md#e0237-tile-depth) を報告する。
 - **複数行コメント禁止**
 - **マクロ禁止**
 
 ::: details 256 段は何に対する上限か
 自分自身を含みうる構文——括弧式・リスト・レコード・`if`・文ブロック・tile 呼び出し・タプルパターン・型適用・theme レコード——はこれ以上深く入れ子にできず、左結合の連鎖（`1 + 1 + 1 + …`、`x.trim().trim()…`、`not` や `-` の連続、1 つの型式に連ねた `where`、代入先 path の `.field` / `[index]` のステップ）もこれを超えるノードを作れない。両者は合算される。連鎖の各ステップは、その連鎖がそれまでに読んだものすべてを下に持つノードなので、先に読んだオペランドが含むもの——括弧で囲んだ連鎖、それ自体が添字の連鎖である添字、引数に `where` を持つ型適用——は後に続くステップ 1 つごとに 1 段深くなる。`1 + (1 + … + 1) + 1 + …` では 2 つの連鎖のステップが別々に数えられるのではなく足し合わされる。二項演算子の右オペランドはその演算子の 1 段下にあり、連ねた `where` の最初の 1 つも、後に続くものと同じく、それが付く型を下に持つノードである。括弧はノードを作らないので、括弧で囲んだオペランドは中身の分だけ数えられる。上限が掛かるのは**出来上がった木**であって、パーサがそこへどう到達したかではない。パース以降の全段階はその木を再帰で辿るため、ループで解析された連鎖であっても下流でスタックを使い切るからである。
+:::
+
+::: details 展開後の tile の木の数え方
+パーサが見るのは一度に一つの定義である。コード生成が出力するモジュールは、ユーザー tile の本体をすべてその呼び出し位置に展開した tile の木と同じ深さに入れ子になり、その深さを制限するものはほかに無い：どれも深くない定義の連鎖が、足し合わされて JavaScript エンジンが読み込みを拒むモジュールになる。そこでその木にも同じ上限を掛け、tile の段で数える:
+
+- tile 自身の本体は、パーサが一つの定義に上限を掛けるとき（上記）と同じに数える：呼び出しと `for`・`when`・`if`・`match`、そしてその中に書いた式も数える
+- 裸の識別子で書いた tile（`column(sidebar)`）もその tile の呼び出しとして数える
+- ユーザー tile の本体はその呼び出しの 1 段下にぶら下がり、コード生成がそのまわりに置く包みごとにさらに 1 段下がる：呼び出しが引数を渡すときに 1 段、キーが付くときに 1 段。キーは自分で書いた `{key: …}` によっても、それを描画する `for` によっても付く（間に `when` / `if` / `match` があっても付くが、builtin の子の中へは及ばない）
+- `error-boundary` はそれ自体で 1 段: 宣言した tile の呼び出しをすべて包み、その tile の本体とフォールバックの本体はどちらもその下にある
+
+兄弟は足し合わされない（木の深さは最も深い経路の深さ）。`tile T0 = column(T1)`、`tile T1 = column(T2)`、… という連鎖は 1 リンクあたり 2 段なので、末尾が `text("leaf")` なら 127 リンクまで収まる。引数を渡すキー付きの呼び出しの連鎖は 1 リンクあたり 3 段、`for` が描画し引数を渡す呼び出しの連鎖は 4 段である。`tile-test` の期待する木もテストをコンパイルする場所で展開されるので、同じ上限を掛ける。`sub-routes` の子は展開されない（ルーターが `route-outlet` を通して描画する）ので、親の木には数えない。
 :::
 
 ---
@@ -713,11 +725,12 @@ pattern      ::= identifier
 
 **`if` と `match` の値文脈 vs tile 文脈**:
 - tile 引数が tile になるのは、**位置引数を内容として読まない builtin の位置引数**だけである —— `text`・`heading`・`markdown`・`code`・`editable`・`label`・`link` 以外のすべての builtin。それを描画するのはコンテナ（`column`, `row`, `card`, `box` 等）だけで、それ以外（`button`, `progress`, `image` 等）では tile でも値でも [E0129](./errors.md#e0129-unrendered-arg) になるが、どの tile もそこで構文解析できるように tile として読む。そこでは `if` と `match` は tile 式（`TileIf` / `TileMatch`）で各 arm は tile を返し、`(` か `{` が続く builtin 名はその builtin の呼び出し、大文字始まりの名前は user tile になる。
-- それ以外の tile 引数はすべて値である：値 builtin が位置引数から読む内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：位置引数を内容として読まない builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になる。
-- `when` と `for` には値の形が無いので、どこに書いても tile である。
+- それ以外の tile 引数はすべて値である：値 builtin が位置引数から読む内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier)、値 builtin の内容では [E0236](./errors.md#e0236-tile-as-content) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：位置引数を内容として読まない builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になる。
+- `when` と `for` には値の形が無いので、どこに書いても tile である。値の位置ではそれを何も描画しない：値 builtin の内容では [E0236](./errors.md#e0236-tile-as-content)、ユーザー tile の入力やほかの名前付き引数では、そこに挙げる例外を除いて [E0201](./errors.md#e0201-type-mismatch)（`progress(max=when(c, …))`、`box(header=when(c, …))`）である。
 - 例: `text(match m with | A -> "a" | B -> "b")` ← 値 match
 - 例: `button(text="Save", disabled=if busy then true else false)`、`Row(if wide then 2 else 1)` ← 値 if
 - 例: `column(match xs with | Loaded(ys) -> ... | None -> spinner())` ← tile match
+- 値 builtin の内容は値であり、そこに書いた tile は決して描画されない：`when` / `for`、tile の呼び出し、プログラムが定義する tile の名前（`text(column(…))`、`text(Header)`）は、内容そのものでも、値の `if` / `match` の腕（`text(if c then Header else "b")`）や `let … in` の本体でも [E0236](./errors.md#e0236-tile-as-content) である。tile はコンテナの子として書く —— `column(when(c, …))` —— か、値を表示する —— `text(x.show)`。
 
 ### 1.7.2 不変条件
 
@@ -864,7 +877,7 @@ items.filter(isActiveOnly)
 
 式断片の位置に置いた fn 名は、メソッドが式断片の positional で行う呼び出しである：`items.map(double)` は `items.map(double($1))`、`xs.fold(0, add)` は `xs.fold(0, add($1, $2))` である。括弧のない fn 名が正しいのは**この位置だけ**である — fn は値ではないので、値の位置に書いた `label` は [E0127](./errors.md#e0127-fn-as-value) であり、呼び出しは `label()` と書く。位置の一覧と、それぞれが束縛する positional の数は E0127 の項に挙げてある。
 
-**各 positional の型**は、メソッドが式断片に渡すものの型であり、レシーバの型から読み取る。`fold` のアキュムレータだけは init の型から読み取る：
+**各 positional の型**は、メソッドが式断片に渡すものの型であり、レシーバの型から読み取る。`fold` のアキュムレータだけは init の型と式断片の結果から読み取る：
 
 | メソッド | レシーバ | `$1` | `$2` |
 |---|---|---|---|
@@ -872,14 +885,15 @@ items.filter(isActiveOnly)
 | `filter`, `map` | `Option(T)` | 値、`T` | — |
 | `map` | `Result(T, E)` | `Ok` の値、`T` | — |
 | `filter`, `map` | `Map(K, V)` | キー、`K` | 値、`V` |
-| `fold(init, f)` | `List(T)` | アキュムレータ、init の型 | 要素、`T` |
+| `filter` | `Set(T)` | メンバー、`T` | — |
+| `fold(init, f)` | `List(T)` | アキュムレータ、init の型と `f` の結果のうち広いほう | 要素、`T` |
 | `flat-map` | `Option(T)`, `Result(T, E)` | 値、`T` | — |
 | `update(k, f)` | `Map(K, V)` | 現在の値、`V` | — |
 | `map-err` | `Result(T, E)` | エラー、`E` | — |
 
-`filter`・`map`・`find`・`sort-by` では、`Tuple(A, B)` である `T`——`.entries` が返すもの——は分解され、`$1` が `A`、`$2` が `B` になる（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）。positional はその型の値として検査され、fn 名は自身が表す呼び出しとして検査される：`fn loud(t: Text)` に対して、`List(Int)` 上の `xs.map(loud($1))` は [E0201](./errors.md#e0201-type-mismatch) であり、`xs.map(loud)` も同じである。`xs.fold(0, f)` は `f` の第 1 パラメータを init の型 `Int` と、第 2 パラメータを要素と照合する。式断片の結果はアキュムレータの型と照合されないので、`$1` が init の型をもつのは最初の 1 回だけである：`xs.fold(0, $1.show)` は通り、2 回目には `Text` を渡す。
+`filter`・`map`・`find`・`sort-by` では、`Tuple(A, B)` である `T`——`.entries` が返すもの——は分解され、`$1` が `A`、`$2` が `B` になる（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）。`Set` のメンバーは分解されない：`Map` のキーと同じく、丸ごと `$1` になる。positional はその型の値として検査され、fn 名は自身が表す呼び出しとして検査される：`fn loud(t: Text)` に対して、`List(Int)` 上の `xs.map(loud($1))` は [E0201](./errors.md#e0201-type-mismatch) であり、`xs.map(loud)` も同じである。`xs.fold(0, f)` は `f` の第 1 パラメータをアキュムレータと、第 2 パラメータを要素と照合する。アキュムレータの型は init の型と式断片の結果の型のうち広いほう——もう一方がそこに収まるほう、互いに収まるなら init の型。ただし init の型が残す `?` を結果が埋めるときは結果の型（`[]` は `List(?)`、`None` は `Option(?)`）——であり、`$1` はどの回でもその型をもつ：`List(Float)` の上の `ps.fold(0, $1 + $2)` のアキュムレータは `Float` であり、`Int` は `Float` に広がる。どこまで広がるかは [標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t) にある。どちらももう一方に収まらないときは、アキュムレータは init の型をもち、式断片は [E0201](./errors.md#e0201-type-mismatch) となる。報告されるのは式断片の位置、名前だけで書いた `fn` ならその名前の位置である：`Int` の init からの `xs.fold(0, $1.show)` も、`fn f(acc: Int, x: Int) -> Text` に対する `xs.fold(0, f)` も E0201 である。結果の型を型検査器が決められない式断片は何とも照合されないので、後の回に別の型が渡ることはなおありうる：型検査器は `fold` の呼び出しに型を推論しないので、`xs.fold(0, [$1].fold("", $1 + $2.show))` は通る。
 
-型検査器が型を決められない positional には型がなく、何とも照合されない：型の決まらないレシーバの上（型パラメータ、`->` を持たず本体の型も決まらない `fn` の結果）、[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t) が束縛を与えていない `Set` の `filter`、型として読み戻されない `Map` のキー（`Bytes` のキーや、型が型パラメータであるキーは、格納されている文字列のまま渡される）、そして init 自体に型のない `fold` のアキュムレータ——空の Map でも空の Set でもある `{}`——がそれにあたる。
+型検査器が型を決められない positional には型がなく、何とも照合されない：型の決まらないレシーバの上（型パラメータ、`->` を持たず本体の型も決まらない `fn` の結果）、型として読み戻されない `Map` のキーや `Set` のメンバー（`Bytes` のものや、型が型パラメータであるものは、格納されている文字列のまま渡される）、そして init 自体に型のない `fold` のアキュムレータ——空の Map でも空の Set でもある `{}`——がそれにあたる。
 
 ---
 
@@ -924,7 +938,7 @@ unop        ::= '-' | '!'
 
 **`{ … }` リテラルは、最初のキーがフィールド名ならレコード、そうでなければ Map である。** フィールド名は識別子か予約語なので `{type: ui.click, target: Go}` や `{for: "name"}` はレコードだが、単独で式になる予約語 — 値である `true`・`false`・`now` と、値ですらない `null` — はフィールド名ではない。これら 4 つはキーである。`{true: "on", false: "off"}` は `Map(Bool, Text)` で、`{(true): "on", false: "off"}` が書くのと同じ Map になり、`{now: "start"}` は `Map(Time, Text)` になる。`{null: 1}` も Map であり、そのキーは [E0235](./errors.md#e0235-null-value) になる。それ以外の最初のキー — 文字列、数値、`Some(1)`、括弧で囲んだ名前 `(k)` — もリテラルを Map にする。リテラル全体の読み方は最初のキーが決める。`{a: 1, true: 2}` は `true` の位置で構文エラーになる。`true` は値であり、レコードのフィールド名ではないからである。`{true}` や `{true = 1}` も同じ構文エラーになる。Map のキーには `:` が続くので、`,`・`=`・`}` が続く `true` はフィールド名の位置にある。これらの位置の `null` も構文エラーになり、そのメッセージは `null` が値でもないことを述べる。
 
-`if` と `match` の値はいずれかの分岐の値なので、**どの分岐も式の行き先に合っていなければならない**。`ou` が `Option(UserId)`、`p` が `PostId` のとき、`p := match ou with | Some(id) -> id | None -> p` は `Some` の arm で [E0201](./errors.md#e0201-type-mismatch) になる。各 arm はそのパターンが束縛する型で読まれ、`p := ou.get-or(p)` と同じ扱いになる。型を宣言する側がない位置（`let`、演算子のオペランド）では、式の型は分岐の共通の型になる。分岐どうしが食い違う場合、共通の型は分岐が共有する基底型で、nominal は落ちる。`UserId` の分岐と `PostId` の分岐なら `Text` になる。式が型を持たず何も報告されないのは、分岐が基底型を共有しない場合か、型が決められない分岐がある場合だけである。
+`if` と `match` の値はいずれかの分岐の値なので、**どの分岐も式の行き先に合っていなければならない**。`ou` が `Option(UserId)`、`p` が `PostId` のとき、`p := match ou with | Some(id) -> id | None -> p` は `Some` の arm で [E0201](./errors.md#e0201-type-mismatch) になる。各 arm はそのパターンが束縛する型で読まれ、`p := ou.get-or(p)` と同じ扱いになる。型を宣言する側がない位置（`let`、演算子のオペランド）では、式の型は分岐の共通の型になる。分岐どうしが食い違う場合、共通の型は分岐が共有する基底型で、nominal は落ちる。`UserId` の分岐と `PostId` の分岐なら `Text` になる。`Int` の分岐と `Float` の分岐なら、`Int` が広がる先の `Float` になる。`1 + 1.5` が `Float` であるのと同じである。`List` リテラルの要素、`Map` リテラルのキーと値も同じように合わさる：`[1, 1.5]` は `List(Float)` である。式が型を持たず何も報告されないのは、分岐が基底型を共有しない場合か、型が決められない分岐がある場合だけである。
 
 `let x = v in body` の値は本体の値であり、本体は `x` を `v` の型に束縛して読まれる。したがって式の行き先に入るのは本体である。`fn label(n: Int) -> Text = let m = n + 1 in m` は `m` で [E0201](./errors.md#e0201-type-mismatch) になり、`… in m.show` は通る。型を宣言する側がない位置では、式の型は本体の型であり、そこから読むメンバはその型のメンバになる。`size` フィールドを持つレコードに対する `(let b = box in b).size` はそのフィールドを読む。
 
