@@ -6,8 +6,9 @@
 # `md: 500` moves the `md` breakpoint down from its 768px default, so the gap
 # below is "lg" from a 500px viewport up.
 #
-# Written negative, either is E0239 at the number. A browser drops
-# `padding: -4px`, and a negative minimum width is no breakpoint at all, so
+# Written negative, either is E0239 at the number. A spacing token is 0 or
+# more: `pad` and `gap` would drop `-4px`, as a browser drops
+# `padding: -4px`. A negative minimum width is no breakpoint at all, so
 # `md: -500` would leave the theme with no `md` rather than move it. A tile
 # meant to pull outward writes the negative length in its own `style` block,
 # as `margin-top: -4` does on the second card.
@@ -20,7 +21,7 @@ theme Compact = {
 tile Flush  = card(text("flush")) {pad: "flush", id: "flush"}
 tile Nudged = card(text("nudged")) {pad: "nudge", style: {margin-top: -4}, id: "nudged"}
 
-tile App = column(Flush, Nudged) {gap: {base: "sm", md: "lg"}, pad: "nudge"}
+tile App = column(Flush, Nudged) {gap: {base: "sm", md: "lg"}, pad: "nudge", id: "cards"}
 
 app ThemeLengthsFromZero
     caps   = []

@@ -1,13 +1,7 @@
 import { readFileSync } from "node:fs";
 import { feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
-import {
-  builtSummariesOf,
-  checkSource,
-  codesOf,
-  locatedOf,
-  posOf,
-} from "./helpers/diagnostics.ts";
+import { builtSummariesOf, checkSource, codesOf, locatedOf, posOf } from "./helpers/diagnostics.ts";
 
 const EXAMPLE = readFileSync(feature("277-theme-lengths-from-zero"), "utf8");
 

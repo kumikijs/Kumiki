@@ -67,7 +67,7 @@ theme DefaultTheme = {
 
 A `breakpoints` width is a minimum viewport width in `px`, `rem` or `em` (`"640px"`, `"48rem"`), or a bare number, which is px (`md: 500`). Anything else — another unit, a nested entry — is not a breakpoint and is ignored ([§4.5](#_4-5-responsive)).
 
-A `spacing` token is a length that `pad` and `gap` resolve to ([§4.3.1](#_4-3-1-shorthand-properties)), and a number there is px too (`nudge: 4`). A spacing number and a bare breakpoint number are 0 or more: `flush: 0` is no padding, and `md: 0` applies at every width. Neither a padding, nor a gap, nor a minimum viewport width can be negative, so a negative one would have no effect. A browser drops `padding: -4px`, and a negative width is not a breakpoint, though it still takes the default's place under its key: `md: -500` leaves the theme with no `md` at all. Either is [E0239](./errors.md#e0239-negative-theme-length), reported at the number.
+A `spacing` token is a length, and a number there is px too (`nudge: 4`). `pad`, `pad-x`, `pad-y`, `gap`, `gap-x` and `gap-y` resolve a token's name to it ([§4.3.1](#_4-3-1-shorthand-properties)), and a `style` block reads it as `@spacing.<key>` ([§4.3](#_4-3-token-references)). A spacing number and a bare breakpoint number are 0 or more: `flush: 0` is no padding, and `md: 0` matches at every width. A negative length belongs in the tile's own `style` block (`style: {margin-top: -4}`), not in a token: a browser drops `padding: -4px`, so `pad` and `gap` would drop it. A negative width is not a breakpoint, though it still takes the default's place under its key: `md: -500` leaves the theme with no `md` at all. Either is [E0239](./errors.md#e0239-negative-theme-length), reported at the number.
 
 ### 4.2.1 Syntax
 

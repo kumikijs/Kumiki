@@ -1422,15 +1422,15 @@ bind していないコントロールが選択状態を読む prop — `check` 
 
 `theme` が、`spacing` トークンまたは `breakpoints` の幅として負の数値を書いている（[スタイル §4.2](./style.md#_4-2-design-tokens)）。その数値の位置（`-` から始まる）で、数値ごとに 1 件報告する。
 
-> `theme "<name>": spacing "<key>" is <n>, and padding and gap cannot be negative, so it has no effect — write a length of 0 or more (see docs/spec/style.md)`
+> `theme "<name>": spacing "<key>" is <n>, but a spacing token is 0 or more — pad and gap drop a negative length; write a negative margin in the tile's own style block (see docs/spec/style.md)`
 >
 > `theme "<name>": breakpoint "<key>" is <n>, and a minimum viewport width cannot be negative, so "<key>" is not a breakpoint at all — write a width of 0 or more (see docs/spec/style.md)`
 
-どちらのセクションでも数値は px である。`nudge: -4` は `pad: "nudge"` に `padding: -4px` という宣言を与えるが、これは正しい CSS ではない：ブラウザはそれを捨て、タイルにはパディングが付かない。`gap` も同じように捨てられる。負のブレイクポイント幅はブレイクポイントではない（[スタイル §4.5](./style.md#_4-5-responsive)）。それでもそのキーでは既定値に取って代わるので、`md: -500` は `md` を動かすのではなく消し、`{base: …, md: …}` のマップは `md` の値に解決されることがなくなる。どちらも実行時のエラーではなく、ページが少しずれて見えるだけなので、`check` 以外にこれを名指すものは無い。
+spacing トークンとブレイクポイントの幅は 0 以上であり、どちらのセクションでも数値は px である。`pad`・`pad-x`・`pad-y`・`gap`・`gap-x`・`gap-y` はトークンをパディングかギャップに解決し、どちらも負にはなれない：`nudge: -4` は `pad: "nudge"` に `padding: -4px` という宣言を与えるが、これは正しい CSS ではないのでブラウザはそれを捨て、タイルにはパディングが付かない。`style` ブロックは同じトークンを `@spacing.nudge` として読める（[スタイル §4.3](./style.md#_4-3-トークン参照)）。そこでは `-4px` は正しい `margin-top` になるが、この規則はどこで読まれるかによらずトークンのものである：負の長さは `style` ブロックそのものに書く。負のブレイクポイント幅はブレイクポイントではない（[スタイル §4.5](./style.md#_4-5-responsive)）。それでもそのキーでは既定値に取って代わるので、`md: -500` は `md` を動かすのではなく消し、`{base: …, md: …}` のマップは `md` の値に解決されることがなくなる。どちらも実行時のエラーではなく、ページが少しずれて見えるだけなので、`check` 以外にこれを名指すものは無い。
 
-検査するのは `spacing` または `breakpoints` の直下の数値だけである。それより深く入れ子になった数値はトークンでも幅でもない。この検査は文字列を読まないので、`nudge: "-4px"` と `md: "-500px"` は同じ誤りだが報告されない。アプリが名指しているかどうかにかかわらず、すべての `theme` を検査する。`app.theme` の slot は実行中にそのどれでも選べるからである（[スタイル §4.6](./style.md#_4-6-dark-mode)）。
+検査するのは `spacing` または `breakpoints` の直下の数値だけである。`breakpoints` の下でそれより深く入れ子になった数値は幅ではない。`spacing` の下でそれより深く入れ子になった数値（`spacing: {tight: {x: -4}}`）は `pad` や `gap` が名指せるトークンではないが、`style` ブロックからは `@spacing.tight.x` としてなお届き、この検査はそれを読まない。文字列も読まないので、`nudge: "-4px"` と `md: "-500px"` は同じ誤りだが報告されない。アプリが名指しているかどうかにかかわらず、すべての `theme` を検査する。`app.theme` の slot は実行中にそのどれでも選べるからである（[スタイル §4.6](./style.md#_4-6-dark-mode)）。
 
-**修正**：長さや幅を 0 以上で書く（`nudge: 4`、`md: 500`）か、キーを省いて既定値を残す。外側へ引き寄せたいタイルは、負の長さを自身の `style` ブロックに書く（`style: {margin-top: -4}`）。そこではそれはトークンではなく、CSS プロパティそのものの値である。
+**修正**：長さや幅を 0 以上で書く（`nudge: 4`、`md: 500`）か、キーを省いて既定値を残す。外側へ引き寄せたいタイルは、負の長さを自身の `style` ブロックに書く（`style: {margin-top: -4}`）。そこではそれはトークンではなく CSS プロパティそのものの値なので、theme とともには変わらなくなる。
 
 ## E03xx — ケイパビリティと純粋性
 
