@@ -180,11 +180,11 @@ ${APP}`,
   });
 
   it("accepts a negative literal where a theme value takes a number", () => {
-    const src = `theme T = {spacing: {nudge: -4, half: -0.5, flat: 0}}${APP}`;
+    const src = `theme T = {custom: {nudge: -4, half: -0.5, flat: 0}}${APP}`;
     clean(src);
     expect(parse(lex(src)).defs[0]).toMatchObject({
       kind: "ThemeDef",
-      body: { spacing: { nudge: -4, half: -0.5, flat: 0 } },
+      body: { custom: { nudge: -4, half: -0.5, flat: 0 } },
     });
   });
 

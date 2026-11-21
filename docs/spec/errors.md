@@ -1455,6 +1455,20 @@ Only an `effect` declaration is refused. Emitting a standard effect needs no dec
 
 **Fix**: Rename the effect together with every `emit`, `app.init` entry and `on=<name>.ok` / `.err` reducer that meant it — `kumiki rename <file> effect.log logRequest` rewrites them all — and emit the standard effect under its own name where the built-in is what was meant. `kumiki rename` rewrites every use, whichever effect it was written for, so an `emit` written for the built-in keeps its `E0202` under the new name and the rename is refused; such a program is renamed by hand, leaving that `emit` as it is. A declaration that restates a standard effect (`effect navigate cap=nav.push in={path: Text, …}`) is deleted instead, since the standard effect needs none. Delete its line directly: `kumiki remove` counts the emits as references to the declaration and refuses.
 
+### E0239 `negative-theme-length`
+
+A `theme` writes a negative number as a `spacing` token or as a `breakpoints` width ([Style §4.2](./style.md#_4-2-design-tokens)). Reported at the number, which starts at its `-`, once per number.
+
+> `theme "<name>": spacing "<key>" is <n>, but a spacing token is 0 or more — pad and gap drop a negative length; write a negative margin in the tile's own style block (see docs/spec/style.md)`
+>
+> `theme "<name>": breakpoint "<key>" is <n>, and a minimum viewport width cannot be negative, so "<key>" is not a breakpoint at all — write a width of 0 or more (see docs/spec/style.md)`
+
+A spacing token and a breakpoint width are 0 or more, and a number in either section is px. `pad`, `pad-x`, `pad-y`, `gap`, `gap-x` and `gap-y` resolve a token to a padding or a gap, and neither can be negative: `nudge: -4` gives a `pad: "nudge"` the declaration `padding: -4px`, which is not valid CSS, so the browser drops it and the tile has no padding. A `style` block can read the same token as `@spacing.nudge` ([Style §4.3](./style.md#_4-3-token-references)), where `-4px` is a valid `margin-top`, but the rule is the token's, wherever it is read: a negative length is written in the `style` block itself. A negative breakpoint width is not a breakpoint ([Style §4.5](./style.md#_4-5-responsive)), yet it still takes the default's place under its key, so `md: -500` removes `md` rather than moving it, and a `{base: …, md: …}` map never resolves to its `md` value. Neither is an error at runtime, and the page only looks slightly off, so nothing but `check` names it.
+
+Only a number directly under `spacing` or `breakpoints` is checked. One nested deeper under `breakpoints` is no width. One nested deeper under `spacing` (`spacing: {tight: {x: -4}}`) is no token `pad` or `gap` can name, but a `style` block can still reach it as `@spacing.tight.x`, and this check does not read it. A string is not read either, so `nudge: "-4px"` and `md: "-500px"` are the same mistakes and are not reported. Every `theme` is checked, whether or not the app names it, since an `app.theme` slot can select any of them while the app runs ([Style §4.6](./style.md#_4-6-dark-mode)).
+
+**Fix**: Write the length or the width as 0 or more (`nudge: 4`, `md: 500`), or leave the key out to keep its default. A tile meant to pull outward writes the negative length in its own `style` block (`style: {margin-top: -4}`), where it is the CSS property's own value and not a token, so it no longer changes with the theme.
+
 ## E03xx — Capabilities and Purity
 
 ### E0301 `missing-capability`
