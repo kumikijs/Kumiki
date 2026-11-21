@@ -208,19 +208,15 @@ describe("an index read", () => {
     expect(_stdlibCore.index({ 5: "x" }, 5)).toBe("x");
   });
 
-  it("panics for a key the Map does not hold", () => {
+  it("panics for a key the Map does not hold, showing the Map", () => {
     expect(() => _stdlibCore.index({ a: 1 }, "zz")).toThrow(KumikiPanic);
-    expect(() => _stdlibCore.index({ a: 1 }, "zz")).toThrow('Key "zz" is not in the Map');
-    expect(() => _stdlibCore.index({ 5: "x" }, 6)).toThrow("Key 6 is not in the Map");
+    expect(() => _stdlibCore.index({ a: 1 }, "zz")).toThrow('Key "zz" is not in {"a":1}');
+    expect(() => _stdlibCore.index({ 5: "x" }, 6)).toThrow('Key 6 is not in {"5":"x"}');
   });
 
   it("shows a record key and a union key in their entry encoding", () => {
-    expect(() => _stdlibCore.index({}, { y: 2, x: 1 })).toThrow(
-      'Key {"x":1,"y":2} is not in the Map',
-    );
-    expect(() => _stdlibCore.index({}, { _tag: "Red" })).toThrow(
-      'Key {"_tag":"Red"} is not in the Map',
-    );
+    expect(() => _stdlibCore.index({}, { y: 2, x: 1 })).toThrow('Key {"x":1,"y":2} is not in {}');
+    expect(() => _stdlibCore.index({}, { _tag: "Red" })).toThrow('Key {"_tag":"Red"} is not in {}');
   });
 
   it("does not read an Object.prototype member as an entry", () => {
@@ -228,17 +224,14 @@ describe("an index read", () => {
   });
 
   // The checker refuses these reads where it knows the receiver's type; where it cannot decide
-  // it, the read still runs, and the panic says what the index hit.
+  // it, the read still runs, and the panic shows what the index hit.
   it.each([
+    ["a Map holding the key _tag", { _tag: 1 }, "zz", 'Key "zz" is not in {"_tag":1}'],
+    ["a record", { a: "x" }, "zz", 'Key "zz" is not in {"a":"x"}'],
+    ["an Option", { _tag: "Some", _0: 1 }, 0, 'Key 0 is not in {"_tag":"Some","_0":1}'],
+    ["a union value", { _tag: "Z" }, "k", 'Key "k" is not in {"_tag":"Z"}'],
     ["an Int", 5, 0, "Index 0 reaches no List or Map, but 5"],
     ["a Text", "abc", 0, 'Index 0 reaches no List or Map, but "abc"'],
-    [
-      "an Option",
-      { _tag: "Some", _0: 1 },
-      0,
-      'Index 0 reaches no List or Map, but {"_tag":"Some","_0":1}',
-    ],
-    ["a union value", { _tag: "Z" }, "k", 'Index "k" reaches no List or Map, but {"_tag":"Z"}'],
     ["no value", undefined, 0, "Index 0 reaches no List or Map, but undefined"],
   ])("panics naming the receiver when it is %s", (_what, recv, key, message) => {
     expect(() => _stdlibCore.index(recv, key)).toThrow(KumikiPanic);

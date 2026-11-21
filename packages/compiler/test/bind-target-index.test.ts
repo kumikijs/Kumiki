@@ -143,6 +143,18 @@ tile App = column(B)`),
     ).toEqual([write]);
   });
 
+  // The bind check steps aside for the read, so a control that did not read its target would
+  // report nothing at all.
+  it.each([
+    ...BINDING_CONTROLS.map((name) => [
+      name,
+      `${name}(${name === "radio" ? `group="g", value=1, ` : ""}bind=i[0])`,
+    ]),
+    ["the {…} block", "input() {bind: i[0]}"],
+  ])("is the read's E0238 alone on %s", (_where, control) => {
+    expect(codesOf(program(`tile App = column(${control})`))).toEqual(["E0238"]);
+  });
+
   it.each([
     ["a List index takes an Int, as the read and the write do", 'rows["x"].title', ["E0201"]],
     ["a call step is left to E0602", "rows.get(0).get.title", ["E0602"]],

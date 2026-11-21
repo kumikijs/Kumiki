@@ -449,11 +449,13 @@ export const _stdlibCore = {
     if (Array.isArray(recv)) return recv[listPosition(recv, key)];
     if (isEntryOf(recv, key)) return (recv as Record<string, unknown>)[entryKey(key)];
     const shown = typeof key === "string" ? JSON.stringify(key) : entryKey(key);
-    // A variant is an object too, told from a Map by its tag.
+    const seen = JSON.stringify(recv);
+    // A Map, a record and a variant are all plain objects, and a Map may hold the key "_tag",
+    // so the message names none of them.
     throw new KumikiPanic(
-      recv && typeof recv === "object" && !("_tag" in recv)
-        ? `Key ${shown} is not in the Map`
-        : `Index ${shown} reaches no List or Map, but ${JSON.stringify(recv)}`,
+      recv && typeof recv === "object"
+        ? `Key ${shown} is not in ${seen}`
+        : `Index ${shown} reaches no List or Map, but ${seen}`,
     );
   },
   /** `panic(message)` — raise Kumiki's controlled stop-the-program signal. */

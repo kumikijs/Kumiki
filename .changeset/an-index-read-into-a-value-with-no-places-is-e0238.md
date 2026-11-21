@@ -3,11 +3,12 @@
 "@kumikijs/runtime": patch
 ---
 
-Report an index read into a scalar, an `Option`, a `Result`, a `Tuple` or a union (E0238), and name the value an index reached when it panics
+Report an index read into a scalar, a `File`, an `Option`, a `Result`, a `Tuple` or a union (E0238), and show the value an index reached when it panics
 
 An index names a place only in a `Map` or a `List` (language.md), and the
 write `n[0] := v` into anything else was already E0602. The read took the
-same step and passed, and nothing after it was checked either:
+same step and passed `check` with no type, so nothing after it was checked
+either:
 
 ```kumiki
 slot word : Text = "abc"
@@ -29,15 +30,27 @@ report the one E0238. A `bind=` target that takes the step
 the control shows its target before it writes one; and the field of an
 `error` tile, `error(field=pair[0])` on a `Tuple`, is E0238 where it was
 E0230. A Set keeps E0232, and a record is not reported: through a literal
-key it reads the field the key names, and through a computed key a value of
-no type. A receiver whose type the checker cannot decide stays silent.
+key that is one of its fields it reads that field, and through a computed
+key a value of no type. A literal key that names no field (`r["zz"]`,
+`r[0]`) is not reported either, and still panics when it runs; what that
+read should be is left open. A receiver whose type the checker cannot
+decide stays silent.
 
-Where such a read still runs, its panic shows the value the index reached
-instead of a Map: `Index 0 reaches no List or Map, but "abc"`, the sentence
-a write through the same step already panics with.
+Where such a read still runs, its panic shows the value the index reached.
+Into a value that is not an object, it is `Index 0 reaches no List or Map,
+but "abc"`, the same wording the write side uses. Into an object, it is
+`Key "zz" is not in {"a":1}`. A Map, a record and a variant are all objects
+at run time, so the message names none of them, and a Map read at a key it
+does not hold, which panicked with `Key "zz" is not in the Map`, now shows
+the Map this way too. An `app.error` reducer that matched on the old text
+sees the new one.
 
-**Migration.** Read the value with the member that answers it: part of a
-`Text` with `.slice(start, end)`, an `Option`'s payload with `.get-or(d)` or
-`.map(…)`, and a `Tuple`'s members with a `match` that takes it apart. For a
-value stored under a key or at a position, declare a `Map(K, V)` or a
-`List(T)`.
+**Migration.** A `Tuple` or a `File` read through an index used to run: a
+Tuple is a `List` at run time, so `p[0]` on `(7, 8)` answered `7`, and a
+File holds its fields as entries, so `f["name"]` answered its name. Those
+reads had no type, and they are now E0238 too, which is why the compiler's
+bump is `minor`. Read the value another way: part of a `Text` with its
+member `.slice(start, end)`, an `Option`'s payload with `.get-or(d)` or
+`.map(…)`, a `File`'s field with a field step (`f.name`), and a `Tuple`'s
+members with a `match` that takes it apart. For a value stored under a key
+or at a position, declare a `Map(K, V)` or a `List(T)`.
