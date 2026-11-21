@@ -1,4 +1,4 @@
-import { isOpaque, recordFieldType, unaliasType } from "../assignable.ts";
+import { isOpaque, recordFieldType, unaliasType, unknownType } from "../assignable.ts";
 import type { Expr, FragmentShape, KeyKind, Pos, TypeExpr } from "../ast.ts";
 import { FIELD_ACCESS_SHORTCUTS, METHOD_MIN_ARGS } from "../codegen.ts";
 import { keyRepresentation } from "../key-representation.ts";
@@ -6,6 +6,7 @@ import {
   type FragmentArgument,
   type FragmentPositional,
   type FragmentPositionals,
+  fragmentAnswer,
   fragmentArgument,
   hasMember,
   isReceiver,
@@ -16,7 +17,7 @@ import {
 } from "../stdlib-members.ts";
 import { STDLIB_TYPES } from "../stdlib-types.ts";
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
-import { inferType, primFieldType, typeName } from "./infer.ts";
+import { container, inferType, prim, primFieldType, typeName } from "./infer.ts";
 
 type MemberClass = "field" | "member" | "unknown" | "undecidable";
 
@@ -109,6 +110,32 @@ export function keyKindOfReader(
   if (t?.kind !== "TypeApp" || !KEY_READERS[t.name]?.has(member)) return undefined;
   const rep = keyRepresentation(t.args[0] ?? null, sym);
   return rep === "text" || rep === null ? undefined : rep;
+}
+
+/**
+ * The type `recv.method`'s fragment is checked against, from {@link fragmentAnswer}, or `null`. A
+ * `container` keeps every type argument but the value's: `Option(?)` over an `Option(T)`, and
+ * `Result(?, E)` over a `Result(T, E)`.
+ */
+export function fragmentAnswerType(
+  recv: TypeExpr | null,
+  method: string,
+  sym: SymbolTable,
+): TypeExpr | null {
+  const t = unaliasType(recv, sym);
+  if (t?.kind !== "TypeApp") return null;
+  switch (fragmentAnswer(t.name, method)) {
+    case undefined:
+      return null;
+    case "Bool":
+      return prim("Bool", t.pos);
+    case "container":
+      return container(
+        t.name,
+        t.args.map((a, i) => (i === TYPE_ARGUMENT_OF.T ? unknownType(a.pos) : a)),
+        t.pos,
+      );
+  }
 }
 
 export function fragmentBindings(

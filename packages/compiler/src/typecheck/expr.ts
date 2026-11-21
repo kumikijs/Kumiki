@@ -55,6 +55,7 @@ import {
 import {
   classifyFieldAccess,
   classifyMember,
+  fragmentAnswerType,
   fragmentBindings,
   fragmentShape,
   KEY_READER_NAMES,
@@ -492,7 +493,9 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
           if (e.method === "sort-by" && i === 0) {
             checkSortKey(inferType(body, sym, inner), a.pos, recvType, sym, errors);
           }
-          const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
+          const declared =
+            memberArgType(recvType, e.method, i, e.args.length, sym) ??
+            fragmentAnswerType(recvType, e.method, sym);
           if (declared !== null) checkAgainst(body, declared, sym, errors, inner);
         }
       }
