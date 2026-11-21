@@ -54,3 +54,51 @@ describe("style block application", () => {
     expect(warnings.join(" ")).toContain('Theme "Ligth" is not declared');
   });
 });
+
+describe("a style block's token the theme leaves out", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // The theme declares each section with another key, so only the default can answer.
+  const PARTIAL_THEME = {
+    spacing: { xs: "1px" },
+    radius: { sm: "1px" },
+    shadow: { lg: "none" },
+    colors: { muted: "#000" },
+    typography: { size: { sm: "1px" } },
+  };
+
+  it.each([
+    ["a spacing", "spacing", ["md"], { pad: "md" }, "padding", "16px"],
+    ["a radius", "radius", ["md"], { radius: "md" }, "border-radius", "8px"],
+    ["a shadow", "shadow", ["sm"], { shadow: "sm" }, "box-shadow", "0 1px 2px rgba(0,0,0,0.1)"],
+    ["a color", "colors", ["surface"], { bg: "surface" }, "background", "#f7f7f7"],
+    ["a font size", "typography", ["size", "lg"], { size: "lg" }, "font-size", "20px"],
+  ])("takes %s shorthand's default, under no theme and a theme without the key", (_label, group, path, shorthand, property, expected) => {
+    for (const themes of [undefined, { T: PARTIAL_THEME }]) {
+      const root = freshRoot();
+      mount(
+        bareApp({
+          ...(themes && { themes, themeName: "T" }),
+          root: () => ({
+            kind: "column",
+            children: [
+              { kind: "box", children: [], props: { ...shorthand, id: "short" } },
+              {
+                kind: "box",
+                children: [],
+                props: { style: { [property]: _stdlib.token(group, path) }, id: "ref" },
+              },
+            ],
+          }),
+        }),
+        root,
+      );
+      const shown = (id: string): string =>
+        (root.querySelector(`#${id}`) as HTMLElement).style.getPropertyValue(property);
+      expect([shown("short"), shown("ref")]).toEqual([expected, expected]);
+      root.remove();
+    }
+  });
+});
