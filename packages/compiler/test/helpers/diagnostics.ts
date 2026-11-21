@@ -93,3 +93,8 @@ export const pointedErrorsOf = (src: string): Pointed[] =>
 /** As {@link pointedErrorsOf}, warnings included. */
 export const pointedDiagnosticsOf = (src: string): Pointed[] =>
   checkSource(src).map((e) => ({ code: e.code, message: e.message, text: textAt(src, e.pos) }));
+
+/** E0227's message, for a value match on `type` that has no arm for `values`. */
+export const nonExhaustiveMessage = (type: string, values: string): string =>
+  `This match on "${type}" has no arm for ${values}, and a match used as a value has to evaluate ` +
+  "to one of its arms. Add the missing arms, or end with `_ -> …`";

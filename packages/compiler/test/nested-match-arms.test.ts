@@ -3,26 +3,31 @@ import { describe, expect, it } from "vitest";
 import {
   builtSummariesOf,
   checkSource,
+  nonExhaustiveMessage,
   pointedDiagnosticsOf,
   posOf,
 } from "./helpers/diagnostics.ts";
-import { withButtonApp } from "./helpers/programs.ts";
+import { withButtonApp, withReducer } from "./helpers/programs.ts";
 
 const DEFS = `type Color = Red | Green | Blue
 type Size = Small | Large
-slot n : Int   = 0
-slot c : Color = Green
-slot s : Size  = Small
-slot b : Bool  = true`;
+slot n  : Int        = 0
+slot m  : Int        = 0
+slot c  : Color      = Green
+slot s  : Size       = Small
+slot b  : Bool       = true
+slot xs : List(Size) = [Small]`;
 
 const program = (defs: string) => withButtonApp(`${DEFS}\n${defs}`);
-const fnOf = (body: string) => program(`fn f(x: Color, y: Size, z: Size) -> Int = ${body}`);
-const reducerOf = (body: string) => program(`reducer r on=ui.click(B)\n    do= ${body}`);
+const fnOf = (body: string) =>
+  program(`fn f(x: Color, y: Size, z: Size, o: Option(Int)) -> Int = ${body}`);
+const reducerOf = (body: string) => withReducer(DEFS, body);
 const tileOf = (body: string) => program(`tile T = ${body}`);
 
 const CLOSE_OFF = {
   value: "put the inner match in parentheses: `(match … with …)`",
-  statement: "put the inner match in braces: `{ match … with … }`",
+  statement:
+    "put the arm's statements in braces, ending with the inner match: `-> { … match … with … }`",
   tile: "move the inner match into a tile of its own and name that tile in the arm",
 };
 
@@ -43,15 +48,17 @@ const unreachable = (src: string, form: Form, arm: string, inner: string, outer:
     `at ${at(src, outer)}, ${CLOSE_OFF[form]}`,
 });
 
-const missing = (type: string, values: string) =>
-  `This match on "${type}" has no arm for ${values}, and a match used as a value has to evaluate ` +
-  "to one of its arms. Add the missing arms, or end with `_ -> …`";
+/** E0227 for a match whose last arm ends in a match that nothing closes off. */
+const missingPast = (type: string, values: string) =>
+  `${nonExhaustiveMessage(type, values)}. The match that ends this match's last arm takes every ` +
+  "arm written after it: put it in parentheses, `(match … with …)`, for an arm after it to be " +
+  "this match's";
 
-/** E0227 for a match whose last arm ends in the match that starts with `inner`. */
-const missingPast = (src: string, type: string, values: string, inner: string) =>
-  `${missing(type, values)}. The match at ${at(src, inner)} ends this match's last arm, so it ` +
-  "takes every arm written after it: put it in parentheses, `(match … with …)`, for an arm " +
-  "after it to be this match's";
+/** E0227 for `match x`, the outer match of every `fnOf` body below whose `Red` arm is its last. */
+const xMissing = { code: "E0227", message: missingPast("Color", "Green, Blue") };
+
+const codesAndMessages = (src: string) =>
+  pointedDiagnosticsOf(src).map(({ code, message }) => ({ code, message }));
 
 describe("a match that ends an arm takes the arms written after it", () => {
   it("reads every arm after the nested match as that match's", () => {
@@ -70,17 +77,25 @@ describe("a match that ends an arm takes the arms written after it", () => {
   });
 
   it.each([
-    ["`_`", "_", "| _ -> 3"],
-    ["a binding name", "other", "| other -> 3"],
-  ])("warns at %s that a value match takes after its arms cover every value", (_, arm, written) => {
-    const src = fnOf(`match x with | Red -> match y with | Small -> 1 | Large -> 2 ${written}`);
+    ["`_`", "match y with | Small -> 1 | Large -> 2 | _ -> 3", "_", "match y"],
+    ["a binding name", "match y with | Small -> 1 | Large -> 2 | other -> 3", "other", "match y"],
+    [
+      "a tuple",
+      "match (y, z) with | (Small, _) -> 1 | (Large, _) -> 2 | (_, Small) -> 3",
+      "(_, Small)",
+      "match (y, z)",
+    ],
+    [
+      "a variant that binds its payload",
+      "match o with | None -> 1 | Some(v) -> 2 | Some(w) -> 3",
+      "Some(w)",
+      "match o",
+    ],
+  ])("warns at %s that a value match takes after its arms cover every value", (_, inner, arm, head) => {
+    const src = fnOf(`match x with | Red -> ${inner}`);
     expect(pointedDiagnosticsOf(src)).toEqual([
-      { ...unreachable(src, "value", arm, "match y", "match x"), text: `${arm} -> 3` },
-      {
-        code: "E0227",
-        message: missingPast(src, "Color", "Green, Blue", "match y"),
-        text: expect.stringMatching(/^match x/),
-      },
+      { ...unreachable(src, "value", arm, head, "match x"), text: `${arm} -> 3` },
+      { ...xMissing, text: expect.stringMatching(/^match x/) },
     ]);
   });
 
@@ -104,53 +119,146 @@ describe("a match that ends an arm takes the arms written after it", () => {
     ]);
   });
 
+  // Only a value match is held to cover its scrutinee, so only `match x` adds E0227.
   it.each([
     [
       "an operator's right operand",
-      "value",
       fnOf("match x with | Red -> 1 + match y with | Small -> 1 | Large -> 2 | _ -> 3"),
-      "match y",
+      (src: string) => [unreachable(src, "value", "_", "match y", "match x"), xMissing],
+    ],
+    [
+      "a prefix `-`",
+      fnOf("match x with | Red -> -match y with | Small -> 1 | Large -> 2 | _ -> 3"),
+      (src: string) => [unreachable(src, "value", "_", "match y", "match x"), xMissing],
     ],
     [
       "an `else` branch",
-      "value",
       fnOf(
         "match x with | Red -> if true then 0 else match y with | Small -> 1 | Large -> 2 | _ -> 3",
       ),
-      "match y",
+      (src: string) => [unreachable(src, "value", "_", "match y", "match x"), xMissing],
     ],
     [
       "a `let … in` body",
-      "value",
       fnOf("match x with | Red -> let w = y in match w with | Small -> 1 | Large -> 2 | _ -> 3"),
-      "match w",
+      (src: string) => [unreachable(src, "value", "_", "match w", "match x"), xMissing],
+    ],
+    [
+      "a slot write's right-hand side",
+      reducerOf("match c with | Red -> n := match s with | Small -> 1 | Large -> 2 | _ -> 3"),
+      (src: string) => [unreachable(src, "value", "_", "match s", "match c")],
+    ],
+    [
+      "a `let` statement's right-hand side",
+      reducerOf("match c with | Red -> let v = match s with | Small -> 1 | Large -> 2 | _ -> 3"),
+      (src: string) => [unreachable(src, "value", "_", "match s", "match c")],
     ],
     [
       "an `if` statement's `else`",
-      "statement",
       reducerOf(
         "match c with | Red -> if b then n := 0 else match s with | Small -> n := 1 | Large -> n := 2 | _ -> n := 3",
       ),
-      "match s",
+      (src: string) => [unreachable(src, "statement", "_", "match s", "match c")],
+    ],
+    [
+      "the `then` of an `if` statement without `else`",
+      reducerOf(
+        "match c with | Red -> if b then match s with | Small -> n := 1 | Large -> n := 2 | _ -> n := 3",
+      ),
+      (src: string) => [unreachable(src, "statement", "_", "match s", "match c")],
+    ],
+    [
+      "a `for` statement's body",
+      reducerOf(
+        "match c with | Red -> for x in xs match x with | Small -> n := 1 | Large -> n := 2 | _ -> n := 3",
+      ),
+      (src: string) => [unreachable(src, "statement", "_", "match x", "match c")],
+    ],
+    [
+      "the last statement of an arm, after another",
+      reducerOf(`match c with
+        | Red -> m := 0
+          match s with
+          | Small -> n := 1
+          | Large -> n := 2
+        | _ -> n := 3`),
+      (src: string) => [unreachable(src, "statement", "_", "match s", "match c")],
     ],
     [
       "a tile `if`'s `else`",
-      "tile",
       tileOf(
         'match c with | Red -> if b then text("0") else match s with | Small -> text("1") | Large -> text("2") | _ -> text("3")',
       ),
-      "match s",
+      (src: string) => [unreachable(src, "tile", "_", "match s", "match c")],
     ],
-  ] as const)("warns where a match ends the arm as %s", (_, form, src, inner) => {
-    const outer = form === "value" ? "match x" : "match c";
-    // Only a value match is held to cover its scrutinee.
-    const uncovered =
-      form === "value"
-        ? [{ code: "E0227", message: missingPast(src, "Color", "Green, Blue", inner) }]
-        : [];
-    expect(pointedDiagnosticsOf(src).map(({ code, message }) => ({ code, message }))).toEqual([
-      unreachable(src, form, "_", inner, outer),
-      ...uncovered,
+    [
+      "a tile `for`'s body",
+      tileOf(
+        'match c with | Red -> for x in xs match x with | Small -> text("1") | Large -> text("2") | _ -> text("3")',
+      ),
+      (src: string) => [unreachable(src, "tile", "_", "match x", "match c")],
+    ],
+  ])("warns where a match ends the arm as %s", (_, src, expected) => {
+    expect(codesAndMessages(src)).toEqual(expected(src));
+  });
+
+  it("warns at the first arm the inner match can never reach, not at those after it", () => {
+    const src = fnOf(
+      "match x with | Red -> match y with | Small -> 1 | Large -> 2 | _ -> 3 | other -> 4",
+    );
+    expect(pointedDiagnosticsOf(src)).toEqual([
+      { ...unreachable(src, "value", "_", "match y", "match x"), text: "_ -> 3 | other -> 4" },
+      { ...xMissing, text: expect.stringMatching(/^match x/) },
+    ]);
+  });
+
+  it("warns once for each inner match that takes an arm it can never reach", () => {
+    const src = fnOf(
+      "match x with | Red -> match y with | Small -> 1 | Large -> 2 | _ -> match z with | Small -> 1 | Large -> 2 | _ -> 3",
+    );
+    expect(codesAndMessages(src)).toEqual([
+      unreachable(src, "value", "_", "match z", "match y"),
+      unreachable(src, "value", "_", "match y", "match x"),
+      xMissing,
+    ]);
+  });
+
+  // A pattern that does not fit the scrutinee is E0209, which already says what is wrong. `match x`
+  // is a value match with no arm for `Green` or `Blue`, so it adds E0227.
+  it.each([
+    [
+      "value",
+      fnOf("match x with | Red -> match y with | Small -> 1 | Large -> 2 | Green -> 3 | _ -> 4"),
+      ["E0209", "E0227"],
+    ],
+    [
+      "statement",
+      reducerOf(
+        "match c with | Red -> match s with | Small -> n := 1 | Large -> n := 2 | Green -> n := 3",
+      ),
+      ["E0209"],
+    ],
+    [
+      "tile",
+      tileOf(
+        'match c with | Red -> match s with | Small -> text("1") | Large -> text("2") | Green -> text("3")',
+      ),
+      ["E0209"],
+    ],
+  ])("leaves a %s match whose arm does not fit its scrutinee to E0209", (_, src, codes) => {
+    expect(checkSource(src).map((d) => d.code)).toEqual(codes);
+  });
+
+  it("does not take an arm as covered when that hinges on an undecidable type", () => {
+    const src = program(
+      "fn f(x: Color, cs: List(Color)) -> Int = match x with | Red -> match cs.fold(x, $2) with | Red -> 1 | Green -> 2 | Blue -> 3 | _ -> 4 | _ -> 5",
+    );
+    expect(pointedDiagnosticsOf(src)).toEqual([
+      {
+        ...unreachable(src, "value", "_", "match cs", "match x"),
+        text: "_ -> 5",
+      },
+      { ...xMissing, text: expect.stringMatching(/^match x/) },
     ]);
   });
 
@@ -177,8 +285,14 @@ describe("a match that ends an arm takes the arms written after it", () => {
     const src = fnOf(
       "match x with | Red -> match y with | Small -> match z with | Small -> 1 | Large -> 2 | _ -> 3",
     );
-    expect(pointedDiagnosticsOf(src).filter((e) => e.code === "W0219")).toEqual([
+    expect(pointedDiagnosticsOf(src)).toEqual([
       { ...unreachable(src, "value", "_", "match z", "match y"), text: "_ -> 3" },
+      {
+        code: "E0227",
+        message: missingPast("Size", "Large"),
+        text: expect.stringMatching(/^match y/),
+      },
+      { ...xMissing, text: expect.stringMatching(/^match x/) },
     ]);
   });
 });
@@ -191,6 +305,15 @@ describe("a nested match that leaves the arms after it to the outer one", () => 
       reducerOf(
         "match c with | Red -> { match s with | Small -> n := 1 | Large -> n := 2 } | _ -> n := 3",
       ),
+    ],
+    [
+      "statement after another, all in braces",
+      reducerOf(`match c with
+        | Red -> { m := 0
+            match s with
+            | Small -> n := 1
+            | Large -> n := 2 }
+        | _ -> n := 3`),
     ],
     [
       "tile",
@@ -226,11 +349,7 @@ describe("E0227 on a match whose last arm ends in a nested match", () => {
   it("says the arms after the nested match are its own", () => {
     const src = fnOf("match x with | Red -> match y with | Small -> 1 | other -> 3");
     expect(pointedDiagnosticsOf(src)).toEqual([
-      {
-        code: "E0227",
-        message: missingPast(src, "Color", "Green, Blue", "match y"),
-        text: expect.stringMatching(/^match x/),
-      },
+      { ...xMissing, text: expect.stringMatching(/^match x/) },
     ]);
   });
 
@@ -239,7 +358,7 @@ describe("E0227 on a match whose last arm ends in a nested match", () => {
     expect(pointedDiagnosticsOf(src)).toEqual([
       {
         code: "E0227",
-        message: missing("Color", "Green, Blue"),
+        message: nonExhaustiveMessage("Color", "Green, Blue"),
         text: expect.stringMatching(/^match x/),
       },
     ]);

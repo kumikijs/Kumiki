@@ -2,6 +2,13 @@ import type { IndexedDbStore, KeyKind, ShowShape } from "@kumikijs/runtime";
 
 export type Pos = { line: number; col: number };
 
+/**
+ * On a value, statement or tile `match`: `outer` is where the `match` starts whose last arm this
+ * one ends with nothing closing it off, so every arm written after it is its own (language.md).
+ * Absent once parentheses or braces close it.
+ */
+export type EndsOuterArm = { outer?: Pos };
+
 export type Token =
   | { kind: "ident"; value: string; pos: Pos }
   | { kind: "kw"; value: string; pos: Pos }
@@ -312,12 +319,6 @@ export type UiEventKind =
   | "hover";
 
 // ----- Statements (reducer body) -----
-
-/**
- * Where a `match` ends an arm of the `match` at `outer`: nothing closes it off before that arm ends,
- * so every arm written after it is its own (language.md).
- */
-export type EndsOuterArm = { outer?: Pos };
 
 export type Statement =
   | { kind: "SlotAssign"; lvalue: Lvalue; rhs: Expr; pos: Pos }

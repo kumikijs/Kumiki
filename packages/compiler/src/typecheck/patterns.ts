@@ -305,13 +305,13 @@ export function checkMatchCovers(
   if (uncovered === null || uncovered.length === 0) return;
   const shown = uncovered.slice(0, WITNESSES_SHOWN).map((w) => w.join(", "));
   const others = uncovered.length > WITNESSES_SHOWN ? ", among others" : "";
-  const tail = openTail(e);
-  // `_ -> …` written after a match that ends the last arm would be that match's arm.
-  const past =
-    tail === undefined
-      ? ""
-      : `. The match at ${at(tail)} ends this match's last arm, so it takes every arm written ` +
-        "after it: put it in parentheses, `(match … with …)`, for an arm after it to be this match's";
+  // `_ -> …` written after a match that ends the last arm would be that match's arm. The message
+  // names no position: `kumiki fix` tells errors apart by their message, and a fix that moves the
+  // lines would read as one that introduced this error.
+  const past = endsInOpenMatch(e)
+    ? ". The match that ends this match's last arm takes every arm written after it: put it in " +
+      "parentheses, `(match … with …)`, for an arm after it to be this match's"
+    : "";
   errors.push({
     code: "E0227",
     kind: "non-exhaustive-match",
@@ -325,23 +325,26 @@ export function checkMatchCovers(
 
 const at = (pos: Pos): string => `${pos.line}:${pos.col}`;
 
-/** Where the match that ends `e`'s last arm starts, when nothing closes it off before that. */
-function openTail(e: Expr & { kind: "MatchExpr" }): Pos | undefined {
+/** True when `e`'s last arm ends in a match that nothing closes off before that. */
+function endsInOpenMatch(e: Expr & { kind: "MatchExpr" }): boolean {
   let end = e.arms[e.arms.length - 1]?.body;
   while (end) {
-    if (end.kind === "MatchExpr") return end.outer === undefined ? undefined : end.pos;
+    if (end.kind === "MatchExpr") return end.outer !== undefined;
     if (end.kind === "BinOp" || end.kind === "UnaryOp") end = end.rhs;
     else if (end.kind === "IfExpr") end = end.alternate;
     else if (end.kind === "LetIn") end = end.body;
-    else return undefined;
+    else return false;
   }
-  return undefined;
+  return false;
 }
 
 /** How each form of `match` is closed off before the end of the arm it is written in. */
 const CLOSE_OFF = {
   value: "put the inner match in parentheses: `(match … with …)`",
-  statement: "put the inner match in braces: `{ match … with … }`",
+  // Braces open a block only at the start of an arm's body, so they go around all its statements.
+  statement:
+    "put the arm's statements in braces, ending with the inner match: " +
+    "`-> { … match … with … }`",
   tile: "move the inner match into a tile of its own and name that tile in the arm",
 } as const;
 
@@ -393,7 +396,10 @@ export function checkArmsAfterNestedMatch(
   });
 }
 
-/** True when every value `scrutType` holds is matched by one of `patterns`. */
+/**
+ * True when every value `scrutType` holds is matched by one of `patterns`; false when that hinges
+ * on an undecidable type.
+ */
 function covers(
   patterns: readonly Pattern[],
   scrutType: TypeExpr | null,

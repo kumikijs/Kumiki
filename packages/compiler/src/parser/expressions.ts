@@ -440,7 +440,10 @@ export class ExpressionParser extends TypeParser {
     return this.parseMatch("MatchExpr", () => this.parseExpr());
   }
 
-  /** The `match` parsed last and the token it ended before. */
+  /**
+   * The match that finished last and the index of the token after it, for a match finishing at
+   * that same index to link.
+   */
   private endedMatch: { node: EndsOuterArm; at: number } | undefined;
 
   // The value, statement and tile forms share this, so each holds a `match` to one arm or more.
@@ -457,7 +460,8 @@ export class ExpressionParser extends TypeParser {
     }
     if (arms.length === 0) throw new ParseError("match requires at least one arm", start.pos);
     const node: MatchNode<K, B> = { kind, scrutinee, arms, pos: start.pos };
-    // One that ended before this same token is the end of this match's last arm.
+    // No token lies between that match's end and this one's, so nothing closed it off: it ends
+    // this match's last arm.
     if (this.endedMatch?.at === this.i) this.endedMatch.node.outer = start.pos;
     this.endedMatch = { node, at: this.i };
     return node;
