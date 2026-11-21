@@ -3,8 +3,8 @@
 
 import { describe, expect, it } from "vitest";
 import { RECEIVER_PARAMS, readsShortCall } from "../src/stdlib-members.ts";
-import { codesOf, locatedOf, pointedErrorsOf, summariesOf } from "./helpers/diagnostics.ts";
-import { withApp, withButtonApp } from "./helpers/programs.ts";
+import { codesOf, pointedErrorsOf, summariesOf } from "./helpers/diagnostics.ts";
+import { withApp } from "./helpers/programs.ts";
 
 const app = (defs: string): string =>
   withApp(`${defs}\ntile Btn = button(text="go")\ntile App = column(Btn)`);
@@ -227,68 +227,89 @@ reducer go on=ui.click(Btn) do=
   });
 });
 
+// A call of each member on the probe's parameter for its receiver, one row per member that takes
+// arguments, so a member the table gains is a row here too.
+const rowsOf = (
+  receiver: string,
+  recv: string,
+  row: Readonly<Record<string, readonly (string | null)[]>>,
+) =>
+  Object.entries(row)
+    .filter(([, params]) => params.length > 0)
+    .map(([member, params]) => ({
+      name: `${receiver}.${member}`,
+      receiver,
+      member,
+      params,
+      n: params.length,
+      callWith: (args: readonly string[]) => `${recv}.${member}(${args.join(", ")})`,
+      call: (count: number, arg = "1") =>
+        `${recv}.${member}(${Array.from({ length: count }, () => arg).join(", ")})`,
+    }));
+const rows = [
+  ...rowsOf("Map", "m", RECEIVER_PARAMS.Map),
+  ...rowsOf("Set", "s", RECEIVER_PARAMS.Set),
+  ...rowsOf("List", "xs", RECEIVER_PARAMS.List),
+];
+
+/** A program whose one fn's body is `call`, with a parameter of each receiver to call it on. */
+const probe = (call: string): string =>
+  withApp(`fn probe(m: Map(Int, Int), mf: Map(Int, Float), fm: Map(Float, Int), s: Set(Int), xs: List(Int)) = ${call}
+tile App = column(text("x"))`);
+
 // A member argument the receiver types as an `Int` is an `Int` position, so a literal there past
 // the safe range is one E0217 at its sign, as it is as a slot's value or a Map literal's key.
 describe("an Int literal past the safe range as a member argument the receiver types", () => {
-  const INTS = `slot m   : Map(Int, Int) = {}
-slot mf  : Map(Int, Float) = {}
-slot s   : Set(Int) = []
-slot xs  : List(Int) = []
-slot xss : List(List(Int)) = []
-slot b   : Bool = false
-slot n   : Int = 0`;
   const BIG = "-9007199254740993";
-  const reported = (stmt: string) =>
-    pointedErrorsOf(app(`${INTS}\nreducer go on=ui.click(Btn) do= ${stmt}`)).map(
-      ({ code, text }) => ({ code, text }),
-    );
+  const reported = (call: string) =>
+    pointedErrorsOf(probe(call)).map(({ code, text }) => ({ code, text }));
 
-  it("reports the key of Map.insert at its sign, as a Map literal's key is", () => {
-    const src = withButtonApp(`slot m : Map(Int, Int) = {}
-reducer r on=ui.click(B) do= m := m.insert(${BIG}, 1)`);
-    expect(locatedOf(src).map(({ code, line, col }) => ({ code, line, col }))).toEqual([
-      { code: "E0217", line: 2, col: 44 },
-    ]);
-    expect(codesOf(app(`slot m : Map(Int, Int) = {${BIG}: 1}`))).toEqual(["E0217"]);
-  });
+  // A `self` parameter takes the literal inside a literal of the receiver's own type.
+  const pastBound = (receiver: string, param: string): readonly string[] =>
+    param !== "self" ? [BIG] : receiver === "Map" ? [`{${BIG}: 1}`, `{1: ${BIG}}`] : [`[${BIG}]`];
+  const inBound = (receiver: string, param: string | null): string =>
+    param !== "self" ? "1" : receiver === "Map" ? "{1: 1}" : "[1]";
 
-  it.each([
-    ["Map.has", `b := m.has(${BIG})`],
-    ["Map.get", `n := m.get(${BIG}).get-or(0)`],
-    ["Map.get-or's key", `n := m.get-or(${BIG}, 0)`],
-    ["Map.get-or's default", `n := m.get-or(1, ${BIG})`],
-    ["Map.insert's key", `m := m.insert(${BIG}, 1)`],
-    ["Map.insert's value", `m := m.insert(1, ${BIG})`],
-    ["Map.remove", `m := m.remove(${BIG})`],
-    ["Map.update's key", `m := m.update(${BIG}, $1 + 1)`],
-    ["Map.merge, a literal's key", `m := m.merge({${BIG}: 1})`],
-    ["Map.merge, a literal's value", `m := m.merge({1: ${BIG}})`],
-    ["Set.has", `b := s.has(${BIG})`],
-    ["Set.add", `s := s.add(${BIG})`],
-    ["Set.remove", `s := s.remove(${BIG})`],
-    ["Set.toggle", `s := s.toggle(${BIG})`],
-    ["Set.union, a literal's member", `s := s.union([${BIG}])`],
-    ["List.push", `xs := xs.push(${BIG})`],
-    ["List.prepend", `xs := xs.prepend(${BIG})`],
-    ["List.contains", `b := xs.contains(${BIG})`],
-    ["List.get's index", `n := xs.get(${BIG}).get-or(0)`],
-    ["List.concat, a literal's item", `xs := xs.concat([${BIG}])`],
-    ["List.slice's start", `xs := xs.slice(${BIG}, 1)`],
-    ["List.slice's end", `xs := xs.slice(0, ${BIG})`],
-    ["List.slice's one argument", `xs := xs.slice(${BIG})`],
-    ["List.chunk's size", `xss := xs.chunk(${BIG})`],
-  ])("%s is one E0217, at the literal's sign", (_member, stmt) => {
-    expect(reported(stmt)).toEqual([
+  // Each typed position of each call the arity allows, the short call of a member that reads one
+  // included, with the literal there and an argument in range everywhere else.
+  const calls = rows.flatMap(({ receiver, member, params, n, callWith }) =>
+    (readsShortCall(receiver, member) ? [n, n - 1] : [n]).flatMap((count) =>
+      params
+        .slice(0, count)
+        .flatMap((param, at) =>
+          param === null
+            ? []
+            : pastBound(receiver, param).map((literal) =>
+                callWith(
+                  params.slice(0, count).map((p, i) => (i === at ? literal : inBound(receiver, p))),
+                ),
+              ),
+        ),
+    ),
+  );
+
+  it.each(calls)("%s is one E0217, at the literal's sign", (call) => {
+    expect(reported(call)).toEqual([
       { code: "E0217", text: expect.stringMatching(/^-9007199254740993/) },
     ]);
   });
 
-  it("reports nothing where the parameter is a Float, which holds an approximation by nature", () => {
-    expect(reported(`mf := mf.insert(1, ${BIG}).update(2, ${BIG})`)).toEqual([]);
+  // `get-or`'s default is no parameter the receiver types: it is read against what the call
+  // answers, the Map's value here.
+  it("reports Map.get-or's default, which the call's answer types, at its sign", () => {
+    expect(reported(`m.get-or(1, ${BIG})`)).toEqual([
+      { code: "E0217", text: expect.stringMatching(/^-9007199254740993/) },
+    ]);
   });
 
-  it("reports a key of another type as E0201, since the key is typed", () => {
-    expect(reported(`m := m.insert("k", 1)`)).toEqual([{ code: "E0201", text: '"k", 1)' }]);
+  // On `m` the key and the value are both `Int`, so only these rows tell one from the other, and
+  // only the key row has a literal that is no `Int` argument in any other row.
+  it.each([
+    ["Map.insert's value", `mf.insert(1, ${BIG})`],
+    ["Map.update's value", `mf.update(2, ${BIG})`],
+    ["Map.insert's key", `fm.insert(${BIG}, 1)`],
+  ])("%s reports nothing where the parameter is a Float, which holds an approximation by nature", (_member, call) => {
+    expect(reported(call)).toEqual([]);
   });
 });
 
@@ -296,33 +317,7 @@ reducer r on=ui.click(B) do= m := m.insert(${BIG}, 1)`);
 // names its member, so a row longer than the arity `check` enforces would turn the check off for
 // every call that arity allows.
 describe("each row of the parameter table is the member's arity", () => {
-  /** A call of `member` on the parameter `recv`, one row per member that takes arguments. */
-  const rowsOf = (
-    receiver: string,
-    recv: string,
-    row: Readonly<Record<string, readonly (string | null)[]>>,
-  ) =>
-    Object.entries(row)
-      .filter(([, params]) => params.length > 0)
-      .map(([member, params]) => ({
-        name: `${receiver}.${member}`,
-        receiver,
-        member,
-        params,
-        n: params.length,
-        call: (count: number, arg = "1") =>
-          `${recv}.${member}(${Array.from({ length: count }, () => arg).join(", ")})`,
-      }));
-  const rows = [
-    ...rowsOf("Map", "m", RECEIVER_PARAMS.Map),
-    ...rowsOf("Set", "s", RECEIVER_PARAMS.Set),
-    ...rowsOf("List", "xs", RECEIVER_PARAMS.List),
-  ];
-  const codes = (call: string): string[] =>
-    codesOf(
-      withApp(`fn probe(m: Map(Int, Int), s: Set(Int), xs: List(Int)) = ${call}
-tile App = column(text("x"))`),
-    );
+  const codes = (call: string): string[] => codesOf(probe(call));
 
   // A member whose short call is read takes one, as `xs.slice(start)` runs to the list's end.
   const shortCalls = rows.filter(({ receiver, member }) => readsShortCall(receiver, member));
