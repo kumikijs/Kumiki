@@ -204,7 +204,10 @@ type FragmentParams = { List: "T"; Option: "T"; Result: "T" | "E"; Map: "K" | "V
 
 export type FragmentReceiver = keyof FragmentParams;
 
-/** `Acc` is `fold`'s accumulator, whose type is its init's. */
+/**
+ * `Acc` is `fold`'s accumulator, typed as its init; `accumulatorType` widens it to the
+ * fragment's result.
+ */
 export type FragmentPositional = FragmentParams[FragmentReceiver] | "Acc";
 
 /** Which type argument of its receiver each type parameter is. */
