@@ -302,8 +302,7 @@ describe("an Int literal past the safe range as a member argument the receiver t
     ]);
   });
 
-  // On `m` the key and the value are both `Int`, so only these rows tell one from the other, and
-  // only the key row has a literal that is no `Int` argument in any other row.
+  // On `m` the key and the value are both `Int`, so only these rows tell one from the other.
   it.each([
     ["Map.insert's value", `mf.insert(1, ${BIG})`],
     ["Map.update's value", `mf.update(2, ${BIG})`],
