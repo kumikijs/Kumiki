@@ -5,9 +5,10 @@
 #
 # A union has no fields: a variant carries its payloads by position. So a
 # field step into one names nothing, read or written — `c.n`, `c.n := v`,
-# `c.n["k"] := v` and `c.n[0] := v` are each E0108 at `.n`, since no
-# variant of `Counter` answers it. A member the runtime has, such as `.show`,
-# still dispatches on the variant the value holds.
+# `c.n["k"] := v` and `c.n[0] := v` are each one E0108, since no variant of
+# `Counter` answers `.n`. A member the runtime has, such as `.show`, still
+# dispatches on the variant the value holds when it is read, and written it
+# is E0602: `c.show := v` has no place to land.
 
 type Counter = Counting(Int) | Idle
 

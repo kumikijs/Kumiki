@@ -10,7 +10,7 @@
       "expect": {
         "noErrors": true,
         "state": { "c": { "_tag": "Counting", "_0": 1 } },
-        "domIncludes": ["count: 1"]
+        "domIncludes": ["count: 1", "shown: Counting"]
       }
     },
     {

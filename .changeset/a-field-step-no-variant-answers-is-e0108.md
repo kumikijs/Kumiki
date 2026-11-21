@@ -2,7 +2,7 @@
 "@kumikijs/compiler": minor
 ---
 
-Report a field step on a union that no variant answers (E0108), on either side of `:=`
+Report a field step on a union that no variant answers (E0108), and a write through a member on one (E0602)
 
 A member step on a union was left undecided, so a name no variant has
 passed `check` on both sides of `:=`, and so did any index after it:
@@ -20,7 +20,8 @@ undefined`). `u.a := "x"` alone added the same key.
 
 A union has no fields: a variant carries its payloads by position, and a
 `match` reads them. A name the runtime has no member for can only be a field
-step, so on a union it is now **E0108**, at the field, on either side of `:=`:
+step, so on a union it is now **E0108** on either side of `:=`, at the field
+when written and at the access when read:
 
 > `Type "U" has no member ".a" — a union has no fields; read a variant's payload with a match`
 
@@ -32,11 +33,19 @@ and an `error(field=…)` step read it first, so `error(field=d.shape.nmae)` is
 E0108 where it was E0230.
 
 A name the runtime has a member for (`.length`, `.get`, `.is-ok`, `.show`)
-still dispatches on the variant the value holds and is not reported. A
-program's own union may name a variant `Ok` or `Some`, and such a member
-reads it by its tag. A name that a variant's record payload declares
-(`p.x` on `type P = A({x: Int}) | Z`) is left undecided as before. So is a
-name on a union with a payload whose type the checker cannot decide.
+still dispatches on the variant the value holds when it is read, and is not
+reported. A program's own union may name a variant `Ok` or `Some`, and such a
+member reads it by its tag. Written, such a name other than `.get` is now
+**E0602**, since a member is never a step of a path: from `u = Z`,
+`u.length := 1` left `u` holding `{"_tag":"Z","length":1}`, and
+`u.show[0] := "x"` panicked in the reducer.
+
+> `Cannot assign through ".length": "U" is a union, and a union has no fields — write it whole, as the variant it now holds`
+
+A name a variant's payload declares as a field (a record's, or a `File`'s:
+`p.x` on `type P = A({x: Int}) | Z`, `fv.name` on `FormValue`) is not
+reported, on either side of `:=`. So is a name on a union with a payload
+whose type the checker cannot decide.
 
 **Migration.** Read a payload with a `match`, and write the union whole:
 `u := match u with | A(n) -> A(n + 1) | Z -> A(1)`.
