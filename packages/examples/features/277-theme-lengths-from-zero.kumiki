@@ -7,12 +7,13 @@
 # size. `md: 500` moves the `md` breakpoint down from its 768px default, so
 # the gap below is "lg" from a 500px viewport up.
 #
-# Written negative, any of them is E0239 at the number. A browser drops
-# `padding: -4px`, `border-radius: -4px` and `font-size: -4px`, and a negative
-# minimum width is no breakpoint at all, so `md: -500` would leave the theme
-# with no `md` rather than move it. A tile meant to pull outward writes the
-# negative length in its own `style` block, as `margin-top: -4` does on the
-# second card.
+# Written negative, any of them is E0239 at the number. A spacing token, a
+# radius and a font size are 0 or more: `pad`, `gap`, `radius` and `size`
+# would drop `-4px`, as a browser drops `padding: -4px`, `border-radius: -4px`
+# and `font-size: -4px`. A negative minimum width is no breakpoint at all, so
+# `md: -500` would leave the theme with no `md` rather than move it. A tile
+# meant to pull outward writes the negative length in its own `style` block,
+# as `margin-top: -4` does on the second card.
 
 theme Compact = {
     spacing:     {flush: 0, nudge: 4},
@@ -21,10 +22,10 @@ theme Compact = {
     breakpoints: {md: 500}
 }
 
-tile Flush  = card(text("flush") {size: "fine"}) {pad: "flush", radius: "square", id: "flush"}
+tile Flush  = card(text("flush") {size: "fine", id: "flush-label"}) {pad: "flush", radius: "square", id: "flush"}
 tile Nudged = card(text("nudged")) {pad: "nudge", style: {margin-top: -4}, id: "nudged"}
 
-tile App = column(Flush, Nudged) {gap: {base: "sm", md: "lg"}, pad: "nudge"}
+tile App = column(Flush, Nudged) {gap: {base: "sm", md: "lg"}, pad: "nudge", id: "cards"}
 
 app ThemeLengthsFromZero
     caps   = []

@@ -1,7 +1,7 @@
 import type { ThemeDef } from "../ast.ts";
 import type { KumikiError } from "./context.ts";
 
-/** A section whose entries are lengths of 0 or more: the keys that lead to it, and what a negative one becomes. */
+/** A section whose entries are lengths of 0 or more: the keys that lead to it, and the message for a negative one. */
 type NonNegativeSection = {
   section: readonly string[];
   describe: (theme: string, key: string, n: number) => string;
@@ -11,17 +11,17 @@ const NON_NEGATIVE: readonly NonNegativeSection[] = [
   {
     section: ["spacing"],
     describe: (theme, key, n) =>
-      `theme "${theme}": spacing "${key}" is ${n}, and padding and gap cannot be negative, so it has no effect — write a length of 0 or more (see docs/spec/style.md)`,
+      `theme "${theme}": spacing "${key}" is ${n}, but a spacing token is 0 or more — pad and gap drop a negative length; write a negative margin in the tile's own style block (see docs/spec/style.md)`,
   },
   {
     section: ["radius"],
     describe: (theme, key, n) =>
-      `theme "${theme}": radius "${key}" is ${n}, and a corner radius cannot be negative, so it has no effect — write a length of 0 or more (see docs/spec/style.md)`,
+      `theme "${theme}": radius "${key}" is ${n}, but a radius token is 0 or more — radius drops a negative length; write a length of 0 or more (see docs/spec/style.md)`,
   },
   {
     section: ["typography", "size"],
     describe: (theme, key, n) =>
-      `theme "${theme}": typography size "${key}" is ${n}, and a font size cannot be negative, so it has no effect — write a size of 0 or more (see docs/spec/style.md)`,
+      `theme "${theme}": typography size "${key}" is ${n}, but a font size token is 0 or more — size drops a negative size; write a size of 0 or more (see docs/spec/style.md)`,
   },
   {
     section: ["breakpoints"],

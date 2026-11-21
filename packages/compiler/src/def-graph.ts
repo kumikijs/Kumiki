@@ -167,9 +167,11 @@ export function forwardedParams(
 export function aliasTarget(
   def: TypeDef,
   lookup: (name: string) => TypeDef | undefined,
+  // Made once per table by the caller: a classifier made here would start empty at every step of
+  // a walk down a chain, and walk the rest of the chain again each time.
+  forwarded: (def: TypeDef) => number | null,
 ): GraphEdge | null {
   const params = new Set(def.params);
-  const forwarded = forwardedParams(lookup, "through");
   let head = headOf(def.body, params);
   while (head?.kind === "name") {
     const edge = { to: head.name, pos: head.pos };

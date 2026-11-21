@@ -67,7 +67,7 @@ theme DefaultTheme = {
 
 `breakpoints` の幅はビューポートの最小幅で、`px`・`rem`・`em`（`"640px"`、`"48rem"`）か、px とみなす数値（`md: 500`）で書く。それ以外の値（他の単位、入れ子のエントリ）はブレイクポイントではなく、無視される（[§4.5](#_4-5-responsive)）。
 
-`spacing` トークンは `pad` と `gap` が解決する長さで（[§4.3.1](#_4-3-1-shorthand-properties)）、`radius` トークンは `radius` が解決する角の半径、`typography.size` トークンは `size` が解決するフォントサイズである。どれも数値はここでも px とみなす（`nudge: 4`、`soft: 4`、`fine: 11`）。この 3 つのセクションの数値とブレイクポイントの数値は 0 以上である：`flush: 0` はパディング無し、`square: 0` は角を丸めず、`md: 0` はあらゆる幅で効く。パディングもギャップも角の半径もフォントサイズもビューポートの最小幅も負にはなれないので、負の値は何の効果も持たない。ブラウザは `padding: -4px`・`border-radius: -4px`・`font-size: -4px` を捨て、負の幅はブレイクポイントではない。それでもそのキーでは既定値に取って代わるので、`md: -500` は theme から `md` そのものを無くす。いずれも [E0239](./errors.md#e0239-negative-theme-length) で、その数値の位置で報告される。
+`spacing` トークンは長さ、`radius` トークンは角の半径、`typography.size` トークンはフォントサイズで、どれも数値はここでも px とみなす（`nudge: 4`、`soft: 4`、`fine: 11`）。`pad`・`pad-x`・`pad-y`・`gap`・`gap-x`・`gap-y` は spacing トークンの名前を、`radius` は radius トークンの名前を、`size` はフォントサイズのトークンの名前を解決し（[§4.3.1](#_4-3-1-shorthand-properties)）、`style` ブロックはどれも `@spacing.<key>`・`@radius.<key>`・`@typography.size.<key>` として読む（[§4.3](#_4-3-トークン参照)）。この 3 つのセクションの数値と、文字列でなく数値のまま書いたブレイクポイントの幅は 0 以上である：`flush: 0` はパディング無し、`square: 0` は角を丸めず、`md: 0` はあらゆる幅で一致する。負の長さはトークンではなく、タイル自身の `style` ブロックに書く（`style: {margin-top: -4}`）：ブラウザは `padding: -4px`・`border-radius: -4px`・`font-size: -4px` を捨てるので、`pad`・`gap`・`radius`・`size` で使えばそれは捨てられることになる。負の幅はブレイクポイントではないが、それでもそのキーでは既定値に取って代わるので、`md: -500` は theme から `md` そのものを無くす。いずれも [E0239](./errors.md#e0239-negative-theme-length) で、その数値の位置で報告される。
 
 ### 4.2.1 構文
 

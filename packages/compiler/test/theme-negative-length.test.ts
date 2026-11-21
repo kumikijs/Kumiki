@@ -1,21 +1,21 @@
 import { readFileSync } from "node:fs";
 import { feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
-import { builtSummariesOf, codesOf, locatedOf, posOf } from "./helpers/diagnostics.ts";
+import { builtSummariesOf, checkSource, codesOf, locatedOf, posOf } from "./helpers/diagnostics.ts";
 
 const EXAMPLE = readFileSync(feature("277-theme-lengths-from-zero"), "utf8");
 
 const spacingMessage = (theme: string, key: string, n: number): string =>
-  `theme "${theme}": spacing "${key}" is ${n}, and padding and gap cannot be negative, so it has no effect — write a length of 0 or more (see docs/spec/style.md)`;
+  `theme "${theme}": spacing "${key}" is ${n}, but a spacing token is 0 or more — pad and gap drop a negative length; write a negative margin in the tile's own style block (see docs/spec/style.md)`;
 
 const breakpointMessage = (theme: string, key: string, n: number): string =>
   `theme "${theme}": breakpoint "${key}" is ${n}, and a minimum viewport width cannot be negative, so "${key}" is not a breakpoint at all — write a width of 0 or more (see docs/spec/style.md)`;
 
 const radiusMessage = (theme: string, key: string, n: number): string =>
-  `theme "${theme}": radius "${key}" is ${n}, and a corner radius cannot be negative, so it has no effect — write a length of 0 or more (see docs/spec/style.md)`;
+  `theme "${theme}": radius "${key}" is ${n}, but a radius token is 0 or more — radius drops a negative length; write a length of 0 or more (see docs/spec/style.md)`;
 
 const sizeMessage = (theme: string, key: string, n: number): string =>
-  `theme "${theme}": typography size "${key}" is ${n}, and a font size cannot be negative, so it has no effect — write a size of 0 or more (see docs/spec/style.md)`;
+  `theme "${theme}": typography size "${key}" is ${n}, but a font size token is 0 or more — size drops a negative size; write a size of 0 or more (see docs/spec/style.md)`;
 
 /** `themes`, the first of them `T`, under an app whose root reads a token from each checked section. */
 const program = (themes: string): string => `${themes}
@@ -51,6 +51,14 @@ describe("a negative spacing token, radius, font size or breakpoint width is E02
     ]);
   });
 
+  it("names its kind negative-theme-length", () => {
+    const src = program("theme T = {spacing: {nudge: -4}, breakpoints: {md: -500}}");
+    expect(checkSource(src).map((e) => [e.code, e.kind])).toEqual([
+      ["E0239", "negative-theme-length"],
+      ["E0239", "negative-theme-length"],
+    ]);
+  });
+
   it.each([
     ["spacing", "nudge", "-4", spacingMessage("T", "nudge", -4)],
     ["spacing", "half", "-0.5", spacingMessage("T", "half", -0.5)],
@@ -79,6 +87,12 @@ describe("a negative spacing token, radius, font size or breakpoint width is E02
     ["a positive breakpoint", "breakpoints: {md: 500, wide: 1800.5}"],
     ["a breakpoint written as a string", 'breakpoints: {md: "48rem"}'],
     ["a number nested under a breakpoint, which is no width", "breakpoints: {md: {x: -1}}"],
+    ["a number nested under a spacing token", "spacing: {nudge: {x: -1}}"],
+    ["a negative spacing string", 'spacing: {nudge: "-4px"}'],
+    ["a negative breakpoint string", 'breakpoints: {md: "-500px"}'],
+    ["a spacing of -0", "spacing: {nudge: -0}"],
+    ["a breakpoint of -0", "breakpoints: {md: -0}"],
+    ["a negative number in another section", "custom: {nudge: -4}"],
     ["a radius of 0", "radius: {square: 0}"],
     ["a positive radius", "radius: {soft: 4, hair: 0.5}"],
     ["a radius written as a string", 'radius: {soft: "-4px"}'],
@@ -90,6 +104,8 @@ describe("a negative spacing token, radius, font size or breakpoint width is E02
     ["a typography entry other than size", "typography: {weight: {thin: -100}, line-height: -1}"],
     ["a section named by a quoted key holding a dot", '"typography.size": {tiny: -4}'],
     ["a negative number for a section itself", "radius: -4"],
+    ["a radius of -0", "radius: {square: -0}"],
+    ["a font size of -0", "typography: {size: {hidden: -0}}"],
   ])("leaves %s alone", (_what, section) => {
     expect(codesOf(program(`theme T = {${section}}`))).toEqual([]);
   });
