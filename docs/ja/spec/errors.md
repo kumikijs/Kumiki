@@ -840,7 +840,7 @@ reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、その subscrip
 
 **E0212 が沈黙する場合（runtime フィルタが権威となる）**:
 
-- subscription が配線される要素に id がない。
+- subscription が配線される要素に id がない。`focus` と `blur` では `scroll` がそうした要素で、id を持つことは少ない：`tile Page = column(scroll(text("x")), input(bind=n) {id: "name"})` に対する `ui.focus(Page#typo)` は何も出ず、`scroll` を `box` に置き換えると E0212 になる。
 - その id の値がリテラル文字列ではない式（`Ref`, method call など） — 実行時の値が check 時にはわからない。
 - ハンドラがその reducer を名指している（どこに書かれていても `onClick=r`）: ハンドラが dispatch する reducer も同じ `#id` でフィルタされ、その対象はハンドラを持つ要素である。
 - tile 配下に `<ev>` を reducer に渡す要素がない — それは [W0212](#w0212-ui-event-tile-mismatch-warning) の扱う場合であり、W0212 は走査が要素を 1 つも見つけられない場合を除いて報告する。
@@ -864,6 +864,10 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に、`<ev>` が�
 
 > `Reducer "<r>" subscribes to ui.key(<Tile>) but "key" never reaches a listener in tile "<Tile>": a details takes no "key" listener on the <details> around its <summary>, since a control in its panel takes the subscription instead — write onKeyDown= on the details to hear a "key" on its <summary> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
+`<ev>` が `key` で body に `scroll` がある場合、scroll が描画する `<div>` は自身が focus を受ける要素であり、その中にあるすべての tile の `keydown` もそこへバブルしてくる（下の `key` / `focus` / `blur` についての注記を参照）。メッセージはそれについても同じことを、details の節とは別の節で述べる:
+
+> `Reducer "<r>" subscribes to ui.key(<Tile>) but "key" never reaches a listener in tile "<Tile>": a scroll takes no "key" listener on its <div>, since a control inside it takes the subscription instead — write onKeyDown= on the scroll to hear a "key" on its <div> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
 kind の要素が `<ev>` を発火するのに、そのレンダラがハンドラを呼ばない場合 — 要素の性質ではなく runtime の方針である — メッセージはそう述べ、レンダラが代わりにすること（`<instead>`）が記録されていればそれも述べる。どの要素も `click` を発火するので、`click` の行に載らない kind はすべてこれに当たる：`link`（レンダラはナビゲーションのためだけに listen する。下の `link` についての注記を参照）と、レンダラが `onClick` を呼ばないそれ以外のすべての kind である。`input` では次の kind で、その要素はいずれも `input` を発火する：`slider` はレンダラが bind の書き込みのためだけに listen し、`check` / `radio` / `switch` / `select` はレンダラが代わりに `change` を listen する。レンダラが同じことをする kind は ` / ` でつなぎ、先頭の kind に合わせて `a` か `an` を前に置く。異なるものの節は `; ` でつなぐ:
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a reducer in tile "<Tile>": a <kinds> fires "<ev>", and its renderer <instead>, never calling <handler> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
@@ -871,6 +875,20 @@ kind の要素が `<ev>` を発火するのに、そのレンダラがハンド�
 `click` で `<instead>` の無い kind の節は `a <kinds> fires "click", and its renderer never calls onClick` である。`tile Label = text("click me")` なら:
 
 > `Reducer "hit" subscribes to ui.click(Label) but "click" never reaches a reducer in tile "Label": a text fires "click", and its renderer never calls onClick (DOM-allowed: button, check, switch, radio; observed in body: text). The handler is silently dropped.`
+
+body に route が埋める `route-outlet` がある場合、route がそこに表示する tile はアプリの実行時には子孫であり、その要素は `<ev>` を発火しうる。route が outlet を埋めるのは、その tile か、それを描画する tile が `sub-routes` を宣言している場合である（[ルーティング §3.6.2](./routing.md#_3-6-2-child-route-map)）。表示する tile は route が実行時に選び、コード生成はその tile をそれ自身の route の対象としてコンパイルするので、subscription はそこへ持ち上げられず、その中の何に対しても reducer は実行されない。メッセージはまずその節を述べ、続けて `route-outlet` を含む body のすべての kind について上の節を `; ` でつないで述べる。そのいずれかが包みの節であれば `"<ev>" never reaches a listener` で、そうでなければ `"<ev>" never reaches a reducer` で始まる。`tile Shell sub-routes = {"/s/child" -> Child, "/s" -> Home} = column(text("shell"), route-outlet())` なら:
+
+> `Reducer "shellKey" subscribes to ui.key(Shell) but "key" never reaches a reducer in tile "Shell": the tile its route-outlet shows is picked by the route at runtime and compiled as its own route target, so ui.key(Shell) is not lifted onto it — subscribe to that tile instead (DOM-allowed: …; observed in body: column, route-outlet, text). The handler is silently dropped.`
+>
+> `Reducer "shellClick" subscribes to ui.click(Shell) but "click" never reaches a reducer in tile "Shell": the tile its route-outlet shows is picked by the route at runtime and compiled as its own route target, so ui.click(Shell) is not lifted onto it — subscribe to that tile instead; a column / route-outlet / text fires "click", and its renderer never calls onClick (DOM-allowed: button, check, switch, radio; observed in body: column, route-outlet, text). The handler is silently dropped.`
+
+route が埋めない outlet には何も表示されないので、その節は付かない：`T` も `T` を描画する tile も `sub-routes` を宣言しないなら、`tile T = column(text("x"), route-outlet())` に対する `ui.key(T)` は最初の形になる。`sub-routes` を宣言した tile を描画する tile も同じで、その tile 自身の sub-routes はそれが route の対象であるときにだけ働く。
+
+body にそのイベントの行に載る kind もある場合も同じことが成り立ち、そのとき W0212 は出ない：`ui.click(Shell)` は Shell 自身の body にある button では実行され、route された tile の中の button では決して実行されない。route された tile への subscription（`ui.click(Child)`）は、route がそれをどこに表示しても実行される。
+
+`<ev>` が `focus` か `blur` で、body のどの `scroll` も、内容がどう描画されても `check`・`radio`・`switch`・`details` のいずれかを含む場合、行に載る kind として数える scroll はない：含むものがその `<div>` を Tab 順から外し、アプリの中にその `<div>` に focus を移すものはない（下の `scroll` の注記を参照）。メッセージは中の control についての節に続けて、そのための節を述べる：
+
+> `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a listener in tile "<Tile>": the runtime listens for "<ev>" on a check's <label>, and the "<ev>" its <input> fires does not bubble to the <label>; the runtime listens for "<ev>" on a scroll's <div>, which is out of the tab order while it holds an element that takes focus, and the "<ev>" fired inside it does not bubble to the <div> (DOM-allowed: …; observed in body: check, scroll). The handler is silently dropped.`
 
 子孫がイベントを発火しないという最初の形は、要素がそのイベントを発火しない kind に対するメッセージである：`box` への `ui.focus`、`editable` への `ui.change`、`text` への `ui.input`。
 
@@ -883,8 +901,8 @@ kind の要素が `<ev>` を発火するのに、そのレンダラがハンド�
 | `change` | `select`, `input`, `textarea`, `check`, `radio`, `switch`, `slider` |
 | `input`  | `input`, `textarea`, `editable` |
 | `key`    | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video`, `check`, `radio`, `switch` |
-| `focus`  | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video` |
-| `blur`   | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video` |
+| `focus`  | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video`, `scroll` |
+| `blur`   | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video`, `scroll` |
 | `hover`  | 任意の tile |
 
 **修正**: 許容集合に含まれる root を持つ tile にセレクタを切り替えるか、focusable な要素に対して `input(onFocus=r)` のように明示配線する。ワイルドカード `_` セレクタと `ui.hover` は対象外。
@@ -895,11 +913,13 @@ kind の要素が `<ev>` を発火するのに、そのレンダラがハンド�
 
 **`editable` と `change` について**: `editable` は `input` / `key` / `focus` / `blur` に載り、`change` にだけ**載らない**。この 1 つの欠落は漏れではなく規則である。`<div contenteditable="true">` は編集ホストなので `tabindex` 無しで focusable であり、`focus` / `blur` / `keydown` / `input` はいずれもブラウザが発火する。違うのは listen する層だけで、前 3 つは `applyUiEventHandlers`、`input` は `editable` レンダラ自身のリスナである。一方 `change` イベントは一切発火せず、これは表の行では埋められない。したがって `ui.change(<editable の tile>)` の W0212 は理由が正しい警告である — `ui.input` を購読して新しいテキストを直前の値を持つ slot と比較するか、編集の終了を捉えたいなら `ui.blur` を使う。
 
-**`key` / `focus` / `blur` について**: runtime はこの 3 つをレンダラが返した要素そのものに付けるので、載っている kind はいずれもその要素にイベントが届くものである。要素自体が focusable な kind — `input` / `textarea` / `button` / `select` / `slider`（素の `<input type="range">`）/ `editable` / `link` / `video`（`controls` 付きで描画された `<video>`）— は 3 行すべてに載る。`check` / `radio` / `switch` は `key` に載り、`focus` / `blur` には**載らない**。3 つは 1 つのケースに見えるが答えは 2 つに分かれる：いずれも `<input>` を `<label>` で包んで描画し、リスナは label 側にある。`keydown` は focus された input から label へバブルするので `ui.key` は届くが、`focus` / `blur` はバブルしないので label 上のリスナは決して実行されず、それらに W0212 を出すのは正しい。control 自身に `onFocus=` / `onBlur=` を書いても、リスナは同じ `<label>` に付くので、やはり実行されず、[W0213](#w0213-handler-on-inert-tile-warning) が同じ記録から読んだ同じ理由でそれを報告する。そこに書いた `onKeyDown=` は `ui.key` と同じく実行される。
+**`key` / `focus` / `blur` について**: runtime はこの 3 つをレンダラが返した要素そのものに付けるので、載っている kind はいずれもその要素にイベントが届くものである。要素自体が focusable で、中に tile を描画しない kind — `input` / `textarea` / `button` / `select` / `slider`（素の `<input type="range">`）/ `editable` / `link` / `video`（`controls` 付きで描画された `<video>`）— は 3 行すべてに載る。自身が focus を受け、中に tile を描画する `scroll` は `focus` と `blur` にだけ載る（下を参照）。`check` / `radio` / `switch` は `key` に載り、`focus` / `blur` には**載らない**。3 つは 1 つのケースに見えるが答えは 2 つに分かれる：いずれも `<input>` を `<label>` で包んで描画し、リスナは label 側にある。`keydown` は focus された input から label へバブルするので `ui.key` は届くが、`focus` / `blur` はバブルしないので label 上のリスナは決して実行されず、それらに W0212 を出すのは正しい。control 自身に `onFocus=` / `onBlur=` を書いても、リスナは同じ `<label>` に付くので、やはり実行されず、[W0213](#w0213-handler-on-inert-tile-warning) が同じ記録から読んだ同じ理由でそれを報告する。そこに書いた `onKeyDown=` は `ui.key` と同じく実行される。
 
 `details` は 3 行のどれにも載らず、どの空白も規則である。`details` は focus を受ける `<summary>` を `<details>` で包んで描画し、リスナが付くとすれば `<details>` である。summary の `focus` / `blur` は、check の label の場合と同じく、そこへバブルしない。`keydown` はバブルするが、パネルにあるすべての tile の keydown も同じくバブルしてくる。パネルにある control のうち `key` 行に載るものには同じ subscription がすでに持ち上げられているので、`<details>` にもリスナを付けると、その control で押したキーごとに reducer が 2 回実行される。したがって 3 つとも W0212 を出すのは正しく、メッセージはそれぞれの理由を述べる。summary 上のキーは、details 自身に書いたハンドラ（`details(…, onKeyDown=r)`）には届き、そのハンドラはパネルからのキーもすべて受け取るので、W0213 はこれを報告しない。そこに書いた `onFocus=` / `onBlur=` も、上で check について述べたのと同じ理由で実行されず、W0213 が報告する。
 
 Chromium では、`controls` があれば Tab は `<video>` に止まり、`focus` / `blur` は focus がそこに入るとき・出るときに発火する。`<video>` が focus を持つ間に押したキーは `ui.key` の reducer に届く。`controls` が無ければ focusable ではない：Tab は素通りし、`.focus()` やクリックでも focus は移らないので、3 つのどれも発火しない。`video` が `controls` を持つかはインスタンスの性質で、コンパイル時の表には見えないため、行はどちらの場合も `video` を載せる。`disabled` な control も同様で、その kind は載っているが focusable ではない。
+
+`scroll` は `focus` と `blur` に載り、`key` には**載らない**。`scroll` は `overflow: auto` の `<div>` を描画する。Chromium では、その内容があふれていて focusable なものを何も含まないとき、Tab はその `<div>` に止まり、`focus` / `keydown` / `blur` は `<div>` 自身で発火する。`.focus()` でも focus が移る。内容が収まっている scroll は Tab が素通りし、`.focus()` でも focus は移らない。focusable な control を含む、あふれた scroll も Tab は素通りしてその control に止まる。scroll をクリックしてもどちらの場合も focus は移らず、ランタイムが `.focus()` を呼ぶのは `input`・`textarea`・`select`・`editable` と確認ダイアログのボタンだけなので、そうした scroll の `<div>` にアプリの中で focus を移すものはない。ただしアプリの外のスクリプトがそれに `.focus()` を呼べば focus は移る。W0212 は、内容のどの分岐にも `check`・`radio`・`switch`・`details` のいずれかを含む scroll を数えず、何も含まないことがありうる scroll があれば何も出さない：`when`、`for`、それを含まない分岐、開いている間だけ表示される overlay の内容、`disabled` と書いた control、`error-boundary` のフォールバックが何も含まない tile。`input` など行に載る kind を含む scroll も Tab 順から外れるが、その kind が subscription を自分で受ける。scroll があふれるかはインスタンスの性質で、`video` の `controls` と同じなので、`focus` と `blur` の行はどちらの場合も `scroll` を載せる。中にある tile の `focus` / `blur` は `<div>` へバブルしないので、そこにあるリスナは scroll 自身に対してだけ実行される。`keydown` は、`<details>` の場合と同じく、中にあるすべての tile からそこへバブルし、そこにある control のうち `key` 行に載るものには subscription がすでに持ち上げられているので、`<div>` にもリスナを付けると、その control で押したキーごとに reducer が 2 回実行される。W0212 は `ui.key` についてそう述べる。scroll 自身に書いたハンドラ（`scroll(…, onKeyDown=r)`）は、その `<div>` 上のキーにも中からのすべてのキーにも実行されるので、W0213 は scroll 上の 3 つのどれも報告しない。W0213 は scroll が何を含むかを問わないので、ハンドラが実行されることのない `scroll(check(value=d), onFocus=r)` も報告しない。
 
 ### E0213 `call-arity-mismatch`
 
@@ -1142,17 +1162,16 @@ reducer editTodo on=ui.input(TodoText) do= todos[$el.todoId].text := $event.valu
 > `error(field=…) cannot show the failure of <what>: <why>. field= names a slot, or a path into one[ — write the slot's name without quotes: error(field=<slot>)] (see docs/spec/forms.md)`
 > `error() names no field, so it has no failure to show: field= names a slot, or a path into one (see docs/spec/forms.md)`
 > `error() {field: …} is not read in a tile-test's expect, which compares named arguments only — write error(field=…) (see docs/spec/forms.md)`
-> `error(field=…) cannot step through ".<member>": it is a member of "<T>", not a field. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)`
-> `error(field=…) cannot step through ".<name>": "<T>" has no fields. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)`
-> `error(field=…) cannot step through ".<method>()": a call is not a step of a path. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)` — 呼び出しに引数があるときは `".<method>(…)"`
-> `error(field=…) cannot step through an index that is not a literal: a path names one element or entry by a literal key, such as [0] or ["k"] (see docs/spec/forms.md)`
+> `error(field=…) cannot step through ".<member>": it is a member of "<T>", not a field. A path's steps are fields, ".get", and indices (see docs/spec/forms.md)`
+> `error(field=…) cannot step through ".<name>": "<T>" has no fields. A path's steps are fields, ".get", and indices (see docs/spec/forms.md)`
+> `error(field=…) cannot step through ".<method>()": a call is not a step of a path. A path's steps are fields, ".get", and indices (see docs/spec/forms.md)` — 呼び出しに引数があるときは `".<method>(…)"`
 > `error(field=…) cannot step through an index into "<T>": a path's index names a List element or a Map entry (see docs/spec/forms.md)`
 
-この tile が描画するのは、ある場所の失敗である：field の根が指す slot の、field のステップが辿るパスかそれより下の失敗。1 つ目の形は、根が slot でないもの — リテラル、ローカルな名前（`for` の変数、tile の `$1`）、型が失敗しうる refinement を持たない `route` slot、値を計算する式、あるいは名前付き引数が tile として持つ `for` や `when`。2 つ目は `field=` をまったく持たない `error()` である。`{…}` ブロックに書かれた `field` は同じ prop であり、`field=` と同じように読まれ、判定される。ただし tile-test の `expect` では違う：expected ツリーは名前付き引数だけを比較するので（[テスト §8.4](./testing.md#_8-4-tile-snapshot-tests)）、そのブロックの `field` は読まれず、3 つ目の形になる。残りは、パスのステップでないステップである：値を導出するメンバー（`.length`、あるいは `Map` の `.get`）、フィールドを持たない値（`Tuple`・union）へのステップ、呼び出し、キーがリテラルでないインデックス、`List`・`Map`・`Set` のいずれでもない値へのインデックス。いずれも失敗がありうる場所を指さないので、slot が何を保持していても tile はメッセージを決して描画できない。slot の名前を綴ったテキストリテラルには修正案が付く。意図したのはおそらくその slot だからである。ただし、その場所で同じ名前のローカルが slot を隠しているときは付かない。報告するのは、場所を指さない最初のステップだけである。
+この tile が描画するのは、ある場所の失敗である：field の根が指す slot の、field のステップが辿るパスかそれより下の失敗。1 つ目の形は、根が slot でないもの — リテラル、ローカルな名前（`for` の変数、tile の `$1`）、型が失敗しうる refinement を持たない `route` slot、値を計算する式、あるいは名前付き引数が tile として持つ `for` や `when`。2 つ目は `field=` をまったく持たない `error()` である。`{…}` ブロックに書かれた `field` は同じ prop であり、`field=` と同じように読まれ、判定される。ただし tile-test の `expect` では違う：expected ツリーは名前付き引数だけを比較するので（[テスト §8.4](./testing.md#_8-4-tile-snapshot-tests)）、そのブロックの `field` は読まれず、3 つ目の形になる。残りは、パスのステップでないステップである：値を導出するメンバー（`.length`、あるいは `Map` の `.get`）、フィールドを持たない値（`Tuple`・union）へのステップ、呼び出し、`List`・`Map`・`Set` のいずれでもない値へのインデックス。いずれも失敗がありうる場所を指さないので、slot が何を保持していても tile はメッセージを決して描画できない。slot の名前を綴ったテキストリテラルには修正案が付く。意図したのはおそらくその slot だからである。ただし、その場所で同じ名前のローカルが slot を隠しているときは付かない。報告するのは、場所を指さない最初のステップだけである。
 
-計算されたインデックス — `error(field=rows[i].email)` — は、キーがリテラルでないインデックスとして拒否される：パスは要素をリテラルのキーで指す。これは規則ではなく既知の制限である（[#828](https://github.com/kumikijs/Kumiki/issues/828)）。field が持ちうるほかのコードは E0230 として重ねて報告しない：何にも解決しない名前は [E0103](#e0103-undef-ref-undef-slot)、呼び出さずに名指した `fn` は [E0127](#e0127-fn-as-value)、レコードにないフィールドは [E0108](#e0108-undef-member)、取る引数なしで名指したメンバーは [E0213](#e0213-call-arity-mismatch)、`Int` でない `List` のインデックスや型の違う `Map` のキーは [E0201](#e0201-type-mismatch)、`Set` へのインデックスは [E0232](#e0232-index-into-set)、どの `fn` も定義しない名前の呼び出し（値として書かれた tile、`error(field=text("form"))` など）は [E0116](#e0116-undef-call)、型が何も指さない slot へのステップは [E0117](#e0117-undef-type) である。
+field が持ちうるほかのコードは E0230 として重ねて報告しない：何にも解決しない名前は [E0103](#e0103-undef-ref-undef-slot)、呼び出さずに名指した `fn` は [E0127](#e0127-fn-as-value)、レコードにないフィールドは [E0108](#e0108-undef-member)、取る引数なしで名指したメンバーは [E0213](#e0213-call-arity-mismatch)、`Int` でない `List` のインデックスや型の違う `Map` のキーは [E0201](#e0201-type-mismatch)、`Set` へのインデックスは [E0232](#e0232-index-into-set)、どの `fn` も定義しない名前の呼び出し（値として書かれた tile、`error(field=text("form"))` など）は [E0116](#e0116-undef-call)、型が何も指さない slot へのステップは [E0117](#e0117-undef-type) である。
 
-**修正**：slot か、メッセージをここに出したいそのフィールドを指す — `form` のどこかの失敗なら `error(field=form)`、email の失敗だけなら `error(field=form.email)`。要素はリテラルのキーで書く：`error(field=rows[0].email)`。
+**修正**：slot か、メッセージをここに出したいそのフィールドを指す — `form` のどこかの失敗なら `error(field=form)`、email の失敗だけなら `error(field=form.email)`。要素はそのインデックスかキーで指す：`error(field=rows[0].email)`、slot `i` が指す要素なら `error(field=rows[i].email)`。
 
 ### E0232 `index-into-set`
 
@@ -1251,9 +1270,9 @@ tile の木が、その中のユーザー tile を展開すると 256 段より�
 
 `onFocus` / `onBlur` はタイルが描画した要素にそのまま付くが、`check` / `radio` / `switch` / `details` ではその要素は focus を受ける要素を包むものである：control の `<input>` を包む `<label>`、`<summary>` を包む `<details>`。どちらのイベントも包む要素へはバブルしないので、ハンドラは決して実行されない。理由は W0212 が同じ kind への `ui.focus` / `ui.blur` について述べる節であり、同じ記録から読む（そちらの `key` / `focus` / `blur` についての注記を参照）。移す先として名指すタイルは、その `focus` / `blur` 行に載るものである。同じタイルへの購読は W0212 になるので、勧める購読は自身が focus を受けるタイルへのものである:
 
-> `"onFocus" on check() is dropped — the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label>. Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`
+> `"onFocus" on check() is dropped — the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label>. Put it on button / editable / input / link / scroll / select / slider / textarea / video, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`
 >
-> `"onBlur" on details() is dropped — the runtime listens for "blur" on a details's <details>, and the "blur" its <summary> fires does not bubble to the <details>. Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.blur(<Tile>) on a tile that takes focus itself`
+> `"onBlur" on details() is dropped — the runtime listens for "blur" on a details's <details>, and the "blur" its <summary> fires does not bubble to the <details>. Put it on button / editable / input / link / scroll / select / slider / textarea / video, or subscribe with a reducer's on=ui.blur(<Tile>) on a tile that takes focus itself`
 
 **user tile** にも同じ問いを立て、2 つ目の形で答える。user tile に書かれたハンドラは、その tile が描画するノードにマージされる（[§1.7.3](./language.md#_1-7-3-event-handler-props)）ので、発火するかどうかは何を描画するかで決まる — `tile Inner = box(text("clickme"))` に対する `Inner(onClick=open)` は、描画はされるが何も配線されない。まさにこの警告が存在する理由の失敗である。ほかに気づける層が無い：この警告は非致命なので `check` は 0 で終了し（`ok (1 warning)`）、`build` も emit を出し、`smoke` から見えるのは「正しく描画され、クリックする対象が無い」タイルでしかない。
 
@@ -1269,13 +1288,13 @@ body の kind がイベントを発火するのに、そのレンダラがハン
 
 `tile Inner = check(value=done)` に対する `Inner(onFocus=r)` なら:
 
-> `"onFocus" on Inner() is dropped — Inner renders nothing at its root where "focus" reaches it: the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label> (observed at its root: check). Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`
+> `"onFocus" on Inner() is dropped — Inner renders nothing at its root where "focus" reaches it: the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label> (observed at its root: check). Put it on button / editable / input / link / scroll / select / slider / textarea / video, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`
 
 `<kinds>` は tile の描画ツリーを辿って集めたもので、これは [W0212](#w0212-ui-event-tile-mismatch-warning) が使うのと同じ走査である。ただし本体内で呼ばれた tile の `error-boundary` フォールバックには入らない: そのフォールバックは、呼び出し側に書いたハンドラなしで描画される。報告するのは、そのツリーのどこにもハンドラを呼ぶ種類が無い場合だけ。これは意図的に控えめである：prop が着地するのはその tile の **root** ノードなので、`tile Card = box(button(...))` もハンドラを捨てるが、この検査は root かその下かを問わずツリーのどこかの種類がハンドラを呼ぶかを問うため報告しない。`onFocus` / `onBlur` は root だけに問う。ランタイムはそれらを root の要素に付け、`focus` と `blur` は内側のどこからもそこへバブルしないので、root より下の種類はそれらを実行できない。root のすべての種類が、包む要素にイベントが届かない包まれた control であるとき報告する：`tile Faq = details(summary="Q", text("a"))` は `Faq(onFocus=r)` で報告し、`tile Row = row(check(value=done))` は報告しない。`row` が focus を受けるかは問わないからである（後述）。逆に、報告するものはすべて確実に捨てられる。
 
 走査が種類を 1 つも見つけられなかった場合は報告しない — その tile の root 自体が、builtin でも宣言済み tile でもない名前である場合（`tile Inner = Nope()`、あるいは循環 `tile Inner = Inner()`）で、走査は何も学べていない。W0212 も同じ空の答えを前にして黙る。これらの形にはそれぞれの符号がある（[E0005](#e0005-tile-cycle)、[E0105](#e0105-undef-tile)）。解決できない名前が解決可能な body の**内側**にある場合（`tile Inner = box(Nope())`）は別の話で、その周囲の種類は root についての正しい答えなので、W0213 は解決できない部分を名指す符号と並んで報告される。
 
-`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` は、それ以外では報告しない。ランタイムはタイルが生成した要素にリスナをそのまま付けるので、決め手はイベントがその要素に届くかどうかであり、答えが記録されている kind は上の包まれた control である。`keydown` は `<label>` にも `<details>` にもバブルするので、`onKeyDown` は 4 つすべてで実行され、`details` ではパネルで押したキーもすべて受け取る。フォーカス可能でない kind、つまりコンテナ（`row`）や葉（`text`）では `focus` と `blur` は発火せず、`keydown` がコンテナに届くのはフォーカス可能な子孫がある場合だけである。そこまで報告するにはフォーカス可能性の解析が必要で、この検査は行わない。
+`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` は、それ以外では報告しない。ランタイムはタイルが生成した要素にリスナをそのまま付けるので、決め手はイベントがその要素に届くかどうかであり、答えが記録されている kind は上の包まれた control である。`keydown` は `<label>` にも `<details>` にもバブルするので、`onKeyDown` は 4 つすべてで実行され、`details` ではパネルで押したキーもすべて受け取る。`scroll` でも中で押したキーをすべて受け取る。フォーカス可能でない kind、つまりコンテナ（`row`）や葉（`text`）では `focus` と `blur` は発火せず、`keydown` がコンテナに届くのはフォーカス可能な子孫がある場合だけである。そこまで報告するにはフォーカス可能性の解析が必要で、この検査は行わない。
 
 [W0212](#w0212-ui-event-tile-mismatch-warning) は同じ黙殺を反対側から見たもの — 対象のタイルが `<ev>` をどの reducer にも渡さない `ui.<ev>(Tile)` 購読である。こちらは捕まえられない：コンテナはクリック可能な子孫が 1 つでもあれば通過し、ボタンを含むカードのレイアウトはすべてそれに当たる。
 
@@ -1721,7 +1740,7 @@ test inf-has-no-value =
 
 2 つ目のメッセージは、表がそもそも持っていない述語に対するもの。その名前はチェッカーへ届く前にパーサが弾くので、ここへ到達するのは手で組み立てた AST 経由だけである — コンパイラ自身のテストはその経路でこの診断を駆動している。
 
-3 つ目は、ツールチェーンが lowering *できる* refinement が、到達できない位置にある場合である。slot の型の内側に書かれた述語は値をたどる検査として型ごとに 1 つの関数へ lowering される（[§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）が、自分自身を大きくなっていく引数に適用するジェネリック — `slot t : T(Text where nonempty)` に対する `type T(A) = {v: A, next: Option(T(List(A)))}` — は段ごとに新しい型になる。32 段を超えると lowering は止まり、その先は黙って通るチェックになってしまう。前の 2 つと違いこれはソースから到達できる。修正は、大きくなっていく引数で自分自身を入れ子にしない型にするか、それに沿って refinement を持たない型の slot にすることである。
+3 つ目は、ツールチェーンが lowering *できる* refinement が、到達できない位置にある場合である。slot の型の内側に書かれた述語は値をたどる検査で確かめられる。この検査は到達した型ごとに lowering され、同じ型に到達するすべての検査で共有される。定義の連鎖は、それらの検査を 1 つのループでたどる（[§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）。自分自身を大きくなっていく引数に適用するジェネリック — `slot t : T(Text where nonempty)` に対する `type T(A) = {v: A, next: Option(T(List(A)))}` — は段ごとに新しい型になるので、段ごとに専用の検査が要る。32 段を超えると lowering は止まり、その先は黙って通るチェックになってしまう。前の 2 つと違いこれはソースから到達できる。修正は、大きくなっていく引数で自分自身を入れ子にしない型にするか、それに沿って refinement を持たない型の slot にすることである。
 
 **現在この状態にある述語はない。** このチェックが存在するのは、代わりに何が起きていたかによる: `refinementToJs` は実装していないものをすべて `(_v) => true` へ lowering する `default` 分岐で終わっていたため、登録済み 12 述語のうち 7 つが「決して失敗しないチェック」としてランタイムへ届いていた — `slot n : Int where positive` は `-7` を受け入れ、その slot に対する `error(field=n)` は何も表示しなかった。refinement は値が slot へ入る際に通るチェックとして規定されている（[フォーム §5.6](./forms.md#_5-6-バリデーション戦略)、[ランタイム §10.3.3](./runtime.md#_10-3-3-batching)）ので、lowering のない述語はドキュメントがプログラムの実際の挙動と異なる約束をしている状態であり、しかもそれを誰も報告しなかった。パーサが受け付ける名前は lowering テーブルの名前とちょうど一致するため、今日のソースからこの診断へ到達することはない。lowering を伴わずに §1.3.3 へ述語を追加した場合に、実行時ではなくビルド時にここへ落ちる。
 

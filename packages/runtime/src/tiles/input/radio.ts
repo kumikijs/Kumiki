@@ -10,6 +10,7 @@ import {
   reconcileId,
   setHandlers,
   tileId,
+  valueKey,
   writeBind,
 } from "./_shared.ts";
 
@@ -33,9 +34,17 @@ function syncLabel(wrap: HTMLElement, props: TileProps | undefined): void {
   }
 }
 
+// The bind writes the value itself; the attribute carries only its key, the one the served
+// radio carries, so both render paths mark up the same `value`.
 function setRadioValue(inp: HTMLInputElement, value: unknown): void {
-  if (value === undefined) RADIO_VALUE.delete(inp);
-  else RADIO_VALUE.set(inp, value);
+  if (value === undefined) {
+    RADIO_VALUE.delete(inp);
+    inp.removeAttribute("value");
+    return;
+  }
+  RADIO_VALUE.set(inp, value);
+  const key = valueKey(value);
+  if (inp.getAttribute("value") !== key) inp.setAttribute("value", key);
 }
 
 export const radioTile: TileRenderer<"radio"> = (node) => {

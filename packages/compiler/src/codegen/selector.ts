@@ -17,8 +17,9 @@ function isNotPropData(tile: string, name: string, forEl = false): boolean {
   // On every tile, in either spelling: a control's own `bind` field carries the lvalue, and as data
   // it would read the slot for nothing, here or in a user tile's call-site props.
   if (name === "bind") return true;
-  // A read of an `error` tile's `field` can panic (`.get` on a `None`, an index
-  // past a List's end) where the tile itself renders nothing.
+  // An `error` tile walks its `field` path itself and renders nothing where a step reaches no
+  // value (`.get` on a `None`, an index past a List's end), which a read of it would panic on.
+  // Only the path's index keys are evaluated, and a key's own read can still panic.
   if (tile === "error" && name === "field") return true;
   return false;
 }
