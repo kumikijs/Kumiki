@@ -41,6 +41,7 @@ import {
   wildcardText,
 } from "./context.ts";
 import { currentFnName } from "./fn.ts";
+import { fragmentAnswerType } from "./fragment-answer.ts";
 import {
   arithmeticResult,
   inferType,
@@ -55,7 +56,6 @@ import {
 import {
   classifyFieldAccess,
   classifyMember,
-  fragmentAnswerType,
   fragmentBindings,
   fragmentShape,
   KEY_READER_NAMES,
