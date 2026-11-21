@@ -1,4 +1,4 @@
-import { isIntLiteral, type NumberLiteral, type Pos } from "../ast.ts";
+import type { NumberLiteral, Pos } from "../ast.ts";
 import type { KumikiError } from "./context.ts";
 
 const SAFE_RANGE = `${Number.MIN_SAFE_INTEGER} through ${Number.MAX_SAFE_INTEGER}`;
@@ -18,7 +18,7 @@ export function intLiteralPrecision(literal: NumberLiteral, pos: Pos): KumikiErr
  * held to the safe range even where it is read as Infinity.
  */
 export function writtenIntPrecision(literal: NumberLiteral, pos: Pos): KumikiError | null {
-  if (!isIntLiteral(literal) || Number.isSafeInteger(literal.value)) return null;
+  if (literal.raw.includes(".") || Number.isSafeInteger(literal.value)) return null;
   return { code: "E0217", kind: "int-literal-precision", message: precisionMessage(literal), pos };
 }
 

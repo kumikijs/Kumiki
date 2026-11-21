@@ -254,14 +254,6 @@ export function assertNever(node: never): void {
 export type NumberLiteral = { readonly value: number; readonly raw: string };
 
 /**
- * Whether a number literal is an `Int`: language.md's `int`, written with no point. The number it
- * is read as cannot tell, since `0.99999999999999999` is read as 1.
- */
-export function isIntLiteral(literal: NumberLiteral): boolean {
-  return !literal.raw.includes(".");
-}
-
-/**
  * The sign is part of a number literal (language.md), but the lexer emits it as
  * its own operator, so `-1` reaches the AST as a negation of `1`. One leading `-`
  * is folded in: `- -1` is the negation of the literal `-1`, so it is `null` here.

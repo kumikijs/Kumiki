@@ -10,7 +10,6 @@ import {
 } from "../assignable.ts";
 import {
   assertNever,
-  isIntLiteral,
   type Pos,
   type Refinement,
   type RefinementNumber,
@@ -172,7 +171,7 @@ function checkAppliedNumberArgs(run: AppliedRun, r: Refinement): void {
  * the refinement comes to be over `Int`.
  */
 function intBoundProblem(r: Refinement, n: RefinementNumber, over: string): KumikiError | null {
-  if (isIntLiteral(n)) return writtenIntPrecision(n, n.pos);
+  if (!n.raw.includes(".")) return writtenIntPrecision(n, n.pos);
   return {
     code: "E0201",
     kind: "type-mismatch",
