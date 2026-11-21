@@ -1,12 +1,18 @@
 import { readFileSync } from "node:fs";
 import { feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
-import { builtSummariesOf, codesOf, locatedOf, posOf } from "./helpers/diagnostics.ts";
+import {
+  builtSummariesOf,
+  checkSource,
+  codesOf,
+  locatedOf,
+  posOf,
+} from "./helpers/diagnostics.ts";
 
 const EXAMPLE = readFileSync(feature("277-theme-lengths-from-zero"), "utf8");
 
 const spacingMessage = (theme: string, key: string, n: number): string =>
-  `theme "${theme}": spacing "${key}" is ${n}, and padding and gap cannot be negative, so it has no effect — write a length of 0 or more (see docs/spec/style.md)`;
+  `theme "${theme}": spacing "${key}" is ${n}, but a spacing token is 0 or more — pad and gap drop a negative length; write a negative margin in the tile's own style block (see docs/spec/style.md)`;
 
 const breakpointMessage = (theme: string, key: string, n: number): string =>
   `theme "${theme}": breakpoint "${key}" is ${n}, and a minimum viewport width cannot be negative, so "${key}" is not a breakpoint at all — write a width of 0 or more (see docs/spec/style.md)`;
@@ -41,6 +47,14 @@ describe("a negative spacing token or breakpoint width is E0239", () => {
     ]);
   });
 
+  it("names its kind negative-theme-length", () => {
+    const src = program("theme T = {spacing: {nudge: -4}, breakpoints: {md: -500}}");
+    expect(checkSource(src).map((e) => [e.code, e.kind])).toEqual([
+      ["E0239", "negative-theme-length"],
+      ["E0239", "negative-theme-length"],
+    ]);
+  });
+
   it.each([
     ["spacing", "nudge", "-4", spacingMessage("T", "nudge", -4)],
     ["spacing", "half", "-0.5", spacingMessage("T", "half", -0.5)],
@@ -59,6 +73,13 @@ describe("a negative spacing token or breakpoint width is E0239", () => {
     ["a positive breakpoint", "breakpoints: {md: 500, wide: 1800.5}"],
     ["a breakpoint written as a string", 'breakpoints: {md: "48rem"}'],
     ["a number nested under a breakpoint, which is no width", "breakpoints: {md: {x: -1}}"],
+    ["a number nested under a spacing token", "spacing: {nudge: {x: -1}}"],
+    ["a negative spacing string", 'spacing: {nudge: "-4px"}'],
+    ["a negative breakpoint string", 'breakpoints: {md: "-500px"}'],
+    ["a spacing of -0", "spacing: {nudge: -0}"],
+    ["a breakpoint of -0", "breakpoints: {md: -0}"],
+    ["a negative radius", "radius: {sm: -2}"],
+    ["a negative number in another section", "custom: {nudge: -4}"],
   ])("leaves %s alone", (_what, section) => {
     expect(codesOf(program(`theme T = {${section}}`))).toEqual([]);
   });
