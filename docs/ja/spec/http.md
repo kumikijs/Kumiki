@@ -80,7 +80,7 @@ Decoder.Bytes        # バイト列のまま
 Decoder.None         # レスポンス本文を捨てる
 ```
 
-`T` は値の位置に書かれるが型である：その中の各名前は宣言の中と同じく解決され、何も指さない名前は [E0117](./errors.md#e0117-undef-type) になる。
+`T` は値の位置に書かれるが型である：その中の各名前は宣言の中と同じく解決され、何も指さない名前は [E0117](./errors.md#e0117-undef-type) になる。宣言される型と同じ綴りで書くので、要素の組は `Decoder.Json(Tuple(Note, Int))` と書く。`(Note, Int)` はタプルの値であり、[E0241](./errors.md#e0241-tuple-as-type) になる。
 
 `Decoder.Text` は本文を UTF-8 として読んだ `Text` を渡す。`Decoder.Bytes` は本文のバイトを届いたまま `Bytes` として渡すので、UTF-8 のテキストでない本文も損なわれずに届く。`Decoder.None` は `Unit` を渡し、本文を読まない。`decode` を持たない、または `decode` が `null` のリクエストは、述語を持たない `T` の `Decoder.Json(T)` と同じく JSON として parse される。`map-request` が組み立てるのは普通のレコードなので、その `decode` にはどんな値でも入りうる。これらのどの decoder でもない値は、リクエストを送る前に effect を失敗させる。`HttpError` の `status` は `0`、`message` はその値を示す（`decode is "TEXT", which is not a Decoder` など）。decoder が何であっても、2xx 以外のレスポンスが生む `HttpError` の `body` は、本文を読めたときはレスポンスのテキストの `Some` である。
 

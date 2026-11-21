@@ -80,7 +80,7 @@ Decoder.Bytes        # keep it as a byte sequence
 Decoder.None         # discard the response body
 ```
 
-`T` is a type, though it is written where a value goes: each name in it resolves as it would in a declaration, and one that resolves to nothing is [E0117](./errors.md#e0117-undef-type).
+`T` is a type, though it is written where a value goes: each name in it resolves as it would in a declaration, and one that resolves to nothing is [E0117](./errors.md#e0117-undef-type). It is spelt as a declared type is, so a tuple of members is `Decoder.Json(Tuple(Note, Int))`; `(Note, Int)` is a tuple value, which is [E0241](./errors.md#e0241-tuple-as-type).
 
 `Decoder.Text` delivers the body as `Text`, read as UTF-8. `Decoder.Bytes` delivers the body's bytes as received, as `Bytes`, so a body that is not UTF-8 text arrives intact. `Decoder.None` delivers `Unit` and does not read the body. A request with no `decode`, or with a `null` one, is parsed as JSON, as by a `Decoder.Json(T)` whose `T` carries no predicate. `map-request` builds an ordinary record, so its `decode` can hold any value; one that is none of these decoders fails the effect before any request is sent, with an `HttpError` whose `status` is `0` and whose `message` names the value, as in `decode is "TEXT", which is not a Decoder`. Whatever the decoder, the `body` of the `HttpError` a non-2xx response produces is `Some` of the response's text whenever its body was read.
 
