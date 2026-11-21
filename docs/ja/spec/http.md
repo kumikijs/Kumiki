@@ -80,11 +80,13 @@ Decoder.Bytes        # バイト列のまま
 Decoder.None         # レスポンス本文を捨てる
 ```
 
-`Decoder.Text` は本文を UTF-8 として読んだ `Text` を渡す。`Decoder.Bytes` は本文のバイトを届いたまま `Bytes` として渡すので、UTF-8 のテキストでない本文も損なわれずに届く。`Decoder.None` は `Unit` を渡し、本文を読まない。`decode` を持たない、または `decode` が `null` のリクエストは、述語を持たない `T` の `Decoder.Json(T)` と同じく JSON として parse される。`map-request` が組み立てるのは普通のレコードなので、その `decode` にはどんな値でも入りうる。これらのどの decoder でもない値は、リクエストを送る前に effect を失敗させる。`HttpError` の `status` は `0`、`message` はその値を示す（`decode is "TEXT", which is not a Decoder` など）。decoder が何であっても、2xx 以外のレスポンスが生む `HttpError` の `body` は、本文を読めたときはレスポンスのテキストの `Some` である。
+`Decoder.Text` は本文を UTF-8 として読んだ `Text` を渡す。`Decoder.Bytes` は本文のバイトを届いたまま `Bytes` として渡すので、UTF-8 のテキストでない本文も損なわれずに届く。`Decoder.None` は `Unit` を渡し、本文を読まない。`decode` を持たない、または `decode` が `null` のリクエストは、述語を持たない `T` の `Decoder.Json(T)` と同じく JSON として parse される。`map-request` に書いた `decode` は `Decoder` に照らして検査されるが（下記）、`fn` が返すリクエストの中のように実行時に組み立てられたものは検査されない。これらのどの decoder でもない値は、リクエストを送る前に effect を失敗させる。`HttpError` の `status` は `0`、`message` はその値を示す（`decode is "TEXT", which is not a Decoder` など）。decoder が何であっても、2xx 以外のレスポンスが生む `HttpError` の `body` は、本文を読めたときはレスポンスのテキストの `Some` である。
 
 レスポンスの decode は型としてはコンパイル時に検査され、実行時に検査されるのは JSON の構文と、宣言した型が持つ述語。JSON として壊れている 2xx の本文は、レスポンス自身の `status`、`decode failed:` で始まる `message`、`body` にレスポンス本文（`Some(text)`）を持つ `HttpError` になる。レスポンスは届いているので接続エラー（`status: 0`）ではなく、リトライもされない（[6.5](#_6-5-リトライ)）。本文のない 2xx（204 など）には `Decoder.None` が必要で、そうしないとデフォルトの decoder がその status で `decode failed:` を報告する。
 
 decode した値は `T` にも照らして検査される。`T` が持つすべての述語を、それが書かれたすべての位置で検査する。型 `T` の slot への書き込みが受けるのと同じ検査である（[§10.3.3](./runtime.md#_10-3-3-batching)）。拒否された値も同じ `HttpError` になり、`message` は述語と、値がそれを満たさなかった位置を示す（`decode failed: uuid at .id`）。検査するのは述語だけで、`T` が述語を持たない位置は届いたまま受け取る。そのため、構文は通るが宣言した型と形が合わない本文は実行時には検出されない。読み取り capability（`http.*`、`storage.read`、`session.read`、`indexed.read`。[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）に登録したホスト provider は、この検査をリクエストの `decode` として関数で受け取る。parse した値を渡すと、`T` が受け入れれば `undefined` を、拒否すれば満たされなかった述語（`{kind, args, path}`）を返す。述語を持たない `T` では、`decode` は文字列 `"json"` である。
+
+`Decoder` はこの 4 つの型であり、それ以外に `Decoder` であるものはない（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）。[6.1.2](#_6-1-2-standard-effect) と [6.7.2](#_6-7-2-宣言-localstorage) のリクエストのレコードは `decode` をこの型で宣言するので、effect は decoder を入力で受け取れ、`fn` は decoder を返せる：`fn pick(raw: Bool) -> Decoder = if raw then Decoder.Text else Decoder.Json(Note)`。`Decoder` と宣言された位置にそれ以外の型の値を置くと [E0201](./errors.md#e0201-type-mismatch)、`emit` の引数では [E0202](./errors.md#e0202-emit-arg-type-mismatch) になる：`emit storage-read({key: "note", decode: "TEXT"})` は `"TEXT"` の位置で `Expected Decoder but got Text` である。`map-request` の `decode` もこの型に従う（[6.6.1](#_6-6-1-request-fields)）。
 
 ### 6.1.5 共通 props（自動付与） {#_6-1-5-common-props-auto-applied}
 
@@ -367,6 +369,8 @@ effect loadUser cap=http.get
 `map-request` が書いたフィールドのうち、その capability の行に無いものは [E0215](./errors.md#e0215-unknown-record-field) になり、そのフィールドの位置に報告される。行に近いフィールドがあればその名前を添え、行が受け付けるフィールドを列挙する：`http.get` の `headrs: {"X": "1"}` は決して送られない header である。メソッドは capability が決め、`timeout` と `credentials` は `app.http` のもの（[6.3.1](#_6-3-1-injecting-global-headers)）なので、3 つともリクエストのフィールドではない。これらの capability に登録したホスト provider（[標準 capability](./stdlib.md#_2-5-standard-capabilities)）も同じリクエストを受け取るので、同じフィールドに従う。
 
 フィールドが検査されるのは、リテラルがそれを名指す位置である：`map-request` のレコードそのもの、または `if` の分岐・`match` の腕・`let` の本体がそこに返すレコード（入れ子の深さは問わない）。テキストをキーに持つ map リテラルも同じオブジェクトになるので、その `Text` のキーも検査される。それ以外の方法で計算されるリクエスト — `fn` が返すもの、slot から読むもの、`$1` そのもの — はフィールドが実行時に決まるので検査されない。
+
+リテラルが `decode` を書く位置では、その値はフィールドの型 [`Decoder`](#_6-1-4-decoder-型) に照らされる：ハンドラはそれによって応答を decode し、どの decoder も組み立てていない値はどの decode も名指さない。別の型の値は [E0201](./errors.md#e0201-type-mismatch) であり、値の位置で報告される — `decode: "TEXT"`、`Text` の slot、`in=Text` での `$1` はいずれも `Expected Decoder but got Text` である。値はそれが書かれたスコープで読まれるので、そこで `let` や `match` の腕が束縛する名前はそこでの型を持つ。ほかのフィールドは型を検査されない。
 
 行の無い capability にはリクエストのスキーマが無く、その `map-request` はホスト provider が読むものを何でも組み立ててよい：カスタム capability と、それ以外の標準 capability（`nav.*`・`log.write` など）がこれに当たり、その宣言した effect は provider に届き、組み込みハンドラには届かない。`http.cancel` は `map-request` そのものを取らない（[E0303](./errors.md#e0303-invalid-cancel-target)）。
 

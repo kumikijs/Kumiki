@@ -47,8 +47,8 @@ that reads its own written `Text` with `Decoder.Text` got `dark` because the
 decoder was ignored; it now gets `"dark"`. Read it with `Decoder.Json(Text)`.
 
 A `decode` that is none of the four decoders is now an error naming it,
-`decode is "TEXT", which is not a Decoder`. A `map-request` record is not
-checked against `Decoder`, so `decode: "TEXT"` compiles; before, HTTP read it
-as text and storage as JSON. Now HTTP fails the effect before any request, with
+`decode is "TEXT", which is not a Decoder`. A `decode` that a request builds
+at run time is not checked against `Decoder`, so such a value can still reach
+the handler; before, HTTP read it as text and storage as JSON. Now HTTP fails the effect before any request, with
 that message in an `HttpError{status: 0}` that no `retry=` policy retries, and
 the storage and IndexedDB reads are `.err` with it as their `Text`.

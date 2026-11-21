@@ -30,6 +30,7 @@ const RUNTIME_SUPPLIED = [
   "HttpStatus",
   "Duration",
   "FormValue",
+  "Decoder",
 ];
 
 const RESERVED: [name: string, meaning: string][] = [
@@ -61,7 +62,7 @@ const DECLARABLE: [string, string][] = [
 ];
 
 describe("the reserved names", () => {
-  it("are the primitives, the built-in constructors and seven standard library entries", () => {
+  it("are the primitives, the built-in constructors and the runtime-supplied standard library entries", () => {
     const named = (rows: [string, string][]) => rows.map(([n, m]) => `${n}: ${m}`).sort();
     expect(named(RESERVED)).toEqual(named(SPELLED_OUT));
     const stdlib = STDLIB_TYPES.map((t) => t.name);
@@ -176,6 +177,17 @@ describe("a use of a reserved name keeps the standard library's type", () => {
     expect(locatedSummariesOf(`type Route = Text\nslot r : Route = "x"\n${TAIL}`)).toEqual([
       `E0231 1:1 ${reservedTypeNameMessage("Route", RUNTIME)}`,
       "E0201 2:18 Expected Route but got Text",
+    ]);
+  });
+
+  it("checks a map-request's decode against the standard library's Decoder, not the declared Text", () => {
+    const src = `type Decoder = Text
+effect load cap=storage.read in=Unit out=Result(Option(Text), Text) map-request={key: "k", decode: "TEXT"}
+tile App = column(text("x"))
+app A caps=[storage.read] routes={"/" -> App, "/404" -> App} init=[]`;
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("Decoder")}`,
+      "E0201 2:100 Expected Decoder but got Text",
     ]);
   });
 

@@ -8,7 +8,7 @@ import {
   writtenVariants,
 } from "../assignable.ts";
 import type { Expr, Pos, TypeExpr } from "../ast.ts";
-import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
+import { isQualifierName, QUALIFIED_BUILTIN_CALLS, RUN_REDUCER } from "../builtin-calls.ts";
 import { qualifierType } from "../parse-reading.ts";
 import { hasMember, isOwnMember } from "../stdlib-members.ts";
 import { FILE_FIELDS, type PrimName, refType } from "../stdlib-types.ts";
@@ -454,6 +454,9 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
         return named === null ? null : container("Option", [named], e.pos);
       }
       if (qualifier === "Duration") return { kind: "TypeRef", name: "Duration", pos: e.pos };
+      if (qualifier === "Decoder" && QUALIFIED_BUILTIN_CALLS.has(e.callee)) {
+        return { kind: "TypeRef", name: "Decoder", pos: e.pos };
+      }
       if (qualifier === "Bytes") return prim("Bytes", e.pos);
       if (qualifier !== null && member === "fresh") return freshResultType(qualifier, e.pos, sym);
       return fnResultType(e.callee, sym);
