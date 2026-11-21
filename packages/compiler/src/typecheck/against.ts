@@ -17,6 +17,7 @@ import {
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { letInScope, type MismatchCode, pushMismatch } from "./expr.ts";
 import { container, inferType, isKnown, isPrimNamed, prim } from "./infer.ts";
+import { intLiteralPrecision } from "./int-literal.ts";
 import { armScope, matchedType } from "./patterns.ts";
 
 export function checkAgainst(
@@ -127,19 +128,12 @@ export function checkAgainst(
     return;
   }
   const literal = numberLiteral(e);
-  if (
-    literal !== null &&
-    d.kind === "TypePrim" &&
-    d.name === "Int" &&
-    Number.isInteger(literal.value) &&
-    !Number.isSafeInteger(literal.value)
-  ) {
-    errors.push({
-      code: "E0217",
-      kind: "int-literal-precision",
-      message: `Int literal ${literal.raw} is not exactly representable and was rounded to ${literal.value}`,
-      pos: e.pos,
-    });
+  const imprecise =
+    literal !== null && d.kind === "TypePrim" && d.name === "Int"
+      ? intLiteralPrecision(literal, e.pos)
+      : null;
+  if (imprecise) {
+    errors.push(imprecise);
     return;
   }
 
