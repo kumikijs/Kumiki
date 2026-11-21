@@ -24,4 +24,5 @@ The value a rounded literal became is written with every digit, so
 `123456789012345678901234567890` is named as rounded to
 `123456789012345677877719597056` rather than `1.2345678901234568e+29`.
 errors.md says the same of E0217, and stdlib.md's `Int` reading names the
-safe range as the one where every integer is held exactly.
+safe range as the one where every integer is held exactly and no other
+integer is read as it.

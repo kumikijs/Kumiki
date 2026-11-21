@@ -174,14 +174,14 @@ export class ExpressionParser extends TypeParser {
         const fldTok = this.peek();
         if (e.kind === "Num" && fldTok.pos.line !== dotTok.pos.line) {
           throw new ParseError(
-            `A float needs digits after the decimal point — write "${e.raw ?? e.value}.0"`,
+            `A float needs digits after the decimal point — write "${e.raw}.0"`,
             e.pos,
           );
         }
         if (fldTok.kind !== "ident" && fldTok.kind !== "kw") {
           if (e.kind === "Num") {
             throw new ParseError(
-              `A float needs digits after the decimal point — write "${e.raw ?? e.value}.0"`,
+              `A float needs digits after the decimal point — write "${e.raw}.0"`,
               e.pos,
             );
           }

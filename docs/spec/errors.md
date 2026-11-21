@@ -1020,7 +1020,7 @@ A tag no union declares at all is reported here as well, because the declared ty
 
 ### E0217 `int-literal-precision`
 
-An `Int` position is given a literal outside the safe range, -9007199254740991 through 9007199254740991 (`Number.MIN_SAFE_INTEGER` through `Number.MAX_SAFE_INTEGER`): the range in which JavaScript holds every integer exactly. Past it, most literals are rounded on the way into the AST, so the program would run with a value that is not the one written. A literal JavaScript still holds exactly there, such as 9007199254740992 (2^53), has a neighbour it does not: 9007199254740993 is read as 9007199254740992 too, so the program cannot tell the two apart, and arithmetic on the literal can round.
+An `Int` position is given a literal outside the safe range, -9007199254740991 through 9007199254740991 (`Number.MIN_SAFE_INTEGER` through `Number.MAX_SAFE_INTEGER`): the range in which JavaScript holds every integer exactly and no other integer is read as it. Past it, most literals are rounded on the way into the AST, so the program would run with a value that is not the one written. A literal JavaScript still holds exactly there, such as 9007199254740992 (2^53), has a neighbour it does not: 9007199254740993 is read as 9007199254740992 too, so the program cannot tell the two apart, and arithmetic on the literal can round.
 
 > `Int literal <literal> is outside the safe range -9007199254740991 through 9007199254740991 and was rounded to <value>`
 > `Int literal <literal> is outside the safe range -9007199254740991 through 9007199254740991: it is held exactly, but an integer next to it is not`
