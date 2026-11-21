@@ -81,7 +81,11 @@ describe("episode-id names the episode the panic happened in", () => {
       expect(ep, `no episode ${id} in the log`).toBeDefined();
       const panics = ep?.steps.filter((s) => s.kind === "panic") ?? [];
       expect(panics).toHaveLength(1);
-      expect(panics[0]).toMatchObject({ category: "tile-render", location: "Guarded" });
+      expect(panics[0]).toMatchObject({
+        category: "tile-render",
+        location: "Guarded",
+        handled: true,
+      });
       expect(text).toContain(`fallback message: ${panics[0]?.message}`);
       expect(text).toContain("fallback location: Guarded");
       expect(ep?.status).toBe("panic");
@@ -113,7 +117,7 @@ describe("a boundary's panic step names the location its fallback names", () => 
     expect(report.steps[1]?.domText).toContain("shell caught: get called on None at Report");
     const last = logger.list().at(-1);
     expect(last?.steps.filter((s) => s.kind === "panic")).toMatchObject([
-      { location: "Report", category: "tile-render" },
+      { location: "Report", category: "tile-render", handled: true },
     ]);
   });
 });

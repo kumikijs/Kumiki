@@ -1,4 +1,4 @@
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { load, renameDef, type Store } from "@kumikijs/cli";
@@ -11,10 +11,25 @@ export const APP_A = `app A
     init   = []
 `;
 
-/** A fresh directory under the OS temp dir, removed when the current test finishes. */
-export function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "kumiki-cli-test-"));
-  onTestFinished(() => rmSync(dir, { recursive: true, force: true }));
+/**
+ * The ways a path can hold no source file, each with how to make one: nothing there, or a
+ * directory.
+ */
+export const NOT_A_FILE: Array<[string, (path: string) => void]> = [
+  ["does not exist", () => undefined],
+  ["is a directory", (path) => mkdirSync(path)],
+];
+
+/**
+ * A fresh directory under `parent` (the OS temp dir by default), removed when the current test
+ * finishes.
+ */
+export function tempDir(parent = tmpdir()): string {
+  const dir = mkdtempSync(join(parent, "kumiki-cli-test-"));
+  // Retried: on Windows a server or watcher that closed a moment before can still hold the files.
+  onTestFinished(() =>
+    rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }),
+  );
   return dir;
 }
 

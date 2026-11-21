@@ -1,7 +1,7 @@
 import { feature } from "@kumikijs/examples";
 import type { AppShape, CapabilityProvider } from "@kumikijs/runtime";
 import { describe, expect, it, onTestFinished } from "vitest";
-import { answer, dialogs } from "./helpers/confirm.ts";
+import { answer, dialogs, removeOverlays } from "./helpers/confirm.ts";
 import { fill, followLink, mountApp, navigate, tick } from "./helpers/dom.ts";
 import { loadApp } from "./helpers/load.ts";
 
@@ -35,8 +35,7 @@ async function mountAt(
   onTestFinished(() => {
     handle.dispose();
     root.remove();
-    for (const el of dialogs()) el.remove();
-    for (const el of Array.from(document.querySelectorAll("[data-kumiki-toast]"))) el.remove();
+    removeOverlays();
   });
   return { app, root };
 }

@@ -41,8 +41,7 @@ const COLUMNS = [
   ["bundle gzip", (a) => a.bundle.gzip],
   ["bundle brotli", (a) => a.bundle.brotli],
   ["modular gzip", (a) => a.modular.gzip],
-  // Uncompressed, because that is the figure the CLI's counter size test
-  // budgets — a PR can see how close it brings the counter to that line.
+  // Uncompressed, so a change to the runtime shows byte for byte.
   ["runtime/ raw", (a) => a.runtime],
 ];
 

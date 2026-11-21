@@ -34,6 +34,33 @@ tile App = column(Box, Field, text("note: " + note))`);
   });
 });
 
+// What the example's scenario cannot hold: a step that fails without a refusal fails the
+// fixture. `packages/e2e/tests/action-faults.spec.ts` asserts the same two at the browser tier.
+describe("a choose that cannot run fails the step, naming what it found", () => {
+  const CHOOSES = feature("264-choose-option");
+
+  it("reports a choose whose selector matches no select, naming the element", async () => {
+    const report = await run(await loadApp(CHOOSES), {
+      steps: [{ do: { choose: "#box", value: "Ay" } }],
+    });
+    expect(report.ok).toBe(false);
+    expect(report.steps[0]?.actionError).toBe(
+      "#box matched <div>, which holds no options to choose — choose targets a select",
+    );
+    expect(report.steps[0]?.errors).toEqual([]);
+  });
+
+  it("reports a choose on a select with no such option, naming the value", async () => {
+    const report = await run(await loadApp(CHOOSES), {
+      steps: [{ do: { choose: "#pick", value: "Zed" } }],
+    });
+    expect(report.ok).toBe(false);
+    expect(report.steps[0]?.actionError).toBe('no option "Zed" in select #pick');
+    expect(report.steps[0]?.errors).toEqual([]);
+    expect(report.steps[0]?.state.pick).toBe("a");
+  });
+});
+
 describe("a broken selector cannot satisfy errorIncludes", () => {
   const SELECTORS = withApp(`slot n : Int = 0
 reducer bump on=ui.click(Btn) do= n := n + 1

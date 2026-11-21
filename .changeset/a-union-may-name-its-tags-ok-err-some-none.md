@@ -22,7 +22,7 @@ reducer recover on=ui.click(Go)
 
 ```
 $ kumiki check a.kumiki
-E0201 type-mismatch at 6:19: Expected Health but got Result(?, ?)
+error E0201 type-mismatch at 6:19: Expected Health but got Result(?, ?)
 ```
 
 The same false E0201 came from `let next = None` into a `type Filter = None |
