@@ -72,12 +72,15 @@ describe("a literal written with no point", () => {
     ).toEqual([]);
   });
 
-  // 10^400 is past the largest double, so it is read as Infinity, which is no whole number.
+  // 10^308 is read as the double nearest it. 10^400 is past the largest double, so it is read as
+  // Infinity, which is no whole number.
   it.each([
-    ["1", "Infinity"],
-    ["-1", "-Infinity"],
-  ])("is an Int even when it is read as no whole number: %s followed by 400 zeros", (lead, became) => {
-    const literal = `${lead}${"0".repeat(400)}`;
+    ["1", 308, `${BigInt(1e308)}`],
+    ["-1", 308, `${BigInt(-1e308)}`],
+    ["1", 400, "Infinity"],
+    ["-1", 400, "-Infinity"],
+  ])("is an Int however far past the safe range: %s followed by %i zeros", (lead, zeros, became) => {
+    const literal = `${lead}${"0".repeat(zeros)}`;
     expect(pointedErrorsOf(withButtonApp(`slot n : Int = ${literal}`))).toEqual([
       {
         code: "E0217",

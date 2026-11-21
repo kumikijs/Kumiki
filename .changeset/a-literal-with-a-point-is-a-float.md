@@ -29,5 +29,5 @@ error E0201 type-mismatch at 1:16: Expected Int but got Float
 So `1.0` and `0.0` are `Float`s: `slot n : Int = 1.0`, `fn f(i: Int) -> Int =
 i + 1.0` and `timeout: 0.0` in `app.http` are now E0201, and a `List(Float)`
 can start from `[0.0]`. A literal with no point is an `Int` whatever it is
-read as, so one too long for a double (309 digits or more) is E0217, rounded
+read as, so one past the largest double (about 1.8 × 10^308) is E0217, rounded
 to `Infinity`, rather than E0201.

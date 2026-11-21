@@ -5,11 +5,10 @@ const SAFE_RANGE = `${Number.MIN_SAFE_INTEGER} through ${Number.MAX_SAFE_INTEGER
 
 /**
  * Whether a number literal is an `Int`: language.md's `int`, written with no point. The number it
- * is read as cannot tell, since `0.99999999999999999` is read as 1. A literal with no text to go
- * by is decided by its number.
+ * is read as cannot tell, since `0.99999999999999999` is read as 1.
  */
-export function isIntLiteral(literal: { readonly value: number; readonly raw?: string }): boolean {
-  return literal.raw === undefined ? Number.isInteger(literal.value) : !literal.raw.includes(".");
+export function isIntLiteral(literal: NumberLiteral): boolean {
+  return !literal.raw.includes(".");
 }
 
 /**
