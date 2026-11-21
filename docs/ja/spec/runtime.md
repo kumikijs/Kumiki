@@ -166,7 +166,7 @@ reducer bump on=ui.click(Btn)
     do= if count < 3 then count := count + 1
 ```
 
-プログラムの外から来る値は、reducer に届く前に検査される。`Decoder.Json(T)` が decode した値を `T` の述語が拒否するレスポンスや保存値は、effect の `.err` になり（[§6.1.4](./http.md#_6-1-4-decoder-型)、[§6.7.2](./http.md#_6-7-2-宣言-localstorage)）、プログラムの `.err` reducer が扱う。そうでなければ、その書き込みがこの規則で破棄される `.ok` になり、reducer が行った他のすべて（ロード状態を終えることなど）も一緒に破棄される。
+プログラムの外から来る値は、reducer に届く前に検査される。`Decoder.Json(T)` が decode した値が `T` でない（形が違う、または `T` の述語が拒否する）レスポンスや保存値は、effect の `.err` になり（[§6.1.4](./http.md#_6-1-4-decoder-型)、[§6.7.2](./http.md#_6-7-2-宣言-localstorage)）、プログラムの `.err` reducer が扱う。そうでなければ、その書き込みがこの規則で破棄される `.ok` になり、reducer が行った他のすべて（ロード状態を終えることなど）も一緒に破棄される。
 
 refinement が門番を**しない**ものが 2 つある:
 

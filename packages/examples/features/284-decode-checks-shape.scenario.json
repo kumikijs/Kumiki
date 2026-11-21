@@ -1,0 +1,31 @@
+{
+  "effects": {
+    "loadUser": [
+      {
+        "outcome": "err",
+        "value": {
+          "status": 200,
+          "message": "decode failed: expected Int at .id",
+          "body": { "_tag": "Some", "_0": "{\"id\": \"7\", \"title\": \"not a user\"}" }
+        }
+      }
+    ],
+    "loadBooking": [{ "outcome": "ok", "value": { "at": 1772877600000 } }]
+  },
+  "steps": [
+    {
+      "label": "a body that is no User reaches .err naming the field, and a Time read from text is an instant",
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "user": "200 decode failed: expected Int at .id",
+          "booking": "an hour later is 1772881200000"
+        },
+        "domIncludes": [
+          "user: 200 decode failed: expected Int at .id",
+          "booking: an hour later is 1772881200000"
+        ]
+      }
+    }
+  ]
+}

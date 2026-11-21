@@ -2,14 +2,21 @@
   "effects": {
     "loadStamps": [
       {
-        "outcome": "ok",
-        "value": [{ "label": "digit", "at": "1" }, { "label": "iso", "at": "2026-03-07T10:00" }]
+        "outcome": "err",
+        "value": {
+          "status": 200,
+          "message": "decode failed: expected Time at [0].at",
+          "body": {
+            "_tag": "Some",
+            "_0": "[{\"label\":\"digit\",\"at\":\"1\"},{\"label\":\"iso\",\"at\":\"2026-03-07T10:00\"}]"
+          }
+        }
       }
     ]
   },
   "steps": [
     {
-      "label": "text outside Time.parse's grammar is no instant; text in it is the instant it names",
+      "label": "text outside Time.parse's grammar is no instant, decoded or parsed; text in it is the instant it names",
       "expect": {
         "noErrors": true,
         "state": {
@@ -20,13 +27,14 @@
           "utc": { "_tag": "Some", "_0": 1772877600000 },
           "offset": { "_tag": "Some", "_0": 1772877600000 },
           "local": "2026-03-07 10:00",
-          "day": "2026-03-07 00:00"
+          "day": "2026-03-07 00:00",
+          "stamps": [],
+          "problem": "decode failed: expected Time at [0].at"
         },
         "domIncludes": [
           "1: none",
           "local: 2026-03-07 10:00",
-          "iso: 2026-03-07 10:00",
-          "digit: 0NaN-NaN-NaN NaN:NaN"
+          "problem: decode failed: expected Time at [0].at"
         ]
       }
     }

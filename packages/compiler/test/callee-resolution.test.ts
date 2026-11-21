@@ -670,7 +670,6 @@ describe("the checker accepts exactly what codegen lowers", () => {
 
 describe("a qualified stdlib member is read the same way without its parentheses", () => {
   const SENTINEL: Record<string, string> = {
-    "Decoder.Json": '"json"',
     "Decoder.Text": '"text"',
     "Decoder.Bytes": '"bytes"',
     "Decoder.None": '"none"',
@@ -780,17 +779,14 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 
   for (const [name, sentinel] of Object.entries(SENTINEL)) {
-    if (name !== "Decoder.Json") {
-      it(`${name} lowers to ${sentinel} with no parentheses`, () => {
-        const body = loweringOf(name);
-        expect(body).toContain(`[${sentinel}]`);
-        expect(body).not.toContain("_tag:");
-      });
-    }
+    it(`${name} lowers to ${sentinel} with no parentheses`, () => {
+      const body = loweringOf(name);
+      expect(body).toContain(`[${sentinel}]`);
+      expect(body).not.toContain("_tag:");
+    });
 
     it(`${name} lowers the same way written as a call`, () => {
-      const body = loweringOf(name === "Decoder.Json" ? `${name}(Text)` : `${name}()`);
-      expect(body).toContain(`[${sentinel}]`);
+      expect(loweringOf(`${name}()`)).toContain(`[${sentinel}]`);
     });
   }
 
