@@ -179,9 +179,9 @@ describe("known gap: W0213 does not see a firing kind that is not the root", () 
   const REDUCER = `slot n : Int = 0
 reducer open on=app.start do= n := n + 1`;
 
-  const src = (tiles: string) => `${REDUCER}
+  const src = (tiles: string, handler = "onClick") => `${REDUCER}
 ${tiles}
-tile App = column(Card {onClick: open}, text(n.show))
+tile App = column(Card {${handler}: open}, text(n.show))
 app A
     caps   = []
     routes = {"/" -> App, "/404" -> App}
@@ -200,6 +200,12 @@ app A
   it("and says nothing about it, nested or through another tile", () => {
     expect(codesOf(src('tile Card = box(button(text="go"))'))).toEqual([]);
     expect(codesOf(src('tile Deep = button(text="go")\ntile Card = box(Deep)'))).toEqual([]);
+  });
+
+  it("but reports onFocus on a details root that holds a panel, as focus does not bubble", () => {
+    expect(codesOf(src('tile Card = details(summary="Q", text("a"))', "onFocus"))).toEqual([
+      "W0213",
+    ]);
   });
 });
 
@@ -292,6 +298,7 @@ app A
     { kind: "check", tile: "check(value=done)", evs: ["key"] },
     { kind: "radio", tile: 'radio(group="g", selected=done)', evs: ["key"] },
     { kind: "switch", tile: "switch(value=done)", evs: ["key"] },
+    { kind: "scroll", tile: "scroll(text(note))", evs: ["focus", "blur"] },
   ];
 
   for (const { kind, tile, evs } of kinds) {
@@ -307,6 +314,7 @@ app A
       });
 
       it(`merges a ${handler} written on ${kind} with a ui.${ev} selector on it, once`, () => {
+        expect(codesOf(explicit(ev, tile))).toEqual([]);
         const js = loweredOf(explicit(ev, tile));
         const merged = `${handler}: _h("hitExplicit", "hitSelector")`;
         expect(js.split(merged)).toHaveLength(2);
@@ -348,8 +356,8 @@ app A
     expect(loweredOf(source(ev, tile))).not.toContain(`${HANDLER[ev]}: _h("hit")`);
   });
 
-  const lifted = (tile: string): number =>
-    loweredOf(source("key", tile)).split(`onKeyDown: _h("hit")`).length - 1;
+  const lifted = (tile: string, ev: UiEv = "key"): number =>
+    loweredOf(source(ev, tile)).split(`${HANDLER[ev]}: _h("hit")`).length - 1;
 
   // A listener on the <details> as well as the control's own would run the
   // reducer twice per key, since the control's keydown bubbles there. A check
@@ -362,6 +370,35 @@ app A
     expect(codesOf(source("key", details))).toEqual([]);
     expect(lifted(details)).toBeGreaterThan(0);
     expect(lifted(details)).toBe(lifted(`box(${inner})`));
+  });
+
+  it("reports ui.key on a scroll with what keeps it away, and lifts nothing onto it", () => {
+    const tile = "scroll(text(note))";
+    const reported = checkSource(source("key", tile));
+    expect(reported.map((e) => e.code)).toEqual(["W0212"]);
+    expect(reported[0]?.message).toContain("a scroll takes no");
+    expect(loweredOf(source("key", tile))).not.toContain(`onKeyDown: _h("hit")`);
+  });
+
+  // The input's keydown bubbles to the scroll's <div>, so a listener there as
+  // well would run the reducer twice for each key pressed in the input.
+  it("lifts ui.key on a scroll onto the input in it, and onto nothing else", () => {
+    const scroll = "scroll(input(bind=note))";
+    expect(codesOf(source("key", scroll))).toEqual([]);
+    expect(lifted(scroll)).toBeGreaterThan(0);
+    expect(lifted(scroll)).toBe(lifted("box(input(bind=note))"));
+  });
+
+  // Focus does not bubble, so the scroll's listener hears its own <div> alone,
+  // and focus in the input runs the reducer once, from the input's listener.
+  it.each([
+    "column(scroll(text(note)), input(bind=note))",
+    "scroll(input(bind=note))",
+  ])("lifts ui.focus on %s onto the scroll and onto the input", (tile) => {
+    const inputAlone = lifted("box(input(bind=note))", "focus");
+    expect(codesOf(source("focus", tile))).toEqual([]);
+    expect(inputAlone).toBeGreaterThan(0);
+    expect(lifted(tile, "focus")).toBe(2 * inputAlone);
   });
 
   it("leaves ui.change on an editable alone, which is the rule rather than the same gap", () => {

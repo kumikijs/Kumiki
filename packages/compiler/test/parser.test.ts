@@ -12,7 +12,7 @@ import type {
 import { lex, parse } from "@kumikijs/compiler";
 import { app } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
-import { PRIM_TYPES } from "../src/parser/types.ts";
+import { PRIM_TYPE_NAMES } from "../src/stdlib-types.ts";
 import { tileCall, uiEvent } from "./helpers/ast.ts";
 import { defined } from "./helpers/defined.ts";
 
@@ -397,7 +397,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
 describe("a union alternative", () => {
   const defOf = (src: string): Def => defined(parse(lex(src)).defs[0], "a def");
   const typeBody = (src: string) => (defOf(src) as TypeDef).body;
-  const PRIMITIVES = [...PRIM_TYPES];
+  const PRIMITIVES = [...PRIM_TYPE_NAMES];
 
   it.each(PRIMITIVES)("named %s is a nullary variant, first or after another", (p) => {
     expect(typeBody(`type V = ${p} | Name | Size`)).toEqual({

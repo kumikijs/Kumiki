@@ -39,13 +39,21 @@ export function installLifecycleListeners(
   return unsubs;
 }
 
+/**
+ * The user tiles a rendered node is the whole tree of, outermost first: `_named` writes one name, or
+ * a list when a tile's whole body is another user tile (`tile Outer = Inner`).
+ */
+export function tileNames(node: TileNode): string[] {
+  return [(node as { props?: Record<string, unknown> }).props?._tile]
+    .flat()
+    .filter((name): name is string => typeof name === "string");
+}
+
 export function collectMountedTiles(root: TileNode): Set<string> {
   const out = new Set<string>();
   const visit = (n: TileNode | null | undefined): void => {
     if (!n || typeof n !== "object") return;
-    const props = (n as { props?: Record<string, unknown> }).props;
-    const tileName = props?._tile;
-    if (typeof tileName === "string") out.add(tileName);
+    for (const name of tileNames(n)) out.add(name);
     const children = (n as { children?: TileNode[] }).children;
     if (Array.isArray(children)) for (const c of children) visit(c);
   };

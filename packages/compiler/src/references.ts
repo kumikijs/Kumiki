@@ -18,6 +18,7 @@ import type {
 } from "./ast.ts";
 import { assertNever, isTileExpr } from "./ast.ts";
 import { callsBuiltin, decodedType, RUN_REDUCER, typeMemberQualifier } from "./builtin-calls.ts";
+import { tileNamedAt } from "./builtins.ts";
 import { eventParts, type RecordField, recordFieldsOf, testSections } from "./test-sections.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
@@ -369,25 +370,12 @@ class Walker {
     switch (t.kind) {
       case "TileCall":
         this.add("tile", t.name, t.pos);
-        for (const a of t.args) this.tileArg(a, locals);
+        for (const a of t.args) {
+          if (a.name !== undefined && this.namingProp(t.name, a.name, a.value)) continue;
+          this.tileArg(t.name, a, locals);
+        }
         for (const p of t.props) {
-          if (HANDLER_NAMES.has(p.name)) {
-            const reducer = handlerReducerName(p.value);
-            if (reducer !== null) {
-              this.add("reducer", reducer, p.value.pos);
-              continue;
-            }
-          }
-          if (t.name === "link" && p.name === "prefetch") {
-            // A bare ident or a string literal, both naming a reducer.
-            if (p.value.kind === "Ref") this.add("reducer", p.value.name, p.value.pos);
-            else if (p.value.kind === "Str") this.addQuoted("reducer", p.value);
-            continue;
-          }
-          if (p.name === "motion" && p.value.kind === "Str") {
-            this.addQuoted("motion", p.value);
-            continue;
-          }
+          if (this.namingProp(t.name, p.name, p.value)) continue;
           this.expr(p.value, locals);
         }
         return;
@@ -417,17 +405,38 @@ class Walker {
     }
   }
 
-  private tileArg(a: TileArg, locals: ReadonlySet<string>): void {
-    const v = a.value;
-    if (a.name !== undefined && HANDLER_NAMES.has(a.name)) {
-      const reducer = handlerReducerName(v);
-      if (reducer !== null) {
-        this.add("reducer", reducer, v.pos);
-        return;
-      }
+  /**
+   * A prop, in either spelling, whose value names a reducer or a motion rather than reading one:
+   * a handler, a link's prefetch target, a motion. False for any other prop.
+   */
+  private namingProp(tile: string, name: string, value: Expr | TileExpr): boolean {
+    if (HANDLER_NAMES.has(name)) {
+      const reducer = handlerReducerName(value);
+      if (reducer === null) return false;
+      this.add("reducer", reducer, value.pos);
+      return true;
     }
+    if (isTileExpr(value)) return false;
+    if (tile === "link" && name === "prefetch") {
+      // A bare ident or a string literal, both naming a reducer.
+      if (value.kind === "Ref") this.add("reducer", value.name, value.pos);
+      else if (value.kind === "Str") this.addQuoted("reducer", value);
+      return true;
+    }
+    if (name !== "motion" || value.kind !== "Str") return false;
+    this.addQuoted("motion", value);
+    return true;
+  }
+
+  private tileArg(callee: string, a: TileArg, locals: ReadonlySet<string>): void {
+    const v = a.value;
     if (isTileExpr(v)) {
       this.tileExpr(v, locals);
+      return;
+    }
+    const tile = tileNamedAt(callee, a, (name) => (this.index.tile.has(name) ? name : undefined));
+    if (tile) {
+      this.add("tile", tile.def, tile.ref.pos);
       return;
     }
     this.expr(v, locals);
