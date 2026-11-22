@@ -3,7 +3,7 @@ import { elementType, nominallyComparable, typeToString, unaliasType } from "../
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
 import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
 import { fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
-import { heldDecoder } from "../held-decoder.ts";
+import { heldDecoder, noEquality } from "../held-decoder.ts";
 import { showShapeOf } from "../show-shape.ts";
 import {
   type FragmentArgument,
@@ -73,6 +73,7 @@ import {
   matchedType,
 } from "./patterns.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
+import { decoderKeyError } from "./types.ts";
 
 /** The type one iteration of `for x in iter` binds, given the iterated expression. */
 export function elementTypeOf(iter: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
@@ -335,7 +336,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
           pos: e.pos,
         };
         errors.push(report);
-        sym.undefinedVariants.set(report, e);
+        sym.reportsUnlessJudged.set(report, e);
       }
       for (const p of e.payload) checkExpr(p, sym, errors, ctx);
       return;
@@ -397,6 +398,9 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         }
       } else checkExpr(e.base, sym, errors, ctx);
       classifyFieldAccess(e, sym, errors, ctx);
+      if (e.accessKind === "shortcut") {
+        refuseDecoderComparison(inferType(e.base, sym, ctx), e.field, e.pos, sym, errors);
+      }
       // The member, not a record's own field that happens to be named `show`.
       if (e.field === "show" && e.accessKind !== "field") noteShown(e.base, sym, ctx);
       return;
@@ -440,7 +444,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         if (rt && !recordUpdate && classifyMember(raw, e.method, sym) === "unknown") {
           errors.push(undefMemberError(raw, rt, e.method, e.pos, sym));
           lacksMember = true;
-        }
+        } else refuseDecoderComparison(raw, e.method, e.pos, sym, errors);
       }
       if (!lacksMember) {
         const min = METHOD_MIN_ARGS.get(e.method);
@@ -542,6 +546,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         checkExpr(ent.key, sym, errors, ctx);
         checkExpr(ent.value, sym, errors, ctx);
       }
+      refuseDecoderKeyedLiteral(e, sym, errors, ctx);
       return;
     case "MatchExpr": {
       checkExpr(e.scrutinee, sym, errors, ctx);
@@ -684,6 +689,50 @@ function orderingFamily(t: TypeExpr | null, sym: SymbolTable): string | null {
   return null;
 }
 
+// The List members that compare elements with `==`. A Set's and a Map's members compare keys,
+// but a key type holding a Decoder is refused where it is written, and a Map literal's at its key.
+const COMPARING_LIST_MEMBERS: ReadonlySet<string> = new Set(["contains", "unique"]);
+
+function refuseDecoderComparison(
+  receiver: TypeExpr | null,
+  member: string,
+  pos: Pos,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  if (!COMPARING_LIST_MEMBERS.has(member)) return;
+  const r = unaliasType(receiver, sym);
+  const element = r?.kind === "TypeApp" && r.name === "List" ? (r.args[0] ?? null) : null;
+  const held = heldDecoder(element, sym);
+  if (!element || !held) return;
+  errors.push({
+    code: "E0201",
+    kind: "type-mismatch",
+    message: `".${member}" cannot compare elements of type ${typeToString(element)}: ${noEquality(element, held)}`,
+    pos,
+  });
+}
+
+// What a written `Map(Decoder, V)` is refused for, reported once at the first key holding one, and
+// dropped when a declared type judges the literal: that type is refused itself, or it reports the
+// key's mismatch.
+function refuseDecoderKeyedLiteral(
+  e: Expr & { kind: "MapLit" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  for (const { key } of e.entries) {
+    const t = inferType(key, sym, ctx);
+    const held = heldDecoder(t, sym);
+    if (!t || !held) continue;
+    const report = decoderKeyError({ container: "Map", key: t, whole: held.whole }, key.pos);
+    errors.push(report);
+    sym.reportsUnlessJudged.set(report, e);
+    return;
+  }
+}
+
 function checkSortKey(
   t: TypeExpr | null,
   pos: Pos,
@@ -800,12 +849,9 @@ function checkBinOpOperands(
     // A `Decoder.Json(T)` is its `T`'s check, or one sentinel for every `T` that carries none, so
     // `==` would call the decoders of an `Int` and a `Text` the same, and an `Email`'s different.
     const holder = [lt, rt].find((t) => heldDecoder(t, sym) !== undefined);
-    if (holder && lt && rt) {
-      incomparable(
-        heldDecoder(holder, sym)?.whole
-          ? ": a Decoder has no equality"
-          : `: ${typeToString(holder)} holds a Decoder, which has no equality`,
-      );
+    const held = heldDecoder(holder ?? null, sym);
+    if (holder && held && lt && rt) {
+      incomparable(`: ${noEquality(holder, held)}`);
       return;
     }
     if (!nominallyComparable(lt, rt, sym)) incomparable();

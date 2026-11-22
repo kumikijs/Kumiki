@@ -96,6 +96,17 @@ function decoderKeyMessage({ container, key, whole }: DecoderKey): string {
     : `a ${role} of type ${typeToString(key)} cannot hold a Decoder`;
 }
 
+/** E0204 at `pos` for `found`, a key that is or holds a Decoder, under the generic `applied` if one keys by it. */
+export function decoderKeyError(found: DecoderKey, pos: Pos, applied?: TypeExpr): KumikiError {
+  const message = decoderKeyMessage(found);
+  return {
+    code: "E0204",
+    kind: "effect-id-misuse",
+    message: `${applied ? `${typeToString(applied)}: ${message}` : `${message.charAt(0).toUpperCase()}${message.slice(1)}`} — it is an opaque handle`,
+    pos,
+  };
+}
+
 // A key is stored as `entryKey` writes it, which keeps no `Decoder.Json(T)` check: a Decoder read
 // back from a Map's keys or a Set is not the one put in, and handed on as a `decode` it decodes by
 // none. A generic is reported where it is applied to a Decoder, unless its own body already keys by
@@ -106,27 +117,17 @@ function refuseDecoderKey(
   typeParams: ReadonlySet<string>,
   errors: KumikiError[],
 ): void {
-  const report = (pos: Pos, message: string): void => {
-    errors.push({
-      code: "E0204",
-      kind: "effect-id-misuse",
-      message: `${message} — it is an opaque handle`,
-      pos,
-    });
-  };
   if (t.name === "Map" || t.name === "Set") {
     const key = t.args[0];
     const held = key && heldDecoder(key, sym, typeParams);
     if (!key || !held) return;
-    const found: DecoderKey = { container: t.name, key, whole: held.whole };
-    const message = decoderKeyMessage(found);
-    report(key.pos, `${message.charAt(0).toUpperCase()}${message.slice(1)}`);
+    errors.push(decoderKeyError({ container: t.name, key, whole: held.whole }, key.pos));
     return;
   }
   const def = sym.types.get(t.name);
   if (!def || def.params.length === 0 || decoderKey(def.body, sym, new Set(def.params))) return;
   const found = decoderKey(t, sym, typeParams);
-  if (found) report(t.pos, `${typeToString(t)}: ${decoderKeyMessage(found)}`);
+  if (found) errors.push(decoderKeyError(found, t.pos, t));
 }
 
 export function checkNestedLowering(slot: SlotDef, sym: SymbolTable, errors: KumikiError[]): void {

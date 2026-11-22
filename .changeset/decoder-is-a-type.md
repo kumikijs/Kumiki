@@ -47,10 +47,11 @@ fail every run with `decode failed:`.
 A `Decoder` is an opaque handle, as an `EffectId` is. Rendering one —
 `text(d)`, `fmt("{0}", d)`, `d.show`, `"x" + d` — is E0204, since what it
 prints is how the runtime builds the decoder. `==` and `!=` on a type that is
-or holds a `Decoder` are E0201: `Decoder.Json(Int) == Decoder.Json(Text)` was
-`true`. A `Map` key or `Set` element type that is or holds one is E0204, and a
-`latest-per-key` key E0233, since a key keeps none of the check a
-`Decoder.Json(T)` is.
+or holds a `Decoder` are E0201, and so are `List.contains` and `List.unique`
+on a `List` of one: `Decoder.Json(Int) == Decoder.Json(Text)` was `true`. A
+`Map` key or `Set` element type that is or holds one is E0204, as is a Map
+literal keyed by one, and a `latest-per-key` key E0233, since a key keeps
+none of the check a `Decoder.Json(T)` is.
 
 Upgrade note: `Decoder` is reserved, like `Duration`, so a program's own
 `type Decoder` is E0231 and the name keeps the standard library's type. A

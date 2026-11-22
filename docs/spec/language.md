@@ -1070,9 +1070,14 @@ is [E0201](./errors.md#e0201-type-mismatch): `d == Decoder.Text` is
 `Operator "==" cannot compare Decoder with Decoder: a Decoder has no equality`,
 and on a `{d: Decoder}` the message names the type that holds it. Ask an
 `Option(Decoder)` `.is-some` or `.is-none`, and a `List(Decoder)` `.is-empty`.
-`List.contains` and `List.unique` ask the same question as `==` and are not
-refused on a `List` holding a `Decoder`; their answer there is not one a
-program may rely on.
+`List.contains` and `List.unique` compare elements as `==` does, so on a
+`List` whose element type is or holds a `Decoder` each is E0201 too:
+`ds.contains(d)` is
+`".contains" cannot compare elements of type Decoder: a Decoder has no equality`.
+A `Set`'s and a `Map`'s members compare keys, and no key type holds a
+`Decoder`: one written is [E0204](./errors.md#e0204-effect-id-misuse), and so
+is a Map literal keyed by one, such as `{Decoder.Text: 1}`
+([stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)).
 
 ---
 

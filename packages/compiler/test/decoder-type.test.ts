@@ -320,6 +320,44 @@ tile App = text("x")`);
   });
 });
 
+describe("a List member that compares elements is E0201 on a type holding a Decoder", () => {
+  const listed = (param: string, body: string): string =>
+    withApp(`fn f(x: ${param}) -> Bool = ${body}
+tile App = text("x")`);
+
+  it.each([
+    ["contains", "List(Decoder)", "x.contains(Decoder.Text)", "Decoder", "is"],
+    ["unique", "List(Decoder)", "x.unique.is-empty", "Decoder", "is"],
+    ["unique()", "List(Option(Decoder))", "x.unique().is-empty", "Option(Decoder)", "holds"],
+    [
+      "contains on records",
+      "List({d: Decoder})",
+      "x.contains({d: Decoder.None})",
+      "{d: Decoder}",
+      "holds",
+    ],
+  ])("refuses %s", (_what, param, body, element, holds) => {
+    const src = listed(param, body);
+    const { line, col } = posOf(src, body);
+    const member = body.includes("contains") ? "contains" : "unique";
+    const why =
+      holds === "is"
+        ? "a Decoder has no equality"
+        : `${element} holds a Decoder, which has no equality`;
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0201 ${line}:${col} ".${member}" cannot compare elements of type ${element}: ${why}`,
+    ]);
+  });
+
+  it.each([
+    ["a member that compares nothing", "List(Decoder)", "x.is-empty"],
+    ["contains on a List holding none", "List(Int)", "x.contains(1)"],
+    ["has on a Map whose values are Decoders", "Map(Text, Decoder)", 'x.has("a")'],
+  ])("takes %s", (_what, param, body) => {
+    expect(locatedSummariesOf(listed(param, body))).toEqual([]);
+  });
+});
+
 describe("a Decoder as a Map key or a Set element is E0204", () => {
   const typed = (type: string, extra = ""): string =>
     withApp(`${extra}
@@ -379,6 +417,50 @@ tile App = text("x")`);
 slot s : ${type} = ${type.startsWith("List") ? "[]" : "{}"}
 tile App = text("x")`);
     expect(locatedSummariesOf(src)).toEqual([]);
+  });
+});
+
+describe("a Map literal keyed by a Decoder", () => {
+  const WHY = "— it is an opaque handle";
+
+  it.each([
+    ["a Decoder", "{Decoder.Text: 1}", "Decoder.Text", "A Decoder cannot be a Map key"],
+    [
+      "a type holding one",
+      "{Some(Decoder.Text): 1}",
+      "Some(Decoder.Text)",
+      "A Map key of type Option(Decoder) cannot hold a Decoder",
+    ],
+  ])("is E0204 at its key, with no declared type to judge it, when it is %s", (_what, lit, at, message) => {
+    const src = withApp(`fn f(x: Int) -> Int = ${lit}.size
+tile App = text("x")`);
+    const { line, col } = posOf(src, at);
+    expect(locatedSummariesOf(src)).toEqual([`E0204 ${line}:${col} ${message} ${WHY}`]);
+  });
+
+  it("is reported once, at the first key, however many keys are Decoders", () => {
+    const src = withApp(`fn f(x: Int) -> Int = {Decoder.Text: 1, Decoder.None: 2}.size
+tile App = text("x")`);
+    const { line, col } = posOf(src, "Decoder.Text");
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0204 ${line}:${col} A Decoder cannot be a Map key ${WHY}`,
+    ]);
+  });
+
+  it("is the declared key type's mismatch alone under a Map(Text, V)", () => {
+    const src = withApp(`slot m : Map(Text, Int) = {Decoder.Text: 1}
+tile App = text("x")`);
+    const { line, col } = posOf(src, "Decoder.Text");
+    expect(locatedSummariesOf(src)).toEqual([`E0201 ${line}:${col} Expected Text but got Decoder`]);
+  });
+
+  it("is the declared type's refusal alone under a Map(Decoder, V)", () => {
+    const src = withApp(`slot m : Map(Decoder, Int) = {Decoder.Text: 1}
+tile App = text("x")`);
+    const { line, col } = posOf(src, "Decoder, Int");
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0204 ${line}:${col} A Decoder cannot be a Map key ${WHY}`,
+    ]);
   });
 });
 
