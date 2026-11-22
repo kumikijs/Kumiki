@@ -1,4 +1,4 @@
-import { unaliasType } from "../assignable.ts";
+import { typeToString, unaliasType } from "../assignable.ts";
 import type { AppDef, Lvalue, ReducerDef, Statement, TypeExpr, UiEventKind } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
@@ -28,7 +28,7 @@ import {
 import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
-import { classifyMember, receiverName, undefMemberError } from "./members.ts";
+import { classifyMember, isUnionMemberWrite, receiverName, undefMemberError } from "./members.ts";
 import { nestedScopes } from "./nested-scopes.ts";
 import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
 import { bindsRoute, namedByHandler, outletFilled, subscriptionIds } from "./tile-collect.ts";
@@ -473,6 +473,15 @@ function checkMemberLvalue(
       return;
 
     case "undecidable":
+      if (isUnionMemberWrite(raw, lv.field, sym)) {
+        errors.push({
+          code: "E0602",
+          kind: "unassignable-member",
+          message: `Cannot assign through ".${lv.field}": "${typeToString(raw ?? base)}" is a union, and a union has no fields — write it whole, as the variant it now holds`,
+          pos: lv.pos,
+        });
+        return;
+      }
       // A receiver we do not fully understand. Silent, exactly as on the read
       // side: a false error on a dynamic receiver is worse than the silence.
       return;
