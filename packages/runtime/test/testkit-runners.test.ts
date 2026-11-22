@@ -303,17 +303,6 @@ describe("runReducerTestFlow (reducer-test effect mocks)", () => {
     expect(run(makeFlowApp(), rest).pass).toBe(true);
   });
 
-  it("fails a mocked `err` that no .err reducer handles", () => {
-    const app = makeFlowApp();
-    app.reducers = app.reducers.filter((r) => r.name !== "userFailed");
-    const r = run(app, {
-      mocks: { loadUser: { outcome: "err", value: "boom" } },
-      expect: expected({ users: {}, error: "" }),
-    });
-    expect(r.pass).toBe(false);
-    expect(r.diffAt).toContain("unhandled");
-  });
-
   // `ask` emits `first("a")`; each of `first`'s reducers records its `$2` and emits `second("b")`,
   // whose reducers record theirs.
   const keyedApp = (): FlowApp => {
@@ -359,6 +348,17 @@ describe("runReducerTestFlow (reducer-test effect mocks)", () => {
       expect: expected({ keys }),
     });
     expect([r.pass, r.actual]).toEqual([true, `slots=${JSON.stringify({ keys })} effects=[]`]);
+  });
+
+  it("fails a mocked `err` that no .err reducer handles", () => {
+    const app = makeFlowApp();
+    app.reducers = app.reducers.filter((r) => r.name !== "userFailed");
+    const r = run(app, {
+      mocks: { loadUser: { outcome: "err", value: "boom" } },
+      expect: expected({ users: {}, error: "" }),
+    });
+    expect(r.pass).toBe(false);
+    expect(r.diffAt).toContain("unhandled");
   });
 });
 
