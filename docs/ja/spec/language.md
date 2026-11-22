@@ -60,6 +60,8 @@ comment     ::= '#' until-eol                    ; 1 行コメントのみ
 `-` の直後に識別子文字があれば名前が続き、なければそこで名前が終わる。`count- 1` も引き算になる（`-` の続く先が無い）。`count -1` が引き算になる理由は別で、空白が `-` に到達する前に名前を終わらせているからである。どこにも解決されない `count-1` は [E0103](./errors.md#e0103-undef-ref-undef-slot) であり、その旨がメッセージに出る。
 :::
 
+**負のリテラルの `-` は数字に接する。** `-1` と `-40.0` はリテラルである。文法がリテラルだけを取る位置 —— refinement の引数、duration、retry の回数と係数、`theme` / `motion` の値、property-test の `count` —— では `- 1` は `-` の位置でパースエラーになり、そのメッセージが書くべきリテラルを示す。式の中の `- 1` は `1` に単項 `-` を適用したもので、`-1` である。
+
 **両側のどちらかに空白がある `#` は常にコメントを開始する。** セレクタ演算子（[§1.6.1](#_1-6-1-構文)）になるのは `SaveBtn#new` の形だけである。
 
 ::: details 正確な条件と、`#` がコメントのままになる場所
@@ -552,7 +554,7 @@ subscription が届く tile を決めるのは、その子孫が「どの経路�
 
 lvalue は **path** であり、ネストしたフィールドや Option の中身を直接書き換えられる。コンパイラが immutable update に展開する。
 
-path が取れるステップは**閉じた集合**である：フィールド（`.name`）、インデックス（`[key]`）、そして `Option` / `Result` への `.get` の3つ。それ以外は lvalue ではない。特に標準ライブラリのメンバーは lvalue ではなく、`name.length := 9` は書き込みではなく [E0602](./errors.md#e0602-unassignable-member) である。そもそもそうした書き込みには意味が無い：メンバーはレシーバから値を導出するものなので、代入が着地すべき場所がレシーバ内に存在しない。
+path が取れるステップは**閉じた集合**である：フィールド（`.name`）、インデックス（`[key]`）、そして `Option` / `Result` への `.get` の3つ。それ以外は lvalue ではない。特に標準ライブラリのメンバーは lvalue ではなく、`name.length := 9` は書き込みではなく [E0602](./errors.md#e0602-unassignable-member) である。そもそもそうした書き込みには意味が無い：メンバーはレシーバから値を導出するものなので、代入が着地すべき場所がレシーバ内に存在しない。ユニオンにもフィールドは無い。variant はペイロードを位置で持つからである。したがってユニオンへのフィールドのステップは何も指さない：`type U = A(Int) | Z` のもとで、`u.a := v` は読み取り `u.a` と同じく [E0108](./errors.md#e0108-undef-member) であり、メンバーのステップは他のレシーバと同じく E0602 である（`u.length := 1`）。ある variant のペイロードがフィールドとして宣言する名前は、[E0108](./errors.md#e0108-undef-member) が挙げるとおり報告しない。ペイロードは `match` で読み、ユニオンは丸ごと書く（`u := A(n)`）。
 
 ```kumiki snippet
 # これらの reducer 文は:
@@ -573,7 +575,7 @@ editor := editor.map($1.copy(body="Body"))
 - **`Map(K, V)`** — そのキーのエントリで、インデックスは読み取りでも書き込みでも `K` である（それ以外は [E0201](./errors.md#e0201-type-mismatch)）。キーは `K` の値と同じように受け入れられる（[§1.3.5](#_1-3-5-型の一意化)）：`TodoId` と `PostId` がどちらも `nominal Text` と宣言されていれば、`PostId` は `Map(TodoId, V)` のキーではなく、`TodoId`、`Text`、リテラル `"t1"` はキーである。`m[k] := v` はエントリを挿入または置換し、`m[k].f := v` はエントリのフィールドへ書き込む。`k` が存在しなければ、展開先の `update` と同じく何も書き込まない。存在しない `k` での読み取り `m[k]` は、List の末尾より先のインデックスと同じく **panic** になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：それが返せる `V` がないからである。そこで `None` を返す読み取りは `m.get(k)` である。タイルではこの読み取りはレンダー中に走るので、存在しないキーは初回を含めそのレンダーを panic させる：最も近い `error-boundary` が fallback を表示し、無ければ組み込みの panic 表示がページを置き換える（[ライフサイクル §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）。存在しないかもしれないキーをタイルで読むには `m.get(k)` か `m.get-or(k, d)` を使う。
 - **`List(T)`** — その位置の要素で、インデックスは `Int` である（それ以外は [E0201](./errors.md#e0201-type-mismatch)）。`xs[i] := v` は同じ長さの新しい `List` の中で `i` の要素を置き換え、`xs[i].f := v` はその要素を通して書き込む。どの階層も形を保つ。要素を指さないインデックス — 末尾より先、または負の `i` — は **panic** である（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）：その reducer の書き込みはロールバックされ、`app.error` が走る。読み取り `xs[i]` も同じインデックスで panic するので、`:=` の両側は一致する。そこで panic せずに `None` を返す読み取りは `xs.get(i)` である。リストを伸ばすには `xs := xs.push(v)` と書く。
 - **`Set(T)`** — 何も指さない。Set にあるのは所属だけで場所は無いので、`s[x] := v` は [E0602](./errors.md#e0602-unassignable-member)、読み取りの `s[x]` は [E0232](./errors.md#e0232-index-into-set) である。所属は `.has` で読み、`.add` / `.remove` / `.toggle` で変える（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。
-- **それ以外の型** — 何も指さない。レコード、スカラー（`Int`、`Text` など）、`Option`、`Result`、`Tuple`、ユニオンにはインデックスが指す場所が無いので、そこへのインデックスのステップも [E0602](./errors.md#e0602-unassignable-member) であり、そのステップの位置で報告される：レコードへの `r["a"] := v`、`Int` への `n[0] := v`、そして要素が `Int` である `List(Int)` への `xs[0][0] := v`。レコードのフィールドはフィールドのステップ（`r.a := v`）で、`Option` / `Result` のペイロードは `.get` を通して書き、それ以外は値全体を置き換える（`n := v`）。リテラルのキーで読むと、レコードはキーが名指すフィールドになり — `cfg["label"]` は `cfg.label` と同じ型を持つ — 実行時に計算されるキーは 1 つのフィールドを名指さないので、型検査器はその読み出しに型を与えない。
+- **それ以外の型** — 何も指さない。レコード、スカラー（`Int`、`Text` など）、`Option`、`Result`、`Tuple`、ユニオンにはインデックスが指す場所が無いので、そこへのインデックスのステップも [E0602](./errors.md#e0602-unassignable-member) であり、そのステップの位置で報告される：レコードへの `r["a"] := v`、`Int` への `n[0] := v`、そして要素が `Int` である `List(Int)` への `xs[0][0] := v`。レコードのフィールドはフィールドのステップ（`r.a := v`）で、`Option` / `Result` のペイロードは `.get` を通して書き、それ以外は値全体を置き換える（`n := v`）。リテラルのキーで読むと、レコードはキーが名指すフィールドになり — `cfg["label"]` は `cfg.label` と同じ型を持つ — 実行時に計算されるキーは 1 つのフィールドを名指さないので、型検査器はその読み出しに型を与えない。ほかのどれにも読み出しが答える値は無い：`Int` への `n[0]`、`Text` への `t[0]`、`Option` への `o[0]` は [E0238](./errors.md#e0238-unindexable-read) である。
 
 この名前は予約語ではなくディスパッチされる: `get` という名前のフィールドを持つレコードに対しては、`rec.get.title := v` はそのフィールドへの書き込みになる。左辺と右辺は `.get` を同じ規則（レコード自身のフィールドが優先、それ以外は unwrap）で解決する。
 
@@ -725,8 +727,8 @@ pattern      ::= identifier
 
 **`if` と `match` の値文脈 vs tile 文脈**:
 - tile 引数が tile になるのは、**位置引数を内容として読まない builtin の位置引数**だけである —— `text`・`heading`・`markdown`・`code`・`editable`・`label`・`link` 以外のすべての builtin。それを描画するのはコンテナ（`column`, `row`, `card`, `box` 等）だけで、それ以外（`button`, `progress`, `image` 等）では tile でも値でも [E0129](./errors.md#e0129-unrendered-arg) になるが、どの tile もそこで構文解析できるように tile として読む。そこでは `if` と `match` は tile 式（`TileIf` / `TileMatch`）で各 arm は tile を返し、`(` か `{` が続く builtin 名はその builtin の呼び出し、大文字始まりの名前は user tile になる。
-- それ以外の tile 引数はすべて値である：値 builtin が位置引数から読む内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier)、値 builtin の内容では [E0236](./errors.md#e0236-tile-as-content) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：位置引数を内容として読まない builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になる。
-- `when` と `for` には値の形が無いので、どこに書いても tile である。
+- それ以外の tile 引数はすべて値である：値 builtin が位置引数から読む内容、user tile の入力、そして名前が何であれ**すべての名前付き引数**。そこでは `if` と `match` は値式（`IfExpr` / `MatchExpr`）で各 arm は値（Text, Int, variant 等）を返し、呼び出しは呼び出しであり（`Say(label("x"))` は `fn` `label` の戻り値を渡す。同名の `fn` が無いところで builtin tile の名前を呼ぶと [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier)、値 builtin の内容では [E0236](./errors.md#e0236-tile-as-content) になる）、大文字始まりの名前で始まる式は式である（`selected=All == filter`）。これ以外の形は [§1.7.3](#_1-7-3-event-handler-props) のものだけである：位置引数を内容として読まない builtin のイベントハンドラとして書いた大文字始まりの名前は tile call になり、どの tile でも、引数か props を伴う brace 形式で書いたハンドラ（`Bump {x: 1}`、`Bump(1) {}`）もまた tile call であり、[E0201](./errors.md#e0201-type-mismatch) になる。
+- `when` と `for` には値の形が無いので、どこに書いても tile である。値の位置ではそれを何も描画しない：値 builtin の内容では [E0236](./errors.md#e0236-tile-as-content)、ユーザー tile の入力やほかの名前付き引数では、そこに挙げる例外を除いて [E0201](./errors.md#e0201-type-mismatch)（`progress(max=when(c, …))`、`box(header=when(c, …))`）である。
 - 例: `text(match m with | A -> "a" | B -> "b")` ← 値 match
 - 例: `button(text="Save", disabled=if busy then true else false)`、`Row(if wide then 2 else 1)` ← 値 if
 - 例: `column(match xs with | Loaded(ys) -> ... | None -> spinner())` ← tile match
@@ -756,7 +758,7 @@ user tile の呼び出し側に書いたデータ prop は、その tile がル�
 
 名前が解決される名前空間は reducer だけであり、これは大文字始まりでも変わらない：`onClick=Bump` は reducer `Bump` を束縛し、どの reducer も指さない名前は [E0102](./errors.md#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。大文字か小文字かが決めるのはパーサが与える形だけであって、どの層を指しているかを言い分ける手段ではない。イベントハンドラ（`onClick=` / `onChange=` 等）として書いた大文字始まりの名前は、位置引数を内容として読まない builtin（`box` / `button` / `check` / `radio` / `column` / `image` 等）では *tile call* に、それ以外——props ブロック、`link` のように位置引数から内容を読む値 builtin、user tile——では variant タグになる。
 
-これらの形は引数を持たないため、裸の名前と引数なしの呼び出しは解析後には同一である — `onClick=Bump` / `onClick=Bump()` / `onClick=Bump {}` は同じノードであり、3 つとも reducer を束縛する。引数を伴う値は名前ではなく、[E0201](./errors.md#e0201-type-mismatch) になる。
+これらの形は引数を持たないため、裸の名前と引数なしの呼び出しは解析後には同一である — `onClick=Bump` / `onClick=Bump()` / `onClick=Bump {}` は同じノードであり、3 つとも reducer を束縛する。これはハンドラを名前付き引数として書くどの tile でも成り立つ：位置引数から内容を読む値 builtin と user tile では、何も伴わない呼び出し形式 `Bump()` / `Bump {}`（あるいは `Bump() {}`）は、そこで `Bump` が表す variant タグである。引数か props を伴う値（`onClick=Some(1)`、`onClick=Bump {x: 1}`）は名前ではなく、[E0201](./errors.md#e0201-type-mismatch) になる。
 
 ### 1.7.4 例
 
@@ -945,6 +947,8 @@ unop        ::= '-' | '!'
 `match` はいずれかの arm の値に評価されるので、**scrutinee の型のすべての値に arm がいる**。union の各 variant（`Option` なら `None` と `Some`、`Result` なら `Ok` と `Err`）と、tuple の要素の組み合わせのそれぞれに arm がいる。variant パターンの bind はどのペイロードも受けるので `Some(v)` はすべての `Some` を覆い、`_` と名前はすべてを覆う。`Bool`・`Int`・`Text`・レコード・リストには名指せる variant がなく、リテラルパターンもない（[§1.9.1](#_1-9-1-禁止事項)）ので、これらを覆うのは `_` か名前である。arm が値を取りこぼす `match` は [E0227](./errors.md#e0227-non-exhaustive-match) になり、取りこぼした値をそれぞれ、それに一致するパターンとして挙げる（`Blue`、`None`、`(Some(_), Green)`）。scrutinee の型が決められない場合（たとえばチェッカーが props に型を付けない `$el` や、`fold` の結果）、どの arm にも一致しない値は **panic** になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。reducer の中なら、その書き込みはロールバックされ `app.error` が走る。描画の中なら、いちばん近い `error-boundary` が受け取る。それがなければ、アプリはページの代わりに panic を表示し、`app.error` は走らない。値としての `match` が、いずれかの arm の値以外に評価されることはない。
 
 reducer 本体の `match` 文（[§1.6.1](#_1-6-1-構文)）とタイル位置の `match`（[§1.7.1](#_1-7-1-構文)）は値ではなく、この規則の対象外である。どの arm にも一致しない `match` 文は、条件が偽のときの `else` なし `if` 文と同じく何も実行せず、どの arm にも一致しないタイルの `match` は空の `text` を描画する。
+
+**arm の終わりにある `match` は、その後に書かれたすべての arm を取る。** その `match` の arm は `|` が続くかぎり続き、レイアウトでは終わらない。改行もインデントも読まれない。`match x with | Red -> match y with | Small -> 1 | Large -> 2 | _ -> 3` では、`| _ -> 3` は `match y` の 3 つ目の arm であり、`match x` の arm は `Red` の 1 つだけである。内側の `match` が arm の最後に書かれたものであれば、どこでも同じである。たとえば演算子の右オペランド、前置の `-` や `!` のオペランド、`else` 分岐、`else` のない `if` 文の `then`、`let … in` の本体、波括弧なしで書いた `for` の本体、文の右辺（`n := match …`、`let v = match …`）、arm の最後の文がそうである。後に書かれた arm を外側の `match` に渡すには、その前で内側を閉じる。値なら括弧に入れる。`| Red -> (match y with | Small -> 1 | Large -> 2) | _ -> 3`。文なら、内側の `match` で終わる arm の文全体を波括弧に入れる。`| Red -> { m := 0  match s with | Small -> n := 1 | Large -> n := 2 } | _ -> n := 3`。波括弧がブロックを開くのは arm の本体の先頭だけなので、内側の `match` だけでなく arm の文全体を囲む。タイルには括弧がないので、内側の `match` を独自のタイルに移し、arm でそのタイルを名指す。上の arm がすでにすべての値に一致した後で内側の `match` が取る arm には決して到達せず、`check` はその最初の arm で警告する（条件は [W0219](./errors.md#w0219-unreachable-nested-arm-warning) を参照）。これによってある値の arm を欠いた値としての `match` は [E0227](./errors.md#e0227-non-exhaustive-match) になり、そのメッセージは、最後の arm を終える `match` がその後に書かれた arm を取ることを告げる。
 
 ### 1.9.1 禁止事項
 
