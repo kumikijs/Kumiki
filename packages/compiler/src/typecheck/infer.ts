@@ -491,9 +491,18 @@ function commonType(types: (TypeExpr | null)[], sym: SymbolTable): TypeExpr | nu
   for (const t of types.slice(1)) {
     if (!t) return null;
     if (!assignable(t, first, sym) || !assignable(first, t, sym))
-      return keepWritten(sharedBase(types, first, sym), types);
+      return keepWritten(
+        sharedBase(types, first, sym) ?? numericJoin(types, sym, first.pos),
+        types,
+      );
   }
   return keepWritten(first, types);
+}
+
+// An `Int` widens to a `Float`, so an `Int` beside a `Float` is a `Float`, as `1 + 1.5` is.
+function numericJoin(types: (TypeExpr | null)[], sym: SymbolTable, pos: Pos): TypeExpr | null {
+  const numeric = types.every((t) => isNumeric(t, sym));
+  return numeric && types.some((t) => isPrimNamed(t, sym, "Float")) ? prim("Float", pos) : null;
 }
 
 // The value is one of `types`' values, so it lands in a union only when each of them was written

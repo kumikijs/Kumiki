@@ -11,6 +11,7 @@ import {
   type Expansion,
   expansionDepths,
   findCycles,
+  forwardedParams,
   type GraphEdge,
   nodesOnCycles,
   type PlacedEdge,
@@ -31,6 +32,7 @@ import { checkReducer } from "./typecheck/reducer.ts";
 import { routeChainResolver } from "./typecheck/route-chain.ts";
 import { checkSlot } from "./typecheck/slot.ts";
 import { checkTest } from "./typecheck/test.ts";
+import { checkTheme } from "./typecheck/theme.ts";
 import { checkTile } from "./typecheck/tile.ts";
 import { collectElementIds, collectPrefetchTargets, tileKinds } from "./typecheck/tile-collect.ts";
 import { checkTypeDef, reservedTypeName } from "./typecheck/types.ts";
@@ -186,6 +188,7 @@ function checkAll(
     if (def.kind === "EffectDef") checkEffect(def, sym, errors);
     if (def.kind === "AppDef") checkApp(def, sym, errors, registeredCaps, routeChain);
     if (def.kind === "MotionDef") checkMotion(def, errors);
+    if (def.kind === "ThemeDef") checkTheme(def, errors);
     if (def.kind === "TestDef") checkTest(def, sym, errors);
   }
   checkCycles(program, sym, index, errors);
@@ -268,10 +271,11 @@ function checkCycles(
 
   const types = program.defs.filter((d): d is TypeDef => d.kind === "TypeDef");
   const typeOf = (name: string): TypeDef | undefined => sym.types.get(name);
+  const forwarded = forwardedParams(typeOf, "through");
   const typeEdges = (name: string): readonly GraphEdge[] => {
     const def = typeOf(name);
     if (!def) return [];
-    const target = aliasTarget(def, typeOf);
+    const target = aliasTarget(def, typeOf, forwarded);
     return target && sym.types.has(target.to) ? [target] : [];
   };
   for (const cycle of findCycles(

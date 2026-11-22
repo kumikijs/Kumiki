@@ -1,0 +1,52 @@
+{
+  "steps": [
+    {
+      "label": "each group starts on its slot's radio",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["plan: pro", "size: M", "status: InProgress", "dims: 2 x 3"]
+      }
+    },
+    {
+      "label": "choosing a Text radio writes the Text, not its key",
+      "do": { "click": "#planFree input" },
+      "expect": { "noErrors": true, "state": { "plan": "free" }, "domIncludes": ["plan: free"] }
+    },
+    {
+      "label": "choosing a variant radio writes that variant",
+      "do": { "click": "#sizeL input" },
+      "expect": {
+        "noErrors": true,
+        "state": { "size": { "_tag": "L" } },
+        "domIncludes": ["size: L"]
+      }
+    },
+    {
+      "label": "choosing a variant with a payload writes that payload",
+      "do": { "click": "#statusBacklog input" },
+      "expect": {
+        "noErrors": true,
+        "state": { "status": { "_tag": "Some", "_0": { "_tag": "Backlog" } } },
+        "domIncludes": ["status: Backlog"]
+      }
+    },
+    {
+      "label": "choosing the radio without a payload writes None",
+      "do": { "click": "#statusAny input" },
+      "expect": {
+        "noErrors": true,
+        "state": { "status": { "_tag": "None" } },
+        "domIncludes": ["status: any"]
+      }
+    },
+    {
+      "label": "choosing a record radio writes that record",
+      "do": { "click": "#dims11 input" },
+      "expect": {
+        "noErrors": true,
+        "state": { "dims": { "w": 1, "h": 1 } },
+        "domIncludes": ["dims: 1 x 1"]
+      }
+    }
+  ]
+}
