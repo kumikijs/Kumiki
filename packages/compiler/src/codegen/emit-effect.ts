@@ -28,7 +28,7 @@ export function storageHandlerOf(eff: EffectDef, env: TypeEnv): StorageHandler |
 export function builtinEffectCall(eff: EffectDef, reqVar: string, env: TypeEnv): string | null {
   const storage = storageHandlerOf(eff, env);
   if (storage?.endsWith("Read")) {
-    const fields = STORAGE_READ_FIELDS.map((f) => `${f}: ${reqVar}.${f}`);
+    const fields = STORAGE_READ_FIELDS.map(({ name }) => `${name}: ${reqVar}.${name}`);
     return `${storage}(${eff.mapRequest ? `{ ${fields.join(", ")} }` : reqVar})`;
   }
   if (storage?.endsWith("Clear")) return `${storage}()`;

@@ -1,0 +1,174 @@
+import { perTable, type TypeEnv } from "./assignable.ts";
+import { assertNever, type TypeExpr } from "./ast.ts";
+import { expandNamed, GENERIC_SELF_NESTING_LIMIT, typeKey } from "./refinement-positions.ts";
+import { BUILTIN_TYPE_CONSTRUCTORS } from "./stdlib-types.ts";
+
+/** A type that is a Decoder, or holds one somewhere inside. */
+export type HeldDecoder = {
+  /** The type is a Decoder itself, rather than holding one. */
+  readonly whole: boolean;
+};
+
+/** A Map key or a Set element type that holds a Decoder, and the container it keys. */
+export type DecoderKey = HeldDecoder & {
+  readonly container: "Map" | "Set";
+  readonly key: TypeExpr;
+};
+
+// A named type is walked through what it stands for, and a name in `opaque` (a type parameter of
+// the definition being read) or one that resolves to nothing is not judged. Each instantiation is
+// entered once in the whole walk, since what it holds does not depend on where it is met, and a
+// generic is entered at most the nesting limit's number of times, so a type applying itself to a
+// growing argument, along one branch or several, ends: what lies past that is not judged. The walk
+// keeps its own stack, as a chain of definitions thousands of `where`s deep is a type too.
+function search<R>(
+  t: TypeExpr,
+  env: TypeEnv,
+  opaque: ReadonlySet<string>,
+  found: (t: TypeExpr, whole: boolean) => R | undefined,
+): R | undefined {
+  const entered = new Set<string>();
+  const entries = new Map<string, number>();
+  const todo: { t: TypeExpr; whole: boolean }[] = [{ t, whole: true }];
+  // Pushed last to first, so the parts are met in the order they are written.
+  const push = (ts: readonly TypeExpr[]): void => {
+    for (let i = ts.length - 1; i >= 0; i--) {
+      const part = ts[i];
+      if (part) todo.push({ t: part, whole: false });
+    }
+  };
+  for (let next = todo.pop(); next !== undefined; next = todo.pop()) {
+    const { t, whole } = next;
+    if ((t.kind === "TypeRef" || t.kind === "TypeApp") && !opaque.has(t.name)) {
+      const body = expandNamed(t, env);
+      if (body) {
+        const at = typeKey(t);
+        const times = entries.get(t.name) ?? 0;
+        if (entered.has(at) || times >= GENERIC_SELF_NESTING_LIMIT) continue;
+        entered.add(at);
+        entries.set(t.name, times + 1);
+        todo.push({ t: body, whole });
+        continue;
+      }
+    }
+    const hit = found(t, whole);
+    if (hit !== undefined) return hit;
+    switch (t.kind) {
+      case "TypePrim":
+      case "TypeRef":
+        break;
+      case "TypeApp":
+        if (BUILTIN_TYPE_CONSTRUCTORS.has(t.name)) push(t.args);
+        break;
+      case "TypeRecord":
+        push(t.fields.map((f) => f.type));
+        break;
+      case "TypeUnion":
+        push(t.variants.flatMap((v) => v.payloads));
+        break;
+      case "TypeNominal":
+      case "TypeRefinement":
+        todo.push({ t: t.inner, whole });
+        break;
+      default:
+        assertNever(t);
+    }
+  }
+  return undefined;
+}
+
+/** The names each node of `t` writes, a name in `skip` aside, and whether it writes the primitive. */
+function namesIn(
+  t: TypeExpr,
+  skip: ReadonlySet<string>,
+): { names: Set<string>; primitive: boolean } {
+  const names = new Set<string>();
+  let primitive = false;
+  const todo = [t];
+  for (let x = todo.pop(); x !== undefined; x = todo.pop()) {
+    switch (x.kind) {
+      case "TypePrim":
+        if (x.name === "Decoder") primitive = true;
+        break;
+      case "TypeRef":
+        if (!skip.has(x.name)) names.add(x.name);
+        break;
+      case "TypeApp":
+        if (!skip.has(x.name)) names.add(x.name);
+        todo.push(...x.args);
+        break;
+      case "TypeRecord":
+        for (const f of x.fields) todo.push(f.type);
+        break;
+      case "TypeUnion":
+        for (const v of x.variants) todo.push(...v.payloads);
+        break;
+      case "TypeNominal":
+      case "TypeRefinement":
+        todo.push(x.inner);
+        break;
+      default:
+        assertNever(x);
+    }
+  }
+  return { names, primitive };
+}
+
+// The definitions whose body writes the primitive, or names one that does at any depth, its own
+// type parameters aside: the standard library's `Decoder` first. A type that writes none of them
+// holds no Decoder, whatever its arguments, so most types are answered without being walked.
+const decoderWriters = perTable((env): ReadonlySet<string> => {
+  const writers = new Set<string>();
+  const namedBy = new Map<string, string[]>();
+  for (const def of env.types.values()) {
+    const { names, primitive } = namesIn(def.body, new Set(def.params));
+    if (primitive) writers.add(def.name);
+    for (const n of names) {
+      const by = namedBy.get(n);
+      if (by) by.push(def.name);
+      else namedBy.set(n, [def.name]);
+    }
+  }
+  const todo = [...writers];
+  for (let w = todo.pop(); w !== undefined; w = todo.pop()) {
+    for (const by of namedBy.get(w) ?? []) {
+      if (writers.has(by)) continue;
+      writers.add(by);
+      todo.push(by);
+    }
+  }
+  return writers;
+});
+
+function mayHoldDecoder(t: TypeExpr, env: TypeEnv, opaque: ReadonlySet<string>): boolean {
+  const { names, primitive } = namesIn(t, opaque);
+  const writers = decoderWriters(env);
+  return primitive || [...names].some((n) => writers.has(n));
+}
+
+/** Whether a value of type `t` is or holds a Decoder, in a Map key and a Set element too. */
+export function heldDecoder(
+  t: TypeExpr | null,
+  env: TypeEnv,
+  opaque: ReadonlySet<string> = new Set(),
+): HeldDecoder | undefined {
+  if (t === null || !mayHoldDecoder(t, env, opaque)) return undefined;
+  return search(t, env, opaque, (x, whole) =>
+    x.kind === "TypePrim" && x.name === "Decoder" ? { whole } : undefined,
+  );
+}
+
+/** The first Map key or Set element type inside `t`, `t` included, that holds a Decoder. */
+export function decoderKey(
+  t: TypeExpr,
+  env: TypeEnv,
+  opaque: ReadonlySet<string> = new Set(),
+): DecoderKey | undefined {
+  if (!mayHoldDecoder(t, env, opaque)) return undefined;
+  return search(t, env, opaque, (x) => {
+    if (x.kind !== "TypeApp" || (x.name !== "Map" && x.name !== "Set")) return undefined;
+    const key = x.args[0];
+    const held = key && heldDecoder(key, env, opaque);
+    return key && held ? { container: x.name, key, whole: held.whole } : undefined;
+  });
+}

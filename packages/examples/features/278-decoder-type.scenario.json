@@ -14,7 +14,7 @@
       "expect": { "noErrors": true, "state": { "shown": "saved" } }
     },
     {
-      "label": "load reads it back with the decoder its input carries",
+      "label": "load emits the read and shows what it answers",
       "do": { "click": "#load" },
       "expect": {
         "noErrors": true,

@@ -684,6 +684,8 @@ A value does not have the type its position requires.
 > `Operator "<op>" expects a number but got <type>`
 > `Operator "<op>" expects Bool but got <type>`
 > `Operator "<op>" cannot compare <type> with <type>`
+> `Operator "<op>" cannot compare <type> with <type>: a Decoder has no equality`
+> `Operator "<op>" cannot compare <type> with <type>: <type> holds a Decoder, which has no equality`
 > `Condition of "<form>" must be Bool but got <type>`
 > `Expected <declared> but got variant "<name>"`
 > `Expected <declared> but got {}, an empty Map, Set or record`
@@ -696,6 +698,8 @@ A value does not have the type its position requires.
 > `timeout <n> is not a number of milliseconds from 1 to 2147483647; every request is aborted before it can answer`
 > `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md)`
 > `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is <type>`
+> `Expected <declared> but got <type>: with no map-request, effect "<name>"'s input is the <cap> request`
+> `Expected Decoder.Json(T) or Decoder.None but got <call>: an indexed.read by key reads a stored record, which has no text to read`
 
 A named argument is a prop on every tile, a builtin or one the program defines, so it takes a value ([Language §1.7.1](./language.md#_1-7-1-syntax)). A `when` or a `for` has no value form, so one written there is a tile, and nothing renders it: `progress(value=1, max=when(busy, text("x")))` rendered a bar with no `max`, and `box(header=when(c, text("x")))` dropped the header. It is reported at the `when` / `for`, and nothing inside it is checked: it is moved whole, to a container's positional argument (`box(when(c, text("x")))`) or out for a value. A value `if` / `match` there is a value (`button(disabled=if busy then true else false)`), a builtin tile called there is [E0116](#e0116-undef-call-undef-variant-undef-qualifier), a tile as a value builtin's named content (`label(text=…)`, `image(src=…)`) is [E0236](#e0236-tile-as-content), a `when` / `for` as a `text=` that is never rendered (`text(text=…)`, `link("a", text=…)`) is [E0129](#e0129-unrendered-arg), a `when` / `for` as an `error`'s `field=` is [E0230](#e0230-error-field-not-path), whose message says `field=` names a slot or a path into one (when the `{…}` block writes a `field` as well, that one is what E0230 judges, and the `when` / `for` is E0201), and a `when` / `for` written as an event handler is reported once, as the handler's `must be a reducer name` (below).
 
@@ -707,7 +711,7 @@ The parser gives the bare name, the argument-less call and the empty brace form 
 
 So what this error reports is a value that is no name: a literal, a call (`onClick=box(text("z"))`), or a capitalised name carrying arguments or props (`onClick=Some(1)`, `onClick=Card {x: 1}`). A bare name that names no reducer is [E0102](#e0102-undef-reducer) instead, whatever its capitalisation — including a tile written there, because the handler position resolves in one namespace and the tile layer is not it.
 
-The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), the index of a `List` (an `Int` in `xs[i]`, `xs[i] := v` and `xs.get(i)` alike) and the bounds of `xs.slice(start, end)` and the size of `xs.chunk(n)` (`Int`s too; [Language §1.6.3](./language.md#_1-6-3-lvalue-semantics), [stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, a builtin tile's prop that [stdlib §2.3.11](./stdlib.md#_2-3-11-prop-types) gives a type — `modal(open=…)`, `select(options=…)` — written on the builtin's own call, as a named argument or in the `{…}` block, the fallback of `.get-or`, an argument of a `Map` / `Set` / `List` member whose parameter is the receiver's key, value or element type or another container of its type (`xs.push(x)`, `m.insert(k, v)`, `s.add(x)`, `xs.concat(ys)`; [stdlib §2.2](./stdlib.md#_2-2-collection-methods)), `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `decode` a `map-request` record writes, against `Decoder` ([HTTP §6.6.1](./http.md#_6-6-1-request-fields)), the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose result is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
+The positions with a declared type to check against are: a `slot`'s initial value, the right-hand side of an assignment (through `.field` and `[k]` paths), the index of a `List` (an `Int` in `xs[i]`, `xs[i] := v` and `xs.get(i)` alike) and the bounds of `xs.slice(start, end)` and the size of `xs.chunk(n)` (`Int`s too; [Language §1.6.3](./language.md#_1-6-3-lvalue-semantics), [stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), an argument to a declared `fn`, a `fn` body against its `->` return type, an argument to a user tile that declares `in=`, a builtin tile's prop that [stdlib §2.3.11](./stdlib.md#_2-3-11-prop-types) gives a type — `modal(open=…)`, `select(options=…)` — written on the builtin's own call, as a named argument or in the `{…}` block, the fallback of `.get-or`, an argument of a `Map` / `Set` / `List` member whose parameter is the receiver's key, value or element type or another container of its type (`xs.push(x)`, `m.insert(k, v)`, `s.add(x)`, `xs.concat(ys)`; [stdlib §2.2](./stdlib.md#_2-2-collection-methods)), `app.http`'s `base-url` / `headers` / `timeout` / `credentials` ([HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)), the `decode` a `map-request` record or map literal writes, against `Decoder` ([HTTP §6.6.1](./http.md#_6-6-1-request-fields)), and the `decode` field the `in=` record of an effect with no `map-request` declares, against `Decoder` too, the `bind=` of a `check` / `switch` (a `Bool`) and a `radio`'s `value=` against its `bind=` ([Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)), the key of `List(T).sort-by`, which has to be one `<` orders — a number, `Text` or `Time` — whether written as a fragment or as a `fn` passed by name, whose result is the key's type ([stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)), and the operands of every operator. An `emit` argument is checked too, and reports [E0202](#e0202-emit-arg-type-mismatch).
 
 An index `[k]` is checked against the type its receiver takes as an index, in a read as in a write: an `Int` on a `List`, and the key type `K` on a `Map(K, V)` ([Language §1.6.3](./language.md#_1-6-3-lvalue-semantics)). With `TodoId` and `PostId` both declared `nominal Text`, `notes[postId]` on a `Map(TodoId, Text)` reports `Expected TodoId but got PostId` at the index, in a read and in `notes[postId] := v` alike, and so does `todos[postId].done := v` on a `Map(TodoId, Todo)`.
 
@@ -735,6 +739,10 @@ Refused only when **both** sides carry a nominal name and neither was declared a
 
 The identity is read at the **top level** of each operand only, which is where the operators and assignment part company: `List(Cents) := List(Yen)` is this error because assignability descends into the type argument, while `lc == ly` on the same pair is not reported. A nominal inside a container, a record field or any other type argument is invisible to the comparison. The silence is a missing diagnostic and not a wrong one, which is the reading this whole code keeps.
 
+No `==` or `!=` is defined on a `Decoder`, nor on a value that holds one, whatever the other side ([Language §1.9.4](./language.md#_1-9-4-operator-types)): `d == Decoder.Text` reports `Operator "==" cannot compare Decoder with Decoder: a Decoder has no equality`, and `r == {d: Decoder.Text}` on a `{d: Decoder}` names the holder, `{d: Decoder} holds a Decoder, which has no equality`.
+
+A request's field is held to its capability's rule ([HTTP §6.6.1](./http.md#_6-6-1-request-fields)). An `indexed.read` by key reads a stored record, which has no text to read, so a `Decoder.Text` or `Decoder.Bytes` written as its `decode`, or as a branch of it, is this error, though it is a `Decoder` (E0202 in an `emit`'s argument); one a name holds is left to run time. An effect with no `map-request` hands its input to the handler as the request, so the `decode` its `in=` record declares is held to `Decoder`: `effect r cap=storage.read in={key: Text, decode: Text} …` reports `Expected Decoder but got Text: with no map-request, effect "r"'s input is the storage.read request` at that `Text`, or at the name `in=` writes when it names an alias.
+
 **The check is one-sided.** It reports what is definitely wrong and stays silent about everything it cannot resolve — an unknown type name, a method whose result nothing resolves (the members of [§2.2](./stdlib.md#_2-2-collection-methods) answer from their receiver — `xs.head` on a `List(T)` is an `Option(T)`, `m.keys` on a `Map(K, V)` is a `List(K)`, `.get` and `.get-or` unwrap an `Option(T)` / `Result(T, E)` to `T` and a `Map` lookup to `Option(V)` or to `V`; `.copy` answers its receiver unchanged, and a fixed table — `show`, `to-int`, `floor`, … — answers a primitive; a member a lambda body decides, such as `.map` and `.fold`, and every receiver whose own type is undecidable, stay dynamic), a `let` binding of an unresolvable expression. A wrong diagnostic rejects a program that runs; a missing one only fails to add a diagnostic that never existed. So a clean `check` is not a proof of type correctness, and [E0801](#e0801-unimplemented-method) / [E0116](#e0116-undef-call-undef-variant-undef-qualifier) remain the checks that a name exists at all.
 
 **Fix**: Correct the value, or widen the declared type. For a nominal mismatch that is deliberate, convert through the base the two types share and write it as a `fn` whose return type is the destination — `-> UserId = p + ""`, not `-> UserId = p`, which is this same error. The `fn` records the intent; what is enforced is that its body reached the base.
@@ -747,6 +755,7 @@ An `emit` argument does not match the effect's declared `in=` type. A standard e
 > `Expected <in-type> but got variant "<name>"`
 > `Expected <in-type> but got {}, an empty Map, Set or record`
 > `emit "<effect>" expects an EffectId argument`
+> `Expected Decoder.Json(T) or Decoder.None but got <call>: an indexed.read by key reads a stored record, which has no text to read`
 
 The `EffectId` case keeps its own wording because its fix is different in kind. It is the shape of a mis-wired cancellation: `emit stopSearch(searchId)` where `searchId : EffectId` is correct, `emit stopSearch(42)` or `emit stopSearch("id")` is not. Codegen would pass the non-`EffectId` value through and the cancel path would silently no-op, indistinguishable from a successful cancel.
 
@@ -756,14 +765,14 @@ Argument *count* is [E0213](#e0213-call-arity-mismatch), not this code.
 
 ### E0204 `effect-id-misuse`
 
-A value of type `EffectId` is used in an operation that is not defined on it. The only operations on `EffectId` are equality (`==`, `!=`), assignment to a slot of type `EffectId`, and being passed to an effect whose `in` type is `EffectId`. Arithmetic, ordering comparisons, and rendering as text are rejected — `EffectId` is opaque so the runtime can change its representation without breaking apps.
+An opaque handle, an `EffectId` or a `Decoder`, is used where it is not defined. A value of type `EffectId` is used in an operation that is not defined on it. The only operations on `EffectId` are equality (`==`, `!=`), assignment to a slot of type `EffectId`, and being passed to an effect whose `in` type is `EffectId`. Arithmetic, ordering comparisons, and rendering as text are rejected — `EffectId` is opaque so the runtime can change its representation without breaking apps.
 
 A handle is refused where these render it as text:
 
 - the content of a value builtin: `text`, `heading`, `markdown`, `code`, `label`, `link` and `editable`, and `image` / `icon`, whose content is `src=` / `name=` ([Standard Library §2.3.2](./stdlib.md#_2-3-2-text-elements));
 - `button`'s `text=`, `link`'s `{text: …}` prop, and the value `editable` binds;
 - an argument of `fmt(...)`, the template included;
-- `.show`. `show` is the member every value has ([Standard Library §2.2.7](./stdlib.md#_2-2-7-int-float)); on an `EffectId` it is this error rather than [E0108](#e0108-undef-member), in each of its spellings: `h.show`, `h.show()`, and `T.show(h)` whatever `T` is, since the qualifier is discarded ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)). An `EffectId` has no other member, so `h.upper` is E0108.
+- `.show`. `show` is the member every value has ([Standard Library §2.2.7](./stdlib.md#_2-2-7-int-float)); on a handle it is this error rather than [E0108](#e0108-undef-member), in each of its spellings: `h.show`, `h.show()`, and `T.show(h)` whatever `T` is, since the qualifier is discarded ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)). A handle has no other member, so `h.upper` is E0108.
 
 The value's type is read through an alias, a `nominal` and a `let`, so a `type Handle = EffectId` is a handle on both counts, operators and rendering, and so is `let x = h in x`. An operator applied to a handle is reported once, at the operator: what it yields — a `Text`, a number or a `Bool` — is not a handle.
 
@@ -773,13 +782,22 @@ A value that holds a handle without being one is not read through: an `Option(Ef
 - a handle given to another named argument or prop that renders text, such as `tooltip(…, text=h)`, `details(…, summary=h)`, a `title=` on `modal` / `drawer` / `popover`, `toast(…, text=h)`, `input(value=h)`, `textarea(value=h)`, `textarea(bind=h)`, `link(…, to=h)`, `input(placeholder=h)`, `image(…, alt=h)`, `{aria-label: h}` and `{title: h}`;
 - `panic(h)`.
 
+A `Decoder` is the other handle ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)). At run time it is a sentinel or the check a `Decoder.Json(T)` lowers to, so a page that rendered one would print that lowering. It is refused in each of the places above, and as an operand of a `+` that joins it to a `Text`, with the gaps above; it has no member at all. Its other operators are not this error: none is defined on a `Decoder`, `==` included, and each is [E0201](#e0201-type-mismatch) ([Language §1.9.4](./language.md#_1-9-4-operator-types)).
+
+A `Map` key or a `Set` element whose type is or holds a `Decoder` is this error too, where the type is written: a key keeps none of the check a `Decoder.Json(T)` is, so the one read back from `keys` or `to-list` is not the one put in, and handed on as a `decode` it decodes by none ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)). `Set(Decoder)` is reported at its `Decoder`, `Map({d: Decoder}, Int)` at its key type, and a generic applied to one at the application when its body keys by the parameter — `Bag(Decoder)` for a `type Bag(T) = Set(T)`. A body that keys by a `Decoder` itself is reported in the definition, once.
+
 > `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`
-> `<builtin>(...) cannot render EffectId — it is an opaque handle`
-> `.show cannot render EffectId — it is an opaque handle`
+> `<builtin>(...) cannot render <handle> — it is an opaque handle`
+> `.show cannot render <handle> — it is an opaque handle`
+> `Operator "+" cannot render Decoder — it is an opaque handle`
+> `A Decoder cannot be a <Map key | Set element> — it is an opaque handle`
+> `A <Map key | Set element> of type <T> cannot hold a Decoder — it is an opaque handle`
+> `<G>: a Decoder cannot be a <Map key | Set element> — it is an opaque handle`
+> `<G>: a <Map key | Set element> of type <T> cannot hold a Decoder — it is an opaque handle`
 
-`<builtin>` is the call that renders the handle, as written: `text`, `heading`, `button`, …, or `fmt`.
+`<builtin>` is the call that renders the handle, as written: `text`, `heading`, `button`, …, or `fmt`. `<handle>` is `EffectId` or `Decoder`, and `<G>` the generic's application, as `Bag(Decoder)`.
 
-**Fix**: Use `==` / `!=` to compare against `EffectId.none`, or pass the value to a cancel effect. To show whether a handle is held, render what the comparison answers — `text(if h == EffectId.none then "idle" else "loading")`, or `(h != EffectId.none).show`. See [EffectId](./stdlib.md#_2-1-1-1-effectid).
+**Fix**: Use `==` / `!=` to compare against `EffectId.none`, or pass the value to a cancel effect. To show whether a handle is held, render what the comparison answers — `text(if h == EffectId.none then "idle" else "loading")`, or `(h != EffectId.none).show`. See [EffectId](./stdlib.md#_2-1-1-1-effectid). For a `Decoder`, render and key by what chose it instead — the flag or the name a `fn` picks the decoder from.
 
 ### E0205 `bind-on-file-input`
 
@@ -1255,13 +1273,14 @@ A `policy=latest-per-key(<key>)` key has a type whose values the key does not te
 > `A latest-per-key key of type <T> is not keyed by its value: it holds a Float, and inside it NaN, Infinity and -Infinity are one key (see docs/spec/language.md)`
 > `A latest-per-key key of type <T> is not keyed by its value: it holds a File, and two Files with the same name, size and type are one key, while == holds only of a File and itself (see docs/spec/language.md)`
 > `A latest-per-key key of type <T> is not keyed by its value: it is a Set, whose == depends on how it was built (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Decoder, and a key keeps none of the check a Decoder.Json(T) runs (see docs/spec/language.md)`
 
 The dispatcher runs each request under its key and aborts an in-flight request when another starts under the same one ([HTTP §6.4](./http.md#_6-4-cancellation)). The key is written the way a Map key is stored ([Stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)), which makes two keys one key exactly when they are `==` but for two types — and, whatever its declared type, not for a non-finite number. A key that is one key for two values `==` calls different aborts a request for no reason the program can see:
 
 - a `Float`: `NaN` is one key, yet `NaN == NaN` is `false`; and inside a record, a tuple, a `List`, a `Map`'s value or a variant, `NaN`, `Infinity` and `-Infinity` are all one key
 - a `File`: two Files with the same name, size and type are one key, while `==` holds only of a File and itself
 
-A `Set`'s key is its `==`, which itself depends on how the Set was built ([Language §1.9.4](./language.md#_1-9-4-operator-types)), so a Set key aborts requests by a rule the program cannot rely on, and is reported too.
+A `Set`'s key is its `==`, which itself depends on how the Set was built ([Language §1.9.4](./language.md#_1-9-4-operator-types)), so a Set key aborts requests by a rule the program cannot rely on, and is reported too. So is a `Decoder`, which has no `==`, and whose key keeps none of the check a `Decoder.Json(T)` is.
 
 The message says `it is` when the key's type is one of them, and `it holds` when it holds one in a record field, a variant payload, a container element or a `Map`'s value, through any alias, generic or `nominal`: `type Spot = {lat: Float, lng: Float}` keyed by `$1` is reported, and so are a `List(Set(Text))` and a `Box(Box(Float))` for a `type Box(A) = {v: A}`. A `Map`'s own keys are stored the same way, so `==` on two Maps agrees with their key, and a `Map(Float, Text)` is not reported. A key whose type the checker cannot decide is not reported, and neither is an `Int`, though one can hold a non-finite number (`n % 0`, an overflowing `pow`, a `.round` of a non-finite Float) and is then keyed as a Float is.
 

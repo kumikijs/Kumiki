@@ -110,7 +110,7 @@ describe("E0116 undef-variant / undef-qualifier", () => {
     },
     {
       name: "the qualifier of a bare member when the qualifier names nothing",
-      request: '{url: "/x", decode: Decodr.None}',
+      request: '{url: "/x", body: Decodr.None}',
       at: "Decodr.None",
       kind: "undef-qualifier",
       message:
@@ -701,7 +701,8 @@ describe("a qualified stdlib member is read the same way without its parentheses
   it("reads a member that takes an argument, written bare, as a call with none", () => {
     for (const [name, arity] of QUALIFIED_BUILTIN_CALLS) {
       if (arity.min === 0) continue;
-      expect(codesOf(inReducer(`t := (${name}).show`)), name).toEqual(["E0213"]);
+      // Bound by a `let`, not shown: rendering a `Decoder` is E0204 of its own.
+      expect(codesOf(inLet(name)), name).toEqual(["E0213"]);
     }
   });
 
@@ -785,8 +786,8 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   }
 
   it("the constant that carries a payload type is an argument short without it", () => {
-    expect(codesOf(inReducer("t := (Decoder.Json).show"))).toEqual(["E0213"]);
-    expect(codesOf(inReducer("t := (Decoder.Json(Text)).show"))).toEqual([]);
+    expect(codesOf(inLet("Decoder.Json"))).toEqual(["E0213"]);
+    expect(codesOf(inLet("Decoder.Json(Text)"))).toEqual([]);
   });
 
   it("reports a misspelt member of a listed namespace", () => {
@@ -799,7 +800,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 
   it("accepts the constants themselves", () => {
-    expect(codesOf(inReducer("t := (Decoder.None).show"))).toEqual([]);
+    expect(codesOf(inLet("Decoder.None"))).toEqual([]);
     expect(codesOf(inReducer("a := [EffectId.none].length"))).toEqual([]);
   });
 });

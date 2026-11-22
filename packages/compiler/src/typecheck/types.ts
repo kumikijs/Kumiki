@@ -17,6 +17,7 @@ import {
   type TypeExpr,
 } from "../ast.ts";
 import { aliasTarget, forwardedParams } from "../def-graph.ts";
+import { type DecoderKey, decoderKey, heldDecoder } from "../held-decoder.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions, typeKey } from "../refinement-positions.ts";
 import {
   type RefinementProblem,
@@ -69,6 +70,7 @@ export function resolveType(
       } else {
         checkTypeArity(t.name, t.args.length, t.pos, sym, errors);
         checkApplication(t, sym, typeParams, errors);
+        refuseDecoderKey(t, sym, typeParams, errors);
       }
       for (const a of t.args) resolveType(a, sym, errors, scope);
       return;
@@ -85,6 +87,46 @@ export function resolveType(
       resolveType(t.inner, sym, errors, scope);
       return;
   }
+}
+
+function decoderKeyMessage({ container, key, whole }: DecoderKey): string {
+  const role = container === "Map" ? "Map key" : "Set element";
+  return whole
+    ? `a Decoder cannot be a ${role}`
+    : `a ${role} of type ${typeToString(key)} cannot hold a Decoder`;
+}
+
+// A key is stored as `entryKey` writes it, which keeps no `Decoder.Json(T)` check: a Decoder read
+// back from a Map's keys or a Set is not the one put in, and handed on as a `decode` it decodes by
+// none. A generic is reported where it is applied to a Decoder, unless its own body already keys by
+// one, which is reported there.
+function refuseDecoderKey(
+  t: TypeExpr & { kind: "TypeApp" },
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+  errors: KumikiError[],
+): void {
+  const report = (pos: Pos, message: string): void => {
+    errors.push({
+      code: "E0204",
+      kind: "effect-id-misuse",
+      message: `${message} — it is an opaque handle`,
+      pos,
+    });
+  };
+  if (t.name === "Map" || t.name === "Set") {
+    const key = t.args[0];
+    const held = key && heldDecoder(key, sym, typeParams);
+    if (!key || !held) return;
+    const found: DecoderKey = { container: t.name, key, whole: held.whole };
+    const message = decoderKeyMessage(found);
+    report(key.pos, `${message.charAt(0).toUpperCase()}${message.slice(1)}`);
+    return;
+  }
+  const def = sym.types.get(t.name);
+  if (!def || def.params.length === 0 || decoderKey(def.body, sym, new Set(def.params))) return;
+  const found = decoderKey(t, sym, typeParams);
+  if (found) report(t.pos, `${typeToString(t)}: ${decoderKeyMessage(found)}`);
 }
 
 export function checkNestedLowering(slot: SlotDef, sym: SymbolTable, errors: KumikiError[]): void {

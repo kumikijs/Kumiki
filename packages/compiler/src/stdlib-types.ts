@@ -2,7 +2,32 @@ import type { Pos, TypeDef, TypeExpr } from "./ast.ts";
 
 const NO_POS: Pos = { line: 0, col: 0 };
 
-export type PrimName = Extract<TypeExpr, { kind: "TypePrim" }>["name"];
+// The primitives a type spells by name. `Decoder` is one too, but no spelling makes it: the parser
+// leaves that name to its standard-library entry below, so a type parameter named `Decoder` is
+// still the parameter, and a program's own `type Decoder` is reserved rather than a primitive's.
+export const PRIM_TYPE_NAMES = [
+  "Text",
+  "Int",
+  "Float",
+  "Bool",
+  "Unit",
+  "Bytes",
+  "Time",
+  "File",
+  "EffectId",
+] as const;
+
+export type SpelledPrimName = (typeof PRIM_TYPE_NAMES)[number];
+
+/** A primitive only the standard library's own entries produce. */
+export type UnspelledPrimName = "Decoder";
+
+export type PrimName = SpelledPrimName | UnspelledPrimName;
+
+// Their values are whatever the runtime represents them as, so a page that rendered one, or a key
+// that stored one, would change when that does. `Decoder` is unspelled and opaque, `EffectId`
+// spelled and opaque, so neither set is the other.
+export const OPAQUE_HANDLES: ReadonlySet<PrimName> = new Set<PrimName>(["EffectId", "Decoder"]);
 
 const prim = (name: PrimName): TypeExpr => ({ kind: "TypePrim", name, pos: NO_POS });
 const ref = (name: string): TypeExpr => ({ kind: "TypeRef", name, pos: NO_POS });
@@ -145,21 +170,9 @@ export const BUILTIN_UNION_TAGS: ReadonlyMap<string, readonly string[]> = new Ma
   ["HttpBody", ["Json", "Form", "Multipart", "Text", "Bytes", "Empty"]],
 ]);
 
-export const PRIM_TYPE_NAMES: readonly PrimName[] = [
-  "Text",
-  "Int",
-  "Float",
-  "Bool",
-  "Unit",
-  "Bytes",
-  "Time",
-  "File",
-  "EffectId",
-];
-
 const PRIM_TYPE_NAME_SET: ReadonlySet<string> = new Set(PRIM_TYPE_NAMES);
 
-export function isPrimTypeName(name: string): name is PrimName {
+export function isPrimTypeName(name: string): name is SpelledPrimName {
   return PRIM_TYPE_NAME_SET.has(name);
 }
 

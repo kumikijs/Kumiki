@@ -11,7 +11,7 @@ import type { Expr, Pos, TypeExpr } from "../ast.ts";
 import { isQualifierName, QUALIFIED_BUILTIN_CALLS, RUN_REDUCER } from "../builtin-calls.ts";
 import { qualifierType } from "../parse-reading.ts";
 import { hasMember, isOwnMember } from "../stdlib-members.ts";
-import { FILE_FIELDS, type PrimName, refType } from "../stdlib-types.ts";
+import { FILE_FIELDS, OPAQUE_HANDLES, type PrimName, refType } from "../stdlib-types.ts";
 import { getOrResultType, indexStep, unwrappedType } from "./against.ts";
 import { type Ctx, isBuiltinCall, type SymbolTable } from "./context.ts";
 import { binOpResult, letInScope } from "./expr.ts";
@@ -71,6 +71,12 @@ export function isPrimNamed(t: TypeExpr | null, sym: SymbolTable, name: PrimName
 /** Through an alias or a `nominal` too: one answer for both halves of E0204, the operators and rendering. */
 export function isEffectId(t: TypeExpr | null, sym: SymbolTable): boolean {
   return isPrimNamed(t, sym, "EffectId");
+}
+
+/** The opaque handle `t` is, through an alias or a `nominal` too, which E0204 refuses to render. */
+export function opaqueHandleOf(t: TypeExpr | null, sym: SymbolTable): PrimName | undefined {
+  const u = unaliasType(t, sym);
+  return u?.kind === "TypePrim" && OPAQUE_HANDLES.has(u.name) ? u.name : undefined;
 }
 
 /** The member a qualified call names (`show` in `Int.show(v)`), by the spelling rule codegen and `builtinArity` apply. */

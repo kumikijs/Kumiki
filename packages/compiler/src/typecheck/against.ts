@@ -18,6 +18,7 @@ import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { letInScope, type MismatchCode, pushMismatch } from "./expr.ts";
 import { container, inferType, isKnown, isPrimNamed, prim } from "./infer.ts";
 import { armScope, matchedType } from "./patterns.ts";
+import { checkEmittedRequest } from "./request-fields.ts";
 
 export function checkAgainst(
   e: Expr,
@@ -571,6 +572,9 @@ export function checkEmitTarget(
     return;
   }
   checkAgainst(arg, inType, sym, errors, ctx, "E0202", omittable);
+  if (cap !== null && !sym.effects.get(effect)?.mapRequest) {
+    checkEmittedRequest(arg, cap, sym, errors, ctx);
+  }
 }
 
 type Omittable = (field: { readonly name: string; readonly type: TypeExpr }) => boolean;
