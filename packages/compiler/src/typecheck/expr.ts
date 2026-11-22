@@ -625,9 +625,9 @@ function checkDecodedArgs(
   visitDecodedParts(first, (t) => errors.push(...undecodableErrors(t, sym)), checkedAbove);
 }
 
-const checkedAbove = (): void => undefined;
-
 const leftToTheCount = (): void => undefined;
+
+const checkedAbove = (): void => undefined;
 
 function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { kind: "Ref" } {
   return (
