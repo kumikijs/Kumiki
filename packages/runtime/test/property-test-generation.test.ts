@@ -444,11 +444,7 @@ describe("a trial that throws fails with what it threw", () => {
     }).actual;
 
   it.each([
-    [
-      "a panic, as a panic",
-      new KumikiPanic("Key 1 is not in the Map"),
-      "panicked: Key 1 is not in the Map",
-    ],
+    ["a panic, as a panic", new KumikiPanic("Key 1 is not in {}"), "panicked: Key 1 is not in {}"],
     [
       "any other error, as a throw",
       new TypeError("x.map is not a function"),
