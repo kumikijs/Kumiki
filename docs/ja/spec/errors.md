@@ -649,6 +649,8 @@ builtin に、決して描画されない引数が書かれている。値 built
 > `Operator "<op>" cannot compare <type> with <type>`
 > `Operator "<op>" cannot compare <type> with <type>: a Decoder has no equality`
 > `Operator "<op>" cannot compare <type> with <type>: <type> holds a Decoder, which has no equality`
+> `".<member>" cannot compare elements of type <type>: a Decoder has no equality`
+> `".<member>" cannot compare elements of type <type>: <type> holds a Decoder, which has no equality`
 > `Condition of "<form>" must be Bool but got <type>`
 > `Expected <declared> but got variant "<name>"`
 > `Expected <declared> but got {}, an empty Map, Set or record`
@@ -702,7 +704,7 @@ builtin に、決して描画されない引数が書かれている。値 built
 
 同一性が読まれるのは各オペランドの **最上位** だけであり、ここが演算子と代入の分かれ目である：`List(Cents) := List(Yen)` は代入可能性が型引数へ降りていくためこのエラーになるが、同じ組に対する `lc == ly` は報告されない。コンテナ・レコードのフィールド・その他あらゆる型引数の内側にある nominal は、比較からは見えない。この沈黙は誤った診断ではなく欠けた診断であり、それがこのコード全体が保つ読み方である。
 
-`Decoder` にも、`Decoder` を持つ値にも、もう一方の辺が何であれ `==` と `!=` は定義されていない（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）：`d == Decoder.Text` は `Operator "==" cannot compare Decoder with Decoder: a Decoder has no equality` を報告し、`{d: Decoder}` に対する `r == {d: Decoder.Text}` はそれを持つ型を `{d: Decoder} holds a Decoder, which has no equality` と名指す。
+`Decoder` にも、`Decoder` を持つ値にも、もう一方の辺が何であれ `==` と `!=` は定義されていない（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）：`d == Decoder.Text` は `Operator "==" cannot compare Decoder with Decoder: a Decoder has no equality` を報告し、`{d: Decoder}` に対する `r == {d: Decoder.Text}` はそれを持つ型を `{d: Decoder} holds a Decoder, which has no equality` と名指す。`List.contains` と `List.unique` も同じように要素を比較するため、要素の型が `Decoder` である、または `Decoder` を持つ `List` ではどちらも呼び出しの位置で報告され、`<member>` はその名前である：`List(Decoder)` に対する `ds.contains(d)` は `".contains" cannot compare elements of type Decoder: a Decoder has no equality` を報告する。
 
 リクエストのフィールドはその capability の規則に照らされる（[HTTP §6.6.1](./http.md#_6-6-1-request-fields)）。キーで読む `indexed.read` は保存されたレコードを読み、そこに読むテキストは無いので、その `decode` として、またはその分岐として書かれた `Decoder.Text` / `Decoder.Bytes` は、`Decoder` ではあってもこのエラーになる（`emit` の引数では E0202）。名前が保持するものは実行時に委ねられる。`map-request` の無い effect は入力をそのままリクエストとしてハンドラに渡すので、その `in=` のレコードが宣言する `decode` は `Decoder` に照らされる：`effect r cap=storage.read in={key: Text, decode: Text} …` はその `Text` の位置で、`in=` がエイリアスを名指すときはその名前の位置で、`Expected Decoder but got Text: with no map-request, effect "r"'s input is the storage.read request` を報告する。
 
@@ -747,7 +749,7 @@ builtin に、決して描画されない引数が書かれている。値 built
 
 `Decoder` はもう 1 つのハンドルである（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）。実行時にはセンチネルか、`Decoder.Json(T)` が lower されたチェックなので、それを描画するページはその lower 結果を表示してしまう。上記のどの位置でも拒否され、`Text` と連結する `+` のオペランドとしても拒否される。上記のギャップも同じく当てはまる。メンバーは 1 つも持たない。それ以外の演算子はこのエラーではない：`Decoder` には `==` を含めどの演算子も定義されておらず、いずれも [E0201](#e0201-type-mismatch) になる（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）。
 
-型が `Decoder` である、または `Decoder` を持つ `Map` のキーや `Set` の要素も、その型が書かれた位置でこのエラーになる：キーは `Decoder.Json(T)` であるチェックを何も保たないので、`keys` や `to-list` から読み戻したものは入れたものではなく、`decode` として渡すとどの decode も行わない（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。`Set(Decoder)` はその `Decoder` の位置で、`Map({d: Decoder}, Int)` はキーの型の位置で報告され、`Decoder` に適用されたジェネリックは、その本体がパラメータでキーを作るとき適用の位置で報告される — `type Bag(T) = Set(T)` に対する `Bag(Decoder)`。本体そのものが `Decoder` でキーを作るものは定義の中で 1 回報告される。
+型が `Decoder` である、または `Decoder` を持つ `Map` のキーや `Set` の要素も、その型が書かれた位置でこのエラーになる：キーは `Decoder.Json(T)` であるチェックを何も保たないので、`keys` や `to-list` から読み戻したものは入れたものではなく、`decode` として渡すとどの decode も行わない（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。`Set(Decoder)` はその `Decoder` の位置で、`Map({d: Decoder}, Int)` はキーの型の位置で報告され、`Decoder` に適用されたジェネリックは、その本体がパラメータでキーを作るとき適用の位置で報告される — `type Bag(T) = Set(T)` に対する `Bag(Decoder)`。本体そのものが `Decoder` でキーを作るものは定義の中で 1 回報告される。`{Decoder.Text: 1}` のように `Decoder` をキーとする Map リテラルは、宣言された型がそのリテラルを判定しない位置では、そのような最初のキーの位置で報告される。判定する位置では、その型自身の報告だけが残る：`Map(Decoder, Int)` は書かれた位置で拒否され、`Map(Text, Int)` はキーに `Expected Text but got Decoder` を与える。
 
 > `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`
 > `<builtin>(...) cannot render <handle> — it is an opaque handle`

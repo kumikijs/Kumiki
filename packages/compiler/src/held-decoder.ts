@@ -1,4 +1,4 @@
-import { perTable, type TypeEnv } from "./assignable.ts";
+import { perTable, type TypeEnv, typeToString } from "./assignable.ts";
 import { assertNever, type TypeExpr } from "./ast.ts";
 import { expandNamed, GENERIC_SELF_NESTING_LIMIT, typeKey } from "./refinement-positions.ts";
 import { BUILTIN_TYPE_CONSTRUCTORS } from "./stdlib-types.ts";
@@ -156,6 +156,13 @@ export function heldDecoder(
   return search(t, env, opaque, (x, whole) =>
     x.kind === "TypePrim" && x.name === "Decoder" ? { whole } : undefined,
   );
+}
+
+/** Why `t`, which is or holds a Decoder, has no `==`: the end of the message each refusal gives. */
+export function noEquality(t: TypeExpr, held: HeldDecoder): string {
+  return held.whole
+    ? "a Decoder has no equality"
+    : `${typeToString(t)} holds a Decoder, which has no equality`;
 }
 
 /** The first Map key or Set element type inside `t`, `t` included, that holds a Decoder. */

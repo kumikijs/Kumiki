@@ -37,6 +37,7 @@ export function checkAgainst(
   }
   const d = unaliasType(declared, sym);
   if (d === null || d.kind === "TypeRef") return; // opaque: a type parameter, or a name that resolves to nothing
+  if (e.kind === "MapLit") sym.judged.add(e);
 
   const mismatch = (at: Expr, actual: TypeExpr): void => {
     pushMismatch(
@@ -261,7 +262,7 @@ function checkVariantAgainst(
   ctx: Ctx,
   code: MismatchCode,
 ): void {
-  sym.judgedVariants.add(e);
+  sym.judged.add(e);
   const payloadsOf = (): TypeExpr[] | "unknown-tag" | null => {
     if (d.kind === "TypeUnion") {
       const v = d.variants.find((variant) => variant.name === e.name);

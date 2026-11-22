@@ -1053,8 +1053,13 @@ items.fold(0, $1 + $2.price)               # ($1: acc, $2: elem)
 `Operator "==" cannot compare Decoder with Decoder: a Decoder has no equality` で
 あり、`{d: Decoder}` ではメッセージがそれを持つ型を名指す。`Option(Decoder)` には
 `.is-some` か `.is-none` を、`List(Decoder)` には `.is-empty` を問う。
-`List.contains` と `List.unique` は `==` と同じ問いを問い、`Decoder` を持つ `List`
-でも拒否されない。そこでの答えはプログラムが頼ってよいものではない。
+`List.contains` と `List.unique` は `==` と同じように要素を比較するため、要素の型が
+`Decoder` である、または `Decoder` を持つ `List` ではどちらも E0201 になる：
+`ds.contains(d)` は
+`".contains" cannot compare elements of type Decoder: a Decoder has no equality` である。
+`Set` と `Map` のメンバはキーを比較するが、`Decoder` を持つキーの型は無い：書かれたものは
+[E0204](./errors.md#e0204-effect-id-misuse) であり、`{Decoder.Text: 1}` のように `Decoder` を
+キーとする Map リテラルも同じである（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。
 
 ---
 
