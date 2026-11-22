@@ -150,17 +150,8 @@ export function makeEffectDispatcher(
     const run: Run = { name: eff.name, token, ctl };
     state.inflight.set(id, ctl);
     state.runs.add(run);
-    let outcome: "ok" | "err";
-    let value: unknown;
-    try {
-      // Read inside the try, so a provider that returns no result is an err as well.
-      const res = await runEffect(eff, input, caps, ctl.signal);
-      outcome = res.kind;
-      value = res.value;
-    } catch (e) {
-      outcome = "err";
-      value = standInValue(eff, "err", { message: String(e) });
-    }
+    // An invoke that throws, or resolves to no result, is already this request's err here.
+    const { kind: outcome, value } = await runEffect(eff, input, caps, ctl.signal);
     // Released before its result is delivered, so a cancel the `.ok` / `.err` reducers emit finds
     // a request that is over. Under `latest` a newer request may hold the id by now.
     if (state.inflight.get(id) === ctl) {
@@ -367,8 +358,9 @@ export function standInValue(
 
 /**
  * The result one run of `eff` delivers: its invoke, attempted again as `eff.retry` says, with an
- * invoke that throws read as its err. The live dispatcher and the server pass both run
- * an effect through here, so the two deliver the same result.
+ * attempt that throws or resolves to no result read as its err. It never rejects. The live
+ * dispatcher and the server pass both run an effect through here, so the two deliver the same
+ * result.
  */
 export async function runEffect(
   eff: EffectSpec,
@@ -378,7 +370,7 @@ export async function runEffect(
 ): Promise<EffectResult> {
   try {
     const policy = eff.retry;
-    let last: EffectResult = await eff.invoke(input, caps, signal);
+    let last = resultOf(eff, await eff.invoke(input, caps, signal));
     if (!policy) return last;
     for (let attempt = 1; attempt < policy.n; attempt++) {
       if (last.kind !== "err" || last.final) return last;
@@ -391,7 +383,7 @@ export async function runEffect(
       // An abort during the wait has no attempt running to answer it, so the aborted err
       // comes from here.
       if (!(await sleep(delay, signal))) return { kind: "err", value: abortedErr(eff) };
-      last = await eff.invoke(input, caps, signal);
+      last = resultOf(eff, await eff.invoke(input, caps, signal));
     }
     return last;
   } catch (e) {
@@ -399,6 +391,16 @@ export async function runEffect(
     // `{message}` for any other.
     return { kind: "err", value: standInValue(eff, "err", { message: String(e) }) };
   }
+}
+
+// A host provider is not type-checked, so what it resolves to may be no result at all, such as
+// the `undefined` of one with no `return`. That is thrown, to be the attempt's err as a throw is.
+function resultOf(eff: EffectSpec, got: unknown): EffectResult {
+  const kind = (got as { kind?: unknown } | null | undefined)?.kind;
+  if (kind === "ok" || kind === "err") return got as EffectResult;
+  const shown =
+    typeof got === "object" && got !== null ? "an object with no ok or err kind" : String(got);
+  throw new Error(`effect "${eff.name}" resolved to ${shown}, not {kind, value}`);
 }
 
 /**

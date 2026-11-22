@@ -24,6 +24,9 @@ const transportDown: CapabilityProvider = async () => {
   throw new Error("transport down");
 };
 
+// What a provider with no `return` resolves to.
+const noResult = (async () => undefined) as unknown as CapabilityProvider;
+
 const stored: CapabilityProvider = async () => ({
   kind: "ok",
   value: { _tag: "Some", _0: "stored" },
@@ -31,6 +34,8 @@ const stored: CapabilityProvider = async () => ({
 
 type Case = {
   example: string;
+  /** What the providers do. */
+  given: string;
   /** Called once per pass, as a server and a browser each have providers of their own. */
   providers: () => Record<string, CapabilityProvider>;
   shown: string[];
@@ -39,11 +44,24 @@ type Case = {
 const cases: Case[] = [
   {
     example: "281-init-results-on-the-server",
+    given: "a quote that answers 503 once and an http.post that throws",
     providers: () => ({ "http.get": flakyQuote(), "http.post": transportDown }),
     shown: ["themeAt=dark", "quote=hello", "pinged=err [Error: transport down]"],
   },
   {
+    example: "281-init-results-on-the-server",
+    given: "providers that resolve to no result",
+    providers: () => ({ "http.get": noResult, "http.post": noResult }),
+    // The `{message}` record has no `status`, so the quote's err shows none.
+    shown: [
+      "themeAt=dark",
+      "quote=failed ",
+      'pinged=err [Error: effect "ping" resolved to undefined, not {kind, value}]',
+    ],
+  },
+  {
     example: "64-init-slot-argument",
+    given: "a stored note",
     providers: () => ({ "storage.read": stored }),
     shown: ["note=stored", "scope=kumiki:note", "themeAt=kumiki:theme"],
   },
@@ -105,18 +123,15 @@ async function servedAndHydrated(c: Case): Promise<{ served: Pass; hydrated: str
 }
 
 describe("an app.init result on the server pass", () => {
-  it.each(cases)("$example: serves, snapshots and hydrates what a mount shows", async (c) => {
+  it.each(
+    cases,
+  )("$example, given $given: serves, snapshots and hydrates what a mount shows, from the binds a mount hands each reducer", async (c) => {
     const live = await mounted(c);
     const { served, hydrated } = await servedAndHydrated(c);
     expect(live.shown).toEqual(c.shown);
     expect(served.shown).toEqual(live.shown);
     expect(served.slots).toEqual(live.slots);
     expect(hydrated).toEqual(live.shown);
-  });
-
-  it.each(cases)("$example: hands each result reducer the binds a mount hands it", async (c) => {
-    const live = await mounted(c);
-    const { served } = await servedAndHydrated(c);
     expect(served.delivered).toEqual(live.delivered);
   });
 });

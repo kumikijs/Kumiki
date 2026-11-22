@@ -1,7 +1,9 @@
 import { type Expr, lex, parse, type TileExpr } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import { VALUE_BUILTIN_CONTENT } from "../src/builtins.ts";
+import { HANDLER_NAMES } from "../src/ui-lifts.ts";
 import { tileCall } from "./helpers/ast.ts";
-import { codesOf, summariesOf } from "./helpers/diagnostics.ts";
+import { codesOf, errorsOf, summariesOf } from "./helpers/diagnostics.ts";
 import { withApp } from "./helpers/programs.ts";
 
 const HOST = `type F = All | Done
@@ -110,6 +112,53 @@ describe("a capitalised name written as an event handler", () => {
     ["Btn(onClick=Bump)", "onClick"],
   ])("is a variant tag on a value builtin that reads a positional argument, or a user tile: %s", (tile, at) => {
     expect(shapeOf(argOf(tile, at))).toBe("Variant Bump");
+  });
+
+  const otherTiles: readonly (readonly [string, (handler: string) => string])[] = [
+    ...Object.entries(VALUE_BUILTIN_CONTENT)
+      .filter(([, reading]) => reading.positional)
+      .map(([name]) => [`the value builtin ${name}`, (h: string) => `${name}(${h})`] as const),
+    ["a user tile", (h) => `Btn(${h})`],
+    ["a user tile, beside its input", (h) => `Row(${h}, 1)`],
+  ];
+
+  describe.each(otherTiles)("on %s", (_, write) => {
+    it.each(
+      [...HANDLER_NAMES].flatMap((name) =>
+        ["Bump()", "Bump {}", "Bump() {}"].map((form) => [name, form] as const),
+      ),
+    )("%s=%s is the same node as the bare name", (name, form) => {
+      expect(argOf(write(`${name}=${form}`), name)).toEqual(argOf(write(`${name}=Bump`), name));
+    });
+  });
+
+  it.each([
+    ['link(to="/", onClick=Bump(1))', "Variant Bump"],
+    ["Btn(onClick=Some(1))", "Variant Some"],
+    ['link(to="/", onClick=Bump {x: 1})', "TileCall Bump"],
+    ["Btn(onClick=Bump {x: 1})", "TileCall Bump"],
+    ["Btn(onClick=Bump(1) {})", "TileCall Bump"],
+    ["Btn(onClick=Bump((1)) {})", "TileCall Bump"],
+  ])("carrying arguments or props, %s is %s", (tile, shape) => {
+    expect(shapeOf(argOf(tile, "onClick"))).toBe(shape);
+  });
+
+  it.each([
+    'link(to="/", onClick=Bump(1))',
+    "Btn(onClick=Some(1))",
+    'link(to="/", onClick=Bump {x: 1})',
+    "Btn(onClick=Bump {x: 1})",
+    "Btn(onClick=Bump(1) {})",
+    "Btn(onClick=Bump((1)) {})",
+    "Btn(onClick=Bump(1) + 1)",
+    "Btn(onClick=Bump() == 1)",
+    "Btn(onClick=Bump(1).x)",
+    "Btn(onClick=when(busy, Bump))",
+  ])("is reported once as no reducer name: %s", (tile) => {
+    const col = "tile App = ".length + tile.indexOf("onClick=") + "onClick=".length + 1;
+    expect(errorsOf(program(tile)).map((e) => `${e.code} ${e.pos.col} ${e.message}`)).toEqual([
+      `E0201 ${col} Event handler arg "onClick" must be a reducer name`,
+    ]);
   });
 });
 
