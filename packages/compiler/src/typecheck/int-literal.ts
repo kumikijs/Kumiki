@@ -36,9 +36,6 @@ function writtenInteger(raw: string): bigint | null {
   return /^[+-]?\d+$/.test(raw) ? BigInt(raw) : null;
 }
 
-/** The grammar's `int`, its sign folded in: digits with no point. */
-const WRITTEN_AS_INT = /^-?\d+$/;
-
 /**
  * E0217 for each `Int` literal outside the safe range that no declared type read: a `let` value,
  * an operand, the body of a `fn` with no `->`. Where nothing declares a type the literal has the
@@ -48,8 +45,7 @@ const WRITTEN_AS_INT = /^-?\d+$/;
 export function checkUndeclaredIntLiterals(sym: SymbolTable, errors: KumikiError[]): void {
   for (const e of sym.numberLiterals.met) {
     const literal = sym.numberLiterals.judged.has(e) ? null : numberLiteral(e);
-    const imprecise =
-      literal && WRITTEN_AS_INT.test(literal.raw) ? intLiteralPrecision(literal, e.pos) : null;
+    const imprecise = literal && isIntLiteral(literal) ? intLiteralPrecision(literal, e.pos) : null;
     if (imprecise) errors.push(imprecise);
   }
 }
