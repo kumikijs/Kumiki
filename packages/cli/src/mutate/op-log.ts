@@ -67,6 +67,8 @@ export type RemovedDef = DefSpec & {
   after?: string;
   /** How many lines lay between the end of `after`, or the file's start, and its first line. */
   gap?: number;
+  /** `true` when it ended the file, with no line break after its last line. */
+  last?: boolean;
 };
 
 export function opLogPath(path: string): string {
@@ -213,14 +215,15 @@ function defSpecsProblem(value: unknown, field: string): string | undefined {
 
 function removedTextsProblem(bodies: readonly RemovedDef[]): string | undefined {
   for (const [i, d] of bodies.entries()) {
-    const { text, after, gap }: Record<string, unknown> = d;
-    if (text === undefined && after === undefined && gap === undefined) continue;
+    const { text, after, gap, last }: Record<string, unknown> = d;
+    if ([text, after, gap, last].every((v) => v === undefined)) continue;
     const at = `\`bodies\`[${i}]`;
     if (typeof text !== "string") return `${at}.text must be a string`;
     if (after !== undefined && typeof after !== "string") return `${at}.after must be a string`;
     if (typeof gap !== "number" || !Number.isInteger(gap) || gap < 0) {
       return `${at}.gap must be a whole number, 0 or more`;
     }
+    if (last !== undefined && typeof last !== "boolean") return `${at}.last must be a boolean`;
   }
   return undefined;
 }

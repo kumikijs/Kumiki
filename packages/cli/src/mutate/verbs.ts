@@ -334,7 +334,7 @@ function editDefLocked(path: string, qname: string, patch: unknown, options: OpL
   });
 }
 
-function patchedLines(target: readonly string[], qname: string, patch: unknown): string[] {
+export function patchedLines(target: readonly string[], qname: string, patch: unknown): string[] {
   if (isFindReplacePatch(patch)) {
     return replaceFirst(target.join("\n"), patch.find, patch.replace, `in ${qname}`).split("\n");
   }

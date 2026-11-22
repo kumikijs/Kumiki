@@ -1,7 +1,9 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import {
   editDef,
+  lockDef,
   type OpLogEntry,
+  patchApplyFile,
   patchRevert,
   readOpLog,
   removeDef,
@@ -10,10 +12,11 @@ import {
 } from "@kumikijs/cli";
 import { feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
-import { seed, seedCopy } from "./helpers/files.ts";
+import { renamed, seed, seedCopy } from "./helpers/files.ts";
 import { lastOp, rewriteLogEntry, snapshot } from "./helpers/op-log.ts";
 
 const EXAMPLE = feature("280-revert-restores-the-text");
+const ABC = "slot a : Int = 0\n\nslot   b : Int = 1\nslot c : Int = 2\n";
 const ORIGINAL = readFileSync(EXAMPLE, "utf8");
 
 const read = (file: string): string => readFileSync(file, "utf8");
@@ -22,6 +25,15 @@ const replaceCount = (file: string): string => replaceDef(file, "slot.count", "N
 const editReset = (file: string): string =>
   editDef(file, "reducer.reset", { find: "count := 0", replace: "count := 1" });
 const removeResetBtn = (file: string): string => removeDef(file, "tile.ResetBtn", true).opId;
+
+/** A remove's entry as a version that recorded only bodies logged it. */
+const withoutTexts = (e: Record<string, unknown>): void => {
+  e.bodies = (e.bodies as OpLogEntry["bodies"])?.map(({ layer, name, body }) => ({
+    layer,
+    name,
+    body,
+  }));
+};
 
 const OPS = [
   { what: "a replace", run: replaceCount },
@@ -48,6 +60,94 @@ describe("patch revert of an op on definitions written by hand", () => {
       expect(read(file)).toBe(ORIGINAL);
     }
   });
+
+  it.each([
+    {
+      what: "a replace whose body ends with a line break",
+      run: (file: string) => replaceDef(file, "slot.count", "N = 5\n").opId,
+    },
+    {
+      what: "a replace whose body ends with a comment line",
+      run: (file: string) => replaceDef(file, "slot.count", "N = 5\n# Five.").opId,
+    },
+    {
+      what: "an edit that ends the definition with a comment line",
+      run: (file: string) =>
+        editDef(file, "reducer.reset", { find: "count := 0", replace: "count := 1\n# One." }),
+    },
+  ])("puts the file back after $what, and back again when that revert is reverted", ({ run }) => {
+    const file = seedCopy(EXAMPLE);
+    const opId = run(file);
+    const written = read(file);
+
+    const revertId = patchRevert(file, opId);
+    expect(read(file)).toBe(ORIGINAL);
+
+    patchRevert(file, revertId);
+    expect(read(file)).toBe(written);
+  });
+
+  it("puts the file back each time a revert is reverted, logging each as a replace that patch apply replays", () => {
+    const file = seedCopy(EXAMPLE);
+    let opId = replaceCount(file);
+    const replaced = read(file);
+
+    for (const expected of [ORIGINAL, replaced, ORIGINAL, replaced]) {
+      const replay = seed(read(file), "replay.kumiki");
+      opId = patchRevert(file, opId);
+      expect(read(file)).toBe(expected);
+
+      const ops = seed(`${JSON.stringify(lastOp(file))}\n`, "ops.jsonl");
+      patchApplyFile(replay, ops);
+      expect(read(replay)).toBe(
+        expected.replace("slot   count  : N    = 0", "slot count : N    = 0"),
+      );
+    }
+  });
+
+  it.each([
+    { what: "a replace", run: replaceCount, qname: "slot.count", to: "total" },
+    { what: "an edit", run: editReset, qname: "reducer.reset", to: "clear" },
+    { what: "a cascade remove", run: removeResetBtn, qname: "reducer.dec", to: "down" },
+  ])("puts the text back under the name a rename has given since $what", ({ run, qname, to }) => {
+    const file = seedCopy(EXAMPLE);
+    const opId = run(file);
+    renameDef(file, qname, to);
+
+    patchRevert(file, opId);
+
+    expect(read(file)).toBe(renamed(seedCopy(EXAMPLE), qname, to));
+  });
+
+  it("fails when the recorded text cannot take the name a rename has given since, writing nothing", () => {
+    const file = seed("slot\n    count : Int = 0\n");
+    const opId = replaceDef(file, "slot.count", "Int = 5").opId;
+    renameDef(file, "slot.count", "total");
+    const before = snapshot(file);
+
+    expect(() => patchRevert(file, opId)).toThrowError(
+      "patch revert: cannot rename slot.count to total in the text the log recorded for it; nothing was written",
+    );
+
+    expect(snapshot(file)).toEqual(before);
+  });
+
+  it.each([
+    { what: "a replace", run: replaceCount, qname: "slot.count" },
+    { what: "an edit", run: editReset, qname: "reducer.reset" },
+  ])("refuses to revert $what of a definition another agent has locked, writing nothing", ({
+    run,
+    qname,
+  }) => {
+    const file = seedCopy(EXAMPLE);
+    const opId = run(file);
+    lockDef(file, "agent:other", qname);
+    const before = snapshot(file);
+
+    expect(() => patchRevert(file, opId)).toThrowError(`lock violation: ${qname}`);
+
+    expect(snapshot(file)).toEqual(before);
+  });
 });
 
 describe("what a write op records so that it can be reverted", () => {
@@ -60,6 +160,17 @@ describe("what a write op records so that it can be reverted", () => {
     run(file);
 
     expect(lastOp(file).prev).toBe(text);
+  });
+
+  it.each([
+    { what: "ends the file with no line break after it", source: ABC.trimEnd(), last: true },
+    { what: "has a line break after it", source: ABC, last: undefined },
+  ])("a remove records `last` for a definition that $what", ({ source, last }) => {
+    const file = seed(source);
+
+    removeDef(file, "slot.c", false);
+
+    expect(lastOp(file).bodies?.[0]?.last).toBe(last);
   });
 
   it("a remove records each definition's text, the one it followed, and the lines between", () => {
@@ -102,8 +213,6 @@ describe("what a write op records so that it can be reverted", () => {
   });
 });
 
-const ABC = "slot a : Int = 0\n\nslot   b : Int = 1\nslot c : Int = 2\n";
-
 describe("where patch revert of a remove puts a definition back", () => {
   it.each([
     { what: "between two others", source: ABC, qname: "slot.b" },
@@ -122,6 +231,12 @@ describe("where patch revert of a remove puts a definition back", () => {
       source: "slot a : Int = 0\n\nslot b : Int = 1",
       qname: "slot.b",
     },
+    {
+      what: "alone, in a file with no line break at its end",
+      source: "slot   a : Int = 0",
+      qname: "slot.a",
+    },
+    { what: "alone", source: "slot   a : Int = 0\n", qname: "slot.a" },
   ])("where it was when it stood $what", ({ source, qname }) => {
     const file = seed(source);
     const { opId } = removeDef(file, qname, false);
@@ -151,24 +266,119 @@ describe("where patch revert of a remove puts a definition back", () => {
     expect(read(file)).toBe("slot a : Int =\n    0\n\nslot   b : Int = 1\nslot c : Int = 2\n");
   });
 
-  it("right before the next definition when fewer lines lie between the two now", () => {
-    const file = seed("slot a : Int = 0\n\n\nslot b : Int = 1\nslot c : Int = 2\n");
+  it.each([
+    {
+      what: "",
+      source: "slot a : Int = 0\n\n\nslot b : Int = 1\nslot c : Int = 2\n",
+      edited: "slot a : Int = 0\n\nslot c : Int = 2\n",
+      reverted: "slot a : Int = 0\n\nslot b : Int = 1\nslot c : Int = 2\n",
+    },
+    {
+      what: " and the comment lines over it",
+      source: "slot a : Int = 0\n\n\nslot b : Int = 1\n# About c.\nslot c : Int = 2\n",
+      edited: "slot a : Int = 0\n# About c.\nslot c : Int = 2\n",
+      reverted: "slot a : Int = 0\nslot b : Int = 1\n# About c.\nslot c : Int = 2\n",
+    },
+  ])("right above the next definition$what when fewer lines lie between the two now", ({
+    source,
+    edited,
+    reverted,
+  }) => {
+    const file = seed(source);
     const { opId } = removeDef(file, "slot.b", false);
-    writeFileSync(file, "slot a : Int = 0\n\nslot c : Int = 2\n");
+    writeFileSync(file, edited);
 
     patchRevert(file, opId);
 
-    expect(read(file)).toBe("slot a : Int = 0\n\nslot b : Int = 1\nslot c : Int = 2\n");
+    expect(read(file)).toBe(reverted);
   });
 
-  it("at the end of the file, as add writes one, when the definition it followed was removed since", () => {
+  it.each([
+    { what: "", source: "slot a : Int = 0\n\n\nslot   b : Int = 1\n" },
+    { what: " and no line break at its end", source: "slot a : Int = 0\n\n\nslot   b : Int = 1" },
+  ])("at the end of the file, after as many lines, when the file is shorter there now$what", ({
+    source,
+  }) => {
+    const file = seed(source);
+    const { opId } = removeDef(file, "slot.b", false);
+    writeFileSync(file, "slot a : Int = 0\n");
+
+    patchRevert(file, opId);
+
+    expect(read(file)).toBe(source);
+  });
+
+  it.each([
+    { what: "newest", order: [1, 0] },
+    { what: "oldest", order: [0, 1] },
+  ])("where each stood when two removes are reverted $what first", ({ order }) => {
+    const file = seed(ABC);
+    const removes = [removeDef(file, "slot.b", false).opId, removeDef(file, "slot.a", false).opId];
+
+    for (const i of order) patchRevert(file, removes[i]!);
+
+    expect(read(file)).toBe(ABC);
+  });
+
+  it("where the definition it followed stood, when a remove has taken that one since", () => {
     const file = seed(ABC);
     const { opId } = removeDef(file, "slot.b", false);
     removeDef(file, "slot.a", false);
 
     patchRevert(file, opId);
 
-    expect(read(file)).toBe("\nslot c : Int = 2\n\nslot   b : Int = 1\n");
+    expect(read(file)).toBe("\nslot   b : Int = 1\nslot c : Int = 2\n");
+  });
+
+  it("each where it stood after a cascade, when a remove has since taken the one they followed", () => {
+    const source = 'slot p : Int = 0\n\ntile A = heading("a")\n\ntile B = column(A)\n';
+    const file = seed(source);
+    const { opId } = removeDef(file, "tile.A", true);
+    const removeP = removeDef(file, "slot.p", false).opId;
+
+    patchRevert(file, opId);
+    expect(read(file)).toBe(source.replace("slot p : Int = 0\n", ""));
+
+    patchRevert(file, removeP);
+    expect(read(file)).toBe(source);
+  });
+
+  it.each([
+    {
+      what: "deleted by hand since",
+      since: (file: string) => writeFileSync(file, "slot c : Int = 2\n"),
+      reverted: "slot c : Int = 2\n\nslot   b : Int = 1\n",
+    },
+    {
+      what: "removed since by a remove that did not record its text",
+      since: (file: string) => {
+        const { opId } = removeDef(file, "slot.a", false);
+        rewriteLogEntry(file, opId, withoutTexts);
+      },
+      reverted: "\nslot c : Int = 2\n\nslot   b : Int = 1\n",
+    },
+    {
+      what: "removed since by a remove whose log line has it follow itself",
+      since: (file: string) => {
+        const { opId } = removeDef(file, "slot.a", false);
+        rewriteLogEntry(file, opId, (e) => {
+          const [first] = e.bodies as Record<string, unknown>[];
+          Object.assign(first ?? {}, { after: "slot.a" });
+        });
+      },
+      reverted: "\nslot c : Int = 2\n\nslot   b : Int = 1\n",
+    },
+  ])("at the end of the file, as add writes one, when the definition it followed was $what", ({
+    since,
+    reverted,
+  }) => {
+    const file = seed(ABC);
+    const { opId } = removeDef(file, "slot.b", false);
+    since(file);
+
+    patchRevert(file, opId);
+
+    expect(read(file)).toBe(reverted);
   });
 
   it("logs the restore as an add of the bodies the remove recorded", () => {
@@ -188,14 +398,6 @@ describe("where patch revert of a remove puts a definition back", () => {
 });
 
 describe("patch revert of an op logged without the text", () => {
-  const withoutTexts = (e: Record<string, unknown>): void => {
-    e.bodies = (e.bodies as OpLogEntry["bodies"])?.map(({ layer, name, body }) => ({
-      layer,
-      name,
-      body,
-    }));
-  };
-
   it("writes a removed definition's body back at the end of the file, as add writes one", () => {
     const file = seed(ABC);
     const { opId } = removeDef(file, "slot.b", false);
@@ -262,6 +464,7 @@ describe("a remove's recorded text in the op log", () => {
     ["a negative gap", { gap: -1 }, "`bodies`[0].gap must be a whole number"],
     ["a text without a gap", { gap: undefined }, "`bodies`[0].gap must be a whole number"],
     ["a gap without a text", { text: undefined }, "`bodies`[0].text must be a string"],
+    ["a last that is not a boolean", { last: "yes" }, "`bodies`[0].last must be a boolean"],
   ])("is refused with %s, naming the log, the line and the field", (_what, change, problem) => {
     const file = seed(ABC);
     const { opId } = removeDef(file, "slot.b", false);

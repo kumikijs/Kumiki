@@ -2,12 +2,9 @@ import { readFileSync } from "node:fs";
 import { joinLines, load, loadSource, type Store, spliceLines } from "../store.ts";
 import { withWriteLock } from "../write-lock.ts";
 import { commit } from "./commit.ts";
-import { bodyOf, definitionText } from "./definition-text.ts";
+import { bodyOf } from "./definition-text.ts";
 import { enforceLock } from "./locks.ts";
 import { type DefSpec, logOp } from "./op-log.ts";
-
-// Only `patch revert` calls these, under its write lock, after its own read of the log has handed
-// over a torn last line; the read `logOp` makes again would skip that same line.
 
 /**
  * Where a definition's text goes back: `gap` lines after the end of the definition `after` names,
@@ -18,40 +15,41 @@ export type Place = { after?: string; gap: number };
 /** A definition a `remove` deleted, to write back as the text it recorded. */
 export type RestoredDef = DefSpec & {
   text: string;
-  /** `undefined` when the definition it followed is gone: it then goes at the end of the file. */
-  place: Place | undefined;
+  /** Whether it ended the file, with no line break after it. */
+  last: boolean;
+  /** Where it goes: at the first of these with no `after` or one in the file, or else at the end. */
+  places: readonly Place[];
 };
 
-/** Writes `text` in place of `qname`'s definition, and logs it as a `replace`. */
-export function replaceText(path: string, qname: string, text: string): string {
+/**
+ * Writes `text` in place of `qname`'s definition, and logs it as a `replace`. When the file still
+ * holds `wrote` from the definition's first line, it takes all of those lines, also the blank and
+ * comment lines past the definition's end.
+ */
+export function replaceText(
+  path: string,
+  qname: string,
+  text: string,
+  wrote: readonly string[] | undefined,
+): string {
   enforceLock(path, qname);
   return withWriteLock(path, () => {
     enforceLock(path, qname);
     const store = load(path);
     const entry = store.byQName.get(qname);
     if (!entry) throw new Error(`Definition "${qname}" not found`);
-    const prev = definitionText(store, entry);
-    const next = spliceLines(
-      store.source,
-      entry.range.startLine,
-      entry.range.endLine,
-      text.split("\n"),
-    );
+    const from = entry.range.startLine;
+    const held =
+      wrote !== undefined && wrote.every((line, i) => store.lines[from - 1 + i] === line);
+    const to = held ? Math.max(entry.range.endLine, from + wrote.length - 1) : entry.range.endLine;
+    const prev = store.lines.slice(from - 1, to).join("\n");
+    const next = spliceLines(store.source, from, to, text.split("\n"));
     return commit(path, next, "replace", () => {
       const written = load(path);
       const now = written.byQName.get(qname);
-      const body = now === undefined ? undefined : bodyOf(written, now, "replace");
-      return logOp(
-        path,
-        {
-          op: "replace",
-          layer: entry.layer,
-          name: entry.name,
-          ...(body !== undefined ? { body } : {}),
-          prev,
-        },
-        {},
-      );
+      if (now === undefined) throw new Error(`the text written back does not define ${qname}`);
+      const body = bodyOf(written, now, "replace");
+      return logOp(path, { op: "replace", layer: entry.layer, name: entry.name, body, prev }, {});
     });
   });
 }
@@ -86,7 +84,7 @@ function placeOrder(defs: readonly RestoredDef[]): RestoredDef[] {
   const out: RestoredDef[] = [];
   while (pending.length > 0) {
     const ready = pending.findIndex(
-      (d) => !pending.some((o) => d.place?.after === `${o.layer}.${o.name}`),
+      (d) => !pending.some((o) => d.places[0]?.after === `${o.layer}.${o.name}`),
     );
     out.push(...pending.splice(Math.max(ready, 0), 1));
   }
@@ -95,21 +93,32 @@ function placeOrder(defs: readonly RestoredDef[]): RestoredDef[] {
 
 function placeText(source: string, d: RestoredDef): string {
   const store = loadSource(source);
-  const line = d.place === undefined ? undefined : lineFor(store, d.place);
-  if (line === undefined) {
-    return (
-      source + joinLines(source, [source.endsWith("\n") ? `\n${d.text}\n` : `\n\n${d.text}\n`])
-    );
+  for (const place of d.places) {
+    const line = lineFor(store, place);
+    if (line !== undefined) return writeAt(source, store, line, d);
   }
-  // Past the last line, which has no line break after it for the text to follow.
-  if (line > store.lines.length) return source + joinLines(source, ["", d.text]);
-  return spliceLines(source, line, line - 1, d.text.split("\n"));
+  return source + joinLines(source, [source.endsWith("\n") ? `\n${d.text}\n` : `\n\n${d.text}\n`]);
 }
 
-/** The line the text starts on, short of the next definition; `undefined` when `after` is gone. */
+/** `d`'s text written to start on `line`, with blank lines before it where the file is shorter. */
+function writeAt(source: string, store: Store, line: number, d: RestoredDef): string {
+  const count = store.lines.length;
+  const atEnd = line > count || (line === count && store.lines[count - 1] === "");
+  if (!atEnd) return spliceLines(source, line, line - 1, d.text.split("\n"));
+  return source + joinLines(source, [`${"\n".repeat(line - count)}${d.text}${d.last ? "" : "\n"}`]);
+}
+
+/**
+ * The line the text starts on; `undefined` when `after` is gone. When fewer lines than `gap` now
+ * lie before the next definition, it goes right above that one and the comment lines over it.
+ */
 function lineFor(store: Store, place: Place): number | undefined {
   const end = place.after === undefined ? 0 : store.byQName.get(place.after)?.range.endLine;
   if (end === undefined) return undefined;
+  const line = end + place.gap + 1;
   const next = store.defs.find((e) => e.range.startLine > end)?.range.startLine;
-  return Math.min(end + place.gap + 1, next ?? store.lines.length + 1);
+  if (next === undefined || line <= next) return line;
+  let above = next;
+  while (above - 1 > end && store.lines[above - 2]?.trim().startsWith("#") === true) above--;
+  return above;
 }

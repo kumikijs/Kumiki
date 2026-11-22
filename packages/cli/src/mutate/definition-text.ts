@@ -86,12 +86,14 @@ export function definitionText(store: Store, entry: DefEntry): string {
 export function removedText(
   store: Store,
   entry: DefEntry,
-): { text: string; after?: string; gap: number } {
+): { text: string; after?: string; gap: number; last?: true } {
   const before = store.defs[store.defs.indexOf(entry) - 1];
   return {
     text: definitionText(store, entry),
     ...(before === undefined ? {} : { after: `${before.layer}.${before.name}` }),
     gap: entry.range.startLine - (before?.range.endLine ?? 0) - 1,
+    // A file that ends in a line break splits into one more line, an empty one.
+    ...(entry.range.endLine === store.lines.length ? { last: true } : {}),
   };
 }
 
