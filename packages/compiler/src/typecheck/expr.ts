@@ -184,7 +184,8 @@ function shownValue(e: Expr): Expr | undefined {
 }
 
 export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  // A number literal, its sign included, is one leaf, held to its type once every definition is.
+  // A number literal, its sign included, is one leaf; one no declared type reads is held to the
+  // safe range after every definition is checked.
   if (numberLiteral(e) !== null) {
     sym.numberLiterals.met.add(e);
     return;
@@ -193,7 +194,6 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
   const shown = shownValue(e);
   if (shown) refuseRenderedEffectId(shown, ".show", sym, errors, ctx);
   switch (e.kind) {
-    case "Num":
     case "Str":
     case "Bool":
     case "Unit":

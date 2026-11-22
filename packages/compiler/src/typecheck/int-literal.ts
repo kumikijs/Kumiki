@@ -28,15 +28,20 @@ function writtenInteger(raw: string): bigint | null {
   return /^0*$/.test(fraction) ? BigInt(whole) : null;
 }
 
+/** The grammar's `int`, its sign folded in: digits with no point. */
+const WRITTEN_AS_INT = /^-?\d+$/;
+
 /**
  * E0217 for each `Int` literal outside the safe range that no declared type read: a `let` value,
- * an operand, the body of a `fn` with no `->`. Where nothing declares a type the literal's own,
- * `Int`, is the type of its position. One a declared type read was judged there, once.
+ * an operand, the body of a `fn` with no `->`. Where nothing declares a type the literal has the
+ * type it is written as: `Int` with no point, `Float` with one, whatever value it holds. One a
+ * declared type read was judged there, once.
  */
 export function checkUndeclaredIntLiterals(sym: SymbolTable, errors: KumikiError[]): void {
   for (const e of sym.numberLiterals.met) {
     const literal = sym.numberLiterals.judged.has(e) ? null : numberLiteral(e);
-    const imprecise = literal ? intLiteralPrecision(literal, e.pos) : null;
+    const imprecise =
+      literal && WRITTEN_AS_INT.test(literal.raw) ? intLiteralPrecision(literal, e.pos) : null;
     if (imprecise) errors.push(imprecise);
   }
 }

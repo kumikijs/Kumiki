@@ -21,9 +21,13 @@ reducer r4 on=ui.click(B) do= n := 9007199254741001
 The build wrote `function f(x) { return 9007199254740992; }`,
 `const x = 9007199254740996`, `_s.add(…, 9007199254740996)` and
 `_s.eq(…, 9007199254741000)`. Where nothing declares a type a literal has
-the type it is written as, and one with no point is an `Int`, so each of the
-six lines is now one E0217 at its literal. A literal a declared type reads is
-still judged there, once: where a `Float` is declared it is a `Float` and is
-taken, and where another type is declared that type reports it. The literal
-a second sign negates, `-9007199254740993` in `- -9007199254740993`, is
-reported too.
+the type it is written as: one with no point is an `Int`, so each of the six
+lines is now one E0217 at its literal, and one with a point, such as
+`100000000000000000000.0`, is a `Float` and is taken. A literal a declared
+type reads is still judged there, once: where a `Float` is declared it is a
+`Float` and is taken, where another type is declared that type reports it,
+and where the declared type names nothing its E0117 is the one report. A
+second sign changes none of this: the literal `-9007199254740993` that the
+outer sign negates in `- -9007199254740993` is E0217 where an `Int` is
+declared or nothing is, taken where a `Float` is, and E0201's where a `Text`
+is.

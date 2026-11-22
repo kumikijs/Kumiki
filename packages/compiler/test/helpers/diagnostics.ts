@@ -89,3 +89,7 @@ export function posOf(source: string, needle: string): { line: number; col: numb
 /** The errors of `src`, each pointing at the source text it was reported at. */
 export const pointedErrorsOf = (src: string): Pointed[] =>
   errorsOf(src).map((e) => ({ code: e.code, message: e.message, text: textAt(src, e.pos) }));
+
+/** As {@link pointedErrorsOf}, each error as its code and that text alone. */
+export const pointedCodesOf = (src: string): Pick<Pointed, "code" | "text">[] =>
+  pointedErrorsOf(src).map(({ code, text }) => ({ code, text }));
