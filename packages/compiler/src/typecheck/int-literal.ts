@@ -20,16 +20,6 @@ export function intLiteralPrecision(literal: NumberLiteral, pos: Pos): KumikiErr
   return { code: "E0217", kind: "int-literal-precision", message: precisionMessage(literal), pos };
 }
 
-/**
- * {@link intLiteralPrecision} for a literal judged as an `Int` by how it is written, as a
- * refinement's bound over an `Int` is: one written with a point is E0201's, and one with none is
- * held to the safe range even where it is read as Infinity.
- */
-export function writtenIntPrecision(literal: NumberLiteral, pos: Pos): KumikiError | null {
-  if (literal.raw.includes(".") || Number.isSafeInteger(literal.value)) return null;
-  return { code: "E0217", kind: "int-literal-precision", message: precisionMessage(literal), pos };
-}
-
 // Outside the safe range most integers are rounded to a neighbour, but some are held exactly
 // (2^53 is), and saying those were rounded would be false. Past the largest double the literal is
 // read as Infinity, which no integer equals.

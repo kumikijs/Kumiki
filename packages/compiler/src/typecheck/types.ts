@@ -27,7 +27,7 @@ import {
 } from "../refinements.ts";
 import { type ReservedTypeReason, reservedTypeReason } from "../stdlib-types.ts";
 import type { KumikiError, SymbolTable } from "./context.ts";
-import { intLiteralPrecision, writtenIntPrecision } from "./int-literal.ts";
+import { intLiteralPrecision, isIntLiteral } from "./int-literal.ts";
 
 export function resolveType(
   t: TypeExpr,
@@ -171,7 +171,7 @@ function checkAppliedNumberArgs(run: AppliedRun, r: Refinement): void {
  * the refinement comes to be over `Int`.
  */
 function intBoundProblem(r: Refinement, n: RefinementNumber, over: string): KumikiError | null {
-  if (!n.raw.includes(".")) return writtenIntPrecision(n, n.pos);
+  if (isIntLiteral(n)) return intLiteralPrecision(n, n.pos);
   return {
     code: "E0201",
     kind: "type-mismatch",
