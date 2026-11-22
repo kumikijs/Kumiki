@@ -313,6 +313,53 @@ describe("runReducerTestFlow (reducer-test effect mocks)", () => {
     expect(r.pass).toBe(false);
     expect(r.diffAt).toContain("unhandled");
   });
+
+  // `ask` emits `first("a")`; each of `first`'s reducers records its `$2` and emits `second("b")`,
+  // whose reducers record theirs.
+  const keyedApp = (): FlowApp => {
+    const recorder = (effect: string, outcome: "ok" | "err", next?: Emit) => ({
+      name: `${effect}-${outcome}`,
+      event: { kind: "effect" as const, effect, outcome },
+      apply: (live: Record<string, unknown>, p: Record<string, unknown>) => ({
+        slots: { keys: [...(live.keys as string[]), `${effect}.${outcome}:${String(p.$2)}`] },
+        emits: next ? [next] : [],
+      }),
+    });
+    return {
+      slots: { keys: { value: [] } },
+      live: {},
+      effects: {},
+      reducers: [
+        {
+          name: "ask",
+          event: { kind: "ui", ev: "click" },
+          apply: () => ({ slots: {}, emits: [{ effect: "first", args: ["a"] }] }),
+        },
+        recorder("first", "ok", { effect: "second", args: ["b"] }),
+        recorder("first", "err", { effect: "second", args: ["b"] }),
+        recorder("second", "ok"),
+        recorder("second", "err"),
+      ],
+    };
+  };
+
+  it.each<["ok" | "err", "ok" | "err", string[]]>([
+    ["ok", "ok", ["first.ok:a", "second.ok:b"]],
+    ["err", "err", ["first.err:a", "second.err:b"]],
+    ["ok", "err", ["first.ok:a", "second.err:b"]],
+  ])("binds the request key to the input of the emit a mocked %s, then %s, answers", (first, second, keys) => {
+    const app = keyedApp();
+    _stdlib.resetLive(app.live, app.slots, { keys: [] });
+    const r = _stdlib.runReducerTestFlow({
+      name: "t",
+      app,
+      target: "ask",
+      el: {},
+      mocks: { first: { outcome: first, value: "v" }, second: { outcome: second, value: "w" } },
+      expect: expected({ keys }),
+    });
+    expect([r.pass, r.actual]).toEqual([true, `slots=${JSON.stringify({ keys })} effects=[]`]);
+  });
 });
 
 describe("runPropertyTest", () => {
