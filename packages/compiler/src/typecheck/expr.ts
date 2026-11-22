@@ -620,13 +620,12 @@ function checkDecodedArgs(
 ): void {
   const [first, ...rest] = args;
   const value = (v: Expr): void => checkExpr(v, sym, errors, ctx);
-  const type = (t: TypeExpr): void => {
-    resolveType(t, sym, errors);
-    errors.push(...undecodableErrors(t, sym));
-  };
-  visitDecodedParts(first, type, value);
+  visitDecodedParts(first, (t) => resolveType(t, sym, errors), value);
   for (const a of rest) visitDecodedParts(a, leftToTheCount, value);
+  visitDecodedParts(first, (t) => errors.push(...undecodableErrors(t, sym)), checkedAbove);
 }
+
+const checkedAbove = (): void => undefined;
 
 const leftToTheCount = (): void => undefined;
 

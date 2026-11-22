@@ -80,7 +80,9 @@ Decoder.Bytes        # バイト列のまま
 Decoder.None         # レスポンス本文を捨てる
 ```
 
-`T` は値の位置に書かれるが型である：その中の各名前は宣言の中と同じく解決され、何も指さない名前は [E0117](./errors.md#e0117-undef-type) になる。JSON の本文はデータを持つので、`T` の中のどこにある `Decoder` も、書かれた位置で [E0204](./errors.md#e0204-effect-id-misuse) になる：`Decoder.Json(List(Decoder))` はその `Decoder` の位置で、`Decoder` を持つエイリアスやジェネリック（`Box(Decoder)` など）はその名前の位置で報告される。
+`T` は値の位置に書かれるが型である：その中の各名前は宣言の中と同じく解決され、何も指さない名前は [E0117](./errors.md#e0117-undef-type) になる。
+
+JSON の本文はデータを持つので、`T` の中のどこにある `Decoder` も、書かれた位置で [E0204](./errors.md#e0204-effect-id-misuse) になる：`Decoder.Json(List(Decoder))` はその `Decoder` の位置で、`Decoder` を持つエイリアスやジェネリック（`Box(Decoder)` など）はその名前の位置で報告される。
 
 `Decoder.Text` は本文を UTF-8 として読んだ `Text` を渡す。`Decoder.Bytes` は本文のバイトを届いたまま `Bytes` として渡すので、UTF-8 のテキストでない本文も損なわれずに届く。`Decoder.None` は `Unit` を渡し、本文を読まない。`decode` を持たない、または `decode` が `null` のリクエストは、述語を持たない `T` の `Decoder.Json(T)` と同じく JSON として parse される。`map-request` に書いた `decode` は `Decoder` に照らして検査されるが（下記）、`fn` が返すリクエストの中のように実行時に組み立てられたものは検査されない。これらのどの decoder でもない値は、リクエストを送る前に effect を失敗させる。`HttpError` の `status` は `0`、`message` はその値を示す（`decode is "TEXT", which is not a Decoder` など）。decoder が何であっても、2xx 以外のレスポンスが生む `HttpError` の `body` は、本文を読めたときはレスポンスのテキストの `Some` である。
 

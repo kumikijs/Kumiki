@@ -80,7 +80,9 @@ Decoder.Bytes        # keep it as a byte sequence
 Decoder.None         # discard the response body
 ```
 
-`T` is a type, though it is written where a value goes: each name in it resolves as it would in a declaration, and one that resolves to nothing is [E0117](./errors.md#e0117-undef-type). A JSON body holds data, so a `Decoder` anywhere in `T` is [E0204](./errors.md#e0204-effect-id-misuse), where it is written: `Decoder.Json(List(Decoder))` at its `Decoder`, and an alias or a generic that holds one, as `Box(Decoder)`, at its name.
+`T` is a type, though it is written where a value goes: each name in it resolves as it would in a declaration, and one that resolves to nothing is [E0117](./errors.md#e0117-undef-type).
+
+A JSON body holds data, so a `Decoder` anywhere in `T` is [E0204](./errors.md#e0204-effect-id-misuse), where it is written: `Decoder.Json(List(Decoder))` at its `Decoder`, and an alias or a generic that holds one, as `Box(Decoder)`, at its name.
 
 `Decoder.Text` delivers the body as `Text`, read as UTF-8. `Decoder.Bytes` delivers the body's bytes as received, as `Bytes`, so a body that is not UTF-8 text arrives intact. `Decoder.None` delivers `Unit` and does not read the body. A request with no `decode`, or with a `null` one, is parsed as JSON, as by a `Decoder.Json(T)` whose `T` carries no predicate. A `decode` written in a `map-request` is checked against `Decoder` (below), but one built at run time, such as in a request a `fn` returns, is not; one that is none of these decoders fails the effect before any request is sent, with an `HttpError` whose `status` is `0` and whose `message` names the value, as in `decode is "TEXT", which is not a Decoder`. Whatever the decoder, the `body` of the `HttpError` a non-2xx response produces is `Some` of the response's text whenever its body was read.
 
