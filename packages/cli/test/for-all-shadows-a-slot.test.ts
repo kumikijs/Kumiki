@@ -9,7 +9,7 @@ const EXAMPLE = feature("279-for-all-shadows-a-slot");
 const SHADOWED = "inc-dec-roundtrips";
 const UNSHADOWED = "inc-counts-past-the-slot";
 
-/** The text of the test named `name`, up to the next definition or the end of the file. */
+/** The text of the test named `name`, up to the next `test` or the end of the file. */
 function testDef(source: string, name: string): string {
   const from = source.indexOf(`test ${name} =`);
   expect(from).toBeGreaterThanOrEqual(0);
@@ -34,6 +34,7 @@ describe("a `for-all` name that is also a slot's", () => {
     const before = readFileSync(path, "utf8");
 
     const after = renamed(path, "slot.n", "limit");
+    expect(after).toMatch(/^slot limit\b/m);
     expect(testDef(after, SHADOWED)).toBe(testDef(before, SHADOWED));
     expect(errorsOf(after)).toEqual([]);
     expect((await testFile(path)).map((r) => `${r.name}:${r.pass}`)).toEqual([

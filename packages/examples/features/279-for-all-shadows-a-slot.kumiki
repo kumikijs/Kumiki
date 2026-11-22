@@ -15,8 +15,9 @@
 #   kumiki rename <file> slot.n limit
 #
 # rewrites the slot where those two read it and leaves `inc-dec-roundtrips` as
-# written. Both tests still pass: rewritten to `count: limit`, the round trip
-# would seed `count` with the slot's 5 and fail on every other generated `n`.
+# written. Both tests still pass. Had the rename rewritten the round trip's
+# `count: n` to `count: limit`, it would seed `count` with the slot's 5 and
+# fail on every other generated `n`.
 
 slot count : Int = 0
 slot n     : Int = 5
