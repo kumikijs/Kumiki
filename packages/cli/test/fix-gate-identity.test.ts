@@ -48,6 +48,27 @@ describe("a diagnostic a repair merely moved is not an introduced one", () => {
     expect(result.remaining.map(at)).toEqual(["E0103@6:27"]);
   });
 
+  it("down the file — an E0227 that says a nested match takes the arms after it", () => {
+    const file = seedLines([
+      "type Color = Red | Green | Blue",
+      "type Size = Small | Large",
+      "fn f(x: Color, y: Size) -> Int = match x with | Red -> match y with | Small -> 1 | other -> 3",
+      'tile B = button(text="go")',
+      "tile App = column(B)",
+      "app A",
+      "    caps   = []",
+      '    routes = {"/" -> App}',
+      "    init   = []",
+    ]);
+
+    const result = applyFixPlan(file, undefined);
+
+    expect(result.applied).toBe(1);
+    expect(result.regressionBlocked).toBeUndefined();
+    expect(readFileSync(file, "utf8")).toContain('"/404" -> NotFound');
+    expect(result.remaining.map(at)).toEqual(["E0227@5:34"]);
+  });
+
   it("when two diagnostics share a code and only one is repairable", () => {
     const file = seedLines([
       "slot counter : Int = 0",

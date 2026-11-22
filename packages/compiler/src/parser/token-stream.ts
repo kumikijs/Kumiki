@@ -179,12 +179,19 @@ export class TokenStream {
 
   /**
    * A number literal with an optional leading `-` and the text it is written as, or undefined
-   * (nothing consumed) when no number starts here. The lexer emits the sign as its own operator.
+   * (nothing consumed) when no number starts here. The lexer emits the sign as its own operator,
+   * so a `-` set apart from its digits is a ParseError at the `-`: only an expression has unary minus.
    */
   protected tryEatSignedNumberLit(): { value: number; raw: string } | undefined {
     if (this.matchOp("-") && this.matchTAt(1, "num")) {
-      this.next();
+      const sign = this.next();
       const t = this.eat("num");
+      if (t.pos.line !== sign.pos.line || t.pos.col !== sign.pos.col + 1) {
+        throw new ParseError(
+          `A negative literal's "-" must touch its digits: write -${t.raw}`,
+          sign.pos,
+        );
+      }
       return { value: -t.value, raw: `-${t.raw}` };
     }
     if (!this.matchT("num")) return undefined;
@@ -203,7 +210,10 @@ export class TokenStream {
     return this.eatSignedNumberLit().value;
   }
 
-  /** `eatSignedNumber`, or undefined (nothing consumed) when no number starts here. */
+  /**
+   * `eatSignedNumber`, or undefined (nothing consumed) when no number starts here. A `-` set apart
+   * from its digits is a ParseError at the `-`, as in `tryEatSignedNumberLit`.
+   */
   protected tryEatSignedNumber(): number | undefined {
     return this.tryEatSignedNumberLit()?.value;
   }

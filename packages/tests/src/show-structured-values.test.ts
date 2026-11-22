@@ -85,7 +85,7 @@ tile App = column(
     text("tree: " + tree),
     text("rows: " + rows),
     text("fn: " + letters()),
-    text("acc: " + [1].fold(letters(), $1.show)),
+    text("acc: " + [1].fold({m: letters(), t: ""}, $1.copy({t: $1.m.show})).t),
     text("om: " + om),
     button(text=t),
     column(for x in sets text("each: " + x)))`);

@@ -1,0 +1,61 @@
+{
+  "steps": [
+    {
+      "label": "each tile shows the failure of the row i names, and each entry's its own",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "[email]Invalid email format[age][row]Invalid email format[end]",
+          "[a]Invalid email format[b]Must be between 18 and 120[people end]"
+        ]
+      }
+    },
+    {
+      "label": "moving i moves each tile to the row it now names",
+      "do": { "click": "#next" },
+      "expect": {
+        "noErrors": true,
+        "state": { "i": 1 },
+        "domIncludes": [
+          "[email][age]Must be between 18 and 120[row]Must be between 18 and 120[end]"
+        ]
+      }
+    },
+    {
+      "label": "text the age field cannot read is a failure at the row's age",
+      "do": { "fill": "#age", "value": "1.5" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["[email][age]Must be a whole number[row]Must be a whole number[end]"]
+      }
+    },
+    {
+      "label": "an age in range lands in the row i names, and its tiles fall silent",
+      "do": { "fill": "#age", "value": "36" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "rows": [{ "email": "", "age": 36 }, { "email": "ada@example.com", "age": 36 }]
+        },
+        "domIncludes": ["[email][age][row][end]"]
+      }
+    },
+    {
+      "label": "moving back finds the first row's failure where it was",
+      "do": { "click": "#next" },
+      "expect": {
+        "noErrors": true,
+        "state": { "i": 0 },
+        "domIncludes": ["[email]Invalid email format[age][row]Invalid email format[end]"]
+      }
+    },
+    {
+      "label": "an entry's email lands, and only the other entry's message is left",
+      "do": { "fill": "#person-a", "value": "a@example.com" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["[a][b]Must be between 18 and 120[people end]"]
+      }
+    }
+  ]
+}
