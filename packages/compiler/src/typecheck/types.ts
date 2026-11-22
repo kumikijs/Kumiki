@@ -17,7 +17,7 @@ import {
   type TypeExpr,
 } from "../ast.ts";
 import { aliasTarget, forwardedParams } from "../def-graph.ts";
-import { type DecoderKey, decoderKey, heldDecoder } from "../held-decoder.ts";
+import { decoderKey, decoderKeyError, heldDecoder } from "../held-decoder.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions, typeKey } from "../refinement-positions.ts";
 import {
   type RefinementProblem,
@@ -87,24 +87,6 @@ export function resolveType(
       resolveType(t.inner, sym, errors, scope);
       return;
   }
-}
-
-function decoderKeyMessage({ container, key, whole }: DecoderKey): string {
-  const role = container === "Map" ? "Map key" : "Set element";
-  return whole
-    ? `a Decoder cannot be a ${role}`
-    : `a ${role} of type ${typeToString(key)} cannot hold a Decoder`;
-}
-
-/** E0204 at `pos` for `found`, a key that is or holds a Decoder, under the generic `applied` if one keys by it. */
-export function decoderKeyError(found: DecoderKey, pos: Pos, applied?: TypeExpr): KumikiError {
-  const message = decoderKeyMessage(found);
-  return {
-    code: "E0204",
-    kind: "effect-id-misuse",
-    message: `${applied ? `${typeToString(applied)}: ${message}` : `${message.charAt(0).toUpperCase()}${message.slice(1)}`} — it is an opaque handle`,
-    pos,
-  };
 }
 
 // A key is stored as `entryKey` writes it, which keeps no `Decoder.Json(T)` check: a Decoder read

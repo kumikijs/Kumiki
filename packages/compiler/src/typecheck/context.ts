@@ -84,11 +84,10 @@ export type SymbolTable = {
   // The program's own tags come first, so a did-you-mean tie goes to one of them.
   constructorTags: ReadonlySet<string>;
   qualifiers: ReadonlySet<string>;
-  // A declared type that judged an expression reports it naming that type, so a report made
-  // without one — an undef-variant, a Map literal's Decoder key — is dropped: one mistake, one
-  // diagnostic.
-  judged: WeakSet<Expr>;
-  reportsUnlessJudged: Map<KumikiError, Expr>;
+  // A declared type that judged a variant reports it naming that type, so the
+  // undef-variant for the same variant is dropped: one mistake, one diagnostic.
+  judgedVariants: WeakSet<Expr>;
+  undefinedVariants: Map<KumikiError, Expr>;
   /** The result of each `fn` declared without `->`, read off its body once per check. */
   fnResults: Map<string, TypeExpr | null>;
   /** The `fn`s that can reach themselves through the `fn`s they call: those E0006 reports. */
@@ -96,6 +95,10 @@ export type SymbolTable = {
   /** The program's own unions, by each tag they declare: `unionsByTag`. */
   unionsByTag: ReadonlyMap<string, readonly TypeExpr[]>;
   app?: AppDef;
+  // The same for a Map literal keyed by a Decoder: a declared type that judged the literal is
+  // refused itself or reports the key's mismatch, so the literal's own E0204 is dropped.
+  judgedMapLiterals: WeakSet<Expr>;
+  decoderKeyedLiterals: Map<KumikiError, Expr>;
 };
 
 export type LocalBinder = "input" | "for";

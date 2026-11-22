@@ -3,7 +3,7 @@ import { elementType, nominallyComparable, typeToString, unaliasType } from "../
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
 import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
 import { fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
-import { heldDecoder, noEquality } from "../held-decoder.ts";
+import { decoderKeyError, heldDecoder, noEquality } from "../held-decoder.ts";
 import { showShapeOf } from "../show-shape.ts";
 import {
   type FragmentArgument,
@@ -73,7 +73,6 @@ import {
   matchedType,
 } from "./patterns.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
-import { decoderKeyError } from "./types.ts";
 
 /** The type one iteration of `for x in iter` binds, given the iterated expression. */
 export function elementTypeOf(iter: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
@@ -336,7 +335,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
           pos: e.pos,
         };
         errors.push(report);
-        sym.reportsUnlessJudged.set(report, e);
+        sym.undefinedVariants.set(report, e);
       }
       for (const p of e.payload) checkExpr(p, sym, errors, ctx);
       return;
@@ -728,7 +727,7 @@ function refuseDecoderKeyedLiteral(
     if (!t || !held) continue;
     const report = decoderKeyError({ container: "Map", key: t, whole: held.whole }, key.pos);
     errors.push(report);
-    sym.reportsUnlessJudged.set(report, e);
+    sym.decoderKeyedLiterals.set(report, e);
     return;
   }
 }

@@ -1,7 +1,8 @@
 import { perTable, type TypeEnv, typeToString } from "./assignable.ts";
-import { assertNever, type TypeExpr } from "./ast.ts";
+import { assertNever, type Pos, type TypeExpr } from "./ast.ts";
 import { expandNamed, GENERIC_SELF_NESTING_LIMIT, typeKey } from "./refinement-positions.ts";
 import { BUILTIN_TYPE_CONSTRUCTORS } from "./stdlib-types.ts";
+import type { KumikiError } from "./typecheck/context.ts";
 
 /** A type that is a Decoder, or holds one somewhere inside. */
 export type HeldDecoder = {
@@ -178,4 +179,22 @@ export function decoderKey(
     const held = key && heldDecoder(key, env, opaque);
     return key && held ? { container: x.name, key, whole: held.whole } : undefined;
   });
+}
+
+function decoderKeyMessage({ container, key, whole }: DecoderKey): string {
+  const role = container === "Map" ? "Map key" : "Set element";
+  return whole
+    ? `a Decoder cannot be a ${role}`
+    : `a ${role} of type ${typeToString(key)} cannot hold a Decoder`;
+}
+
+/** E0204 at `pos` for `found`, a key that is or holds a Decoder, under the generic `applied` if one keys by it. */
+export function decoderKeyError(found: DecoderKey, pos: Pos, applied?: TypeExpr): KumikiError {
+  const message = decoderKeyMessage(found);
+  return {
+    code: "E0204",
+    kind: "effect-id-misuse",
+    message: `${applied ? `${typeToString(applied)}: ${message}` : `${message.charAt(0).toUpperCase()}${message.slice(1)}`} — it is an opaque handle`,
+    pos,
+  };
 }
