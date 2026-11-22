@@ -1,6 +1,14 @@
 import type { IndexedDbStore, KeyKind, ShowShape } from "@kumikijs/runtime";
+import type { PrimName } from "./stdlib-types.ts";
 
 export type Pos = { line: number; col: number };
+
+/**
+ * On a value, statement or tile `match`: `outer` is where the `match` starts whose last arm this
+ * one ends with nothing closing it off, so every arm written after it is its own (language.md).
+ * Absent once parentheses or braces close it.
+ */
+export type EndsOuterArm = { outer?: Pos };
 
 export type Token =
   | { kind: "ident"; value: string; pos: Pos }
@@ -207,17 +215,7 @@ export type AppDef = {
 export type TypeExpr =
   | {
       kind: "TypePrim";
-      name:
-        | "Int"
-        | "Text"
-        | "Bool"
-        | "Unit"
-        | "Float"
-        | "Time"
-        | "Bytes"
-        | "File"
-        | "EffectId"
-        | "Decoder";
+      name: PrimName;
       pos: Pos;
     }
   | { kind: "TypeRef"; name: string; pos: Pos }
@@ -330,12 +328,12 @@ export type Statement =
   | { kind: "StopTimer"; name: string; pos: Pos }
   | { kind: "ForStmt"; bind: string; bindPos: Pos; iter: Expr; body: Statement[]; pos: Pos }
   | { kind: "IfStmt"; cond: Expr; consequent: Statement[]; alternate: Statement[]; pos: Pos }
-  | {
+  | ({
       kind: "MatchStmt";
       scrutinee: Expr;
       arms: { pattern: Pattern; body: Statement[] }[];
       pos: Pos;
-    }
+    } & EndsOuterArm)
   | { kind: "PanicStmt"; message: Expr; pos: Pos }
   | { kind: "NoopStmt"; pos: Pos };
 
@@ -418,7 +416,7 @@ type ExprForm =
   | { kind: "MapLit"; entries: { key: Expr; value: Expr }[]; pos: Pos }
   | { kind: "Wildcard"; wild: "any-id"; pos: Pos }
   | { kind: "Wildcard"; wild: "slot"; slot: string; slotPos: Pos; pos: Pos }
-  | { kind: "MatchExpr"; scrutinee: Expr; arms: MatchArm[]; pos: Pos }
+  | ({ kind: "MatchExpr"; scrutinee: Expr; arms: MatchArm[]; pos: Pos } & EndsOuterArm)
   | { kind: "IfExpr"; cond: Expr; consequent: Expr; alternate: Expr; pos: Pos }
   | { kind: "LetIn"; name: string; namePos: Pos; value: Expr; body: Expr; pos: Pos }
   | { kind: "EmitExpr"; effect: string; args: Expr[]; effectPos?: Pos; pos: Pos }
@@ -460,7 +458,7 @@ export type TileExpr =
   | { kind: "TileFor"; bind: string; bindPos: Pos; iter: Expr; body: TileExpr; pos: Pos }
   | { kind: "TileWhen"; cond: Expr; body: TileExpr; pos: Pos }
   | { kind: "TileIf"; cond: Expr; consequent: TileExpr; alternate: TileExpr; pos: Pos }
-  | { kind: "TileMatch"; scrutinee: Expr; arms: TileMatchArm[]; pos: Pos };
+  | ({ kind: "TileMatch"; scrutinee: Expr; arms: TileMatchArm[]; pos: Pos } & EndsOuterArm);
 
 export type TileMatchArm = {
   pattern: Pattern;

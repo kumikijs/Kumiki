@@ -3,6 +3,7 @@ import { elementType, nominallyComparable, typeToString, unaliasType } from "../
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
 import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
 import { fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
+import { heldDecoder } from "../held-decoder.ts";
 import { showShapeOf } from "../show-shape.ts";
 import {
   type FragmentArgument,
@@ -49,6 +50,7 @@ import {
   isNumeric,
   isPrimNamed,
   KNOWN_TOKEN_GROUPS,
+  opaqueHandleOf,
   prim,
   qualifiedMember,
 } from "./infer.ts";
@@ -64,6 +66,7 @@ import {
 } from "./members.ts";
 import { laterDeclaration } from "./nested-scopes.ts";
 import {
+  checkArmsAfterNestedMatch,
   checkMatchCovers,
   checkPatternAgainstType,
   checkPatternBindsAreDistinct,
@@ -153,18 +156,19 @@ function unwrapRemedy(t: TypeExpr & { kind: "TypeApp" }, tags: string, sym: Symb
 }
 
 /** A handle's text is whatever the runtime represents it as, so a page that showed it would change when that does. */
-export function refuseRenderedEffectId(
+export function refuseRenderedHandle(
   value: Expr,
   renderer: string,
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  if (!isEffectId(inferType(value, sym, ctx), sym)) return;
+  const handle = opaqueHandleOf(inferType(value, sym, ctx), sym);
+  if (handle === undefined) return;
   errors.push({
     code: "E0204",
     kind: "effect-id-misuse",
-    message: `${renderer} cannot render EffectId — it is an opaque handle`,
+    message: `${renderer} cannot render ${handle} — it is an opaque handle`,
     pos: value.pos,
   });
 }
@@ -186,7 +190,7 @@ function shownValue(e: Expr): Expr | undefined {
 export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
   // Asked before the three spellings of `show` part company in the switch, so the exception is made once.
   const shown = shownValue(e);
-  if (shown) refuseRenderedEffectId(shown, ".show", sym, errors, ctx);
+  if (shown) refuseRenderedHandle(shown, ".show", sym, errors, ctx);
   switch (e.kind) {
     case "Num":
     case "Str":
@@ -354,6 +358,10 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkExpr(e.rhs, sym, errors, ctx);
       if (!effectIdMisuse) checkBinOpOperands(e, sym, errors, ctx);
       if (e.op === "+" && isPrimNamed(binOpResult(e, sym, ctx), sym, "Text")) {
+        if (!effectIdMisuse) {
+          refuseRenderedHandle(e.lhs, 'Operator "+"', sym, errors, ctx);
+          refuseRenderedHandle(e.rhs, 'Operator "+"', sym, errors, ctx);
+        }
         noteShown(e.lhs, sym, ctx);
         noteShown(e.rhs, sym, ctx);
       }
@@ -546,7 +554,10 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         if (errors.length > before) patternsFit = false;
         checkExpr(arm.body, sym, errors, inner);
       });
-      if (patternsFit) checkMatchCovers(e, scrutType, sym, errors);
+      if (patternsFit) {
+        checkMatchCovers(e, scrutType, sym, errors);
+        checkArmsAfterNestedMatch(e, "value", scrutType, sym, errors);
+      }
       return;
     }
     case "IfExpr":
@@ -769,11 +780,11 @@ function checkBinOpOperands(
     }
     return;
   }
-  const incomparable = (): void => {
+  const incomparable = (why = ""): void => {
     errors.push({
       code: "E0201",
       kind: "type-mismatch",
-      message: `Operator "${e.op}" cannot compare ${typeToString(lt as TypeExpr)} with ${typeToString(rt as TypeExpr)}`,
+      message: `Operator "${e.op}" cannot compare ${typeToString(lt as TypeExpr)} with ${typeToString(rt as TypeExpr)}${why}`,
       pos: e.pos,
     });
   };
@@ -786,6 +797,17 @@ function checkBinOpOperands(
     return;
   }
   if (EQUALITY_OPS.has(e.op)) {
+    // A `Decoder.Json(T)` is its `T`'s check, or one sentinel for every `T` that carries none, so
+    // `==` would call the decoders of an `Int` and a `Text` the same, and an `Email`'s different.
+    const holder = [lt, rt].find((t) => heldDecoder(t, sym) !== undefined);
+    if (holder && lt && rt) {
+      incomparable(
+        heldDecoder(holder, sym)?.whole
+          ? ": a Decoder has no equality"
+          : `: ${typeToString(holder)} holds a Decoder, which has no equality`,
+      );
+      return;
+    }
     if (!nominallyComparable(lt, rt, sym)) incomparable();
   }
 }

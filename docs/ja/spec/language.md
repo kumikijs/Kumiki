@@ -399,9 +399,14 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
 - 両者とも他の式と同様に検査される — key 中の未定義名は dispatch 時の実行時
   エラーではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)
 - effect の capability が [http.md §6.6.1](./http.md#_6-6-1-request-fields) に行を
-  持つとき、`map-request` のレコードが書くフィールドはその capability のリクエストに
-  照らされる：リクエストに無いフィールドは [E0215](./errors.md#e0215-unknown-record-field)、
-  `Decoder` でない `decode` は [E0201](./errors.md#e0201-type-mismatch)
+  持つとき、`map-request` のレコードリテラルまたはマップリテラルが書くフィールドは
+  その capability のリクエストに照らされる：リクエストに無いフィールドは
+  [E0215](./errors.md#e0215-unknown-record-field)、`Decoder` でない `decode` と、
+  キーで読む `indexed.read` に書かれた `Decoder.Text` / `Decoder.Bytes` は
+  [E0201](./errors.md#e0201-type-mismatch)。`map-request` の無い effect は入力を
+  そのままリクエストとしてハンドラに渡すので、その `in=` のレコードが宣言する
+  `decode` も `Decoder` に照らされる：`storage.read` 上の
+  `in={key: Text, decode: Text}` はその `Text` の位置で E0201 になる
 - `latest-per-key` の key は `emit` が実行された地点で評価される。key が読む slot は
   reducer 本体のその文までの書き込みを反映し、それ以降の書き込みは反映しない
   （[http.md §6.4](./http.md#_6-4-cancellation)）
@@ -419,6 +424,9 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
     それ自身の間でしか成り立たない
 - `Set` の key はその `==` であり、その `==` 自体が Set の作られ方に依存するので、
   `Set` である key、または `Set` を持つ key も E0233 になる
+- `Decoder` には `==` が無く（[§1.9.4](#_1-9-4-演算子の型)）、key は
+  `Decoder.Json(T)` であるチェックを何も保たないので、`Decoder` である key、または
+  `Decoder` を持つ key も E0233 になる
 - それ以外の型はすべて key になる：`Text`、`Int`、`Bool`、`Time`、`Bytes`、
   `EffectId`、`Unit`、それらの上の `nominal` や refinement、そしてそれらから作られた
   レコード、タプル、`List`、`Map`、`Option`、`Result`、ユニオン —
@@ -947,6 +955,8 @@ unop        ::= '-' | '!'
 
 reducer 本体の `match` 文（[§1.6.1](#_1-6-1-構文)）とタイル位置の `match`（[§1.7.1](#_1-7-1-構文)）は値ではなく、この規則の対象外である。どの arm にも一致しない `match` 文は、条件が偽のときの `else` なし `if` 文と同じく何も実行せず、どの arm にも一致しないタイルの `match` は空の `text` を描画する。
 
+**arm の終わりにある `match` は、その後に書かれたすべての arm を取る。** その `match` の arm は `|` が続くかぎり続き、レイアウトでは終わらない。改行もインデントも読まれない。`match x with | Red -> match y with | Small -> 1 | Large -> 2 | _ -> 3` では、`| _ -> 3` は `match y` の 3 つ目の arm であり、`match x` の arm は `Red` の 1 つだけである。内側の `match` が arm の最後に書かれたものであれば、どこでも同じである。たとえば演算子の右オペランド、前置の `-` や `!` のオペランド、`else` 分岐、`else` のない `if` 文の `then`、`let … in` の本体、波括弧なしで書いた `for` の本体、文の右辺（`n := match …`、`let v = match …`）、arm の最後の文がそうである。後に書かれた arm を外側の `match` に渡すには、その前で内側を閉じる。値なら括弧に入れる。`| Red -> (match y with | Small -> 1 | Large -> 2) | _ -> 3`。文なら、内側の `match` で終わる arm の文全体を波括弧に入れる。`| Red -> { m := 0  match s with | Small -> n := 1 | Large -> n := 2 } | _ -> n := 3`。波括弧がブロックを開くのは arm の本体の先頭だけなので、内側の `match` だけでなく arm の文全体を囲む。タイルには括弧がないので、内側の `match` を独自のタイルに移し、arm でそのタイルを名指す。上の arm がすでにすべての値に一致した後で内側の `match` が取る arm には決して到達せず、`check` はその最初の arm で警告する（条件は [W0219](./errors.md#w0219-unreachable-nested-arm-warning) を参照）。これによってある値の arm を欠いた値としての `match` は [E0227](./errors.md#e0227-non-exhaustive-match) になり、そのメッセージは、最後の arm を終える `match` がその後に書かれた arm を取ることを告げる。
+
 ### 1.9.1 禁止事項
 
 - **ラムダ式禁止**
@@ -1033,6 +1043,18 @@ items.fold(0, $1 + $2.price)               # ($1: acc, $2: elem)
 
 `EffectId` はこの表の外にある：適用できるのは `==` と `!=` だけである
 （[E0204](./errors.md#e0204-effect-id-misuse)）。
+
+`Decoder` もこの表の外にある：`Decoder` に適用できる演算子は無く、`Decoder` を
+持つ値にも `==` と `!=` は適用できない。`Decoder.Json(T)` はその `T` のチェックで
+あるか、チェックを持たないすべての `T` で同じ 1 つの値であるため、
+`Decoder.Json(Int) == Decoder.Json(Text)` は `true`、
+`Decoder.Json(Email) == Decoder.Json(Text)` は `false` になってしまう。いずれも
+[E0201](./errors.md#e0201-type-mismatch) である：`d == Decoder.Text` は
+`Operator "==" cannot compare Decoder with Decoder: a Decoder has no equality` で
+あり、`{d: Decoder}` ではメッセージがそれを持つ型を名指す。`Option(Decoder)` には
+`.is-some` か `.is-none` を、`List(Decoder)` には `.is-empty` を問う。
+`List.contains` と `List.unique` は `==` と同じ問いを問い、`Decoder` を持つ `List`
+でも拒否されない。そこでの答えはプログラムが頼ってよいものではない。
 
 ---
 

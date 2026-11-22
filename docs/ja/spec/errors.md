@@ -647,6 +647,8 @@ builtin に、決して描画されない引数が書かれている。値 built
 > `Operator "<op>" expects a number but got <type>`
 > `Operator "<op>" expects Bool but got <type>`
 > `Operator "<op>" cannot compare <type> with <type>`
+> `Operator "<op>" cannot compare <type> with <type>: a Decoder has no equality`
+> `Operator "<op>" cannot compare <type> with <type>: <type> holds a Decoder, which has no equality`
 > `Condition of "<form>" must be Bool but got <type>`
 > `Expected <declared> but got variant "<name>"`
 > `Expected <declared> but got {}, an empty Map, Set or record`
@@ -659,6 +661,8 @@ builtin に、決して描画されない引数が書かれている。値 built
 > `timeout <n> is not a number of milliseconds from 1 to 2147483647; every request is aborted before it can answer`
 > `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md)`
 > `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is <type>`
+> `Expected <declared> but got <type>: with no map-request, effect "<name>"'s input is the <cap> request`
+> `Expected Decoder.Json(T) or Decoder.None but got <call>: an indexed.read by key reads a stored record, which has no text to read`
 
 名前付き引数は builtin でもプログラムが定義する tile でも prop なので、値を取る（[言語 §1.7.1](./language.md#_1-7-1-構文)）。`when` と `for` には値の形が無いので、そこに書いたものは tile であり、何もそれを描画しない：`progress(value=1, max=when(busy, text("x")))` は `max` の無いバーを描画し、`box(header=when(c, text("x")))` はヘッダを捨てていた。`when` / `for` の位置で報告し、その中は何も検査しない：それは丸ごと、コンテナの位置引数へ（`box(when(c, text("x")))`）移すか、値に置き換えるものだからである。そこにある値の `if` / `match` は値であり（`button(disabled=if busy then true else false)`）、そこで呼んだ builtin tile は [E0116](#e0116-undef-call-undef-variant-undef-qualifier)、値 builtin の名前付きの内容（`label(text=…)`、`image(src=…)`）にある tile は [E0236](#e0236-tile-as-content)、決して描画されない `text=`（`text(text=…)`、`link("a", text=…)`）にある `when` / `for` は [E0129](#e0129-unrendered-arg)、`error` の `field=` にある `when` / `for` は、`field=` がスロットかその中へのパスを指すとメッセージで示す [E0230](#e0230-error-field-not-path)（`{…}` ブロックにも `field` を書いた場合は、E0230 が判定するのはそちらで、`when` / `for` は E0201 である）であり、イベントハンドラとして書いた `when` / `for` は、ハンドラの `must be a reducer name` として 1 度だけ報告する（下記）。
 
@@ -670,7 +674,7 @@ builtin に、決して描画されない引数が書かれている。値 built
 
 したがってこのエラーが報告するのは、そもそも名前でない値である：リテラル、呼び出し（`onClick=box(text("z"))`）、引数か props を伴う大文字始まりの名前（`onClick=Some(1)`、`onClick=Card {x: 1}`）。裸の名前がどの reducer も指さない場合は、大文字始まりかどうかによらず [E0102](#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。ハンドラ位置が解決する名前空間は 1 つであり、tile 層はそこに無いからである。
 
-照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、`List` のインデックス（`xs[i]`・`xs[i] := v`・`xs.get(i)` のいずれでも `Int`）と、`xs.slice(start, end)` の両端および `xs.chunk(n)` の大きさ（これらも `Int`。[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)、[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、[stdlib §2.3.11](./stdlib.md#_2-3-11-prop-types) が型を与える builtin tile の prop（`modal(open=…)`、`select(options=…)` — builtin 自身の呼び出しに、名前付き引数でも `{…}` ブロックでも書いたもの）、`.get-or` のフォールバック、`Map` / `Set` / `List` のメンバーの引数のうち、パラメータがレシーバのキー・値・要素の型か、レシーバと同じ型の別のコンテナであるもの（`xs.push(x)`、`m.insert(k, v)`、`s.add(x)`、`xs.concat(ys)`。[stdlib §2.2](./stdlib.md#_2-2-コレクションメソッド)）、`app.http` の `base-url` / `headers` / `timeout` / `credentials`（[HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)）、`map-request` のレコードが書く `decode`（`Decoder` に照らす。[HTTP §6.6.1](./http.md#_6-6-1-request-fields)）、`check` / `switch` の `bind=`（`Bool`）と、`radio` の `bind=` に対するその `value=`（[Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）、`List(T).sort-by` のキー（`<` が順序を与える数値・`Text`・`Time` のいずれかでなければならない。fragment で書いても、名前で渡した `fn` でもよく、後者はその `fn` の結果の型がキーの型になる。[stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)）、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
+照合すべき宣言型を持つ位置は次のとおり：`slot` の初期値、代入の右辺（`.field` / `[k]` のパスを辿った先も含む）、`List` のインデックス（`xs[i]`・`xs[i] := v`・`xs.get(i)` のいずれでも `Int`）と、`xs.slice(start, end)` の両端および `xs.chunk(n)` の大きさ（これらも `Int`。[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)、[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）、宣言済み `fn` への引数、`fn` の body とその `->` 戻り型、`in=` を宣言した user tile への引数、[stdlib §2.3.11](./stdlib.md#_2-3-11-prop-types) が型を与える builtin tile の prop（`modal(open=…)`、`select(options=…)` — builtin 自身の呼び出しに、名前付き引数でも `{…}` ブロックでも書いたもの）、`.get-or` のフォールバック、`Map` / `Set` / `List` のメンバーの引数のうち、パラメータがレシーバのキー・値・要素の型か、レシーバと同じ型の別のコンテナであるもの（`xs.push(x)`、`m.insert(k, v)`、`s.add(x)`、`xs.concat(ys)`。[stdlib §2.2](./stdlib.md#_2-2-コレクションメソッド)）、`app.http` の `base-url` / `headers` / `timeout` / `credentials`（[HTTP §6.3.1](./http.md#_6-3-1-injecting-global-headers)）、`map-request` のレコードリテラルまたはマップリテラルが書く `decode`（`Decoder` に照らす。[HTTP §6.6.1](./http.md#_6-6-1-request-fields)）、`map-request` の無い effect の `in=` のレコードが宣言する `decode` フィールド（これも `Decoder` に照らす）、`check` / `switch` の `bind=`（`Bool`）と、`radio` の `bind=` に対するその `value=`（[Forms §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）、`List(T).sort-by` のキー（`<` が順序を与える数値・`Text`・`Time` のいずれかでなければならない。fragment で書いても、名前で渡した `fn` でもよく、後者はその `fn` の結果の型がキーの型になる。[stdlib §2.2.3](./stdlib.md#_2-2-3-list-t)）、そしてすべての演算子のオペランド。`emit` の引数も検査するが、そちらは [E0202](#e0202-emit-arg-type-mismatch) を報告する。
 
 インデックス `[k]` も、読み取りでも書き込みでも、レシーバがインデックスとして取る型と照合する：`List` では `Int`、`Map(K, V)` ではキー型 `K` である（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）。`TodoId` と `PostId` がどちらも `nominal Text` と宣言されていれば、`Map(TodoId, Text)` に対する `notes[postId]` は読み取りでも `notes[postId] := v` でも、`Map(TodoId, Todo)` に対する `todos[postId].done := v` も、インデックスの位置で `Expected TodoId but got PostId` を報告する。
 
@@ -698,6 +702,10 @@ builtin に、決して描画されない引数が書かれている。値 built
 
 同一性が読まれるのは各オペランドの **最上位** だけであり、ここが演算子と代入の分かれ目である：`List(Cents) := List(Yen)` は代入可能性が型引数へ降りていくためこのエラーになるが、同じ組に対する `lc == ly` は報告されない。コンテナ・レコードのフィールド・その他あらゆる型引数の内側にある nominal は、比較からは見えない。この沈黙は誤った診断ではなく欠けた診断であり、それがこのコード全体が保つ読み方である。
 
+`Decoder` にも、`Decoder` を持つ値にも、もう一方の辺が何であれ `==` と `!=` は定義されていない（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）：`d == Decoder.Text` は `Operator "==" cannot compare Decoder with Decoder: a Decoder has no equality` を報告し、`{d: Decoder}` に対する `r == {d: Decoder.Text}` はそれを持つ型を `{d: Decoder} holds a Decoder, which has no equality` と名指す。
+
+リクエストのフィールドはその capability の規則に照らされる（[HTTP §6.6.1](./http.md#_6-6-1-request-fields)）。キーで読む `indexed.read` は保存されたレコードを読み、そこに読むテキストは無いので、その `decode` として、またはその分岐として書かれた `Decoder.Text` / `Decoder.Bytes` は、`Decoder` ではあってもこのエラーになる（`emit` の引数では E0202）。名前が保持するものは実行時に委ねられる。`map-request` の無い effect は入力をそのままリクエストとしてハンドラに渡すので、その `in=` のレコードが宣言する `decode` は `Decoder` に照らされる：`effect r cap=storage.read in={key: Text, decode: Text} …` はその `Text` の位置で、`in=` がエイリアスを名指すときはその名前の位置で、`Expected Decoder but got Text: with no map-request, effect "r"'s input is the storage.read request` を報告する。
+
 **この検査は片側だけを主張する。** 確実に誤っているものだけを報告し、解決できないものについては黙る — 未知の型名、結果型を何も解決できないメソッド（[§2.2](./stdlib.md#_2-2-コレクションメソッド) のメンバーはレシーバから答えを決める — `List(T)` の `xs.head` は `Option(T)`、`Map(K, V)` の `m.keys` は `List(K)`、`.get` と `.get-or` は `Option(T)` / `Result(T, E)` を `T` に、`Map` の索きを `Option(V)` またはフォールバック付きで `V` にアンラップする。`.copy` はレシーバをそのまま返し、`show` / `to-int` / `floor` などの固定表はプリミティブを返す。`.map` や `.fold` のようにラムダの本体が決めるメンバーと、レシーバ自身の型が決まらない場合は動的なまま）、解決できない式の `let` 束縛など。誤った診断は動くプログラムを拒否するが、報告漏れは元から存在しなかった診断が増えないだけである。したがって check が緑であることは型の正しさの証明ではなく、名前の存在そのものは引き続き [E0801](#e0801-unimplemented-method) / [E0116](#e0116-undef-call-undef-variant-undef-qualifier) が担保する。
 
 **修正**：値を直すか、宣言型を広げる。nominal どうしの不一致が意図的なものであれば、2 つの型が共有する基底型を経由して変換し、それを戻り型が行き先を表す `fn` として書く — `-> UserId = p + ""` であって、`-> UserId = p` ではない（後者はこのエラーそのものである）。`fn` は意図を記録するだけで、強制されるのは body が基底型に到達していることだけである。
@@ -710,6 +718,7 @@ builtin に、決して描画されない引数が書かれている。値 built
 > `Expected <in-type> but got variant "<name>"`
 > `Expected <in-type> but got {}, an empty Map, Set or record`
 > `emit "<effect>" expects an EffectId argument`
+> `Expected Decoder.Json(T) or Decoder.None but got <call>: an indexed.read by key reads a stored record, which has no text to read`
 
 `EffectId` の場合だけ文言を分けているのは、修正の種類が違うからである。これはキャンセルの配線ミスの典型形で、`emit stopSearch(searchId)`（`searchId : EffectId`）は正しく、`emit stopSearch(42)` や `emit stopSearch("id")` は誤り。codegen は `EffectId` でない値をそのまま渡し、cancel パスは静かに no-op となる — 成功したキャンセルと見分けがつかない。
 
@@ -719,14 +728,14 @@ builtin に、決して描画されない引数が書かれている。値 built
 
 ### E0204 `effect-id-misuse`
 
-`EffectId` 型の値が定義されていない操作に使われている。`EffectId` で定義された操作は等価比較（`==` / `!=`）、`EffectId` 型 slot への代入、`in` 型が `EffectId` の effect への引数渡しのみ。算術・順序比較・テキストとしての描画は拒否する — `EffectId` は不透明型なのでランタイムが表現を変えてもアプリが壊れないようにするため。
+不透明なハンドル（`EffectId` か `Decoder`）が、定義されていない位置で使われている。`EffectId` 型の値が定義されていない操作に使われている。`EffectId` で定義された操作は等価比較（`==` / `!=`）、`EffectId` 型 slot への代入、`in` 型が `EffectId` の effect への引数渡しのみ。算術・順序比較・テキストとしての描画は拒否する — `EffectId` は不透明型なのでランタイムが表現を変えてもアプリが壊れないようにするため。
 
 ハンドルは、次の場所でテキストとして描画されるときに拒否される：
 
 - 値 builtin の内容：`text`・`heading`・`markdown`・`code`・`label`・`link`・`editable`、そして内容が `src=` / `name=` である `image` / `icon`（[標準ライブラリ §2.3.2](./stdlib.md#_2-3-2-テキスト要素)）。
 - `button` の `text=`、`link` の `{text: …}` prop、`editable` が束縛する値。
 - テンプレートを含む `fmt(...)` の引数。
-- `.show`。`show` はすべての値が持つメンバーであり（[標準ライブラリ §2.2.7](./stdlib.md#_2-2-7-int-float)）、`EffectId` に対しては [E0108](#e0108-undef-member) ではなくこのエラーになる。どの書き方でも同じである：`h.show`、`h.show()`、そして修飾子は捨てられるので `T` が何であれ `T.show(h)`（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）。`EffectId` はほかにメンバーを持たないので、`h.upper` は E0108 になる。
+- `.show`。`show` はすべての値が持つメンバーであり（[標準ライブラリ §2.2.7](./stdlib.md#_2-2-7-int-float)）、ハンドルに対しては [E0108](#e0108-undef-member) ではなくこのエラーになる。どの書き方でも同じである：`h.show`、`h.show()`、そして修飾子は捨てられるので `T` が何であれ `T.show(h)`（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）。ハンドルはほかにメンバーを持たないので、`h.upper` は E0108 になる。
 
 値の型はエイリアス・`nominal`・`let` を通して読まれるので、`type Handle = EffectId` は演算子と描画のどちらについてもハンドルであり、`let x = h in x` もハンドルである。ハンドルに演算子を適用したものは、演算子の位置で 1 回だけ報告される：その結果 —— `Text`・数・`Bool` —— はハンドルではない。
 
@@ -736,13 +745,22 @@ builtin に、決して描画されない引数が書かれている。値 built
 - テキストを描画する、上記以外の名前付き引数や prop に渡したハンドル。例えば `tooltip(…, text=h)`、`details(…, summary=h)`、`modal` / `drawer` / `popover` の `title=`、`toast(…, text=h)`、`input(value=h)`、`textarea(value=h)`、`textarea(bind=h)`、`link(…, to=h)`、`input(placeholder=h)`、`image(…, alt=h)`、`{aria-label: h}`、`{title: h}`。
 - `panic(h)`。
 
+`Decoder` はもう 1 つのハンドルである（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）。実行時にはセンチネルか、`Decoder.Json(T)` が lower されたチェックなので、それを描画するページはその lower 結果を表示してしまう。上記のどの位置でも拒否され、`Text` と連結する `+` のオペランドとしても拒否される。上記のギャップも同じく当てはまる。メンバーは 1 つも持たない。それ以外の演算子はこのエラーではない：`Decoder` には `==` を含めどの演算子も定義されておらず、いずれも [E0201](#e0201-type-mismatch) になる（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）。
+
+型が `Decoder` である、または `Decoder` を持つ `Map` のキーや `Set` の要素も、その型が書かれた位置でこのエラーになる：キーは `Decoder.Json(T)` であるチェックを何も保たないので、`keys` や `to-list` から読み戻したものは入れたものではなく、`decode` として渡すとどの decode も行わない（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。`Set(Decoder)` はその `Decoder` の位置で、`Map({d: Decoder}, Int)` はキーの型の位置で報告され、`Decoder` に適用されたジェネリックは、その本体がパラメータでキーを作るとき適用の位置で報告される — `type Bag(T) = Set(T)` に対する `Bag(Decoder)`。本体そのものが `Decoder` でキーを作るものは定義の中で 1 回報告される。
+
 > `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`
-> `<builtin>(...) cannot render EffectId — it is an opaque handle`
-> `.show cannot render EffectId — it is an opaque handle`
+> `<builtin>(...) cannot render <handle> — it is an opaque handle`
+> `.show cannot render <handle> — it is an opaque handle`
+> `Operator "+" cannot render Decoder — it is an opaque handle`
+> `A Decoder cannot be a <Map key | Set element> — it is an opaque handle`
+> `A <Map key | Set element> of type <T> cannot hold a Decoder — it is an opaque handle`
+> `<G>: a Decoder cannot be a <Map key | Set element> — it is an opaque handle`
+> `<G>: a <Map key | Set element> of type <T> cannot hold a Decoder — it is an opaque handle`
 
-`<builtin>` はハンドルを描画する呼び出しを書かれたとおりに示す：`text`、`heading`、`button`、…、または `fmt`。
+`<builtin>` はハンドルを描画する呼び出しを書かれたとおりに示す：`text`、`heading`、`button`、…、または `fmt`。`<handle>` は `EffectId` か `Decoder`、`<G>` は `Bag(Decoder)` のようなジェネリックの適用である。
 
-**修正**: `EffectId.none` との `==` / `!=` 比較に置き換えるか、cancel 用 effect に渡す。ハンドルを保持しているかどうかを表示するには、比較の答えを描画する —— `text(if h == EffectId.none then "idle" else "loading")`、または `(h != EffectId.none).show`。詳細は [EffectId](./stdlib.md#_2-1-1-1-effectid)。
+**修正**: `EffectId.none` との `==` / `!=` 比較に置き換えるか、cancel 用 effect に渡す。ハンドルを保持しているかどうかを表示するには、比較の答えを描画する —— `text(if h == EffectId.none then "idle" else "loading")`、または `(h != EffectId.none).show`。詳細は [EffectId](./stdlib.md#_2-1-1-1-effectid)。`Decoder` については、それを選んだもの — `fn` が decoder を選ぶ元のフラグや名前 — を代わりに描画し、それでキーを作る。
 
 ### E0205 `bind-on-file-input`
 
@@ -1110,13 +1128,15 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 
 値として使う `match` に、scrutinee の型のある値に対する arm がない（[言語 §1.9](./language.md#_1-9-式言語)）。値としての `match` はいずれかの arm の値に評価されるので、どの arm にも一致しない値があると、評価される値がなくなる。
 
-> ``This match on "<T>" has no arm for <values>[, among others], and a match used as a value has to evaluate to one of its arms. Add the missing arms, or end with `_ -> …` ``
+> ``This match on "<T>" has no arm for <values>[, among others], and a match used as a value has to evaluate to one of its arms. Add the missing arms, or end with `_ -> …`[. The match that ends this match's last arm takes every arm written after it: put it in parentheses, `(match … with …)`, for an arm after it to be this match's] ``
 
 取りこぼした値はそれぞれ、それに一致するパターンとして、型が variant を宣言した順（`Some` より `None`、`Err` より `Ok` が先）に書かれる。ペイロードのない variant は `Blue`、ペイロードのある variant は `Some(_)`、tuple の要素の組み合わせは `(None, Green)` である。`_` は、variant を持たない型の要素のすべての値と、どの arm も当てはまらなくなった位置より後の要素を表す。`None` を受ける arm が 1 つもなければ `(None, _)` になる。メッセージが挙げる値は 8 個までで、それより多いときは一覧が `, among others` で終わる。variant パターンの bind はどのペイロードも受けるので `Some(v)` はすべての `Some` を覆い、入れ子になるパターンは tuple だけである。`Bool`・`Int`・`Text`・レコード・`List` には variant がなく、リテラルパターンもない（[言語 §1.9.1](./language.md#_1-9-1-禁止事項)）ので、これらを覆う arm は `_` か名前である。
 
 網羅は、すべての arm のパターンが scrutinee に合っているときに判定する。合わない arm は [E0207](#e0207-pat-arity-mismatch)・[E0208](#e0208-pat-type-mismatch)・[E0209](#e0209-pat-unknown-variant) であり、それだけが報告される。scrutinee の型が決められない場合（たとえばチェッカーが props に型を付けない `$el`、`fold`・`map`・`zip` の結果、`map-request` の `$1`）、ここでは何も報告せず、どの arm にも一致しない値は実行時に panic になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。そうした要素を 1 つ含む tuple も、ほかの要素では判定され、型のその位置は `?` と書かれる。`match (cs.fold(c, $2), c) with | (_, Red) -> 1 | (_, Green) -> 2` は `Tuple(?, Color)` について `(_, Blue)` を報告する。チェッカーが挙げられる値は、ほかの値が決められない要素に左右されるときでも報告する。reducer 本体の `match` 文とタイル位置の `match` は値ではなく、このコードの対象外である。
 
-**修正**：メッセージが挙げる値ごとに arm を足すか、ほかの arm が取りこぼす値すべてのために `match` を `_ -> …` で終える。
+角括弧内の文は、最後の arm が、何にも閉じられていない `match` で終わるときに加わる（[言語 §1.9](./language.md#_1-9-式言語)）。その `match` はその後に書かれたすべての arm を取るので、末尾に足した `_ -> …` はこの `match` ではなくその `match` の arm になる。`match x with | Red -> match y with | Small -> 1 | other -> 3` は `Color` について `Green, Blue` を報告し、この文を加える。この文は位置を名指さない。`kumiki fix` はエラーをコード・種別・メッセージで見分けるので、メッセージに位置があると、修正が行を動かすたびにそれが変わり、新しいエラーとして読まれてしまう。内側の `match` が決して到達しない arm も取るときは、その arm は [W0219](#w0219-unreachable-nested-arm-warning) にもなる。
+
+**修正**：メッセージが挙げる値ごとに arm を足すか、ほかの arm が取りこぼす値すべてのために `match` を `_ -> …` で終える。メッセージがこの文を加えるときは、先に最後の arm を終える `match` を括弧に入れる。
 
 ### E0228 `undef-route-pattern`
 
@@ -1216,13 +1236,14 @@ field が持ちうるほかのコードは E0230 として重ねて報告しな�
 > `A latest-per-key key of type <T> is not keyed by its value: it holds a Float, and inside it NaN, Infinity and -Infinity are one key (see docs/spec/language.md)`
 > `A latest-per-key key of type <T> is not keyed by its value: it holds a File, and two Files with the same name, size and type are one key, while == holds only of a File and itself (see docs/spec/language.md)`
 > `A latest-per-key key of type <T> is not keyed by its value: it is a Set, whose == depends on how it was built (see docs/spec/language.md)`
+> `A latest-per-key key of type <T> is not keyed by its value: it is a Decoder, and a key keeps none of the check a Decoder.Json(T) runs (see docs/spec/language.md)`
 
 dispatcher は各リクエストをその key で実行し、同じ key で別のリクエストが始まると実行中のリクエストを中断する（[HTTP §6.4](./http.md#_6-4-cancellation)）。key は Map の key が格納されるのと同じ書き方で書かれ（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）、その書き方では 2 つの型を除いて、2 つの key が 1 つの key になるのはそれらが `==` であるときに限られる — ただし宣言された型が何であれ、有限でない数は例外である。`==` が異なるとする 2 つの値を 1 つの key にする key は、プログラムからは見えない理由でリクエストを中断する：
 
 - `Float`：`NaN` は 1 つの key だが `NaN == NaN` は `false` である。また、レコード・タプル・`List`・`Map` の値・バリアントの中では `NaN`、`Infinity`、`-Infinity` がすべて 1 つの key になる
 - `File`：名前・サイズ・型が同じ 2 つの File は 1 つの key になるが、`==` は File とそれ自身の間でしか成り立たない
 
-`Set` の key はその `==` であり、その `==` 自体が Set の作られ方に依存する（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）。したがって Set の key はプログラムが頼れない規則でリクエストを中断するので、これも報告する。
+`Set` の key はその `==` であり、その `==` 自体が Set の作られ方に依存する（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）。したがって Set の key はプログラムが頼れない規則でリクエストを中断するので、これも報告する。`Decoder` も同じである：`==` を持たず、その key は `Decoder.Json(T)` であるチェックを何も保たない。
 
 メッセージは、key の型がそのいずれかであれば `it is`、エイリアス・ジェネリクス・`nominal` を通して、レコードのフィールド・バリアントのペイロード・コンテナの要素・`Map` の値にそのいずれかを持つ場合は `it holds` と言う：`$1` で key にした `type Spot = {lat: Float, lng: Float}` は報告され、`List(Set(Text))` も、`type Box(A) = {v: A}` に対する `Box(Box(Float))` も報告される。`Map` 自身の key も同じ書き方で格納されるので、2 つの Map の `==` はその key と一致し、`Map(Float, Text)` は報告しない。型を検査器が決められない key は報告せず、`Int` も報告しない。ただし `Int` も有限でない数（`n % 0`、あふれた `pow`、有限でない Float の `.round`）を持つことがあり、そのときは Float と同じく key になる。
 
@@ -1384,6 +1405,28 @@ bind していないコントロールが選択状態を読む prop — `check` 
 他の警告と同じく、`check` もビルドも失敗させない。ルーターは表に何が書かれていても自分の順序に従うのでプログラムは動く。警告は表のうち決して使われない部分を名指す。
 
 **修正**：キーを取り除くか、それが描画するものをルーターが届く場所に置く：兄弟がマッチしないパス、あるいは兄弟自身のターゲットの中である。兄弟の方が誤りなら、それを狭めるか取り除く。デフォルトの子が報告されるのは親に届くパスが無いときだけなので、それを取り除いても描画されるページは変わらない。
+
+### W0219 `unreachable-nested-arm` (warning)
+
+ほかの `match` の arm を終える `match` が、自身の上の arm がすでに覆っている arm を取っている（[言語 §1.9](./language.md#_1-9-式言語)）。外側の次の arm の前で内側の `match` を閉じるものがないので、内側はその後に書かれたすべての arm を、外側の `match` のために並べられたものも含めて取る。arm がすでにすべての値に一致した後に書かれた arm は決して実行されない。
+
+```kumiki invalid
+fn f(x: Color, y: Size) -> Int = match x with | Red -> match y with | Small -> 1 | Large -> 2 | _ -> 3
+```
+
+では、`| _ -> 3` は `Small` と `Large` がすべての `Size` に一致した後の、`match y` の 3 つ目の arm であり、`match x` には `Green` にも `Blue` にも arm がない。同じ arm を文として書くと、[E0227](#e0227-non-exhaustive-match) は値としての `match` にしか及ばないので、ほかに報告するものがなく、`n := 3` を実行するはずのクリックはどの arm も実行しない。
+
+> ``The arm `<pattern>` can never be reached: it belongs to the match at <line>:<col>, whose arms above it already match every value. That match ends an arm of the match at <line>:<col>, so it takes every arm written after it. To give this arm to the match at <line>:<col>, <fix>``
+
+`<fix>` は、その形で内側の `match` を閉じる方法である。
+
+- 値：``put the inner match in parentheses: `(match … with …)` ``
+- 文：``put the arm's statements in braces, ending with the inner match: `-> { … match … with … }` ``。波括弧がブロックを開くのは arm の本体の先頭だけなので、内側の `match` だけでなく、その arm の文全体を囲む。
+- 括弧を持たないタイル：`move the inner match into a tile of its own and name that tile in the arm`
+
+プログラムは構文解析されたとおりに動くので、これは警告である。文やタイルの `match` は値を取りこぼしてよい（[言語 §1.9](./language.md#_1-9-式言語)）ので、そうした arm を持つ文やタイルの `match` は `check` を通り、アプリはビルドされる。W0219 は、内側の `match` が決して到達しない最初の arm の位置で、そのパターンとして書いて、内側の `match` ごとに 1 件報告する。arm は、E0227 と同じく、すべての arm のパターンが scrutinee に合っているときに判定する。内側の scrutinee に該当する variant がない、外側のための variant（`Size` の scrutinee の下の `| Green -> …` など）は代わりに [E0209](#e0209-pat-unknown-variant) になり、その `match` では W0219 は動かない。`match` が入れ子になって arm を終えるときは、メッセージは、内側の `match` が arm を終える `match`、つまりすぐ外側のものを名指し、いちばん外側のものではない。内側の `match` によってある値の arm を欠いた値としての `match` は、引き続き [E0227](#e0227-non-exhaustive-match) になり、ビルドされない。レイアウトは読まれない。arm は、内側の `match` の行に書かれていても、外側の下にインデントされていても報告される。括弧か波括弧で閉じた `match` と、ほかの `match` の arm を終えない `match` は、どんな arm を持っていてもここでは報告されない。
+
+**修正**：メッセージのとおりに内側の `match` を閉じて、arm を外側の `match` のものにするか、内側のための arm だったならその arm を削除する。
 
 ### E0231 `reserved-type-name`
 

@@ -398,11 +398,15 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
   [E0103](./errors.md#e0103-undef-ref-undef-slot)
 - Both are checked like any other expression — an undefined name in the key is
   [E0103](./errors.md#e0103-undef-ref-undef-slot), not a runtime failure at dispatch
-- A field a `map-request` record writes is held to the request of the effect's
-  capability when that capability has a row in
+- A field a `map-request` record or map literal writes is held to the request
+  of the effect's capability when that capability has a row in
   [http.md §6.6.1](./http.md#_6-6-1-request-fields): one the request does not have
   is [E0215](./errors.md#e0215-unknown-record-field), and a `decode` that is not a
-  `Decoder` is [E0201](./errors.md#e0201-type-mismatch)
+  `Decoder`, or a `Decoder.Text` / `Decoder.Bytes` written in an `indexed.read` by
+  key, is [E0201](./errors.md#e0201-type-mismatch). An effect with no
+  `map-request` hands its input to the handler as the request, so a `decode` its
+  `in=` record declares is held to `Decoder` too: `in={key: Text, decode: Text}`
+  on `storage.read` is E0201 at that `Text`
 - A `latest-per-key` key is evaluated where the `emit` runs, so a slot it reads
   sees the reducer body's writes up to that statement and none after it
   ([http.md §6.4](./http.md#_6-4-cancellation))
@@ -421,6 +425,9 @@ map-expr        ::= record-literal       ; conversion from high-level effect →
     `==` holds only of a File and itself
 - A `Set`'s key is its `==`, which itself depends on how the Set was built, so
   a key that is or holds a `Set` is E0233 too
+- A `Decoder` has no `==` ([§1.9.4](#_1-9-4-operator-types)), and a key keeps
+  none of the check a `Decoder.Json(T)` is, so a key that is or holds a
+  `Decoder` is E0233 too
 - Every other type is a key: a `Text`, `Int`, `Bool`, `Time`, `Bytes`,
   `EffectId` or `Unit`, a `nominal` or refinement over one, and a record,
   tuple, `List`, `Map`, `Option`, `Result` or union built from them —
@@ -960,6 +967,8 @@ Since a `match` evaluates to one of its arms, it needs **an arm for every value 
 
 A `match` statement in a reducer body ([§1.6.1](#_1-6-1-syntax)) and a `match` in tile position ([§1.7.1](#_1-7-1-syntax)) are not values, and are not held to this: a statement `match` that no arm matches runs none of its arms, as an `if` statement without `else` runs nothing on a false condition, and a tile `match` that no arm matches renders an empty `text`.
 
+**A `match` that ends an arm takes every arm written after it.** Its arms go on for as long as a `|` follows, and the layout does not end them: line breaks and indentation are not read. In `match x with | Red -> match y with | Small -> 1 | Large -> 2 | _ -> 3`, `| _ -> 3` is the third arm of `match y`, and `match x` has the one arm `Red`. The same holds wherever the inner `match` is the last thing written in the arm, for example the right operand of an operator, the operand of a prefix `-` or `!`, an `else` branch, the `then` of an `if` statement without `else`, a `let … in` body, the body of a `for` written without braces, the right-hand side of a statement (`n := match …`, `let v = match …`), or the last statement of an arm. To give the arms after it to the outer `match`, close the inner one off before them. As a value, put it in parentheses: `| Red -> (match y with | Small -> 1 | Large -> 2) | _ -> 3`. As a statement, put the arm's statements in braces, ending with the inner `match`: `| Red -> { m := 0  match s with | Small -> n := 1 | Large -> n := 2 } | _ -> n := 3`. Braces open a block only at the start of an arm's body, so they go around all of its statements, not the inner `match` alone. A tile has no parentheses, so move the inner `match` into a tile of its own and name that tile in the arm. An arm the inner `match` takes after its arms above already match every value can never be reached, and `check` warns at the first such arm ([W0219](./errors.md#w0219-unreachable-nested-arm-warning) says when). A value `match` that this leaves without an arm for some of its values is [E0227](./errors.md#e0227-non-exhaustive-match), and its message then says that the `match` ending its last arm takes the arms written after it.
+
 ### 1.9.1 Prohibitions
 
 - **Lambda expressions prohibited**
@@ -1052,6 +1061,18 @@ the reading every rule in the check keeps.
 
 `EffectId` is outside this table: only `==` and `!=` apply to it
 ([E0204](./errors.md#e0204-effect-id-misuse)).
+
+`Decoder` is outside it too: no operator applies to a `Decoder`, nor `==` and
+`!=` to a value that holds one. A `Decoder.Json(T)` is its `T`'s check, or one
+value for every `T` that carries none, so `Decoder.Json(Int) == Decoder.Json(Text)`
+would be `true` and `Decoder.Json(Email) == Decoder.Json(Text)` `false`. Each
+is [E0201](./errors.md#e0201-type-mismatch): `d == Decoder.Text` is
+`Operator "==" cannot compare Decoder with Decoder: a Decoder has no equality`,
+and on a `{d: Decoder}` the message names the type that holds it. Ask an
+`Option(Decoder)` `.is-some` or `.is-none`, and a `List(Decoder)` `.is-empty`.
+`List.contains` and `List.unique` ask the same question as `==` and are not
+refused on a `List` holding a `Decoder`; their answer there is not one a
+program may rely on.
 
 ---
 

@@ -13,6 +13,7 @@ import {
   checkSource,
   codesOf,
   locatedSummariesOf,
+  posOf,
   reservedTypeNameMessage,
 } from "./helpers/diagnostics.ts";
 import { appliedName } from "./helpers/programs.ts";
@@ -194,9 +195,10 @@ describe("a use of a reserved name keeps the standard library's type", () => {
 effect load cap=storage.read in=Unit out=Result(Option(Text), Text) map-request={key: "k", decode: "TEXT"}
 tile App = column(text("x"))
 app A caps=[storage.read] routes={"/" -> App, "/404" -> App} init=[]`;
+    const { line, col } = posOf(src, '"TEXT"');
     expect(locatedSummariesOf(src)).toEqual([
       `E0231 1:1 ${reservedTypeNameMessage("Decoder")}`,
-      "E0201 2:100 Expected Decoder but got Text",
+      `E0201 ${line}:${col} Expected Decoder but got Text`,
     ]);
   });
 
