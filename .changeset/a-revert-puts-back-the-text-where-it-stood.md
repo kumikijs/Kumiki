@@ -14,9 +14,12 @@ everything else, with their spacing gone.
 `replace` and `edit` now record the definition's text before the op as `prev`,
 and `remove` records, for each definition it deletes, its text, the definition
 it followed (`after`) and how many lines lay between the two (`gap`).
-`patch revert` writes that text back in place, so reverting the latest op
+`patch revert` writes that text back in place, together with any blank or
+comment lines the op's body or patch ended with, so reverting the latest op
 leaves the file as it was before it. A removed definition goes back `gap` lines
-after the one it followed, under that one's name now; right before the next
-definition when fewer lines lie between them now; and at the end of the file,
-as `add` writes one, when the one it followed is gone. Ops logged without the
-text revert as before.
+after the one it followed, under the name renames have given that one since;
+right above the next definition and its comment lines when fewer lines lie
+between them now; and, when the one it followed was removed too, where that one
+stood, so removes go back where they stood in either order. It goes at the end
+of the file, as `add` writes one, only when nothing recorded where the one it
+followed stood. Ops logged without the text revert as before.

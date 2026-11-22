@@ -1,6 +1,6 @@
-import { isOpaque, recordFieldType, unaliasType } from "../assignable.ts";
+import { assignable, isOpaque, recordFieldType, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, KeyKind, Pos, TypeExpr } from "../ast.ts";
-import { FIELD_ACCESS_SHORTCUTS, METHOD_MIN_ARGS } from "../codegen.ts";
+import { FIELD_ACCESS_SHORTCUTS, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
 import { keyRepresentation } from "../key-representation.ts";
 import {
   type FragmentArgument,
@@ -15,7 +15,7 @@ import {
   UNIVERSAL_MEMBERS,
 } from "../stdlib-members.ts";
 import { STDLIB_TYPES } from "../stdlib-types.ts";
-import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
+import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
 import { inferType, primFieldType, typeName } from "./infer.ts";
 
 type MemberClass = "field" | "member" | "unknown" | "undecidable";
@@ -29,12 +29,57 @@ export function classifyMember(raw: TypeExpr | null, field: string, sym: SymbolT
     return UNIVERSAL_MEMBERS.has(field) ? "member" : "unknown";
   }
 
+  if (t.kind === "TypeUnion") return unionMember(t, field, sym);
+
   const receivers = memberReceivers(raw, t, sym);
   if (receivers === null) return "undecidable";
 
   if (t.kind === "TypePrim" && primFieldType(t.name, field) !== null) return "field";
 
   return receivers.some((r) => hasMember(r, field)) ? "member" : "unknown";
+}
+
+/**
+ * A union has no fields, and a member dispatches by name on the variant the value holds (a
+ * program's union may name a variant `Ok` or `Some`, which `.is-ok` / `.get` read by its tag), so a
+ * runtime member name is left undecided. Any other name is a field step no variant answers, except
+ * one a payload may declare, which is left undecided until what such a step answers is settled.
+ */
+function unionMember(
+  t: TypeExpr & { kind: "TypeUnion" },
+  field: string,
+  sym: SymbolTable,
+): MemberClass {
+  if (KNOWN_METHODS.has(field)) return "undecidable";
+  return somePayloadDeclares(t, field, sym) ? "undecidable" : "unknown";
+}
+
+/**
+ * A member is never a step of a path but `.get` (language.md), and a union has no fields, so a
+ * write through a runtime member name on a union has no place to land. A name a payload may
+ * declare is left undecided, as it is on the read side.
+ */
+export function isUnionMemberWrite(raw: TypeExpr | null, field: string, sym: SymbolTable): boolean {
+  const t = unaliasType(raw, sym);
+  if (t?.kind !== "TypeUnion" || field === "get" || !KNOWN_METHODS.has(field)) return false;
+  return !somePayloadDeclares(t, field, sym);
+}
+
+function somePayloadDeclares(
+  t: TypeExpr & { kind: "TypeUnion" },
+  field: string,
+  sym: SymbolTable,
+): boolean {
+  return t.variants.some((v) => v.payloads.some((p) => payloadDeclares(p, field, sym)));
+}
+
+function payloadDeclares(payload: TypeExpr, field: string, sym: SymbolTable): boolean {
+  const t = unaliasType(payload, sym);
+  // A payload whose type is not known could declare anything.
+  if (t === null || t.kind === "TypeRef") return true;
+  // A union declares no fields. Judging one with `classifyMember` would come back here, and on a
+  // union that holds itself (`type T = Node(T) | Leaf`) it would never stop.
+  return t.kind !== "TypeUnion" && classifyMember(payload, field, sym) === "field";
 }
 
 export function memberReceivers(
@@ -81,7 +126,9 @@ export function undefMemberError(
   const head =
     t.kind === "TypeRecord"
       ? `Record type has no field or method ".${field}"`
-      : `Type "${receiverName(raw, t, sym)}" has no member ".${field}"`;
+      : t.kind === "TypeUnion"
+        ? `Type "${typeToString(raw ?? t)}" has no member ".${field}" — a union has no fields; read a variant's payload with a match`
+        : `Type "${receiverName(raw, t, sym)}" has no member ".${field}"`;
   const owners = receiversOf(field);
   return {
     code: "E0108",
@@ -111,6 +158,14 @@ export function keyKindOfReader(
   return rep === "text" || rep === null ? undefined : rep;
 }
 
+// The type parameter each receiver stores as object keys, which a Map's `filter` / `map` and a
+// Set's `filter` hand the fragment as an entry's key: a Map's key, and a Set's member, whose
+// entry's value is `true`.
+const KEYED: ReadonlyMap<string, FragmentPositional> = new Map([
+  ["Map", "K"],
+  ["Set", "T"],
+]);
+
 export function fragmentBindings(
   recv: TypeExpr | null,
   call: Expr & { kind: "MethodCall" },
@@ -127,7 +182,61 @@ export function fragmentBindings(
     ];
   }
   const only = positionalType(row[0], app, call, sym, ctx);
-  return found.fragment.second === "pair-value" ? pairOrElement(only, sym) : [only, null];
+  return found.fragment.second === "pair-value" && !KEYED.has(app.name)
+    ? pairOrElement(only, sym)
+    : [only, null];
+}
+
+/** How many times `accumulatorType` reads the fragment, each time with the type it widened to. */
+const ACCUMULATOR_READINGS = 4;
+
+/**
+ * `fold`'s accumulator: the fragment's result type where only the init's type fits it (an `Int`
+ * init answered a `Float`) or where it fills a hole the init's type leaves (`[]` answered a
+ * `List(Int)`), otherwise the init's type, so a tie or a mismatch keeps what the init gives. A
+ * widened type is the next `$1`, so the fragment is read again with it until it answers no wider
+ * one, at most `ACCUMULATOR_READINGS` times. `null` when the init has no type.
+ */
+export function accumulatorType(
+  init: TypeExpr | null,
+  elem: TypeExpr | null,
+  body: Expr,
+  sym: SymbolTable,
+  ctx: Ctx,
+): TypeExpr | null {
+  if (init === null) return null;
+  let acc = init;
+  for (let reading = 0; reading < ACCUMULATOR_READINGS; reading++) {
+    const scope = innerScope(ctx);
+    bindLocal(scope, "$1", acc);
+    bindLocal(scope, "$2", elem);
+    const result = inferType(body, sym, scope);
+    if (result === null || !assignable(acc, result, sym)) return acc;
+    const widens = !assignable(result, acc, sym) || holes(result) < holes(acc);
+    if (!widens) return acc;
+    acc = result;
+  }
+  return acc;
+}
+
+/** How many `?` a type leaves undecided. */
+function holes(t: TypeExpr): number {
+  const sum = (ts: readonly TypeExpr[]) => ts.reduce((n, inner) => n + holes(inner), 0);
+  switch (t.kind) {
+    case "TypePrim":
+      return 0;
+    case "TypeRef":
+      return t.name === "?" ? 1 : 0;
+    case "TypeApp":
+      return sum(t.args);
+    case "TypeRecord":
+      return sum(t.fields.map((f) => f.type));
+    case "TypeUnion":
+      return sum(t.variants.flatMap((v) => v.payloads));
+    case "TypeNominal":
+    case "TypeRefinement":
+      return holes(t.inner);
+  }
 }
 
 function fragmentRow(
@@ -148,9 +257,9 @@ function fragmentRow(
 }
 
 /**
- * A key is typed only when it reads back as a value of `K`: a type parameter or
- * a `Bytes` key is handed over as the string it is stored under. `{}` as a
- * fold's init infers to nothing, being the empty Map and the empty Set alike.
+ * A Map's key or a Set's member is typed only when it reads back as a value of its type: a type
+ * parameter or a `Bytes` one is handed over as the string it is stored under. `{}` as a fold's
+ * init infers to nothing, being the empty Map and the empty Set alike.
  */
 function positionalType(
   p: FragmentPositional,
@@ -159,18 +268,12 @@ function positionalType(
   sym: SymbolTable,
   ctx: Ctx,
 ): TypeExpr | null {
-  switch (p) {
-    case "Acc": {
-      const init = call.args[0];
-      return init === undefined ? null : inferType(init, sym, ctx);
-    }
-    case "K": {
-      const key = app.args[TYPE_ARGUMENT_OF.K] ?? null;
-      return keyRepresentation(key, sym) === null ? null : key;
-    }
-    default:
-      return app.args[TYPE_ARGUMENT_OF[p]] ?? null;
+  if (p === "Acc") {
+    const init = call.args[0];
+    return init === undefined ? null : inferType(init, sym, ctx);
   }
+  const arg = app.args[TYPE_ARGUMENT_OF[p]] ?? null;
+  return KEYED.get(app.name) === p && keyRepresentation(arg, sym) === null ? null : arg;
 }
 
 export function fragmentShape(
@@ -184,6 +287,7 @@ export function fragmentShape(
   if (found === null || found.fragment.second !== "pair-value") return null;
   const { row } = found;
   if (row.length === 2) return "key-value";
+  if (KEYED.has(found.app.name)) return "key";
   return elementShape(positionalType(row[0], found.app, call, sym, ctx), sym).shape;
 }
 
@@ -248,7 +352,8 @@ export function classifyFieldAccess(
       return;
 
     case "undecidable":
-      // A union or an opaque type param → leave as shortcut, no diagnostic.
+      // A receiver whose type is not known, or a step on a union that a runtime member or a
+      // payload's field may answer: the name-based shortcut stays, with no diagnostic.
       return;
   }
 }

@@ -142,7 +142,7 @@ function withoutDefinition(store: Store, entry: DefEntry): string {
 export function removedText(
   store: Store,
   entry: DefEntry,
-): { text: string; after?: string; gap: number } {
+): { text: string; after?: string; gap: number; last?: true } {
   const before = store.defs[store.defs.indexOf(entry) - 1];
   const { startLine, endLine } = entry.range;
   return {
@@ -154,6 +154,8 @@ export function removedText(
     ...(before === undefined ? {} : { after: `${before.layer}.${before.name}` }),
     // None when it starts on the line the one before it ends on: it goes back on the next line.
     gap: Math.max(0, startLine - (before?.range.endLine ?? 0) - 1),
+    // A file that ends in a line break splits into one more line, an empty one.
+    ...(endLine === store.lines.length ? { last: true } : {}),
   };
 }
 
