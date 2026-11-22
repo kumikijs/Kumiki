@@ -60,6 +60,8 @@ comment     ::= '#' until-eol                    ; single-line comment only
 A `-` continues the identifier when an identifier character follows it, and ends it otherwise. `count- 1` is also subtraction, because there the `-` has nothing to continue into; `count -1` is subtraction because the space ended the name before the `-` was reached at all. A name written `count-1` that resolves to nothing is [E0103](./errors.md#e0103-undef-ref-undef-slot), and its message says so.
 :::
 
+**A negative literal's `-` touches its digits.** `-1` and `-40.0` are literals. Where the grammar takes only a literal — a refinement argument, a duration, a retry count or factor, a `theme` or `motion` value, a property-test `count` — `- 1` is a parse error at the `-`, whose message gives the literal to write. In an expression, `- 1` is unary `-` applied to `1`, which is `-1`.
+
 **A `#` with whitespace on either side of it always starts a comment.** It is the selector operator ([§1.6.1](#_1-6-1-syntax)) only in the tight form `SaveBtn#new`.
 
 ::: details The exact condition, and where a `#` still comments
