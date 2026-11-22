@@ -51,10 +51,14 @@ or holds a `Decoder` are E0201, and so are `List.contains` and `List.unique`
 on a `List` of one: `Decoder.Json(Int) == Decoder.Json(Text)` was `true`. A
 `Map` key or `Set` element type that is or holds one is E0204, as is a Map
 literal keyed by one, and a `latest-per-key` key E0233, since a key keeps
-none of the check a `Decoder.Json(T)` is.
+none of the check a `Decoder.Json(T)` is. A `Decoder.Json(T)` whose `T` is
+or holds a handle, a `Decoder` or an `EffectId`, is E0204 too, at each handle
+it writes: a JSON body holds data, and no body decodes into a handle only the
+runtime makes.
 
 Upgrade note: `Decoder` is reserved, like `Duration`, so a program's own
 `type Decoder` is E0231 and the name keeps the standard library's type. A
 `map-request` whose `decode` is not a decoder, and a `Decoder.*` value put
-where another type is declared, now fail `check`. The examples and the
-benchmark corpus produce no new diagnostic.
+where another type is declared, now fail `check`, and so does a
+`Decoder.Json(T)` whose `T` is or holds an `EffectId`, which used to pass. The
+examples and the benchmark corpus produce no new diagnostic.
