@@ -1,7 +1,7 @@
 import { perTable, type TypeEnv, typeToString } from "./assignable.ts";
 import { assertNever, type Pos, type TypeExpr } from "./ast.ts";
 import { expandNamed, GENERIC_SELF_NESTING_LIMIT, typeKey } from "./refinement-positions.ts";
-import { BUILTIN_TYPE_CONSTRUCTORS, type PrimName } from "./stdlib-types.ts";
+import { BUILTIN_TYPE_CONSTRUCTORS, OPAQUE_HANDLES, type PrimName } from "./stdlib-types.ts";
 import type { KumikiError } from "./typecheck/context.ts";
 
 /** A type that is a Decoder, or holds one somewhere inside. */
@@ -202,10 +202,9 @@ export function decoderKeyError(found: DecoderKey, pos: Pos, applied?: TypeExpr)
   };
 }
 
-// A JSON body holds data, and a Decoder is a check the compiler builds, so no body decodes into one.
-const UNDECODABLE: ReadonlySet<PrimName> = new Set<PrimName>(["Decoder"]);
-
-/** A handle no JSON body decodes into, which a type is or holds. */
+// A JSON body holds data, and an opaque handle is what only the runtime makes: an EffectId names one
+// dispatched effect, and a Decoder is a check the compiler builds. So no body decodes into one.
+/** An opaque handle a type is or holds, which no JSON body decodes into. */
 type Undecodable = HeldDecoder & { readonly handle: PrimName };
 
 // A Map key or a Set element holding a Decoder is refused wherever it is written, so the walks
@@ -217,14 +216,14 @@ function unkeyed(x: TypeApp, env: TypeEnv): readonly TypeExpr[] {
     : x.args;
 }
 
-/** The first handle no JSON body decodes into that `t` is or holds. */
+/** The first opaque handle that `t` is or holds. */
 function undecodable(t: TypeExpr, env: TypeEnv): Undecodable | undefined {
   return search(
     t,
     env,
     new Set(),
     (x, whole) =>
-      x.kind === "TypePrim" && UNDECODABLE.has(x.name) ? { whole, handle: x.name } : undefined,
+      x.kind === "TypePrim" && OPAQUE_HANDLES.has(x.name) ? { whole, handle: x.name } : undefined,
     (x) => unkeyed(x, env),
   );
 }

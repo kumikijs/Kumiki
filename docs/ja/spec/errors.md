@@ -753,7 +753,7 @@ builtin に、決して描画されない引数が書かれている。値 built
 
 型が `Decoder` である、または `Decoder` を持つ `Map` のキーや `Set` の要素も、その型が書かれた位置でこのエラーになる：キーは `Decoder.Json(T)` であるチェックを何も保たないので、`keys` や `to-list` から読み戻したものは入れたものではなく、`decode` として渡すとどの decode も行わない（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。`Set(Decoder)` はその `Decoder` の位置で、`Map({d: Decoder}, Int)` はキーの型の位置で報告され、`Decoder` に適用されたジェネリックは、その本体がパラメータでキーを作るとき適用の位置で報告される — `type Bag(T) = Set(T)` に対する `Bag(Decoder)`。本体そのものが `Decoder` でキーを作るものは定義の中で 1 回報告される。`{Decoder.Text: 1}` のように `Decoder` をキーとする Map リテラルは、宣言された型がそのリテラルを判定しない位置では、そのような最初のキーの位置で報告される。判定する位置では、その型自身の報告だけが残る：`Map(Decoder, Int)` は書かれた位置で拒否され、`Map(Text, Int)` はキーに `Expected Text but got Decoder` を与える。
 
-`Decoder.Json(T)` が decode する型の中のどこにある `Decoder` もこのエラーになる：JSON の本文はデータを持ち、`Decoder` はコンパイラが組み立てるチェックなので、どの本文もそれには decode されない（[HTTP §6.1.4](./http.md#_6-1-4-decoder-型)）。`T` が書く 1 つ 1 つが、書かれた位置で 1 回ずつ報告される：`Decoder.Json(Decoder)` と `Decoder.Json({d: Decoder})` はその `Decoder` の位置で、`List`・`Option`・`Map` の値・`Tuple`・`Result` の中でも同じであり、`Decoder` を持つエイリアスやジェネリックはその名前の位置で報告される — `type Holder = {d: Decoder}` に対する `Holder`、`type Box(T) = {v: T}` に対する `Box(Decoder)`。そこで `Decoder` を持つ `Map` のキーや `Set` の要素には、上記のキーの報告だけが残る。
+`Decoder.Json(T)` が decode する型の中のどこにあるハンドル（`EffectId` か `Decoder`）もこのエラーになる：JSON の本文はデータを持ち、ハンドルはランタイムだけが作るもの —— `EffectId` は 1 つの dispatch された effect を指し、`Decoder` はコンパイラが組み立てるチェックである —— なので、どの本文もそれには decode されない（[HTTP §6.1.4](./http.md#_6-1-4-decoder-型)）。`T` が書く 1 つ 1 つが、書かれた位置で 1 回ずつ報告される：`Decoder.Json(Decoder)`・`Decoder.Json(EffectId)`・`Decoder.Json({d: Decoder})` はそのハンドルの位置で、`List`・`Option`・`Map` の値・`Tuple`・`Result` の中でも同じであり、ハンドルを持つエイリアスやジェネリックはその名前の位置で報告される — `type Holder = {d: Decoder}` に対する `Holder`、`type Box(T) = {v: T}` に対する `Box(EffectId)`。そこで `Decoder` を持つ `Map` のキーや `Set` の要素には、上記のキーの報告だけが残る。`EffectId` である、または `EffectId` を持つキーは、ほかの位置ではキーになれるので、ここで報告される：`Map(EffectId, Int)` はその `EffectId` の位置で報告される。
 
 > `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`
 > `<builtin>(...) cannot render <handle> — it is an opaque handle`
@@ -763,10 +763,10 @@ builtin に、決して描画されない引数が書かれている。値 built
 > `A <Map key | Set element> of type <T> cannot hold a Decoder — it is an opaque handle`
 > `<G>: a Decoder cannot be a <Map key | Set element> — it is an opaque handle`
 > `<G>: a <Map key | Set element> of type <T> cannot hold a Decoder — it is an opaque handle`
-> `A Decoder cannot be decoded from JSON — it is an opaque handle`
-> `<N> holds a Decoder, which cannot be decoded from JSON — it is an opaque handle`
+> `<A Decoder | An EffectId> cannot be decoded from JSON — it is an opaque handle`
+> `<N> holds <a Decoder | an EffectId>, which cannot be decoded from JSON — it is an opaque handle`
 
-`<builtin>` はハンドルを描画する呼び出しを書かれたとおりに示す：`text`、`heading`、`button`、…、または `fmt`。`<handle>` は `EffectId` か `Decoder`、`<G>` は `Bag(Decoder)` のようなジェネリックの適用、`<N>` は `T` が書くエイリアスかジェネリックの適用（`Holder` や `Box(Decoder)` など）である。
+`<builtin>` はハンドルを描画する呼び出しを書かれたとおりに示す：`text`、`heading`、`button`、…、または `fmt`。`<handle>` は `EffectId` か `Decoder`、`<G>` は `Bag(Decoder)` のようなジェネリックの適用、`<N>` は `T` が書くエイリアスかジェネリックの適用（`Holder` や `Box(EffectId)` など）で、それが持つ最初のハンドルを示す。
 
 **修正**: `EffectId.none` との `==` / `!=` 比較に置き換えるか、cancel 用 effect に渡す。ハンドルを保持しているかどうかを表示するには、比較の答えを描画する —— `text(if h == EffectId.none then "idle" else "loading")`、または `(h != EffectId.none).show`。詳細は [EffectId](./stdlib.md#_2-1-1-1-effectid)。`Decoder` については、それを選んだもの — `fn` が decoder を選ぶ元のフラグや名前 — を代わりに描画し、それでキーを作り、それを JSON から decode して decoder を選ぶ。
 

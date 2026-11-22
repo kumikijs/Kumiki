@@ -464,9 +464,11 @@ tile App = text("x")`);
   });
 });
 
-describe("a Decoder in the type Decoder.Json decodes is E0204", () => {
+describe("an opaque handle in the type Decoder.Json decodes is E0204", () => {
   const DEFS = `type Dec = Decoder
+type Eid = EffectId
 type Holder = {d: Decoder}
+type IdHolder = {e: EffectId}
 type Box(T) = {v: T}
 type Note = {title: Text}
 type Phantom(T) = Int`;
@@ -478,8 +480,9 @@ type Phantom(T) = Int`;
     return `${line}:${col + "Decoder.Json(".length + type.indexOf(part)}`;
   };
   const WHOLE = "A Decoder cannot be decoded from JSON — it is an opaque handle";
-  const held = (type: string): string =>
-    `${type} holds a Decoder, which cannot be decoded from JSON — it is an opaque handle`;
+  const WHOLE_ID = "An EffectId cannot be decoded from JSON — it is an opaque handle";
+  const held = (type: string, handle = "a Decoder"): string =>
+    `${type} holds ${handle}, which cannot be decoded from JSON — it is an opaque handle`;
 
   it.each([
     ["a Decoder", "Decoder", "Decoder", WHOLE],
@@ -492,6 +495,23 @@ type Phantom(T) = Int`;
     ["an alias of one", "Dec", "Dec", WHOLE],
     ["an alias holding one", "Holder", "Holder", held("Holder")],
     ["a generic applied to one", "Box(Decoder)", "Box(Decoder)", held("Box(Decoder)")],
+    ["an EffectId", "EffectId", "EffectId", WHOLE_ID],
+    ["a List of EffectIds", "List(EffectId)", "EffectId", WHOLE_ID],
+    ["an Option of an EffectId", "Option(EffectId)", "EffectId", WHOLE_ID],
+    ["a Map to EffectIds", "Map(Text, EffectId)", "EffectId", WHOLE_ID],
+    ["a Map keyed by EffectIds", "Map(EffectId, Int)", "EffectId", WHOLE_ID],
+    ["a Set of EffectIds", "Set(EffectId)", "EffectId", WHOLE_ID],
+    ["an EffectId record field", "{e: EffectId}", "EffectId", WHOLE_ID],
+    ["an EffectId Tuple part", "Tuple(Int, EffectId)", "EffectId", WHOLE_ID],
+    ["an EffectId Result's success", "Result(EffectId, Text)", "EffectId", WHOLE_ID],
+    ["an alias of an EffectId", "Eid", "Eid", WHOLE_ID],
+    ["an alias holding an EffectId", "IdHolder", "IdHolder", held("IdHolder", "an EffectId")],
+    [
+      "a generic applied to an EffectId",
+      "Box(EffectId)",
+      "Box(EffectId)",
+      held("Box(EffectId)", "an EffectId"),
+    ],
   ])("refuses %s, where it is written", (_what, type, part, message) => {
     const src = json(type);
     expect(locatedSummariesOf(src)).toEqual([`E0204 ${at(src, type, part)} ${message}`]);
@@ -503,6 +523,15 @@ type Phantom(T) = Int`;
     expect(locatedSummariesOf(src)).toEqual([
       `E0204 ${at(src, type, "Decoder")} ${WHOLE}`,
       `E0204 ${at(src, type, "Decoder)")} ${WHOLE}`,
+    ]);
+  });
+
+  it("refuses a Decoder and an EffectId one type writes, each once", () => {
+    const type = "{d: Decoder, e: EffectId}";
+    const src = json(type);
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0204 ${at(src, type, "Decoder")} ${WHOLE}`,
+      `E0204 ${at(src, type, "EffectId")} ${WHOLE_ID}`,
     ]);
   });
 
@@ -535,6 +564,7 @@ type Phantom(T) = Int`;
     ["a record", "Note"],
     ["a List of them", "List(Note)"],
     ["a generic that holds none of its argument", "Phantom(Decoder)"],
+    ["a generic that holds none of an EffectId", "Phantom(EffectId)"],
   ])("takes %s", (_what, type) => {
     expect(locatedSummariesOf(json(type))).toEqual([]);
   });
