@@ -1,7 +1,7 @@
 import { nearestName } from "@kumikijs/runtime/text-distance";
 import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
-import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
+import { isQualifierName, RUN_REDUCER, visitDecodedParts } from "../builtin-calls.ts";
 import { fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
 import { showShapeOf } from "../show-shape.ts";
 import {
@@ -53,6 +53,7 @@ import {
   qualifiedMember,
 } from "./infer.ts";
 import {
+  accumulatorType,
   classifyFieldAccess,
   classifyMember,
   fragmentBindings,
@@ -63,12 +64,14 @@ import {
 } from "./members.ts";
 import { laterDeclaration } from "./nested-scopes.ts";
 import {
+  checkArmsAfterNestedMatch,
   checkMatchCovers,
   checkPatternAgainstType,
   checkPatternBindsAreDistinct,
   matchedType,
 } from "./patterns.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
+import { resolveType } from "./types.ts";
 
 /** The type one iteration of `for x in iter` binds, given the iterated expression. */
 export function elementTypeOf(iter: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
@@ -276,13 +279,15 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         return;
       }
       if (e.name === "$2" && ctx.oneValueFragment !== undefined) {
-        const { method, hides } = ctx.oneValueFragment;
+        const { method, hides, shape } = ctx.oneValueFragment;
         errors.push({
           code: "E0103",
           kind: "undef-ref",
           message: hides
             ? `"$2" is not bound here — the .${method} fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
-            : `"$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
+            : shape === "key"
+              ? `"$2" is not bound here — ${wholeMember(method)}`
+              : `"$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over ${PAIR_BINDERS}`,
           pos: e.pos,
         });
         return;
@@ -395,18 +400,17 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkIndexStep(inferType(e.base, sym, ctx), e.index, "read", e.index.pos, sym, errors, ctx);
       return;
     }
-    case "Call":
+    case "Call": {
       if (ctx.kind === "test" && e.callee === RUN_REDUCER && isBuiltinCall(e.callee, sym)) {
         reportRunReducerPosition(ctx, e.pos, errors);
         return;
       }
-      for (const a of e.args) {
-        if (e.callee === "Decoder.Json") checkTypeSpelling(a, sym, errors, ctx);
-        else checkExpr(a, sym, errors, ctx);
-      }
+      if (e.callee === "Decoder.Json") checkDecodedArgs(e.args, sym, errors, ctx);
+      else for (const a of e.args) checkExpr(a, sym, errors, ctx);
       checkCallee(e.callee, e.args, e.pos, sym, errors, ctx);
       for (const a of shownArgs(e)) noteShown(a, sym, ctx);
       return;
+    }
     case "MethodCall": {
       // The chained spelling of the same thing: `run-reducer(inc).run-reducer(dec)`.
       if (ctx.kind === "test" && e.method === RUN_REDUCER && isBuiltinCall(e.method, sym)) {
@@ -479,12 +483,16 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             body = fragmentCall(a.name, arity, a.pos);
           }
           const [p1, p2] = fragmentBindings(recvType, e, sym, ctx);
+          // `fold`'s fragment answers the next `$1`, so `$1` and its result share the
+          // accumulator's type.
+          const acc =
+            fragment.second === "element" ? accumulatorType(p1, p2, body, sym, ctx) : null;
           const inner = innerScope(ctx);
-          bindLocal(inner, "$1", p1);
-          if (shape === "value") {
+          bindLocal(inner, "$1", acc ?? p1);
+          if (shape === "value" || shape === "key") {
             inner.localBinds.delete("$2");
             inner.localTypes.delete("$2");
-            inner.oneValueFragment = { method: e.method, hides: ctx.localBinds.has("$2") };
+            inner.oneValueFragment = { method: e.method, hides: ctx.localBinds.has("$2"), shape };
           } else if (fragmentBinds(fragment) === 2) {
             bindLocal(inner, "$2", p2);
           }
@@ -492,7 +500,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
           if (e.method === "sort-by" && i === 0) {
             checkSortKey(inferType(body, sym, inner), a.pos, recvType, sym, errors);
           }
-          const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
+          const declared = acc ?? memberArgType(recvType, e.method, i, e.args.length, sym);
           if (declared !== null) checkAgainst(body, declared, sym, errors, inner);
         }
       }
@@ -539,7 +547,10 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         if (errors.length > before) patternsFit = false;
         checkExpr(arm.body, sym, errors, inner);
       });
-      if (patternsFit) checkMatchCovers(e, scrutType, sym, errors);
+      if (patternsFit) {
+        checkMatchCovers(e, scrutType, sym, errors);
+        checkArmsAfterNestedMatch(e, "value", scrutType, sym, errors);
+      }
       return;
     }
     case "IfExpr":
@@ -586,19 +597,22 @@ function didYouMean(written: string, candidates: Iterable<string>): string {
   return near === null ? "" : ` — did you mean "${near}"?`;
 }
 
-// `Decoder.Json(T)` takes a type written in expression position, so its
-// capitalised names are a type's and not tags; codegen reads them back as one.
-function checkTypeSpelling(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  if (e.kind === "Variant") {
-    for (const p of e.payload) checkTypeSpelling(p, sym, errors, ctx);
-    return;
-  }
-  if (e.kind === "RecordLit") {
-    for (const f of e.fields) checkTypeSpelling(f.value, sym, errors, ctx);
-    return;
-  }
-  checkExpr(e, sym, errors, ctx);
+// Codegen decodes by the first argument, which parses as a value, so each part of it that spells a
+// type is resolved as one. An argument after the first is E0213: its capitalised names are left
+// unreported rather than read as variant tags.
+function checkDecodedArgs(
+  args: readonly Expr[],
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const [first, ...rest] = args;
+  const value = (v: Expr): void => checkExpr(v, sym, errors, ctx);
+  visitDecodedParts(first, (t) => resolveType(t, sym, errors), value);
+  for (const a of rest) visitDecodedParts(a, leftToTheCount, value);
 }
+
+const leftToTheCount = (): void => undefined;
 
 function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { kind: "Ref" } {
   return (
@@ -631,13 +645,26 @@ function checkFragmentFnArity(
   if (n > fragmentBinds(fragment)) {
     return report(`.${method} supplies at most ${fragmentBinds(fragment)}`);
   }
-  if (n === 2 && (shape === "value" || shape === null)) {
+  if (n === 2 && (shape === "value" || shape === "key" || shape === null)) {
     const on = receiver ? ` on "${typeToString(receiver)}"` : "";
-    return report(
-      `.${method}${on} supplies 1 — a second positional is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
-    );
+    const why =
+      shape === "key"
+        ? wholeMember(method)
+        : `a second positional is bound only over ${PAIR_BINDERS}`;
+    return report(`.${method}${on} supplies 1 — ${why}`);
   }
   return true;
+}
+
+/** The fragments that bind a second positional, as E0103 and E0213 name them. */
+const PAIR_BINDERS = "a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)";
+
+/**
+ * What a Set's fragment is handed instead of a second positional. A member that is itself a pair
+ * is handed whole too, so pointing at pairs would send the reader the wrong way.
+ */
+function wholeMember(method: string): string {
+  return `a Set's .${method} hands each member whole, as "$1"`;
 }
 
 const COMPARISON_OPS: ReadonlySet<string> = new Set(["<", ">", "<=", ">="]);

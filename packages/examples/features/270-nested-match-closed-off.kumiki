@@ -1,0 +1,70 @@
+# Feature (language.md): a `match` that ends an arm takes every arm written
+# after it, so the outer `match` gets its next arm only once the inner one is
+# closed off.
+#
+#   match x with | Red -> match y with | Small -> 1 | Large -> 2 | _ -> 3
+#
+# Here `| _ -> 3` is the third arm of `match y`, whatever the layout, and
+# `check` warns at it (W0219): it can never be reached after `Small` and
+# `Large`, and the warning says how to give it to `match x`. Each form is
+# closed off its own way:
+#
+#   value      | Red -> (match y with | Small -> 1 | Large -> 2) | _ -> 3
+#   statement  | Red -> { m := 0  match s with | Small -> n := 1 | Large -> n := 2 } | _ -> n := 3
+#   tile       | Red -> BySize | _ -> text("3")    # the inner match in a tile of its own
+#
+# A statement's braces go around all of the arm's statements, ending with the
+# inner match, since braces open a block only at the start of an arm's body.
+#
+# With `c = Green` and `s = Small`, every form below takes the outer `_` arm.
+# Once `RedLarge` sets `c = Red` and `s = Large`, every form takes the inner
+# match's `Large` arm.
+
+type Color = Red | Green | Blue
+type Size = Small | Large
+
+slot c         : Color = Green
+slot s         : Size  = Small
+slot asValue   : Int   = 0
+slot asStmt    : Int   = 0
+slot reds      : Int   = 0
+
+fn pick(x: Color, y: Size) -> Int =
+    match x with
+    | Red -> (match y with | Small -> 1 | Large -> 2)
+    | _ -> 3
+
+reducer redLarge on=ui.click(RedLarge)
+    do= c := Red
+        s := Large
+
+reducer go on=ui.click(Go)
+    do= asValue := pick(c, s)
+        match c with
+        | Red -> {
+            reds := reds + 1
+            match s with
+            | Small -> asStmt := 1
+            | Large -> asStmt := 2
+          }
+        | _ -> asStmt := 3
+
+tile BySize = match s with | Small -> text("tile: 1") | Large -> text("tile: 2")
+
+tile ByColor = match c with | Red -> BySize | _ -> text("tile: 3")
+
+tile Go = button(text="go") {id: "go"}
+
+tile RedLarge = button(text="red, large") {id: "red-large"}
+
+tile App = column(
+  Go,
+  RedLarge,
+  text("value: " + asValue.show),
+  text("statement: " + asStmt.show),
+  ByColor)
+
+app NestedMatchClosedOff
+  caps   = []
+  routes = {"/" -> App, "/404" -> App}
+  init   = []
