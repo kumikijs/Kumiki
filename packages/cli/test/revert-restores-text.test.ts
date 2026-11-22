@@ -119,17 +119,14 @@ describe("patch revert of an op on definitions written by hand", () => {
     expect(read(file)).toBe(renamed(seedCopy(EXAMPLE), qname, to));
   });
 
-  it("fails when the recorded text cannot take the name a rename has given since, writing nothing", () => {
+  it("puts the text back under the name a rename has given since, when that name is on the line after its keyword", () => {
     const file = seed("slot\n    count : Int = 0\n");
     const opId = replaceDef(file, "slot.count", "Int = 5").opId;
     renameDef(file, "slot.count", "total");
-    const before = snapshot(file);
 
-    expect(() => patchRevert(file, opId)).toThrowError(
-      "patch revert: cannot rename slot.count to total in the text the log recorded for it; nothing was written",
-    );
+    patchRevert(file, opId);
 
-    expect(snapshot(file)).toEqual(before);
+    expect(read(file)).toBe("slot\n    total : Int = 0\n");
   });
 
   it.each([
