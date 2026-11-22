@@ -27,9 +27,9 @@ the size it inherits. Now:
 ```
 $ kumiki check app.kumiki
 error E0239 negative-theme-length at 2:20: theme "T": radius "soft" is -4, but a radius token is 0 or more — radius drops a negative length; write a length of 0 or more (see docs/spec/style.md)
-error E0239 negative-theme-length at 3:31: theme "T": typography size "tiny" is -4, but a font size token is 0 or more — size drops a negative size; write a size of 0 or more (see docs/spec/style.md)
+error E0239 negative-theme-length at 3:31: theme "T": typography size "tiny" is -4, but a font size token is 0 or more — size drops a negative font size; write a font size of 0 or more (see docs/spec/style.md)
 ```
 
 0 is in range: `square: 0` rounds nothing, and a font size of 0 hides the
 text. A string is not read, so `soft: "-4px"` still passes, and the rest of
-`typography` (`weight`, `line-height`) is not checked.
+`typography` (`family`, `weight`, `line-height`) is not checked.

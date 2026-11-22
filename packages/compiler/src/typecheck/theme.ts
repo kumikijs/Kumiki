@@ -21,7 +21,7 @@ const NON_NEGATIVE: readonly NonNegativeSection[] = [
   {
     section: ["typography", "size"],
     describe: (theme, key, n) =>
-      `theme "${theme}": typography size "${key}" is ${n}, but a font size token is 0 or more — size drops a negative size; write a size of 0 or more (see docs/spec/style.md)`,
+      `theme "${theme}": typography size "${key}" is ${n}, but a font size token is 0 or more — size drops a negative font size; write a font size of 0 or more (see docs/spec/style.md)`,
   },
   {
     section: ["breakpoints"],
@@ -30,7 +30,7 @@ const NON_NEGATIVE: readonly NonNegativeSection[] = [
   },
 ];
 
-/** The section `path` names an entry of directly, if it is one whose entries are 0 or more. */
+/** The checked section that `path` is a direct entry of, if any. */
 function nonNegativeSectionOf(path: readonly string[]): NonNegativeSection | undefined {
   return NON_NEGATIVE.find(
     ({ section }) =>

@@ -15,9 +15,9 @@ const radiusMessage = (theme: string, key: string, n: number): string =>
   `theme "${theme}": radius "${key}" is ${n}, but a radius token is 0 or more — radius drops a negative length; write a length of 0 or more (see docs/spec/style.md)`;
 
 const sizeMessage = (theme: string, key: string, n: number): string =>
-  `theme "${theme}": typography size "${key}" is ${n}, but a font size token is 0 or more — size drops a negative size; write a size of 0 or more (see docs/spec/style.md)`;
+  `theme "${theme}": typography size "${key}" is ${n}, but a font size token is 0 or more — size drops a negative font size; write a font size of 0 or more (see docs/spec/style.md)`;
 
-/** `themes`, the first of them `T`, under an app whose root reads a token from each checked section. */
+/** `themes`, the first of them `T`, under an app whose tiles read a token from each checked section. */
 const program = (themes: string): string => `${themes}
 
 tile App = column(text("hi") {size: "tiny"}) {pad: "nudge", gap: {base: "sm", md: "lg"}, radius: "soft"}
@@ -104,6 +104,9 @@ describe("a negative spacing token, radius, font size or breakpoint width is E02
     ["a typography entry other than size", "typography: {weight: {thin: -100}, line-height: -1}"],
     ["a section named by a quoted key holding a dot", '"typography.size": {tiny: -4}'],
     ["a negative number for a section itself", "radius: -4"],
+    ["a negative number for the typography size section itself", "typography: {size: -4}"],
+    ["a size section outside typography", "size: {tiny: -4}"],
+    ["a radius nested in another section", "custom: {radius: {soft: -4}}"],
     ["a radius of -0", "radius: {square: -0}"],
     ["a font size of -0", "typography: {size: {hidden: -0}}"],
   ])("leaves %s alone", (_what, section) => {
