@@ -3,10 +3,6 @@ import { isUnwrapStep, type PathStep, UNWRAP_SEGMENT } from "./codegen/path-segm
 
 export type BindStep = Expr & { kind: "FieldAccess" | "Index" | "MethodCall" };
 
-/**
- * The checker and the lowering both read a target through `bindTarget`, so the
- * root the checker asks to be a slot is the one the lowering writes.
- */
 export type BindTarget = {
   root: Expr;
   steps: BindStep[];
@@ -14,6 +10,11 @@ export type BindTarget = {
   path: PathStep[] | null;
 };
 
+/**
+ * The checker and the lowering both read a target through `bindTarget`, so the
+ * root and steps the checker judges are the ones the lowering emits, for a
+ * `bind=` target and an `error(field=…)` path alike.
+ */
 export function bindTarget(value: Expr): BindTarget {
   const steps: BindStep[] = [];
   let cur = value;

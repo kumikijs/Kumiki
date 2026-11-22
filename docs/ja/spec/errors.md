@@ -48,7 +48,7 @@ type KumikiError = {
 |---|---|---|
 | `E0001` | あり | app 自身の `routes` に `"/404" -> NotFound` を追加する（tile の `sub-routes` には追加しない）。`NotFound` tile は、プログラムがまだ定義していなければ挿入する。パッチを出すのは `missing-404` だけである。app に `routes` 節がないとき、`404-is-redirect`（リダイレクトを置き換えて直すもので、その隣にエントリを追加すれば `/404` が 2 つになる：`E0008`）、および `404-in-sub-routes`（エントリを削除して直すもの）にはパッチを出さない。 |
 | `E0102` | あり | 既知の reducer 名に対する近傍名の提案（Levenshtein ≤ 2 または ≤ 25%）。 |
-| `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。名前を宣言したスコープ — reducer の `if` の枝・`for` の本体・match arm、`let … in` の本体、tile の `for` の本体、`match` 式の arm — が終わった後で、同じ定義の中でその名前を読んでいる場合（診断の `endedScope` が設定されている）はパッチを出さない：読み出しは綴りの誤りではなくスコープ外であり、名前を置き換えた読み出しは型検査を通って別の値を読むことがある。宣言と読み出しのどちらを動かすかはユーザの意図である。 |
+| `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。名前を宣言するスコープ — reducer の `if` の枝・`for` の本体・match arm、`let … in` の本体、tile の `for` の本体、`match` 式の arm — の外で、つまりそのスコープが終わった後か始まる前に、同じ定義の中でその名前を読んでいる場合（診断の `endedScope` か `laterScope` が設定されている）はパッチを出さない：読み出しは綴りの誤りではなくスコープ外であり、名前を置き換えた読み出しは型検査を通って別の値を読むことがある。宣言と読み出しのどちらを動かすかはユーザの意図である。 |
 | `E0104` | あり | 宣言済みの `effect` 名と、プログラムが宣言しない[標準 effect](./stdlib.md#_2-6-標準-effect) に対する近傍名の提案（スコープ限定 — 名前の近い tile や slot は候補にならない）。 |
 | `E0105` | あり | 既知の tile 名に対する近傍名の提案。 |
 | `E0106` | あり | `on=timer(d, name=N)` から収集したタイマー名に対する近傍名の提案（スコープ限定 — トップレベル定義は候補にならない）。 |
@@ -217,7 +217,7 @@ type Shape   = Leaf | Branch(Shape, Shape)
 
 > `Redirect "<path>" comes back to itself (<a> ->> <b> ->> <a>)`
 
-check がターゲットをたどるのは、どのエントリがそれを持つかを表だけで決められる場合に限る：同じマップの中にそのパスに対して書かれたリダイレクトがある静的パス（`:name` も `*` も含まない）である。パスはランタイムがマッチするのと同じくセグメントごとに比べるので、`"/a/"` と `"/a"` は同じパスであり、相対的なターゲットはリダイレクト元のパスに対して解決する：`"/docs/a" ->> "b"` と `"/docs/b" ->> "a"` は循環である。ターゲットのクエリやハッシュは関係しない。静的なパターンは、同じパスにマッチするどのパラメータやワイルドカードよりも優先される（[ルーティング §3.1.2](./routing.md#_3-1-2-マッチ順序)）ので、1 つのマップの中で適用されるのはそのリダイレクトである。1 つのパスに 2 つのエントリがある場合（[E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) / [E0112](#e0112-duplicate-sub-route)）は、ランタイムと同じく先のものがそのパスを持つ。アプリの `routes` の静的ルートが持つパスは、親の `/*` より優先されるので `sub-routes` マップからは見えない：そのパスに対して書かれた `sub-routes` のリダイレクトは適用されず、マップ内の連鎖はそこに着いたところで終わる。`/404` に書かれたエントリは何も持たない——`/404` のエントリはフォールバックであり、マッチすることがない——うえ、ターゲットがパス `/404` なら連鎖はそこで終わる（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）ので、どの循環もそこを通らない。パラメータやワイルドカードを経由するループ（`"/p/:x" ->> "/q/:x"` と `"/q/:x" ->> "/p/:x"`）や、アプリの `routes` と `sub-routes` マップの間をまたぐループは、どのエントリが URL を持つかに依存するので、止めるのはランタイムである。
+check がターゲットをたどるのは、どのエントリがそれを持つかを表だけで決められる場合に限る：同じマップの中にそのパスに対して書かれたリダイレクトがある静的パス（`:name` も `*` も含まない）である。パスはランタイムがマッチするのと同じくセグメントごとに比べるので、`"/a/"` と `"/a"` は同じパスであり、相対的なターゲットはリダイレクト元のパスに対して解決する：`"/docs/a" ->> "b"` と `"/docs/b" ->> "a"` は循環である。ターゲットのクエリやハッシュは関係しない。静的なパターンは、同じパスにマッチするどのパラメータやワイルドカードよりも優先される（[ルーティング §3.1.2](./routing.md#_3-1-2-マッチ順序)）ので、1 つのマップの中で適用されるのはそのリダイレクトである。1 つのパスに 2 つのエントリがある場合（[E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) / [E0112](#e0112-duplicate-sub-route)）は、ランタイムと同じく先のものがそのパスを持つ。アプリの `routes` のエントリが親より先に取るパスは `sub-routes` マップからは見えない：親の `/*` より優先されるそのパスの静的ルートか、キーのマッチするすべてのパスを取るエントリである。そのパスに対して書かれた `sub-routes` のリダイレクトは適用されず（[W0218](#w0218-shadowed-sub-route-warning) が報告する）、マップ内の連鎖はそこに着いたところで終わる。`/404` に書かれたエントリは何も持たない——`/404` のエントリはフォールバックであり、マッチすることがない——うえ、ターゲットがパス `/404` なら連鎖はそこで終わる（[ルーティング §3.10](./routing.md#_3-10-redirects-static)）ので、どの循環もそこを通らない。パラメータやワイルドカードを経由するループ（`"/p/:x" ->> "/q/:x"` と `"/q/:x" ->> "/p/:x"`）や、アプリの `routes` と `sub-routes` マップの間をまたぐループは、どのエントリが URL を持つかに依存するので、止めるのはランタイムである。
 
 **修正**：循環上のリダイレクトのどれか 1 つを、ルートが描画するパスへ向ける。
 
@@ -244,9 +244,13 @@ reducer 名がどの `reducer` 定義も指していない。名指す箇所は 
 
 > `Reference to undefined name "count-1" — "-" continues an identifier, so this is one name. Write "count - 1" with spaces for subtraction.`
 
-1 つの値を受け取る `filter` / `map` / `find` / `sort-by` のフラグメント — ペアでない要素、`Option` の値 — は `$1` だけを束縛する（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）ので、その中の `$2` は理由を添えて報告される：
+1 つの値を受け取る `filter` / `map` / `find` / `sort-by` のフラグメント — ペアでない要素、`Option` の値、`Set` のメンバー — は `$1` だけを束縛する（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）ので、その中の `$2` は理由を添えて報告される：
 
 > `"$2" is not bound here — the .filter fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`
+
+`Set` の `filter` は各メンバーを、ペアのメンバーも含めて丸ごと渡すので、そこではメッセージはペアを示す代わりにそう述べ、式断片に 2 引数の `fn` を渡したときの [E0213](#e0213-call-arity-mismatch) も同じく述べる（`… .filter on "Set(Tuple(Int, Int))" supplies 1 — a Set's .filter hands each member whole, as "$1"`）：
+
+> `"$2" is not bound here — a Set's .filter hands each member whole, as "$1"`
 
 これはフラグメントの中のどこでも同じで、別のメソッドの引数の中の `$2` も含む（`xs.map($1.min($2))`）：positional を宣言するのはフラグメントだけなので、そうした引数はフラグメントのものを読む。フラグメントを囲むスコープが自分の `$2` — `fn` の第 2 引数、外側のペアの値 — を束縛している場合、フラグメントはそれを隠し、メッセージはそこへの届き方を示す：
 
@@ -266,9 +270,13 @@ reducer 名がどの `reducer` 定義も指していない。名指す箇所は 
 
 同じ `if` のもう一方の枝や、同じ match・同じ `match` 式の後続の arm での読み出しは、すでに枝・arm の中にあるので、メッセージは名前を宣言している側を指す：`if` なら `it was declared in the other branch of this "if"` … `the branch that declares it`、match なら `another arm of this match` … `the arm that declares it`、`match` 式なら `another arm of this "match" expression` … `the arm that declares it` となる。
 
-式の後では、読み出しを式の中へ移す：`let … in` の本体、tile の `for` の本体 — このループの外へも名前は値を持ち出せない — 、`match` 式の arm である。`let … in` が束縛する値は、メッセージが示すとおり、代わりに両方の読みから見える場所で一度だけ束縛してもよい：reducer では `let` 文で、`fn` や slot の初期化式では両方の読みを囲む 1 つの `let … in` で、tile では両方の読みを `in=` を宣言した tile の中へ移してその値を渡すことで。`app.init` の各要素は式を共有しないので、そこでは読み出しを `let … in` の中へ移すしかない。
+式の後では、読み出しを式の中へ移す：`let … in` の本体、tile の `for` の本体 — このループの外へも名前は値を持ち出せない — 、`match` 式の arm である。`let … in` が束縛する値は、メッセージが示すとおり、代わりに両方の読みから見える場所で一度だけ束縛してもよい：reducer では `let` 文で、`fn`、slot の初期化式、effect 自身の式では両方の読みを囲む 1 つの `let … in` で、tile では両方の読みを `in=` を宣言した tile の中へ移してその値を渡すことで。`app.init` の各要素、app の `http` ブロックの各フィールド、テストの各セクションは式を共有しないので、そこでは読み出しを `let … in` の中へ移すしかない。
 
-スコープ内に近い名前がいくらあってもスコープは名指される：読み出しは綴りの誤りではなくスコープ外なので、`kumiki fix` は名前の置き換えを提案しない。`for idx in xs` の後の `idx` の読み出しを slot `id` に置き換えると、型検査を通ってその slot を読んでしまう。
+スコープの**前**での読み出しも同じように報告される。読み出しがその内側にないそうしたスコープの中で、同じ定義が名前をより後で宣言している場合 — 後の文、tile の後の兄弟の引数、後の枝や arm、あるいは条件や対象がその名前を読む `if` や `match` の枝や arm — メッセージは名前が宣言される位置を示し（`it is declared later, at 3:39, in a tile's "for"`）、それは名前の位置、variant パターンが束縛する名前ならそのパターンの位置である。診断の `laterScope` フィールドがスコープの種類を `endedScope` と同じ一覧から示す。読み出しはその後で計算される値を見られないので、修正は読み出しをそのスコープの中の宣言の後へ移すことである。`let … in` が束縛する値は、代わりに両方の読みから見える場所で一度だけ束縛してもよい。そうしたスコープが複数あればメッセージは最初に始まるものを名指し、同時に始まる 2 つなら先にある宣言を名指す。宣言を囲むだけのスコープは名指さない。2 つのフィールドのうち設定されるのは多くとも 1 つで、読み出しの前に終わったスコープと後に始まるスコープの両方で宣言された名前は前者として報告される。
+
+同じ本体の中で名前を宣言する `let` より前にある読み出しと、宣言自身の右辺（[言語 §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)）— `for` が反復するリスト、`let … in` が束縛する値、arm のパターンが名前を束縛する `match` の対象 — の中の読み出しについては、メッセージはスコープを名指さない。名前はその右辺から束縛されるので、そこでは名前がスコープに入る前に読まれる。スコープが名指されないので、`kumiki fix` は綴りの誤りと同じように置き換えを提案しうる。
+
+スコープ内に近い名前がいくらあってもスコープは名指される：読み出しは綴りの誤りではなくスコープ外なので、`kumiki fix` は名前の置き換えを提案しない。`for idx in xs` の後や前の `idx` の読み出しを slot `id` に置き換えると、型検査を通ってその slot を読んでしまう。
 
 **修正**：参照先の slot / 束縛が宣言済みか確認する。
 
@@ -316,11 +324,13 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 `recv.member` アクセスで、`recv` の**推論型**が既知なのに `member` がその型のフィールドでも stdlib のメソッド/ショートカットでもない（ADR-002）。タイポ（`list.frist`）、形状違いのメンバー使用（`head` フィールドの無い record への `record.head`）、別の受け手のメンバー（`Result` への `res.filter(…)`、`List` への `xs.size`）を捕捉する。受け手が持つメンバーは標準ライブラリ §2.2 のその受け手自身の一覧であり、いずれかの受け手が持つ名前すべてではない（[§2.2.3 の dispatch 規則](./stdlib.md#_2-2-3-list-t)）。`recv.m` と `recv.m(…)` のどちらの書き方でも、引数がいくつであっても同じである。引数の数は受け手が持つメンバーについての問いなので、持たないメンバーの呼び出しはこのエラーだけになり、[E0213](#e0213-call-arity-mismatch) が併せて出ることはない — `Text` に対する `.get`、`.get()`、`.get(k)`、`.get(1, 2)` はどれも E0108 が 1 つである。受け手型が推論できないときはエラーにならず、名前ベースのショートカット dispatch が使われる。
 
+union にはメンバー表が無く、フィールドも無い：variant はペイロードを位置で持ち、それを読むのは `match` である。メンバーは値が持つ variant に対して名前で dispatch されるので、ランタイムがメンバーを持つ名前（`.length`・`.get`・`.is-ok`）の読み取りは union に対して報告しない。プログラム自身の union は variant に `Ok` や `Some` と名付けてよく、そうしたメンバーはその variant をタグで読む。そうした名前への書き込みは、`.get` を除いて [E0602](#e0602-unassignable-member) になる。ランタイムがメンバーを持たない名前はフィールドのステップでしかありえず、どの variant もそれに答えないので、union に対してはこのエラーになる。`:=` のどちら側でも、その後に何が続いても同じである。`type U = A(Int) | Z` のもとで、`u.a`・`u.a := v`・`u.a["k"] := v`・`u.a[0] := v` はどれも E0108 が 1 つで、書き込みならフィールドの位置、読み取りならアクセスの先頭に出る。この検査が無いと、書き込みは `check` を通り、variant の形を変えていた：`u = Z` から、`u.a["k"] := "x"` は `u` を `{"_tag": "Z", "a": {"k": "x"}}` にし、`u.a[0] := "x"` は reducer の中で panic した。`:=` のどちら側でも報告しない場合が 2 つある。1 つは、ある variant のペイロードがフィールドとして宣言する名前（レコードのものか、`File` のもの）である：`type P = A({x: Int}) | Z` に対する `p.x` と、`FileV` が `File` を持つ標準ライブラリの `FormValue` に対する `fv.name`。もう 1 つは、チェッカーが型を決定できないペイロードを持つ union に対する名前である。
+
 > `Record type has no field or method ".<member>"` / `Type "<T>" has no member ".<member>"`
 
-その名前が他の受け手のメンバーであるとき、メッセージの末尾はそれらを挙げる `— it is a member of <receivers>` になる（`Type "Result" has no member ".filter" — it is a member of Map / Set / List / Option`）。`<T>` はメンバー表が読む受け手で、別名・`where`・`nominal` を通した先の型。`Duration` は、その下の `Int` ではなく `Duration` と書かれる（`Type "Duration" has no member ".ms"`）。
+その名前が他の受け手のメンバーであるとき、メッセージの末尾はそれらを挙げる `— it is a member of <receivers>` になる（`Type "Result" has no member ".filter" — it is a member of Map / Set / List / Option`）。`<T>` はメンバー表が読む受け手で、別名・`where`・`nominal` を通した先の型。`Duration` は、その下の `Int` ではなく `Duration` と書かれる（`Type "Duration" has no member ".ms"`）。union に対しては、メッセージの末尾は `— a union has no fields; read a variant's payload with a match` になり、`<T>` はプログラムが書いたとおりの union である：`U` と宣言した slot なら `"U"`、union をその場に書いて宣言した slot なら `"A(Int) | Z"`。
 
-**修正**：メンバー名を直す。`recv` が record なら、存在するフィールドを使う。詳細は [List(T)](./stdlib.md#_2-2-3-list-t)。
+**修正**：メンバー名を直す。`recv` が record なら、存在するフィールドを使う。詳細は [List(T)](./stdlib.md#_2-2-3-list-t)。union なら、ペイロードは `match` で読み（`match u with | A(n) -> n | Z -> 0`）、値は丸ごと書く（`u := A(n + 1)`）。
 
 ### E0110 `unknown-token-group`
 
@@ -368,7 +378,7 @@ tile の `motion: "<name>"` プロップが、`motion <name> = {…}` 定義の�
 
 outlet は tile 自身の body に書かれている必要はない。ランタイムは tile が描画する木の中で最初に見つかった `route-outlet` を埋め（[ルーティング §3.6.3](./routing.md#_3-6-3-matching-rules)）、コード生成はその木を body から組み立てる：body が呼び出す（`Outlet()`）か名前で書く（`Outlet`）tile、`for` / `when` / `if` / `match` の各分岐、そして `column`・`card`・`modal` のように子を描画する builtin の位置引数をインライン展開する。したがってレイアウト用の補助 tile に置いた outlet は何段下であっても数え、body がその補助 tile そのもの（`= Outlet`）であっても数える。自身も `sub-routes` を宣言している tile も数える：この tile にインライン展開されたその outlet は、この tile にマッチした子を映す。入れ子の tile 自身の `sub-routes` が使われるのは、それ自体がルートのターゲットになっている場所だけである。分岐の中の outlet は、body に直接書いた場合と同じく数える。分岐が描画されないときは、捨てた子をランタイムが報告する。
 
-たどるのは body が描画する tile だけである。子を描画しない builtin に位置引数として渡した outlet は数えない。`button`・`input`・`textarea`・`check`・`radio`・`switch`・`select`・`slider`・`spinner`・`progress`・`skeleton`・`toast`・`video`・`divider`・`error`・`route-outlet` は位置引数を捨てるので、`spinner(Outlet)` は outlet を描画しない。名前付き引数として書いた outlet も、何もそれを描画しないので数えない（`column(x=when(c, route-outlet()))`）。`error-boundary` のフォールバックにだけ現れる outlet も、その tile 自身のものでも描画する tile のものでも数えない：フォールバックは body の一部ではない。
+たどるのは body が描画する tile だけである。子を描画しない builtin に位置引数として渡した outlet は数えない。`button`・`input`・`textarea`・`check`・`radio`・`switch`・`select`・`slider`・`spinner`・`progress`・`skeleton`・`toast`・`video`・`divider`・`error`・`route-outlet` は位置引数を捨てるので、`spinner(Outlet)` は outlet を描画しない。名前付き引数として書いた outlet も、何もそれを描画しないので数えない（`column(x=when(c, route-outlet()))`。これ自体が [E0201](#e0201-type-mismatch) である）。`error-boundary` のフォールバックにだけ現れる outlet も、その tile 自身のものでも描画する tile のものでも数えない：フォールバックは body の一部ではない。
 
 **修正**：子を表示したい場所——tile の body か、それが描画する tile の中——に `route-outlet()` を 1 つ置く。要らないなら `sub-routes` を外す。
 
@@ -410,9 +420,11 @@ outlet は tile 自身の body に書かれている必要はない。ランタ�
 
 lowering が読む `_init` / `_event` は trial の中でしか束縛されないため、`given` や `expect` から生成されたモジュールは、どのテストも結果を出す前に `_init is not defined` で死ぬ。
 
-builtin tile の名前も候補に含まれない。tile は関数ではなく、その呼び出しが tile になるのは tile が描画される位置——コンテナの位置引数（[言語 §1.7.1](./language.md#_1-7-1-構文)）——だけである。位置引数を内容として読まないそれ以外の builtin では、何も描画しない tile であり [E0129](#e0129-unrendered-arg) になる。同名の `fn` が無いところでそれ以外の位置——名前付き引数、user tile の入力、値 builtin の内容、任意の式——で呼ぶと E0116 になり、専用の文面を持つ。ここでも誤っているのは名前ではなく位置だからである：
+builtin tile の名前も候補に含まれない。tile は関数ではなく、その呼び出しが tile になるのは tile が描画される位置——コンテナの位置引数（[言語 §1.7.1](./language.md#_1-7-1-構文)）——だけである。位置引数を内容として読まないそれ以外の builtin では、何も描画しない tile であり [E0129](#e0129-unrendered-arg) になる。同名の `fn` が無いところでそれ以外の位置——名前付き引数、user tile の入力、任意の式——で呼ぶと E0116 になり、専用の文面を持つ。ここでも誤っているのは名前ではなく位置だからである：
 
 > `"<name>" is a tile, and a tile renders only as a positional argument of a container`
+
+値 builtin の内容で呼んだ場合は代わりに [E0236](#e0236-tile-as-content) になる。
 
 > `Call to undefined function "<name>"`
 
@@ -589,7 +601,7 @@ bind list はペイロードの positional を**順に**名指すので、2つ�
 
 `xs.map(double)` は `xs.map(double($1))` であり、`xs.fold(0, add)` は `xs.fold(0, add($1, $2))` である。名指された `fn` はそれらの positional を先頭から、自身が宣言する数だけ受け取るので、1 つ以上、かつメソッドが束縛する数以下を宣言していなければならない — そうでなければ [E0213](#e0213-call-arity-mismatch) である。`fold` の `fn` はちょうど 2 つを宣言する。要素は 2 番目だからであり、1 つの `fn` は何も畳み込まない。`filter` / `map` / `find` / `sort-by` の `fn` が 2 つを宣言できるのは、フラグメントが各値を分解する場合 — Map の filter と map、ペア（[標準ライブラリ §2.2.3](./stdlib.md#_2-2-3-list-t)）— だけである。チェッカが型を決められるそれ以外のレシーバの上では、2 番目のパラメータは何も受け取らないか、lowering がフォールバックする場合は JS のインデックスか要素そのものを再び受け取るので、これも E0213 である。`fold` の 1 番目を含むそれ以外の引数はすべて値であり、このチェックを受ける。
 
-数が合えば、名前は自身が表す呼び出しとして、式断片が束縛するスコープの中で検査される：各パラメータは渡される positional と照合され、その型は [言語 §1.8.6](./language.md#_1-8-6-部分適用と高階関数) が与えるものである。`fn` の結果は、メソッドが式断片の結果を検査する位置で検査される——`sort-by` のキー、`update` の新しい値。したがって `fn loud(t: Text)` に対して `List(Int)` の上の `xs.map(loud)` は `loud` の位置で [E0201](#e0201-type-mismatch) となり、`xs.map(loud($1))` が `$1` の位置でそうなるのと同じである。`Map(Text, Int)` の上の `m.filter(keep)` は `fn keep(k: Text, v: Int)` を受け付け、`fn keep(k: Int, v: Int)` を報告する。`xs.fold(0, f)` は `f` の第 1 パラメータを `Int` と照合する。チェッカが型を決められない positional は何とも照合されない。
+数が合えば、名前は自身が表す呼び出しとして、式断片が束縛するスコープの中で検査される：各パラメータは渡される positional と照合され、その型は [言語 §1.8.6](./language.md#_1-8-6-部分適用と高階関数) が与えるものである。`fn` の結果は、メソッドが式断片の結果を検査する位置で検査される——`sort-by` のキー、`update` の新しい値、`fold` の次のアキュムレータ。したがって `fn loud(t: Text)` に対して `List(Int)` の上の `xs.map(loud)` は `loud` の位置で [E0201](#e0201-type-mismatch) となり、`xs.map(loud($1))` が `$1` の位置でそうなるのと同じである。`Map(Text, Int)` の上の `m.filter(keep)` は `fn keep(k: Text, v: Int)` を受け付け、`fn keep(k: Int, v: Int)` を報告する。`xs.fold(0, f)` は `f` の第 1 パラメータをアキュムレータ——`Int`、または `f` が返すより広い型——と照合する。チェッカが型を決められない positional は何とも照合されない。
 
 **修正**：呼び出しを書く — `label()`、あるいは宣言された引数を渡して `greet(first, last)`。
 
@@ -610,7 +622,7 @@ tile が期待される位置に値が書かれている。tile を期待する�
 
 codegen は位置引数の値を捨てる。そのため `column(text("a"), 42)` は `text` だけを描画し、`n` が slot の `column(text("a"), n)` は子のリストに `null` を入れ、`column(let x = 42 in Card(x))` は空のルートをマウントしていた。`let` は tile を検査からも隠していた：`Card` の引数は `in=` と照合されず、その下に書いた builtin は `fn` として探された（E0116）。診断は値の位置に出し、値の中身は検査しない —— その中の診断は、誤ったものも正しいもの（未定義の名前）も、値を本来の位置に移したときに出る。
 
-値の位置にある値は報告しない：値 builtin の内容（`text(let x = 1 in x.show)`）、ユーザー tile の入力（`Card(let x = "a" in {label: x})`）、名前付き引数。`tile-expr` が本体全体である位置 —— tile 本体、`when` / `if` / `for` / `match` の腕 —— では、`let` は代わりにパースエラーになる（`tile Foo = let x = 0 in …`、`when(c, let x = 1 in …)`）。名前でも呼び出しでもない他の値 —— リテラル（`when(c, 42)`）やメンバ読み出し（`when(c, total.show)`）—— も同じくパースエラーになる。
+値の位置にある値は報告しない：値 builtin の内容（`text(let x = 1 in x.show)`）、ユーザー tile の入力（`Card(let x = "a" in {label: x})`）、名前付き引数。値 builtin の内容にある tile は [E0236](#e0236-tile-as-content)、ユーザー tile の入力やほかの名前付き引数にある `when` / `for` は、そこに挙げる例外を除いて [E0201](#e0201-type-mismatch) である。`tile-expr` が本体全体である位置 —— tile 本体、`when` / `if` / `for` / `match` の腕 —— では、`let` は代わりにパースエラーになる（`tile Foo = let x = 0 in …`、`when(c, let x = 1 in …)`）。名前でも呼び出しでもない他の値 —— リテラル（`when(c, 42)`）やメンバ読み出し（`when(c, total.show)`）—— も同じくパースエラーになる。
 
 **修正**：値を tile で表示する —— `column(text(n.show))`、`when(c, text(total.show))` —— か、値を使う位置に直接書く —— `column(Card({label: "a"}))` —— か、`fn` で計算してそれを呼ぶ。名指した組み込み tile は呼び出しを書く —— `column(divider())`。
 
@@ -650,6 +662,7 @@ builtin に、決して描画されない引数が書かれている。値 built
 > `Expected <declared> but got variant "<name>"`
 > `Expected <declared> but got {}, an empty Map, Set or record`
 > `Tile "<name>" expects a value of type <type> but got a tile`
+> `` Named argument "<name>" on tile "<tile>" is a prop, and a prop's value cannot be a tile — nothing renders it. Write the tile as a positional child of a container — `column(when(c, …))` — or pass a value — `<tile>(<name>=…)` ``
 > `Event handler arg "<name>" must be a reducer name`
 > `Event handler prop "<name>" must be a reducer name`
 > `link prefetch must be a reducer name`
@@ -658,11 +671,13 @@ builtin に、決して描画されない引数が書かれている。値 built
 > `<tile>(bind=…) writes a Bool, but the bound value is <type> (see docs/spec/forms.md)`
 > `".sort-by" orders by its key as "<" does, which needs a number, Text or Time, but the key is <type>`
 
+名前付き引数は builtin でもプログラムが定義する tile でも prop なので、値を取る（[言語 §1.7.1](./language.md#_1-7-1-構文)）。`when` と `for` には値の形が無いので、そこに書いたものは tile であり、何もそれを描画しない：`progress(value=1, max=when(busy, text("x")))` は `max` の無いバーを描画し、`box(header=when(c, text("x")))` はヘッダを捨てていた。`when` / `for` の位置で報告し、その中は何も検査しない：それは丸ごと、コンテナの位置引数へ（`box(when(c, text("x")))`）移すか、値に置き換えるものだからである。そこにある値の `if` / `match` は値であり（`button(disabled=if busy then true else false)`）、そこで呼んだ builtin tile は [E0116](#e0116-undef-call-undef-variant-undef-qualifier)、値 builtin の名前付きの内容（`label(text=…)`、`image(src=…)`）にある tile は [E0236](#e0236-tile-as-content)、決して描画されない `text=`（`text(text=…)`、`link("a", text=…)`）にある `when` / `for` は [E0129](#e0129-unrendered-arg)、`error` の `field=` にある `when` / `for` は、`field=` がスロットかその中へのパスを指すとメッセージで示す [E0230](#e0230-error-field-not-path)（`{…}` ブロックにも `field` を書いた場合は、E0230 が判定するのはそちらで、`when` / `for` は E0201 である）であり、イベントハンドラとして書いた `when` / `for` は、ハンドラの `must be a reducer name` として 1 度だけ報告する（下記）。
+
 イベントハンドラが束縛するのは **reducer** であり、これは `f(onX=r)` と `f() {onX: r}` のどちらの形でも変わらない。reducer の名前空間で解決される唯一の引数位置であり、そこに書かれた裸の識別子の意味は形ではなくこの位置が決める。
 
 到着する形は一様でなく、それが値の形より先にハンドラであるかを問う理由である。小文字始まりの名前は参照として解析される。大文字始まりの名前は、位置引数を内容として読まない builtin での引数形式では *tile call* として（`box(text("x"), onClick=Card)`、`image(src=…, onClick=Card)`）、それ以外——props ブロック、`link` のように位置引数から内容を読む値 builtin、user tile——では variant タグとして解析される。3 つとも「担っている名前」として読むので、名前自体が大文字始まりの reducer も他と同じように束縛できる：形が記録しているのは大文字か小文字か、そしてその引数がどの tile に載っているかであって、どちらもこの位置で書き手が言い分けていることではない。引数形式は以前は形を先に見ていたため、その位置に書かれた tile 名はリスナのない要素にコンパイルされていた。
 
-裸の名前・引数なしの呼び出し・空の brace 形式に、パーサは同一のノードを与える — `onClick=Bump` / `onClick=Bump()` / `onClick=Bump {}` は解析後に区別がつかない — ので、3 つとも reducer を名指す。見分ける材料が残っておらず、どれか 1 つだけを指す診断も出せない。
+裸の名前・引数なしの呼び出し・空の brace 形式に、パーサはハンドラを名前付き引数として書くどの tile でも同一のノードを与える — `onClick=Bump` / `onClick=Bump()` / `onClick=Bump {}` は解析後に区別がつかず、位置引数を内容として読まない builtin では tile call、位置引数から内容を読む値 builtin と user tile では variant タグである — ので、3 つとも reducer を名指す。見分ける材料が残っておらず、どれか 1 つだけを指す診断も出せない。
 
 したがってこのエラーが報告するのは、そもそも名前でない値である：リテラル、呼び出し（`onClick=box(text("z"))`）、引数か props を伴う大文字始まりの名前（`onClick=Some(1)`、`onClick=Card {x: 1}`）。裸の名前がどの reducer も指さない場合は、大文字始まりかどうかによらず [E0102](#e0102-undef-reducer) になる — そこに書かれた tile 名も含めて。ハンドラ位置が解決する名前空間は 1 つであり、tile 層はそこに無いからである。
 
@@ -845,7 +860,7 @@ reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、その subscrip
 
 **E0212 が沈黙する場合（runtime フィルタが権威となる）**:
 
-- subscription が配線される要素に id がない。
+- subscription が配線される要素に id がない。`focus` と `blur` では `scroll` がそうした要素で、id を持つことは少ない：`tile Page = column(scroll(text("x")), input(bind=n) {id: "name"})` に対する `ui.focus(Page#typo)` は何も出ず、`scroll` を `box` に置き換えると E0212 になる。
 - その id の値がリテラル文字列ではない式（`Ref`, method call など） — 実行時の値が check 時にはわからない。
 - ハンドラがその reducer を名指している（どこに書かれていても `onClick=r`）: ハンドラが dispatch する reducer も同じ `#id` でフィルタされ、その対象はハンドラを持つ要素である。
 - tile 配下に `<ev>` を reducer に渡す要素がない — それは [W0212](#w0212-ui-event-tile-mismatch-warning) の扱う場合であり、W0212 は走査が要素を 1 つも見つけられない場合を除いて報告する。
@@ -869,6 +884,10 @@ reducer の `ui.<ev>(<Tile>)` セレクタの対象 tile 配下に、`<ev>` が�
 
 > `Reducer "<r>" subscribes to ui.key(<Tile>) but "key" never reaches a listener in tile "<Tile>": a details takes no "key" listener on the <details> around its <summary>, since a control in its panel takes the subscription instead — write onKeyDown= on the details to hear a "key" on its <summary> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
 
+`<ev>` が `key` で body に `scroll` がある場合、scroll が描画する `<div>` は自身が focus を受ける要素であり、その中にあるすべての tile の `keydown` もそこへバブルしてくる（下の `key` / `focus` / `blur` についての注記を参照）。メッセージはそれについても同じことを、details の節とは別の節で述べる:
+
+> `Reducer "<r>" subscribes to ui.key(<Tile>) but "key" never reaches a listener in tile "<Tile>": a scroll takes no "key" listener on its <div>, since a control inside it takes the subscription instead — write onKeyDown= on the scroll to hear a "key" on its <div> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
+
 kind の要素が `<ev>` を発火するのに、そのレンダラがハンドラを呼ばない場合 — 要素の性質ではなく runtime の方針である — メッセージはそう述べ、レンダラが代わりにすること（`<instead>`）が記録されていればそれも述べる。どの要素も `click` を発火するので、`click` の行に載らない kind はすべてこれに当たる：`link`（レンダラはナビゲーションのためだけに listen する。下の `link` についての注記を参照）と、レンダラが `onClick` を呼ばないそれ以外のすべての kind である。`input` では次の kind で、その要素はいずれも `input` を発火する：`slider` はレンダラが bind の書き込みのためだけに listen し、`check` / `radio` / `switch` / `select` はレンダラが代わりに `change` を listen する。レンダラが同じことをする kind は ` / ` でつなぎ、先頭の kind に合わせて `a` か `an` を前に置く。異なるものの節は `; ` でつなぐ:
 
 > `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a reducer in tile "<Tile>": a <kinds> fires "<ev>", and its renderer <instead>, never calling <handler> (DOM-allowed: …; observed in body: …). The handler is silently dropped.`
@@ -876,6 +895,20 @@ kind の要素が `<ev>` を発火するのに、そのレンダラがハンド�
 `click` で `<instead>` の無い kind の節は `a <kinds> fires "click", and its renderer never calls onClick` である。`tile Label = text("click me")` なら:
 
 > `Reducer "hit" subscribes to ui.click(Label) but "click" never reaches a reducer in tile "Label": a text fires "click", and its renderer never calls onClick (DOM-allowed: button, check, switch, radio; observed in body: text). The handler is silently dropped.`
+
+body に route が埋める `route-outlet` がある場合、route がそこに表示する tile はアプリの実行時には子孫であり、その要素は `<ev>` を発火しうる。route が outlet を埋めるのは、その tile か、それを描画する tile が `sub-routes` を宣言している場合である（[ルーティング §3.6.2](./routing.md#_3-6-2-child-route-map)）。表示する tile は route が実行時に選び、コード生成はその tile をそれ自身の route の対象としてコンパイルするので、subscription はそこへ持ち上げられず、その中の何に対しても reducer は実行されない。メッセージはまずその節を述べ、続けて `route-outlet` を含む body のすべての kind について上の節を `; ` でつないで述べる。そのいずれかが包みの節であれば `"<ev>" never reaches a listener` で、そうでなければ `"<ev>" never reaches a reducer` で始まる。`tile Shell sub-routes = {"/s/child" -> Child, "/s" -> Home} = column(text("shell"), route-outlet())` なら:
+
+> `Reducer "shellKey" subscribes to ui.key(Shell) but "key" never reaches a reducer in tile "Shell": the tile its route-outlet shows is picked by the route at runtime and compiled as its own route target, so ui.key(Shell) is not lifted onto it — subscribe to that tile instead (DOM-allowed: …; observed in body: column, route-outlet, text). The handler is silently dropped.`
+>
+> `Reducer "shellClick" subscribes to ui.click(Shell) but "click" never reaches a reducer in tile "Shell": the tile its route-outlet shows is picked by the route at runtime and compiled as its own route target, so ui.click(Shell) is not lifted onto it — subscribe to that tile instead; a column / route-outlet / text fires "click", and its renderer never calls onClick (DOM-allowed: button, check, switch, radio; observed in body: column, route-outlet, text). The handler is silently dropped.`
+
+route が埋めない outlet には何も表示されないので、その節は付かない：`T` も `T` を描画する tile も `sub-routes` を宣言しないなら、`tile T = column(text("x"), route-outlet())` に対する `ui.key(T)` は最初の形になる。`sub-routes` を宣言した tile を描画する tile も同じで、その tile 自身の sub-routes はそれが route の対象であるときにだけ働く。
+
+body にそのイベントの行に載る kind もある場合も同じことが成り立ち、そのとき W0212 は出ない：`ui.click(Shell)` は Shell 自身の body にある button では実行され、route された tile の中の button では決して実行されない。route された tile への subscription（`ui.click(Child)`）は、route がそれをどこに表示しても実行される。
+
+`<ev>` が `focus` か `blur` で、body のどの `scroll` も、内容がどう描画されても `check`・`radio`・`switch`・`details` のいずれかを含む場合、行に載る kind として数える scroll はない：含むものがその `<div>` を Tab 順から外し、アプリの中にその `<div>` に focus を移すものはない（下の `scroll` の注記を参照）。メッセージは中の control についての節に続けて、そのための節を述べる：
+
+> `Reducer "<r>" subscribes to ui.<ev>(<Tile>) but "<ev>" never reaches a listener in tile "<Tile>": the runtime listens for "<ev>" on a check's <label>, and the "<ev>" its <input> fires does not bubble to the <label>; the runtime listens for "<ev>" on a scroll's <div>, which is out of the tab order while it holds an element that takes focus, and the "<ev>" fired inside it does not bubble to the <div> (DOM-allowed: …; observed in body: check, scroll). The handler is silently dropped.`
 
 子孫がイベントを発火しないという最初の形は、要素がそのイベントを発火しない kind に対するメッセージである：`box` への `ui.focus`、`editable` への `ui.change`、`text` への `ui.input`。
 
@@ -888,8 +921,8 @@ kind の要素が `<ev>` を発火するのに、そのレンダラがハンド�
 | `change` | `select`, `input`, `textarea`, `check`, `radio`, `switch`, `slider` |
 | `input`  | `input`, `textarea`, `editable` |
 | `key`    | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video`, `check`, `radio`, `switch` |
-| `focus`  | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video` |
-| `blur`   | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video` |
+| `focus`  | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video`, `scroll` |
+| `blur`   | `input`, `textarea`, `button`, `select`, `slider`, `editable`, `link`, `video`, `scroll` |
 | `hover`  | 任意の tile |
 
 **修正**: 許容集合に含まれる root を持つ tile にセレクタを切り替えるか、focusable な要素に対して `input(onFocus=r)` のように明示配線する。ワイルドカード `_` セレクタと `ui.hover` は対象外。
@@ -900,11 +933,13 @@ kind の要素が `<ev>` を発火するのに、そのレンダラがハンド�
 
 **`editable` と `change` について**: `editable` は `input` / `key` / `focus` / `blur` に載り、`change` にだけ**載らない**。この 1 つの欠落は漏れではなく規則である。`<div contenteditable="true">` は編集ホストなので `tabindex` 無しで focusable であり、`focus` / `blur` / `keydown` / `input` はいずれもブラウザが発火する。違うのは listen する層だけで、前 3 つは `applyUiEventHandlers`、`input` は `editable` レンダラ自身のリスナである。一方 `change` イベントは一切発火せず、これは表の行では埋められない。したがって `ui.change(<editable の tile>)` の W0212 は理由が正しい警告である — `ui.input` を購読して新しいテキストを直前の値を持つ slot と比較するか、編集の終了を捉えたいなら `ui.blur` を使う。
 
-**`key` / `focus` / `blur` について**: runtime はこの 3 つをレンダラが返した要素そのものに付けるので、載っている kind はいずれもその要素にイベントが届くものである。要素自体が focusable な kind — `input` / `textarea` / `button` / `select` / `slider`（素の `<input type="range">`）/ `editable` / `link` / `video`（`controls` 付きで描画された `<video>`）— は 3 行すべてに載る。`check` / `radio` / `switch` は `key` に載り、`focus` / `blur` には**載らない**。3 つは 1 つのケースに見えるが答えは 2 つに分かれる：いずれも `<input>` を `<label>` で包んで描画し、リスナは label 側にある。`keydown` は focus された input から label へバブルするので `ui.key` は届くが、`focus` / `blur` はバブルしないので label 上のリスナは決して実行されず、それらに W0212 を出すのは正しい。control 自身に `onFocus=` / `onBlur=` を書いても、リスナは同じ `<label>` に付くので、やはり実行されず、[W0213](#w0213-handler-on-inert-tile-warning) が同じ記録から読んだ同じ理由でそれを報告する。そこに書いた `onKeyDown=` は `ui.key` と同じく実行される。
+**`key` / `focus` / `blur` について**: runtime はこの 3 つをレンダラが返した要素そのものに付けるので、載っている kind はいずれもその要素にイベントが届くものである。要素自体が focusable で、中に tile を描画しない kind — `input` / `textarea` / `button` / `select` / `slider`（素の `<input type="range">`）/ `editable` / `link` / `video`（`controls` 付きで描画された `<video>`）— は 3 行すべてに載る。自身が focus を受け、中に tile を描画する `scroll` は `focus` と `blur` にだけ載る（下を参照）。`check` / `radio` / `switch` は `key` に載り、`focus` / `blur` には**載らない**。3 つは 1 つのケースに見えるが答えは 2 つに分かれる：いずれも `<input>` を `<label>` で包んで描画し、リスナは label 側にある。`keydown` は focus された input から label へバブルするので `ui.key` は届くが、`focus` / `blur` はバブルしないので label 上のリスナは決して実行されず、それらに W0212 を出すのは正しい。control 自身に `onFocus=` / `onBlur=` を書いても、リスナは同じ `<label>` に付くので、やはり実行されず、[W0213](#w0213-handler-on-inert-tile-warning) が同じ記録から読んだ同じ理由でそれを報告する。そこに書いた `onKeyDown=` は `ui.key` と同じく実行される。
 
 `details` は 3 行のどれにも載らず、どの空白も規則である。`details` は focus を受ける `<summary>` を `<details>` で包んで描画し、リスナが付くとすれば `<details>` である。summary の `focus` / `blur` は、check の label の場合と同じく、そこへバブルしない。`keydown` はバブルするが、パネルにあるすべての tile の keydown も同じくバブルしてくる。パネルにある control のうち `key` 行に載るものには同じ subscription がすでに持ち上げられているので、`<details>` にもリスナを付けると、その control で押したキーごとに reducer が 2 回実行される。したがって 3 つとも W0212 を出すのは正しく、メッセージはそれぞれの理由を述べる。summary 上のキーは、details 自身に書いたハンドラ（`details(…, onKeyDown=r)`）には届き、そのハンドラはパネルからのキーもすべて受け取るので、W0213 はこれを報告しない。そこに書いた `onFocus=` / `onBlur=` も、上で check について述べたのと同じ理由で実行されず、W0213 が報告する。
 
 Chromium では、`controls` があれば Tab は `<video>` に止まり、`focus` / `blur` は focus がそこに入るとき・出るときに発火する。`<video>` が focus を持つ間に押したキーは `ui.key` の reducer に届く。`controls` が無ければ focusable ではない：Tab は素通りし、`.focus()` やクリックでも focus は移らないので、3 つのどれも発火しない。`video` が `controls` を持つかはインスタンスの性質で、コンパイル時の表には見えないため、行はどちらの場合も `video` を載せる。`disabled` な control も同様で、その kind は載っているが focusable ではない。
+
+`scroll` は `focus` と `blur` に載り、`key` には**載らない**。`scroll` は `overflow: auto` の `<div>` を描画する。Chromium では、その内容があふれていて focusable なものを何も含まないとき、Tab はその `<div>` に止まり、`focus` / `keydown` / `blur` は `<div>` 自身で発火する。`.focus()` でも focus が移る。内容が収まっている scroll は Tab が素通りし、`.focus()` でも focus は移らない。focusable な control を含む、あふれた scroll も Tab は素通りしてその control に止まる。scroll をクリックしてもどちらの場合も focus は移らず、ランタイムが `.focus()` を呼ぶのは `input`・`textarea`・`select`・`editable` と確認ダイアログのボタンだけなので、そうした scroll の `<div>` にアプリの中で focus を移すものはない。ただしアプリの外のスクリプトがそれに `.focus()` を呼べば focus は移る。W0212 は、内容のどの分岐にも `check`・`radio`・`switch`・`details` のいずれかを含む scroll を数えず、何も含まないことがありうる scroll があれば何も出さない：`when`、`for`、それを含まない分岐、開いている間だけ表示される overlay の内容、`disabled` と書いた control、`error-boundary` のフォールバックが何も含まない tile。`input` など行に載る kind を含む scroll も Tab 順から外れるが、その kind が subscription を自分で受ける。scroll があふれるかはインスタンスの性質で、`video` の `controls` と同じなので、`focus` と `blur` の行はどちらの場合も `scroll` を載せる。中にある tile の `focus` / `blur` は `<div>` へバブルしないので、そこにあるリスナは scroll 自身に対してだけ実行される。`keydown` は、`<details>` の場合と同じく、中にあるすべての tile からそこへバブルし、そこにある control のうち `key` 行に載るものには subscription がすでに持ち上げられているので、`<div>` にもリスナを付けると、その control で押したキーごとに reducer が 2 回実行される。W0212 は `ui.key` についてそう述べる。scroll 自身に書いたハンドラ（`scroll(…, onKeyDown=r)`）は、その `<div>` 上のキーにも中からのすべてのキーにも実行されるので、W0213 は scroll 上の 3 つのどれも報告しない。W0213 は scroll が何を含むかを問わないので、ハンドラが実行されることのない `scroll(check(value=d), onFocus=r)` も報告しない。
 
 ### E0213 `call-arity-mismatch`
 
@@ -1086,13 +1121,15 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 
 値として使う `match` に、scrutinee の型のある値に対する arm がない（[言語 §1.9](./language.md#_1-9-式言語)）。値としての `match` はいずれかの arm の値に評価されるので、どの arm にも一致しない値があると、評価される値がなくなる。
 
-> ``This match on "<T>" has no arm for <values>[, among others], and a match used as a value has to evaluate to one of its arms. Add the missing arms, or end with `_ -> …` ``
+> ``This match on "<T>" has no arm for <values>[, among others], and a match used as a value has to evaluate to one of its arms. Add the missing arms, or end with `_ -> …`[. The match that ends this match's last arm takes every arm written after it: put it in parentheses, `(match … with …)`, for an arm after it to be this match's] ``
 
 取りこぼした値はそれぞれ、それに一致するパターンとして、型が variant を宣言した順（`Some` より `None`、`Err` より `Ok` が先）に書かれる。ペイロードのない variant は `Blue`、ペイロードのある variant は `Some(_)`、tuple の要素の組み合わせは `(None, Green)` である。`_` は、variant を持たない型の要素のすべての値と、どの arm も当てはまらなくなった位置より後の要素を表す。`None` を受ける arm が 1 つもなければ `(None, _)` になる。メッセージが挙げる値は 8 個までで、それより多いときは一覧が `, among others` で終わる。variant パターンの bind はどのペイロードも受けるので `Some(v)` はすべての `Some` を覆い、入れ子になるパターンは tuple だけである。`Bool`・`Int`・`Text`・レコード・`List` には variant がなく、リテラルパターンもない（[言語 §1.9.1](./language.md#_1-9-1-禁止事項)）ので、これらを覆う arm は `_` か名前である。
 
 網羅は、すべての arm のパターンが scrutinee に合っているときに判定する。合わない arm は [E0207](#e0207-pat-arity-mismatch)・[E0208](#e0208-pat-type-mismatch)・[E0209](#e0209-pat-unknown-variant) であり、それだけが報告される。scrutinee の型が決められない場合（たとえばチェッカーが props に型を付けない `$el`、`fold`・`map`・`zip` の結果、`map-request` の `$1`）、ここでは何も報告せず、どの arm にも一致しない値は実行時に panic になる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。そうした要素を 1 つ含む tuple も、ほかの要素では判定され、型のその位置は `?` と書かれる。`match (cs.fold(c, $2), c) with | (_, Red) -> 1 | (_, Green) -> 2` は `Tuple(?, Color)` について `(_, Blue)` を報告する。チェッカーが挙げられる値は、ほかの値が決められない要素に左右されるときでも報告する。reducer 本体の `match` 文とタイル位置の `match` は値ではなく、このコードの対象外である。
 
-**修正**：メッセージが挙げる値ごとに arm を足すか、ほかの arm が取りこぼす値すべてのために `match` を `_ -> …` で終える。
+角括弧内の文は、最後の arm が、何にも閉じられていない `match` で終わるときに加わる（[言語 §1.9](./language.md#_1-9-式言語)）。その `match` はその後に書かれたすべての arm を取るので、末尾に足した `_ -> …` はこの `match` ではなくその `match` の arm になる。`match x with | Red -> match y with | Small -> 1 | other -> 3` は `Color` について `Green, Blue` を報告し、この文を加える。この文は位置を名指さない。`kumiki fix` はエラーをコード・種別・メッセージで見分けるので、メッセージに位置があると、修正が行を動かすたびにそれが変わり、新しいエラーとして読まれてしまう。内側の `match` が決して到達しない arm も取るときは、その arm は [W0219](#w0219-unreachable-nested-arm-warning) にもなる。
+
+**修正**：メッセージが挙げる値ごとに arm を足すか、ほかの arm が取りこぼす値すべてのために `match` を `_ -> …` で終える。メッセージがこの文を加えるときは、先に最後の arm を終える `match` を括弧に入れる。
 
 ### E0228 `undef-route-pattern`
 
@@ -1101,7 +1138,7 @@ bind した型は先にエイリアスを解くので、`type Qty = Int where po
 > `Reducer "<name>" subscribes to route.<ev>("<pattern>"), but no route is declared at "<pattern>", so the subscription never fires: the argument is compared to the keys of app.routes and of every sub-routes map character for character. Declared routes: "<p>", …`
 > `Reducer "<name>" subscribes to route.<ev>("<pattern>"), but "<pattern>" is a redirect (->>), which the router follows before any route is shown, so the subscription never fires. Declared routes: "<p>", …`
 
-runtime はルートライフサイクルのイベントを、表示中のルートがマッチしたパターン — トップレベルのパターンと、その下でマッチしたサブルートのパターン — ごとに発火し、reducer の引数を書かれたとおりにそれらと比較する。したがって引数は `app.routes` か `sub-routes` マップの中で tile を描画するエントリ（`->>` ではなく `->`）のキーでなければならず、それ以外は何も発火させない購読になる：`route.enter("/*")` が指すのは `"/*"` として宣言されたルートであり、すべてのルートではない。宣言済みの `"/b"` の隣の `route.enter("/bb")` はタイポである。宣言済みの `"/users/:id"` の隣の `route.enter("/users/:userId")` はキーの綴りが違う。`->>` リダイレクトのキーは、ルートが表示される前にルーターが辿るパスである。どれも決して走らない reducer にコンパイルされる — tile 名について [E0211](#e0211-undef-tile-in-selector) が報告するのと同じ、死んだ購読である。位置はパターンの文字列リテラルであり、メッセージは宣言済みのルートを宣言順（`app.routes` が先）に列挙する。`app` の無いプログラムには比較するルートが無い：それは [E0003](#e0003-missing-app) であり、この検査は何も言わない。
+runtime はルートライフサイクルのイベントを、表示中のルートがマッチしたパターン — トップレベルのパターンと、その下でマッチしたサブルートのパターン — ごとに発火し、reducer の引数を書かれたとおりにそれらと比較する。したがって引数は `app.routes` か `sub-routes` マップの中で tile を描画するエントリ（`->>` ではなく `->`）のキーでなければならず、それ以外は何も発火させない購読になる：`route.enter("/*")` が指すのは `"/*"` として宣言されたルートであり、すべてのルートではない。宣言済みの `"/b"` の隣の `route.enter("/bb")` はタイポである。宣言済みの `"/users/:id"` の隣の `route.enter("/users/:userId")` はキーの綴りが違う。`->>` リダイレクトのキーは、ルートが表示される前にルーターが辿るパスである。どれも決して走らない reducer にコンパイルされる — tile 名について [E0211](#e0211-undef-tile-in-selector) が報告するのと同じ、死んだ購読である。ルーターが行き着かない `sub-routes` のキーも、ここでは宣言済みのキーである：[W0218](#w0218-shadowed-sub-route-warning) がそのキーの位置で報告し、別のエントリが同じキーを宣言していなければ、それを購読する reducer を名指す。位置はパターンの文字列リテラルであり、メッセージは宣言済みのルートを宣言順（`app.routes` が先）に列挙する。`app` の無いプログラムには比較するルートが無い：それは [E0003](#e0003-missing-app) であり、この検査は何も言わない。
 
 **修正**：reducer が対象とするルートのキーを、`app.routes` か `sub-routes` マップに書かれているとおりに書く。すべてのルートで走らせたいなら、トップレベルのパターンをそれぞれ購読するか、処理を行う場所で [`route` slot](./routing.md#_3-2-current-route-state) を読む。
 
@@ -1145,17 +1182,16 @@ reducer editTodo on=ui.input(TodoText) do= todos[$el.todoId].text := $event.valu
 > `error(field=…) cannot show the failure of <what>: <why>. field= names a slot, or a path into one[ — write the slot's name without quotes: error(field=<slot>)] (see docs/spec/forms.md)`
 > `error() names no field, so it has no failure to show: field= names a slot, or a path into one (see docs/spec/forms.md)`
 > `error() {field: …} is not read in a tile-test's expect, which compares named arguments only — write error(field=…) (see docs/spec/forms.md)`
-> `error(field=…) cannot step through ".<member>": it is a member of "<T>", not a field. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)`
-> `error(field=…) cannot step through ".<name>": "<T>" has no fields. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)`
-> `error(field=…) cannot step through ".<method>()": a call is not a step of a path. A path's steps are fields, ".get", and indices with a literal key (see docs/spec/forms.md)` — 呼び出しに引数があるときは `".<method>(…)"`
-> `error(field=…) cannot step through an index that is not a literal: a path names one element or entry by a literal key, such as [0] or ["k"] (see docs/spec/forms.md)`
+> `error(field=…) cannot step through ".<member>": it is a member of "<T>", not a field. A path's steps are fields, ".get", and indices (see docs/spec/forms.md)`
+> `error(field=…) cannot step through ".<name>": "<T>" has no fields. A path's steps are fields, ".get", and indices (see docs/spec/forms.md)`
+> `error(field=…) cannot step through ".<method>()": a call is not a step of a path. A path's steps are fields, ".get", and indices (see docs/spec/forms.md)` — 呼び出しに引数があるときは `".<method>(…)"`
 > `error(field=…) cannot step through an index into "<T>": a path's index names a List element or a Map entry (see docs/spec/forms.md)`
 
-この tile が描画するのは、ある場所の失敗である：field の根が指す slot の、field のステップが辿るパスかそれより下の失敗。1 つ目の形は、根が slot でないもの — リテラル、ローカルな名前（`for` の変数、tile の `$1`）、型が失敗しうる refinement を持たない `route` slot、値を計算する式、あるいは名前付き引数が tile として持つ `for` や `when`。2 つ目は `field=` をまったく持たない `error()` である。`{…}` ブロックに書かれた `field` は同じ prop であり、`field=` と同じように読まれ、判定される。ただし tile-test の `expect` では違う：expected ツリーは名前付き引数だけを比較するので（[テスト §8.4](./testing.md#_8-4-tile-snapshot-tests)）、そのブロックの `field` は読まれず、3 つ目の形になる。残りは、パスのステップでないステップである：値を導出するメンバー（`.length`、あるいは `Map` の `.get`）、フィールドを持たない値（`Tuple`・union）へのステップ、呼び出し、キーがリテラルでないインデックス、`List`・`Map`・`Set` のいずれでもない値へのインデックス。いずれも失敗がありうる場所を指さないので、slot が何を保持していても tile はメッセージを決して描画できない。slot の名前を綴ったテキストリテラルには修正案が付く。意図したのはおそらくその slot だからである。ただし、その場所で同じ名前のローカルが slot を隠しているときは付かない。報告するのは、場所を指さない最初のステップだけである。
+この tile が描画するのは、ある場所の失敗である：field の根が指す slot の、field のステップが辿るパスかそれより下の失敗。1 つ目の形は、根が slot でないもの — リテラル、ローカルな名前（`for` の変数、tile の `$1`）、型が失敗しうる refinement を持たない `route` slot、値を計算する式、あるいは名前付き引数が tile として持つ `for` や `when`。2 つ目は `field=` をまったく持たない `error()` である。`{…}` ブロックに書かれた `field` は同じ prop であり、`field=` と同じように読まれ、判定される。ただし tile-test の `expect` では違う：expected ツリーは名前付き引数だけを比較するので（[テスト §8.4](./testing.md#_8-4-tile-snapshot-tests)）、そのブロックの `field` は読まれず、3 つ目の形になる。残りは、パスのステップでないステップである：値を導出するメンバー（`.length`、あるいは `Map` の `.get`）、フィールドを持たない値（`Tuple`・union）へのステップ、呼び出し、レコードへのインデックス。いずれも失敗がありうる場所を指さないので、slot が何を保持していても tile はメッセージを決して描画できない。slot の名前を綴ったテキストリテラルには修正案が付く。意図したのはおそらくその slot だからである。ただし、その場所で同じ名前のローカルが slot を隠しているときは付かない。報告するのは、場所を指さない最初のステップだけである。
 
-計算されたインデックス — `error(field=rows[i].email)` — は、キーがリテラルでないインデックスとして拒否される：パスは要素をリテラルのキーで指す。これは規則ではなく既知の制限である（[#828](https://github.com/kumikijs/Kumiki/issues/828)）。field が持ちうるほかのコードは E0230 として重ねて報告しない：何にも解決しない名前は [E0103](#e0103-undef-ref-undef-slot)、呼び出さずに名指した `fn` は [E0127](#e0127-fn-as-value)、レコードにないフィールドは [E0108](#e0108-undef-member)、取る引数なしで名指したメンバーは [E0213](#e0213-call-arity-mismatch)、`Int` でない `List` のインデックスや型の違う `Map` のキーは [E0201](#e0201-type-mismatch)、`Set` へのインデックスは [E0232](#e0232-index-into-set)、どの `fn` も定義しない名前の呼び出し（値として書かれた tile、`error(field=text("form"))` など）は [E0116](#e0116-undef-call)、型が何も指さない slot へのステップは [E0117](#e0117-undef-type) である。
+field が持ちうるほかのコードは E0230 として重ねて報告しない：何にも解決しない名前は [E0103](#e0103-undef-ref-undef-slot)、呼び出さずに名指した `fn` は [E0127](#e0127-fn-as-value)、レコードにないフィールドや、どの variant も答えないユニオンへのステップは [E0108](#e0108-undef-member)、取る引数なしで名指したメンバーは [E0213](#e0213-call-arity-mismatch)、`Int` でない `List` のインデックスや型の違う `Map` のキーは [E0201](#e0201-type-mismatch)、`Set` へのインデックスは [E0232](#e0232-index-into-set)、スカラー・`Option`・`Result`・`Tuple`・union へのインデックスは [E0238](#e0238-unindexable-read)、どの `fn` も定義しない名前の呼び出し（値として書かれた tile、`error(field=text("form"))` など）は [E0116](#e0116-undef-call)、型が何も指さない slot へのステップは [E0117](#e0117-undef-type) である。
 
-**修正**：slot か、メッセージをここに出したいそのフィールドを指す — `form` のどこかの失敗なら `error(field=form)`、email の失敗だけなら `error(field=form.email)`。要素はリテラルのキーで書く：`error(field=rows[0].email)`。
+**修正**：slot か、メッセージをここに出したいそのフィールドを指す — `form` のどこかの失敗なら `error(field=form)`、email の失敗だけなら `error(field=form.email)`。要素はそのインデックスかキーで指す：`error(field=rows[0].email)`、slot `i` が指す要素なら `error(field=rows[i].email)`。
 
 ### E0232 `index-into-set`
 
@@ -1165,11 +1201,25 @@ reducer editTodo on=ui.input(TodoText) do= todos[$el.todoId].text := $event.valu
 
 メッセージは、E0602 と同じく、レシーバの型をプログラムが書いたとおりに示す：`type Tags = Set(Text)` のもとで `Tags` と宣言した slot なら `"Tags"` である。報告する位置はインデックスのキーなので、`sets[0][1]` では Set へのステップの `1` を指す。
 
-インデックスは場所 — `Map` のエントリ、`List` の位置 — を指す（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）が、Set にあるのは所属だけで場所は無いので、`tags[x]` には答える値が無い。これは `:=` の左辺で [E0602](#e0602-unassignable-member) が拒否するステップを、読み取りが踏んだものである。Set がある値について言えるのはそれを含むかどうかであり、それを尋ねる読み取りが `tags.has(x)` である。
+インデックスは場所 — `Map` のエントリ、`List` の位置 — を指す（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）が、Set にあるのは所属だけで場所は無いので、`tags[x]` には答える値が無い。これは `:=` の左辺で [E0602](#e0602-unassignable-member) が拒否するステップを、読み取りが踏んだものである。Set がある値について言えるのはそれを含むかどうかであり、それを尋ねる読み取りが `tags.has(x)` である。場所を持たないほかのレシーバ（レコードを除く）へのインデックスでの読み取りは [E0238](#e0238-unindexable-read) である。
 
 この読み取りには型が無いので、1 つの誤りは 1 度だけ報告される：型を期待する位置 — `n := tags[x]`、`if tags[x] then …`、`->` と照合される `fn` の本体 — も、その後に続くステップ（`tags[x].foo` など）も、その隣に何も足さない。`bind=` の対象は、値を書き込む前にその位置の値を表示するので、`input(bind=tags[x])` や `check(bind=tags[x])` もこのコードになる。`error` tile の field も同じである：`error(field=tags[x])` はまず値として読まれ、そのステップは [E0230](#e0230-error-field-not-path) ではなく E0232 になる。型が決定できないレシーバ — `{}` から始まる `fold` のアキュムレータ `$1` など — は報告しない。
 
 **修正**：所属を尋ねる — `tags.has(x)` は `Bool` である。`check` でそれを表示するなら `value=tags.has(x)` を与え、そのクリックで動く reducer が `tags := tags.toggle(x)` を書く（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。キーの下に値を保持したいなら、代わりに `Map(K, V)` を宣言する。`error(field=…)` では、Set の失敗を出すために Set の slot そのものを指す：`error(field=tags)`。
+
+### E0238 `unindexable-read`
+
+型が分かっていて、`Map`・`List`・`Set`・レコードのいずれでもないレシーバから、インデックスで読んでいる：スカラー（`Int`・`Float`・`Text`・`Bool` など）・`File`・`Option`・`Result`・`Tuple`・union。どう到達したかは問わない — 直接の宣言、エイリアスや `nominal`、フィールド・`List` の要素・`Map` の値・`.get`。
+
+> `Cannot read through an index into "<T>": an index names a place only in a Map or a List`
+
+メッセージは、E0602 や E0232 と同じく、レシーバの型をプログラムが書いたとおりに示す：`type Count = Int` のもとで `Count` と宣言した slot なら `"Count"` である。報告する位置はインデックスのキーなので、`List(Int)` に対する `xs[0][1]` では `Int` へのステップの `1` を指す。
+
+インデックスは場所 — `Map` のエントリ、`List` の位置 — を指す（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）が、これらのどれにも場所は無いので、`n[0]` には答える値が無い。これは `:=` の左辺で [E0602](#e0602-unassignable-member) が拒否するステップを読み取りが踏んだものであり、Set について E0232 が言うことと同じである。この検査が無いと、読み取りは型の無いまま `check` を通った。スカラー・`Option`・`Result`・union では、実行されると、プログラムが持ったことのない Map についてのメッセージで panic していた：`Text` に対する `text(word[0])` は `Key 0 is not in the Map` で描画を止めた。`Tuple` と `File` では読み取りが動いていた：実行時の Tuple は `List` なので `p[0]` は最初のメンバーを読み、File はフィールドをエントリとして持つので `f["name"]` は名前を読んだ。これらの読み取りは型の無いまま動いていたが、いまはこれらも拒否される。レコードは報告しない：リテラルのキーで読めばキーが指すフィールドであり、計算されたキーで読めば型の無い値である（[言語 §1.6.3](./language.md#_1-6-3-lvalue-の意味論)）。
+
+この読み取りには型が無いので、1 つの誤りは 1 度だけ報告される：型を期待する位置 — `t := n[0]`、`if o[0] then …`、`(n[0] + 1).show` の `+` のオペランド、`->` と照合される `fn` の本体 — も、その後に続くステップ（`n[0].foo` など）も、その隣に何も足さない。`bind=` の対象は、値を書き込む前にその位置の値を表示するので、`input(bind=n[0])` も E0602 ではなくこのコードになる。`error` tile の field も同じである：`Tuple` に対する `error(field=pair[0])` はまず値として読まれ、そのステップは [E0230](#e0230-error-field-not-path) ではなく E0238 になる。型が決定できないレシーバ — 書かれた位置で [E0117](#e0117-undef-type) になる、何にも解決しない型名や、`{}` から始まる `fold` のアキュムレータ `$1` — は報告しない。そうした読み取りは実行されるので、キーの位置に何も持たない値へのインデックスは、届いた値を示すメッセージで panic する：`Text` のようにオブジェクトでない値なら `Index 0 reaches no List or Map, but "abc"`、オブジェクトなら `Key "zz" is not in {"a":1}` である。実行時には `Map`・レコード・variant はどれもオブジェクトなので、キーにエントリの無い `Map` もこのメッセージになる（[ライフサイクル §7.2.2](./lifecycle.md#_7-2-2-unexpected-errors-panic)）。`Tuple` は `List` と同じように読まれる。
+
+**修正**：インデックスで答えさせたかったものを、別の方法でレシーバから読む：`Option` / `Result` のペイロードはメンバー `.get-or(d)`・`.map(…)` か `match` で、`Text` の一部はメンバー `.slice(start, end)` や `.split(sep)` で、`File` のフィールドはフィールドのステップ（`f.name`）で、`Tuple` のメンバーや variant のペイロードはそれを分解する `match`（`match p with | (a, b) -> …`）で読む。キーの下に値を保持したいなら `Map(K, V)` を、位置に保持したいなら `List(T)` を宣言する。
 
 ### E0233 `policy-key-type`
 
@@ -1203,6 +1253,43 @@ dispatcher は各リクエストをその key で実行し、同じ key で別�
 
 **修正**：型を `Option(T)` と宣言し、値が無いところには `None`、あるところには `Some(x)` を書く — `slot picked : Option(TodoId) = None`。値があるかどうかは `== null` ではなく、`.is-none` / `.is-some`、`.get-or(d)`、あるいは `match` で問う。
 
+### E0236 `tile-as-content`
+
+値 builtin の内容に tile が書かれている。値 builtin は値を内容として表示する（[言語 §1.7.1](./language.md#_1-7-1-構文)）—— `text`・`heading`・`markdown`・`code` は最初の位置引数から、`link`・`label`・`editable` はそれか `text=` から（`link` はどちらも書かれていなければ `{text: …}` ブロックの項目から）、`image` は `src=` から、`icon` は `name=` から読む（[E0129](#e0129-unrendered-arg)）—— ので、そこに書いた tile は決して描画されない：`text(when(c, column(…)))` は何も表示しない。逆向き、tile の位置にある値は [E0128](#e0128-value-as-child) である。ユーザー tile の入力やほかの名前付き引数にある `when` / `for` は、そこに挙げる例外を除いて [E0201](#e0201-type-mismatch) である。
+
+> ``A tile is not a value: <builtin> shows a value as its content, so this tile is never rendered. Write the tile as a child of a container — `column(when(c, …))` — or show a value — `<content>` ``
+
+`<content>` は、builtin が内容を読む位置に値を書いた形である：`text(x.show)`、内容を名前付き引数で書いた場合は `image(src=x.show)` / `label(text=x.show)`、`{…}` ブロックに書いた場合は `link {text: x.show}`。
+
+そこにある tile とは次のいずれかである：
+
+- `when` か `for`。これらは `tile-expr` にしかない。
+- builtin の呼び出し（`text(column(…))`）か、プログラムが定義する tile の呼び出し（`text(Card({label: "a"}))`、`text(lower())`）、またはプログラムが定義する tile の名前（`text(Header)`）。
+- 値の `if` / `match` の腕にある tile —— `text(if c then Header else "b")`。その腕が選ばれたときの内容はそれである。tile の腕はそれぞれ報告する。
+- `let … in` の本体にある tile —— `text(let x = 1 in Header)`。内容はそれである。
+
+見るのは内容そのものと、値の `if` / `match` の腕、`let … in` の本体だけである。式のさらに内側にある tile（`text(Header + "!")`）は、その式の一部として検査する。
+
+内容は式として読まれるので、名前は、tile がその名前を持つところでも、まずそれが名指す値である：slot、`let` やループ変数、`match` の束縛、`fn`（`fn label` がある場合の `heading(label(x))`）は値であり、union がタグとして持つ大文字の名前も、標準ライブラリのもの（`HttpBody` の `Empty`）を含めて値である。呼び出しが値になるのは、その名前の `fn` があるところだけである：`slot code` があっても `text(code("x"))` は builtin の呼び出しである。呼び出しを書かない builtin の名前（`text(code)`）は何も呼ばず、未定義の名前（[E0103](#e0103-undef-ref-undef-slot)）である。ループの後で読んだ、tile と同じ名前のループ変数（`column(for lower in xs text("a"), text(lower))`）も同じで、その E0103 はループが終わったことを告げる。腕が値である値の `if` / `match`（`text(match m with | A -> "a" | B -> "b")`）は値である。
+
+tile はそれぞれ書かれた位置で報告し、内容のそれ以外 —— tile 自身の引数、`if` の条件、もう一方の腕 —— は検査しない：内容は丸ごと、コンテナの中へ、あるいは値と入れ替えて移すものであり、その中の診断は移したときに出る。
+
+**修正**：tile をコンテナの子として書く —— `column(when(c, column(…)))`、`column(Header)`、`column(if c then Header else text("b"))` —— か、builtin で値を表示する —— `text(x.show)`。
+
+### E0237 `tile-depth`
+
+tile の木が、その中のユーザー tile を展開すると 256 段より深く入れ子になる（[§1.2.3](./language.md#_1-2-3-設計判断)）。コード生成はユーザー tile の呼び出しをすべてインライン展開するので、互いを呼ぶ tile の深さは足し合わされ、一度に一つの定義しか見ないパーサはその和を何も制限しない。次の定義を呼ぶ定義の連鎖は、どの定義も深くないのに、JavaScript エンジンが読み込めないモジュール（V8 はパース中にスタックを使い切る）に達し、さらに長ければコード生成そのものを溢れさせる。上限はパーサ自身のもので、それをモジュールの元になる木に掛ける。
+
+> `Tile "<root>" nests <depth> levels deep once the tiles in it are inlined, past the limit of 256; it goes over where "<from>" expands into "<to>"`
+>
+> `The expected tree of tile-test "<test>" nests <depth> levels deep once the tiles in it are inlined, past the limit of 256; it goes over where <from> expands into "<to>"`
+
+段の数え方は [§1.2.3](./language.md#_1-2-3-設計判断) のとおりである。tile 自身の本体は、パーサが一つの定義に上限を掛けるときと同じに数え、その中の式も含める。ユーザー tile の本体はその呼び出しの下にぶら下がり、コード生成がそのまわりに置く包みごとにさらに 1 段下がる：呼び出しが引数を渡すときに 1 段、呼び出しにキーが付くときに 1 段——自分で書いた `{key: …}` によっても、それを描画する `for` によっても（間に `when` / `if` / `match` があっても）キーは付く。`error-boundary` はさらに 1 段で、フォールバックの本体は tile 自身の本体と並んでその下にある。`tile T0 = column(T1)`、`tile T1 = column(T2)`、… という連鎖は 1 リンクあたり 2 段、末尾の `text("leaf")` が 3 段なので、127 リンクまでは収まり、128 番目のリンクで上限を超える。引数を渡すキー付きの呼び出しの連鎖（`tile T0 = T1(0) {key: "k"}`、…）は 1 リンクあたり 3 段、`for` が描画し引数を渡す呼び出しの連鎖（`tile T0 = for x in xs T1(x)`、…）は 4 段である。コード生成が何も描画しない位置——値の位置、あるいは位置引数を描画しない builtin の位置引数（[E0005](#e0005-tile-cycle) のとおり）——に書かれた tile は木に無く、段を足さない。
+
+深さを持つどの tile も展開しない tile——ルートの対象、あるいはどこからも名指されない tile——ごとに 1 件報告する。その木を浅くすれば、その中のどの木も浅くなるからである。ループに届く tile には深さが無く、[E0005](#e0005-tile-cycle) に任せる。その下にある深い木はそれ自体として報告される。`tile-test` の期待する木も、テストをコンパイルする場所で同じように展開されるので、同じ上限を掛けてテストについて報告する（2 つ目のメッセージ）。ただしその木が展開する tile がループに届くか、それ自体で上限を超えるときは、その tile の報告に任せる。位置は木が上限を超える箇所である：`<root>`（あるいは期待する木）から最も深い経路をたどって下り、対象の本体が 256 段目より下へ届く、`<from>` の中の呼び出し（または `error-boundary` 節）。2 つ目のメッセージの `<from>` は、期待する木そのものなら `the expected tree`、そこへ展開された tile なら `"<tile>"` である。
+
+**修正**：木を浅くする。定義の連鎖で 1 段ずつ書き下している繰り返しはコレクションに対する `for` に、描き分けは `when` / `match` に属し、いずれも描画する要素や分岐がいくつあっても同じ数段で済む。木の一部を別の tile に移しても助けにならない：呼び出された場所へ再びインライン展開される。
+
 ### W0213 `handler-on-inert-tile` (warning)
 
 ハンドラ prop が、そのレンダラが決して読まないタイルに書かれている — `row(text("card"), onClick=open)`、`card(...) {onChange: r}` など — か、そのイベントが要素に決して届かないタイルに書かれている（`check(onFocus=r)`、後述）。対応する DOM イベントを持つタイルだけが配線する：`onClick` は `button` / `check` / `radio` / `switch`、`onChange` は input 系、`onInput` は input 系と `editable`、`onSubmit` は `form`、`onClose` はオーバーレイ系。それ以外はハンドラを痕跡なく捨てるので、その reducer は死んだコードになる。
@@ -1217,9 +1304,9 @@ dispatcher は各リクエストをその key で実行し、同じ key で別�
 
 `onFocus` / `onBlur` はタイルが描画した要素にそのまま付くが、`check` / `radio` / `switch` / `details` ではその要素は focus を受ける要素を包むものである：control の `<input>` を包む `<label>`、`<summary>` を包む `<details>`。どちらのイベントも包む要素へはバブルしないので、ハンドラは決して実行されない。理由は W0212 が同じ kind への `ui.focus` / `ui.blur` について述べる節であり、同じ記録から読む（そちらの `key` / `focus` / `blur` についての注記を参照）。移す先として名指すタイルは、その `focus` / `blur` 行に載るものである。同じタイルへの購読は W0212 になるので、勧める購読は自身が focus を受けるタイルへのものである:
 
-> `"onFocus" on check() is dropped — the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label>. Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`
+> `"onFocus" on check() is dropped — the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label>. Put it on button / editable / input / link / scroll / select / slider / textarea / video, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`
 >
-> `"onBlur" on details() is dropped — the runtime listens for "blur" on a details's <details>, and the "blur" its <summary> fires does not bubble to the <details>. Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.blur(<Tile>) on a tile that takes focus itself`
+> `"onBlur" on details() is dropped — the runtime listens for "blur" on a details's <details>, and the "blur" its <summary> fires does not bubble to the <details>. Put it on button / editable / input / link / scroll / select / slider / textarea / video, or subscribe with a reducer's on=ui.blur(<Tile>) on a tile that takes focus itself`
 
 **user tile** にも同じ問いを立て、2 つ目の形で答える。user tile に書かれたハンドラは、その tile が描画するノードにマージされる（[§1.7.3](./language.md#_1-7-3-event-handler-props)）ので、発火するかどうかは何を描画するかで決まる — `tile Inner = box(text("clickme"))` に対する `Inner(onClick=open)` は、描画はされるが何も配線されない。まさにこの警告が存在する理由の失敗である。ほかに気づける層が無い：この警告は非致命なので `check` は 0 で終了し（`ok (1 warning)`）、`build` も emit を出し、`smoke` から見えるのは「正しく描画され、クリックする対象が無い」タイルでしかない。
 
@@ -1235,13 +1322,13 @@ body の kind がイベントを発火するのに、そのレンダラがハン
 
 `tile Inner = check(value=done)` に対する `Inner(onFocus=r)` なら:
 
-> `"onFocus" on Inner() is dropped — Inner renders nothing at its root where "focus" reaches it: the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label> (observed at its root: check). Put it on button / editable / input / link / select / slider / textarea / video, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`
+> `"onFocus" on Inner() is dropped — Inner renders nothing at its root where "focus" reaches it: the runtime listens for "focus" on a check's <label>, and the "focus" its <input> fires does not bubble to the <label> (observed at its root: check). Put it on button / editable / input / link / scroll / select / slider / textarea / video, or subscribe with a reducer's on=ui.focus(<Tile>) on a tile that takes focus itself`
 
 `<kinds>` は tile の描画ツリーを辿って集めたもので、これは [W0212](#w0212-ui-event-tile-mismatch-warning) が使うのと同じ走査である。ただし本体内で呼ばれた tile の `error-boundary` フォールバックには入らない: そのフォールバックは、呼び出し側に書いたハンドラなしで描画される。報告するのは、そのツリーのどこにもハンドラを呼ぶ種類が無い場合だけ。これは意図的に控えめである：prop が着地するのはその tile の **root** ノードなので、`tile Card = box(button(...))` もハンドラを捨てるが、この検査は root かその下かを問わずツリーのどこかの種類がハンドラを呼ぶかを問うため報告しない。`onFocus` / `onBlur` は root だけに問う。ランタイムはそれらを root の要素に付け、`focus` と `blur` は内側のどこからもそこへバブルしないので、root より下の種類はそれらを実行できない。root のすべての種類が、包む要素にイベントが届かない包まれた control であるとき報告する：`tile Faq = details(summary="Q", text("a"))` は `Faq(onFocus=r)` で報告し、`tile Row = row(check(value=done))` は報告しない。`row` が focus を受けるかは問わないからである（後述）。逆に、報告するものはすべて確実に捨てられる。
 
 走査が種類を 1 つも見つけられなかった場合は報告しない — その tile の root 自体が、builtin でも宣言済み tile でもない名前である場合（`tile Inner = Nope()`、あるいは循環 `tile Inner = Inner()`）で、走査は何も学べていない。W0212 も同じ空の答えを前にして黙る。これらの形にはそれぞれの符号がある（[E0005](#e0005-tile-cycle)、[E0105](#e0105-undef-tile)）。解決できない名前が解決可能な body の**内側**にある場合（`tile Inner = box(Nope())`）は別の話で、その周囲の種類は root についての正しい答えなので、W0213 は解決できない部分を名指す符号と並んで報告される。
 
-`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` は、それ以外では報告しない。ランタイムはタイルが生成した要素にリスナをそのまま付けるので、決め手はイベントがその要素に届くかどうかであり、答えが記録されている kind は上の包まれた control である。`keydown` は `<label>` にも `<details>` にもバブルするので、`onKeyDown` は 4 つすべてで実行され、`details` ではパネルで押したキーもすべて受け取る。フォーカス可能でない kind、つまりコンテナ（`row`）や葉（`text`）では `focus` と `blur` は発火せず、`keydown` がコンテナに届くのはフォーカス可能な子孫がある場合だけである。そこまで報告するにはフォーカス可能性の解析が必要で、この検査は行わない。
+`onKeyDown` / `onMouseEnter` / `onFocus` / `onBlur` は、それ以外では報告しない。ランタイムはタイルが生成した要素にリスナをそのまま付けるので、決め手はイベントがその要素に届くかどうかであり、答えが記録されている kind は上の包まれた control である。`keydown` は `<label>` にも `<details>` にもバブルするので、`onKeyDown` は 4 つすべてで実行され、`details` ではパネルで押したキーもすべて受け取る。`scroll` でも中で押したキーをすべて受け取る。フォーカス可能でない kind、つまりコンテナ（`row`）や葉（`text`）では `focus` と `blur` は発火せず、`keydown` がコンテナに届くのはフォーカス可能な子孫がある場合だけである。そこまで報告するにはフォーカス可能性の解析が必要で、この検査は行わない。
 
 [W0212](#w0212-ui-event-tile-mismatch-warning) は同じ黙殺を反対側から見たもの — 対象のタイルが `<ev>` をどの reducer にも渡さない `ui.<ev>(Tile)` 購読である。こちらは捕まえられない：コンテナはクリック可能な子孫が 1 つでもあれば通過し、ボタンを含むカードのレイアウトはすべてそれに当たる。
 
@@ -1284,6 +1371,54 @@ bind していないコントロールが選択状態を読む prop — `check` 
 `name` は radio の `group` の別の書き方である。グループはその `<input>` の `name` 属性だからである（[フォーム §5.5.2](./forms.md#_5-5-2-radio)）。両方あれば読まれるのは `group` なので、`name` はラジオがどの組に入るかという問いへの 2 つめの答えであり、[W0216](#w0216-selection-beside-bind-warning) が報告する引数と同じく何の痕跡も残さない。
 
 **修正**：どちらかを取り除く。この仕様が使う書き方は `group` である。
+
+### W0218 `shadowed-sub-route` (warning)
+
+`sub-routes` のキーがマッチするのは、`app.routes` のあるエントリがそのキーの親より先に取るパスだけであり（[ルーティング §3.6.3](./routing.md#_3-6-3-matching-rules)）、ルーターがそのキーに行き着くことはない。
+
+> `Sub-route "<key>" in tile "<name>" is never matched: every path it matches is matched by "<sibling>" in app.routes, which ranks ahead of its parent "<parent>", so the router renders that route there, without the parent`
+>
+> `… which ranks ahead of its parents "<parent>", "<parent>", so …`
+>
+> `… so the router follows that redirect there instead`
+>
+> `…. Reducer "<reducer>" subscribes to it and never runs`
+>
+> `…. Reducers "<reducer>", "<reducer>" subscribe to it and never run`
+
+ルーターが tile の `sub-routes` マップを引くのは、マッチ順序（[ルーティング §3.1.2](./routing.md#_3-1-2-マッチ順序)）のもとでそのパスを持つのが、その tile を対象とするルートであるときだけである。`app.routes` の別のエントリがそうした親のすべてより上位にあり、キーが描画されうるすべてのパスにマッチするなら、それらのパスはどれもそのエントリが持ち、子は決して描画されない：兄弟は親を介さず自分のターゲットを描画するか、`->>` リダイレクトであればパスを別の場所へ送る。`"/settings/*"` と並ぶ `"/settings/:section"` はレイアウトの `"/settings/account"` をそうするし、キーと同じパスに書かれた静的な兄弟はもっとも単純な場合である。報告はキーの位置で、キーごとに 1 件である。キーのパスを取るエントリ（複数あればマッチ順序で最初のもの）と親を名指す。2 つのルートが対象とする tile では両方を名指し、1 つのエントリが両方より上位にあるときにだけ報告する。`->>` のキーも、決して適用されないので同じように報告する。
+
+キーが描画されうるパスは、そのキーがマッチするパスと、親の bare パスにある `->` のキー（`"/settings/*"` の下の `"/settings"`、`"/*"` の下の `"/"`）ではさらに親のすべてのパスである：ルーターはそのキー、すなわち親のデフォルトの子を、他のどのサブルートもマッチしないところで描画し（[ルーティング §3.6.3](./routing.md#_3-6-3-matching-rules)）、そこでそのルートイベントを発火する。したがってデフォルトの子は、兄弟が親そのもののすべてのパスを取るときにだけ報告する。`"/*" -> Shell` と並ぶ `"/" -> Home` はパス `/` を取るが、Shell の `"/"` の子は `/nowhere` でなお描画されるので、何も報告しない。`"/:b/*" -> Layout` より前に宣言された `"/:a/*" -> Other` は親と引き分けて親のすべてのパスを取るので、レイアウトの `"/:b"` は報告する。bare パスにある `->>` のキーはデフォルトの子ではない——ルーターはデフォルトを tile を描画するエントリから選ぶ——ので、それがマッチするパスだけで読む。
+
+順位付けはルーターのものである：セグメントごとに、静的セグメントがパラメータより、パラメータがワイルドカードより先で、引き分けたパターンの間では定義順である。「すべてのパス」は、ルーターがパスをマッチするのと同じに読む：パラメータは任意の 1 セグメントに、`*` はパスの残り（何も残っていない場合も含む）にマッチする。check は 2 つの静的セグメントを綴りが同じときだけ同じものと読むので、URL パーサが同じに書く組は報告しない。親を通ってまだ届くパスがあるキーは、兄弟がそのパスをいくつ取っていても報告しない：同じマップの `"/settings/*"` は `/settings` と `/settings/a/b` にマッチし、`"/settings/:section"` はそれらにマッチしない。`/404` のエントリはマッチすることがないのでどのパスも取らず、`/404` に書かれたキーはどのパスにもマッチしない：そのキーは [E0001](#e0001-missing-404-404-is-redirect-404-in-sub-routes) としてだけ報告する。`->>` の兄弟は、その連鎖が通ったパスに戻ってきてランタイムがどれも適用せずに止め、結局は親がそのパスを取る場合でも、マッチするパスを持つものとして扱う：その表はすでに壊れており、警告はそれでもそのリダイレクトを名指す。
+
+この報告はキーのルートイベントもカバーする。そのキーの `route.enter` / `route.leave` / `route.error` がこのエントリを通じて発火することはなく、メッセージはそれを購読する reducer をそれぞれ名指す。ただし別のエントリが同じキーを宣言しているとき——そのパスのトップレベルのルートや、別の tile のマップのキー——は、それがまだ発火させうるので名指さない。それらの reducer のパターンは宣言済みのキーなので、[E0228](#e0228-undef-route-pattern) が重ねて報告することはない。
+
+他の警告と同じく、`check` もビルドも失敗させない。ルーターは表に何が書かれていても自分の順序に従うのでプログラムは動く。警告は表のうち決して使われない部分を名指す。
+
+**修正**：キーを取り除くか、それが描画するものをルーターが届く場所に置く：兄弟がマッチしないパス、あるいは兄弟自身のターゲットの中である。兄弟の方が誤りなら、それを狭めるか取り除く。デフォルトの子が報告されるのは親に届くパスが無いときだけなので、それを取り除いても描画されるページは変わらない。
+
+### W0219 `unreachable-nested-arm` (warning)
+
+ほかの `match` の arm を終える `match` が、自身の上の arm がすでに覆っている arm を取っている（[言語 §1.9](./language.md#_1-9-式言語)）。外側の次の arm の前で内側の `match` を閉じるものがないので、内側はその後に書かれたすべての arm を、外側の `match` のために並べられたものも含めて取る。arm がすでにすべての値に一致した後に書かれた arm は決して実行されない。
+
+```kumiki invalid
+fn f(x: Color, y: Size) -> Int = match x with | Red -> match y with | Small -> 1 | Large -> 2 | _ -> 3
+```
+
+では、`| _ -> 3` は `Small` と `Large` がすべての `Size` に一致した後の、`match y` の 3 つ目の arm であり、`match x` には `Green` にも `Blue` にも arm がない。同じ arm を文として書くと、[E0227](#e0227-non-exhaustive-match) は値としての `match` にしか及ばないので、ほかに報告するものがなく、`n := 3` を実行するはずのクリックはどの arm も実行しない。
+
+> ``The arm `<pattern>` can never be reached: it belongs to the match at <line>:<col>, whose arms above it already match every value. That match ends an arm of the match at <line>:<col>, so it takes every arm written after it. To give this arm to the match at <line>:<col>, <fix>``
+
+`<fix>` は、その形で内側の `match` を閉じる方法である。
+
+- 値：``put the inner match in parentheses: `(match … with …)` ``
+- 文：``put the arm's statements in braces, ending with the inner match: `-> { … match … with … }` ``。波括弧がブロックを開くのは arm の本体の先頭だけなので、内側の `match` だけでなく、その arm の文全体を囲む。
+- 括弧を持たないタイル：`move the inner match into a tile of its own and name that tile in the arm`
+
+プログラムは構文解析されたとおりに動くので、これは警告である。文やタイルの `match` は値を取りこぼしてよい（[言語 §1.9](./language.md#_1-9-式言語)）ので、そうした arm を持つ文やタイルの `match` は `check` を通り、アプリはビルドされる。W0219 は、内側の `match` が決して到達しない最初の arm の位置で、そのパターンとして書いて、内側の `match` ごとに 1 件報告する。arm は、E0227 と同じく、すべての arm のパターンが scrutinee に合っているときに判定する。内側の scrutinee に該当する variant がない、外側のための variant（`Size` の scrutinee の下の `| Green -> …` など）は代わりに [E0209](#e0209-pat-unknown-variant) になり、その `match` では W0219 は動かない。`match` が入れ子になって arm を終えるときは、メッセージは、内側の `match` が arm を終える `match`、つまりすぐ外側のものを名指し、いちばん外側のものではない。内側の `match` によってある値の arm を欠いた値としての `match` は、引き続き [E0227](#e0227-non-exhaustive-match) になり、ビルドされない。レイアウトは読まれない。arm は、内側の `match` の行に書かれていても、外側の下にインデントされていても報告される。括弧か波括弧で閉じた `match` と、ほかの `match` の arm を終えない `match` は、どんな arm を持っていてもここでは報告されない。
+
+**修正**：メッセージのとおりに内側の `match` を閉じて、arm を外側の `match` のものにするか、内側のための arm だったならその arm を削除する。
 
 ### E0231 `reserved-type-name`
 
@@ -1450,7 +1585,13 @@ lvalue のステップがレシーバ内のどの場所も指していない：�
 
 名前は予約ではなくディスパッチされる：`length` という名前のフィールドを宣言したレコードは、今まで通りそのフィールドへ書き込める。逆にレコードは `.show` を宣言しないので、ディスパッチは標準ライブラリへ落ち、`rec.show := "x"` は他のメンバーと同じく E0602 になる。
 
-メンバーについて、E0602 は「その名前はこのレシーバの**メンバーである**」と述べるので、その文が真であるときにだけ報告される。このレシーバのメンバーではない名前は、`:=` のどちら側でも [E0108](#e0108-undef-member) になる。単に存在しない名前（`name.frist`）と、別のレシーバに属する名前の両方がこれにあたる — `.abs` は `Int` / `Float` のメソッドなので、`Text` に対しては代入できないのではなく未定義である。型が決定できないレシーバ — ユニオンや不透明な型引数 — ではどちらも報告しない。読み側と同じく、動的なレシーバに対する誤ったエラーは沈黙より悪いからである。
+メンバーについて、E0602 は「その名前はこのレシーバの**メンバーである**」と述べるので、その文が真であるときにだけ報告される。このレシーバのメンバーではない名前は、`:=` のどちら側でも [E0108](#e0108-undef-member) になる。単に存在しない名前（`name.frist`）と、別のレシーバに属する名前の両方がこれにあたる — `.abs` は `Int` / `Float` のメソッドなので、`Text` に対しては代入できないのではなく未定義である。型が決定できないレシーバ（不透明な型引数など）ではどちらも報告しない。読み側と同じく、動的なレシーバに対する誤ったエラーは沈黙より悪いからである。
+
+ユニオンにはメンバー表が無いので、ユニオンへのステップは名前で判定する。ランタイムがメンバーを持つ名前は、読むときは値が持つ variant に対して dispatch され、その読み取りは報告しない。しかしメンバーは `.get` を除いてパスのステップにならず、ユニオンにはフィールドも無いので、書き込みはこのエラーになる：`type U = A(Int) | Z` のもとで、`u.length := 1`・`u.length["k"] := "x"`・`u.show[0] := "x"` はどれもメンバーの位置の E0602 が 1 つである。これが無いと、書き込みは値が持つ variant にキーを加えていた：`u = Z` から、`u.length := 1` は `u` を `{"_tag": "Z", "length": 1}` にした。ユニオンに対する `.get` は報告しない。
+
+> `Cannot assign through ".<member>": "<U>" is a union, and a union has no fields — write it whole, as the variant it now holds`
+
+ランタイムがメンバーを持たない名前は、ユニオンでも E0108 になるが、[E0108](#e0108-undef-member) が挙げる場合は除く：ある variant のペイロードがフィールドとして宣言する名前と、チェッカーが型を決定できないペイロードを持つユニオンに対する名前は、どちらも報告しない。
 
 インデックスについては、レシーバの型が分かっていて、それが `Map` でも `List` でもないときに E0602 が報告される — 直接の宣言でも、エイリアスや `nominal` を通しても、フィールド・`List` の要素・`Map` の値・`.get` を経由して到達しても同じである。インデックスは場所 — `Map` のエントリ、`List` の位置 — を指し、それ以外に場所を持つものは無い。Set にあるのは所属だけで場所は無いので、`tags[x] := v` には着地する場所が無い：
 
@@ -1462,9 +1603,9 @@ lvalue のステップがレシーバ内のどの場所も指していない：�
 
 どちらのメッセージも、レシーバの型をプログラムが書いた通りに名指す：`type Tags = Set(Text)` のもとで `Tags` と宣言された slot は `"Tags"`、`Set(Int)` と宣言された slot は `"Set(Int)"` である。
 
-ユニオンへのメンバーは判定しないが、ユニオンへのインデックスはここで判定する：メンバー表にユニオンの行は無いが、ユニオンの値はどの variant を持っていても `Map` でも `List` でもない。エラーはそのステップの位置に出て、その後ろに型の不一致は続かない：場所を指さないステップより先のパスには型が無いので、それ以降のステップも右辺も、型と照合されない。この検査が無いと、書き込みは黙って通っていた：`type R = {a: Int}` に対する `r["a"] := "oops"` は `check` を通って Int のフィールドに Text を格納し — `r.a := "oops"` は [E0201](#e0201-type-mismatch) なのに — `Int` や `Text` に対しては、`n[0] := v` は実行時に panic し、`n["a"] := v` はメンバーへの書き込みがそうであったように slot をレコード `{"a": v}` で置き換えていた。レコードに対して、キーがそのフィールドの一つを名指すリテラルとして書かれていれば、そのフィールドのステップで答える：`— write the field step ".a"`。型が分からないレシーバ — 何にも解決されない型名 — では何も報告しない。その名前は書かれた位置で [E0117](#e0117-undef-type) になる。
+ユニオンへのフィールドやメンバーのステップは名前と、variant のペイロードが宣言するフィールドとで判定する（[E0108](#e0108-undef-member)）が、ユニオンへのインデックスはすべてここで判定する：メンバー表にユニオンの行は無いが、ユニオンの値はどの variant を持っていても `Map` でも `List` でもない。エラーはそのステップの位置に出て、その後ろに型の不一致は続かない：場所を指さないステップより先のパスには型が無いので、それ以降のステップも右辺も、型と照合されない。この検査が無いと、書き込みは黙って通っていた：`type R = {a: Int}` に対する `r["a"] := "oops"` は `check` を通って Int のフィールドに Text を格納し — `r.a := "oops"` は [E0201](#e0201-type-mismatch) なのに — `Int` や `Text` に対しては、`n[0] := v` は実行時に panic し、`n["a"] := v` はメンバーへの書き込みがそうであったように slot をレコード `{"a": v}` で置き換えていた。レコードに対して、キーがそのフィールドの一つを名指すリテラルとして書かれていれば、そのフィールドのステップで答える：`— write the field step ".a"`。型が分からないレシーバ — 何にも解決されない型名 — では何も報告しない。その名前は書かれた位置で [E0117](#e0117-undef-type) になる。
 
-Set からの読み取り `tags[x]` も同じステップを踏み、やはり答えるものが無い。こちらは [E0232](#e0232-index-into-set) である。
+Set からの読み取り `tags[x]` も同じステップを踏み、やはり答えるものが無い。こちらは [E0232](#e0232-index-into-set) である。スカラー・`Option`・`Result`・`Tuple`・union からの読み取り `n[0]` も同じであり、こちらは [E0238](#e0238-unindexable-read) である。
 
 **`bind=` の対象**も同じように書き込まれる — コントロールが書き込む場所である（[フォーム §5.1](./forms.md#_5-1-個別入力の双方向束縛)）— ので、そのステップはパスのステップであり、括弧を付けずに書く。呼び出しとして書かれたステップは場所ではなく呼び出しが返す値を指すので、レシーバを問わずその呼び出しの位置で E0602 になる：
 
@@ -1472,13 +1613,13 @@ Set からの読み取り `tags[x]` も同じステップを踏み、やはり�
 
 この検査が無いと bind は丸ごと落とされていた：`input(bind=d.get().title)` は `check` も `build` も通り、何にも束縛されていない input が描画された。アンラップのステップは、`:=` の左辺と同じく bind でも `.get` である — `:=` の左辺では、パスのステップは識別子なので `d.get().title := v` は構文として読めない（[言語 §1.6.1](./language.md#_1-6-1-構文)）。
 
-bind の対象のインデックスのステップは、`:=` の左辺で指すのと同じ場所 — `List` の要素、`Map` のエントリ — を指すので、レコード・スカラー・`Option`・`Result`・`Tuple`・union へのインデックスはここでもそのインデックスの位置で E0602 になる。メッセージは上のインデックスについての二つ目の `assign` を `bind` にしたものである：
+bind の対象のインデックスのステップは、`:=` の左辺で指すのと同じ場所 — `List` の要素、`Map` のエントリ — を指すので、レコードへのインデックスはここでもそのインデックスの位置で E0602 になる。メッセージは上のインデックスについての二つ目の `assign` を `bind` にしたものである：
 
 > `Cannot bind through an index into "<T>": an index names a place only in a Map or a List`
 
-`Set` へのインデックスはここでは代わりに [E0232](#e0232-index-into-set) になる：コントロールは対象を書く前にそれを表示し、その読み出しが 1 度だけ報告される。
+場所を持たないほかのレシーバへのインデックスは、ここでは代わりに読み取りのコードになる — `Set` へは [E0232](#e0232-index-into-set)、スカラー・`Option`・`Result`・`Tuple`・union へは [E0238](#e0238-unindexable-read)：コントロールは対象を書く前にそれを表示し、その読み出しが 1 度だけ報告される。
 
-**対処**：メンバーなら、そのメンバーが導出するはずだった値を直接書く（`name.length := 9` ではなく `name := "some text"`）。レシーバがレコードなら、実在するフィールドを使う。Set なら、インデックスではなく所属を変える：`tags := tags.add(x)`、あるいはその位置に `.remove(x)` / `.toggle(x)`（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。それ以外へのインデックスなら、場所を指すステップで書く：レコードのフィールドは `r.a := v`、`Option` / `Result` のペイロードは `.get` を通して（`o.get := v`。`None` や `Err` には何も書き込まない）、それ以外の値は全体を置き換える（`n := v`）。中身にかかわらず `Option` / `Result` の値を書くには、全体を置き換える：`o := Some(v)`、`res := Ok(v)`。
+**対処**：メンバーなら、そのメンバーが導出するはずだった値を直接書く（`name.length := 9` ではなく `name := "some text"`）。レシーバがレコードなら、実在するフィールドを使う。ユニオンなら、値が今持つ variant として丸ごと書く：`u := A(n)`。Set なら、インデックスではなく所属を変える：`tags := tags.add(x)`、あるいはその位置に `.remove(x)` / `.toggle(x)`（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。それ以外へのインデックスなら、場所を指すステップで書く：レコードのフィールドは `r.a := v`、`Option` / `Result` のペイロードは `.get` を通して（`o.get := v`。`None` や `Err` には何も書き込まない）、それ以外の値は全体を置き換える（`n := v`）。中身にかかわらず `Option` / `Result` の値を書くには、全体を置き換える：`o := Some(v)`、`res := Ok(v)`。
 
 ## E07xx — オプトイン検査（a11y／strict-icons／テスト DSL 不変条件）
 
@@ -1498,7 +1639,7 @@ a11y 検査は `check(program, { strictA11y: true })` で有効化される。
 
 > `link must have inner text or aria-label`
 
-`aria-label` と `alt` は、名前付き引数（`button(aria-label="Close")`）と props ブロック（`button() {aria-label: "Close"}`）のどちらで書いても数える。名前付き引数はどこに書いても prop であり（[言語 §1.7.1](./language.md#_1-7-1-構文)）、どちらも要素に属性を付けるからである。両方を書いた場合は、描かれるのと同じく props ブロックのほうを読む。検査が見るのは書かれているかどうかで値ではないので、`""` やスロットから読む値も数える。`Text` でない値はここではまだ検査しない：`button(aria-label=Mark)` はバリアント `Mark` を書いたことになり、検査を通って `aria-label="[object Object]"` を描く。引数に `when` / `for` を書いた場合（`button(aria-label=when(c, text("x")))`）はタイルで prop のデータではなく、属性を描かないので数えない。
+`aria-label` と `alt` は、名前付き引数（`button(aria-label="Close")`）と props ブロック（`button() {aria-label: "Close"}`）のどちらで書いても数える。名前付き引数はどこに書いても prop であり（[言語 §1.7.1](./language.md#_1-7-1-構文)）、どちらも要素に属性を付けるからである。両方を書いた場合は、描かれるのと同じく props ブロックのほうを読む。検査が見るのは書かれているかどうかで値ではないので、`""` やスロットから読む値も数える。`Text` でない値はここではまだ検査しない：`button(aria-label=Mark)` はバリアント `Mark` を書いたことになり、検査を通って `aria-label="[object Object]"` を描く。引数に `when` / `for` を書いた場合（`button(aria-label=when(c, text("x")))`）はタイルで prop のデータではなく、属性を描かないので数えない。prop はタイルを保持できないので、これは [E0201](#e0201-type-mismatch) でもある。
 
 **修正**：可視テキストか、`aria-label` / `alt` を付与する。フォーム全般の指針は [フォーム](./forms.md)。
 
@@ -1665,7 +1806,7 @@ test inf-has-no-value =
 
 2 つ目のメッセージは、表がそもそも持っていない述語に対するもの。その名前はチェッカーへ届く前にパーサが弾くので、ここへ到達するのは手で組み立てた AST 経由だけである — コンパイラ自身のテストはその経路でこの診断を駆動している。
 
-3 つ目は、ツールチェーンが lowering *できる* refinement が、到達できない位置にある場合である。slot の型の内側に書かれた述語は値をたどる検査として型ごとに 1 つの関数へ lowering される（[§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）が、自分自身を大きくなっていく引数に適用するジェネリック — `slot t : T(Text where nonempty)` に対する `type T(A) = {v: A, next: Option(T(List(A)))}` — は段ごとに新しい型になる。32 段を超えると lowering は止まり、その先は黙って通るチェックになってしまう。前の 2 つと違いこれはソースから到達できる。修正は、大きくなっていく引数で自分自身を入れ子にしない型にするか、それに沿って refinement を持たない型の slot にすることである。
+3 つ目は、ツールチェーンが lowering *できる* refinement が、到達できない位置にある場合である。slot の型の内側に書かれた述語は値をたどる検査で確かめられる。この検査は到達した型ごとに lowering され、同じ型に到達するすべての検査で共有される。定義の連鎖は、それらの検査を 1 つのループでたどる（[§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）。自分自身を大きくなっていく引数に適用するジェネリック — `slot t : T(Text where nonempty)` に対する `type T(A) = {v: A, next: Option(T(List(A)))}` — は段ごとに新しい型になるので、段ごとに専用の検査が要る。32 段を超えると lowering は止まり、その先は黙って通るチェックになってしまう。前の 2 つと違いこれはソースから到達できる。修正は、大きくなっていく引数で自分自身を入れ子にしない型にするか、それに沿って refinement を持たない型の slot にすることである。
 
 **現在この状態にある述語はない。** このチェックが存在するのは、代わりに何が起きていたかによる: `refinementToJs` は実装していないものをすべて `(_v) => true` へ lowering する `default` 分岐で終わっていたため、登録済み 12 述語のうち 7 つが「決して失敗しないチェック」としてランタイムへ届いていた — `slot n : Int where positive` は `-7` を受け入れ、その slot に対する `error(field=n)` は何も表示しなかった。refinement は値が slot へ入る際に通るチェックとして規定されている（[フォーム §5.6](./forms.md#_5-6-バリデーション戦略)、[ランタイム §10.3.3](./runtime.md#_10-3-3-batching)）ので、lowering のない述語はドキュメントがプログラムの実際の挙動と異なる約束をしている状態であり、しかもそれを誰も報告しなかった。パーサが受け付ける名前は lowering テーブルの名前とちょうど一致するため、今日のソースからこの診断へ到達することはない。lowering を伴わずに §1.3.3 へ述語を追加した場合に、実行時ではなくビルド時にここへ落ちる。
 
