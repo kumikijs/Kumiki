@@ -384,12 +384,15 @@ tile App = text("x")`);
 
 describe("the walk that looks for a Decoder", () => {
   // Each instantiation along two growing branches is new, so a walk bounded only per path would
-  // enter about 2^32 of them.
+  // enter about 2^32 of them before it reaches the Decoder the last variant holds.
   it("ends on a generic growing its argument along two branches", () => {
-    const src = withApp(`type G(T) = Leaf(T) | Node(G(List(T)), G(Option(T)))
+    const src = withApp(`type G(T) = Leaf(T) | Node(G(List(T)), G(Option(T))) | Held(Decoder)
 fn f(x: G(Int)) -> Bool = x == x
 slot s : Set(G(Int)) = {}
 tile App = text("x")`);
-    expect(locatedSummariesOf(src)).toEqual([]);
+    expect(locatedSummariesOf(src)).toEqual([
+      'E0201 2:27 Operator "==" cannot compare G(Int) with G(Int): G(Int) holds a Decoder, which has no equality',
+      "E0204 3:14 A Set element of type G(Int) cannot hold a Decoder — it is an opaque handle",
+    ]);
   });
 });
