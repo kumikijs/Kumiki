@@ -790,6 +790,8 @@ A `Decoder` is the other handle ([Standard Library §2.1.3](./stdlib.md#_2-1-3-d
 
 A `Map` key or a `Set` element whose type is or holds a `Decoder` is this error too, where the type is written: a key keeps none of the check a `Decoder.Json(T)` is, so the one read back from `keys` or `to-list` is not the one put in, and handed on as a `decode` it decodes by none ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)). `Set(Decoder)` is reported at its `Decoder`, `Map({d: Decoder}, Int)` at its key type, and a generic applied to one at the application when its body keys by the parameter — `Bag(Decoder)` for a `type Bag(T) = Set(T)`. A body that keys by a `Decoder` itself is reported in the definition, once. A Map literal keyed by a `Decoder`, as `{Decoder.Text: 1}`, is reported at its first such key where no declared type judges the literal. Where one does, that type's own report stands alone: a `Map(Decoder, Int)` is refused where it is written, and a `Map(Text, Int)` gives the key `Expected Text but got Decoder`.
 
+A `Decoder` anywhere in the type a `Decoder.Json(T)` decodes is this error too: a JSON body holds data, and a `Decoder` is a check the compiler builds, so no body decodes into one ([HTTP §6.1.4](./http.md#_6-1-4-the-decoder-type)). Each one `T` writes is reported once, where it is written: `Decoder.Json(Decoder)` and `Decoder.Json({d: Decoder})` at the `Decoder`, the same inside a `List`, an `Option`, a `Map`'s value, a `Tuple` or a `Result`, and an alias or a generic that holds one at its name — `Holder` for a `type Holder = {d: Decoder}`, `Box(Decoder)` for a `type Box(T) = {v: T}`. A `Map` key or a `Set` element holding a `Decoder` there gets the key's report above, alone.
+
 > `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`
 > `<builtin>(...) cannot render <handle> — it is an opaque handle`
 > `.show cannot render <handle> — it is an opaque handle`
@@ -798,10 +800,12 @@ A `Map` key or a `Set` element whose type is or holds a `Decoder` is this error 
 > `A <Map key | Set element> of type <T> cannot hold a Decoder — it is an opaque handle`
 > `<G>: a Decoder cannot be a <Map key | Set element> — it is an opaque handle`
 > `<G>: a <Map key | Set element> of type <T> cannot hold a Decoder — it is an opaque handle`
+> `A Decoder cannot be decoded from JSON — it is an opaque handle`
+> `<N> holds a Decoder, which cannot be decoded from JSON — it is an opaque handle`
 
-`<builtin>` is the call that renders the handle, as written: `text`, `heading`, `button`, …, or `fmt`. `<handle>` is `EffectId` or `Decoder`, and `<G>` the generic's application, as `Bag(Decoder)`.
+`<builtin>` is the call that renders the handle, as written: `text`, `heading`, `button`, …, or `fmt`. `<handle>` is `EffectId` or `Decoder`, `<G>` the generic's application, as `Bag(Decoder)`, and `<N>` the alias or the generic's application `T` writes, as `Holder` or `Box(Decoder)`.
 
-**Fix**: Use `==` / `!=` to compare against `EffectId.none`, or pass the value to a cancel effect. To show whether a handle is held, render what the comparison answers — `text(if h == EffectId.none then "idle" else "loading")`, or `(h != EffectId.none).show`. See [EffectId](./stdlib.md#_2-1-1-1-effectid). For a `Decoder`, render and key by what chose it instead — the flag or the name a `fn` picks the decoder from.
+**Fix**: Use `==` / `!=` to compare against `EffectId.none`, or pass the value to a cancel effect. To show whether a handle is held, render what the comparison answers — `text(if h == EffectId.none then "idle" else "loading")`, or `(h != EffectId.none).show`. See [EffectId](./stdlib.md#_2-1-1-1-effectid). For a `Decoder`, render and key by what chose it instead — the flag or the name a `fn` picks the decoder from — and decode that from JSON, picking the decoder from it.
 
 ### E0205 `bind-on-file-input`
 

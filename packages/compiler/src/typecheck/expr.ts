@@ -3,7 +3,7 @@ import { elementType, nominallyComparable, typeToString, unaliasType } from "../
 import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
 import { isQualifierName, RUN_REDUCER, visitDecodedParts } from "../builtin-calls.ts";
 import { fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
-import { decoderKeyError, heldDecoder, noEquality } from "../held-decoder.ts";
+import { decoderKeyError, heldDecoder, noEquality, undecodableErrors } from "../held-decoder.ts";
 import { showShapeOf } from "../show-shape.ts";
 import {
   type FragmentArgument,
@@ -609,8 +609,9 @@ function didYouMean(written: string, candidates: Iterable<string>): string {
 }
 
 // Codegen decodes by the first argument, which parses as a value, so each part of it that spells a
-// type is resolved as one. An argument after the first is E0213: its capitalised names are left
-// unreported rather than read as variant tags.
+// type is resolved as one, and refused where it is or holds what no JSON body decodes into. An
+// argument after the first is E0213: its capitalised names are left unreported rather than read as
+// variant tags.
 function checkDecodedArgs(
   args: readonly Expr[],
   sym: SymbolTable,
@@ -619,7 +620,11 @@ function checkDecodedArgs(
 ): void {
   const [first, ...rest] = args;
   const value = (v: Expr): void => checkExpr(v, sym, errors, ctx);
-  visitDecodedParts(first, (t) => resolveType(t, sym, errors), value);
+  const type = (t: TypeExpr): void => {
+    resolveType(t, sym, errors);
+    errors.push(...undecodableErrors(t, sym));
+  };
+  visitDecodedParts(first, type, value);
   for (const a of rest) visitDecodedParts(a, leftToTheCount, value);
 }
 
