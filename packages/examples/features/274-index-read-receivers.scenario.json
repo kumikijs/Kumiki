@@ -1,0 +1,44 @@
+{
+  "steps": [
+    {
+      "label": "each value is read by the step it has: an index into a List, a Map or a record, a member otherwise",
+      "expect": {
+        "noErrors": true,
+        "domIncludes": [
+          "first: a",
+          "next score: 2",
+          "pair: ada is 36",
+          "xs: 10 ada: 36",
+          "label: go"
+        ]
+      }
+    },
+    {
+      "label": "the Option's payload and the List's element change, and the same reads follow them",
+      "do": { "click": "#bump" },
+      "expect": {
+        "noErrors": true,
+        "state": { "xs": [11, 20] },
+        "domIncludes": ["next score: 3", "xs: 11 ada: 36"]
+      }
+    },
+    {
+      "label": "an index after a read of no type panics, showing the Text it reached",
+      "do": { "navigate": "/read-field" },
+      "expect": {
+        "state": { "word": "abc" },
+        "domIncludes": ["failed: Index 0 reaches no List or Map, but \"go\""],
+        "errorIncludes": ["panic in reducer \"read-field\""]
+      }
+    },
+    {
+      "label": "a computed key that names no field panics, showing the record it reached",
+      "do": { "navigate": "/read-stray" },
+      "expect": {
+        "state": { "word": "abc" },
+        "domIncludes": ["failed: Key \"zz\" is not in {\"label\":\"go\"}"],
+        "errorIncludes": ["panic in reducer \"read-stray\""]
+      }
+    }
+  ]
+}
