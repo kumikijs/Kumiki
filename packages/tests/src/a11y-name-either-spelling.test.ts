@@ -64,21 +64,6 @@ const ROWS: Row[] = [
     reported: false,
     renders: "",
   },
-  {
-    label: "button, aria-label argument that is a when",
-    tile: "button",
-    args: 'aria-label=when(true, text("A"))',
-    reported: true,
-    renders: null,
-  },
-  {
-    label: "button, a when argument under an aria-label prop",
-    tile: "button",
-    args: 'aria-label=when(true, text("A"))',
-    block: 'aria-label: "Close"',
-    reported: false,
-    renders: "Close",
-  },
   { label: "button, no aria-label", tile: "button", reported: true, renders: null },
   {
     label: "link, aria-label argument",
@@ -140,20 +125,6 @@ const ROWS: Row[] = [
     block: "alt: name",
     reported: false,
     renders: "Close",
-  },
-  {
-    label: "image, alt argument that is a when",
-    tile: "image",
-    args: 'src="a.png", alt=when(true, text("A"))',
-    reported: true,
-    renders: null,
-  },
-  {
-    label: "image, alt argument that is a for",
-    tile: "image",
-    args: 'src="a.png", alt=for x in ["A"] text(x)',
-    reported: true,
-    renders: null,
   },
   { label: "image, no alt", tile: "image", args: 'src="a.png"', reported: true, renders: null },
   // A value that is not a Text counts as written, in either spelling, and the element does not
@@ -229,5 +200,27 @@ describe("a11y names, written as an argument or a prop", () => {
       reported: row.reported,
       renders: row.renders,
     });
+  });
+});
+
+// A `when` or a `for` is a tile, which a prop cannot hold (E0201), so these never mount.
+describe("a tile written as the name's argument", () => {
+  const codes = (call: string) =>
+    check(parse(lex(withApp(`tile Probe = column(${call})`, "Probe"))), { strictA11y: true })
+      .map((e) => e.code)
+      .sort();
+
+  it.each([
+    ['button(aria-label=when(true, text("A")))', ["E0201", "E0701"]],
+    ['image(src="a.png", alt=when(true, text("A")))', ["E0201", "E0702"]],
+    ['image(src="a.png", alt=for x in ["A"] text(x))', ["E0201", "E0702"]],
+  ])("is refused, and is no name: %s", (call, refused) => {
+    expect(codes(call)).toEqual(refused);
+  });
+
+  it("is refused beside a block prop of the same name, which is the name", () => {
+    expect(codes('button(aria-label=when(true, text("A"))) {aria-label: "Close"}')).toEqual([
+      "E0201",
+    ]);
   });
 });

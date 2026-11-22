@@ -317,8 +317,23 @@ export function checkInputBindType(
 }
 
 /**
+ * The `when` / `for` written as an error's `field=` that checkErrorField reports as E0230.
+ * Where the block writes the field, or a tile-test's expect leaves the block unread, E0230
+ * is about the block instead, and the `when` / `for` is left to the other checks.
+ */
+export function tileAsErrorField(
+  t: TileExpr & { kind: "TileCall" },
+  ctx: Ctx,
+): TileExpr | undefined {
+  if (t.name !== "error" || propOf(t, "field", ctx)) return undefined;
+  if (ctx.expectedTree && t.props.some((p) => p.name === "field")) return undefined;
+  const value = t.args.find((a) => a.name === "field")?.value;
+  return value && isTileExpr(value) ? value : undefined;
+}
+
+/**
  * Run after the field has been checked as a value, so what that read already
- * reported (E0103, E0127, E0108, E0213, an E0201 or E0232 at a key) is not reported again.
+ * reported (E0103, E0127, E0108, E0213, an E0201, E0232 or E0238 at a key) is not reported again.
  */
 export function checkErrorField(
   t: TileExpr & { kind: "TileCall" },
@@ -343,10 +358,10 @@ export function checkErrorField(
     return;
   }
   if (!written) {
-    const arg = t.args.find((a) => a.name === "field");
-    if (arg && isTileExpr(arg.value)) {
-      const kind = arg.value.kind === "TileFor" ? "for" : "when";
-      refuse(rootProblem(`a "${kind}"`, "it is a tile, not a slot"), arg.value.pos);
+    const tile = tileAsErrorField(t, ctx);
+    if (tile) {
+      const kind = tile.kind === "TileFor" ? "for" : "when";
+      refuse(rootProblem(`a "${kind}"`, "it is a tile, not a slot"), tile.pos);
     } else {
       refuse(
         `error() names no field, so it has no failure to show: field= names a slot, or a path into one ${see}`,
