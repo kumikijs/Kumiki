@@ -71,6 +71,7 @@ import { inferType } from "./infer.ts";
 import { nestedScopes } from "./nested-scopes.ts";
 import {
   armScope,
+  checkArmsAfterNestedMatch,
   checkPatternAgainstType,
   checkPatternBindsAreDistinct,
   matchedType,
@@ -473,11 +474,15 @@ export function checkTileExpr(
     case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
       const scrutType = matchedType(inferType(t.scrutinee, sym, ctx), t.arms, sym);
+      let patternsFit = true;
       checkArms(t.arms, ctx, (arm, inner) => {
         checkPatternBindsAreDistinct(arm.pattern, errors);
+        const before = errors.length;
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
+        if (errors.length > before) patternsFit = false;
         checkTileExpr(arm.body, sym, errors, inner, { kind: "arm", of: "match" });
       });
+      if (patternsFit) checkArmsAfterNestedMatch(t, "tile", scrutType, sym, errors);
       return;
     }
     case "TileCall":
