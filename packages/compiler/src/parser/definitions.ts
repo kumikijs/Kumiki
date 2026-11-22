@@ -248,8 +248,10 @@ export class Parser extends AppParser {
       throw new ParseError(`Unexpected token in tile definition`, t.pos);
     }
     this.eat("op", "=");
+    const enclosing = this.measure();
     const body = this.parseTileExpr();
-    const def: TileDef = { kind: "TileDef", name, body, pos: start.pos };
+    const depth = this.measured(enclosing);
+    const def: TileDef = { kind: "TileDef", name, body, depth, pos: start.pos };
     if (duplicateClauses.length > 0) def.duplicateClauses = duplicateClauses;
     if (inType) def.in = inType;
     if (errorBoundary) def.errorBoundary = errorBoundary;
@@ -466,8 +468,22 @@ export class Parser extends AppParser {
       throw new ParseError(`Expected "expect" in test "${name}"`, expectKw.pos);
     }
     this.eat("op", "=");
-    const expect = kindTok.value === "tile-test" ? this.parseTileExpr() : this.parseExpr();
-
+    if (kindTok.value === "tile-test") {
+      const enclosing = this.measure();
+      const expect = this.parseTileExpr();
+      const expectDepth = this.measured(enclosing);
+      return {
+        kind: "TestDef",
+        name,
+        testKind: kindTok.value,
+        target,
+        targetPos: targetTok.pos,
+        given,
+        expect,
+        expectDepth,
+        pos: start.pos,
+      };
+    }
     return {
       kind: "TestDef",
       name,
@@ -475,7 +491,7 @@ export class Parser extends AppParser {
       target,
       targetPos: targetTok.pos,
       given,
-      expect,
+      expect: this.parseExpr(),
       pos: start.pos,
     };
   }

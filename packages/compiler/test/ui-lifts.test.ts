@@ -64,8 +64,8 @@ describe("UI_LIFTS", () => {
       "video",
     ];
     expect(byEv.get("key")?.tiles).toEqual(new Set([...focusable, "check", "radio", "switch"]));
-    expect(byEv.get("focus")?.tiles).toEqual(new Set(focusable));
-    expect(byEv.get("blur")?.tiles).toEqual(new Set(focusable));
+    expect(byEv.get("focus")?.tiles).toEqual(new Set([...focusable, "scroll"]));
+    expect(byEv.get("blur")?.tiles).toEqual(new Set([...focusable, "scroll"]));
   });
 
   // A listener on an element that holds children hears every key from them too, so it would run
@@ -97,6 +97,16 @@ describe("wrappedUnreached", () => {
     expect(wrappedUnreached("key", WRAPPED)).toEqual([
       { kinds: ["details"], ...DETAILS, bubbles: true, handler: "onKeyDown" },
     ]);
+  });
+
+  // A scroll's <div> is the element that takes focus, so focus and blur fire where the runtime
+  // listens. A key does too, and so does every key from the tiles inside it.
+  it("answers key for a scroll, whose <div> takes focus itself and holds its content too", () => {
+    expect(wrappedUnreached("key", ["scroll"])).toEqual([
+      { kinds: ["scroll"], wrapper: "div", focused: "div", bubbles: true, handler: "onKeyDown" },
+    ]);
+    expect(wrappedUnreached("focus", ["scroll"])).toEqual([]);
+    expect(wrappedUnreached("blur", ["scroll"])).toEqual([]);
   });
 
   it("answers no other event", () => {
@@ -138,6 +148,13 @@ describe("wrapperNeverReceives", () => {
     expect(answered.sort()).toEqual(["blur", "focus"]);
     expect(wrappedUnreached("key", ["details"])).toHaveLength(1);
     expect(wrapperNeverReceives("key", ["details"])).toEqual([]);
+  });
+
+  it("answers no event for a scroll, so W0213 reports no handler written on one", () => {
+    const answered = ALL_UI_EVENT_KINDS.filter(
+      (ev) => wrapperNeverReceives(ev, ["scroll"]).length > 0,
+    );
+    expect(answered).toEqual([]);
   });
 });
 
@@ -487,6 +504,65 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
         "W0213",
         "E0005",
       ]);
+    });
+
+    // Whichever tile is asked about first is the one the walk enters the loop by.
+    it("the tiles on a loop, whichever is asked about first", () => {
+      const loop = 'tile A = row(B)\ntile B = column(C)\ntile C = box(A, text("c"))';
+      for (const order of [
+        ["A", "B", "C"],
+        ["B", "C", "A"],
+        ["C", "A", "B"],
+      ]) {
+        const calls = order.map((t) => `${t}() {onClick: bump}`).join(", ");
+        const found = diags(loop, calls);
+        expect(
+          found.map((e) => e.code),
+          calls,
+        ).toEqual(["W0213", "W0213", "W0213", "E0005"]);
+        for (const d of found.slice(0, 3)) {
+          expect(d.message, calls).toContain("observed in body: box, column, row, text");
+        }
+      }
+    });
+
+    // A loop shares one answer, and the tiles it leads to keep their own: asked about first or
+    // after, a tile downstream never takes on what only the tiles above it render.
+    it.each([
+      [
+        "a loop that leads into a second loop",
+        'tile A = row(B)\ntile B = column(A, C)\ntile C = box(D)\ntile D = stack(C, text("d"))',
+        ["E0005", "E0005"],
+      ],
+      [
+        "a loop that leads out of any loop",
+        'tile A = row(B)\ntile B = column(A, C)\ntile C = box(D)\ntile D = stack(text("d"))',
+        ["E0005"],
+      ],
+      [
+        "two paths that meet again, with no loop",
+        'tile A = row(B, C)\ntile B = column(D)\ntile C = box(D)\ntile D = stack(text("d"))',
+        [],
+      ],
+    ])("the tiles of %s, whichever is asked about first", (_, tiles, loops) => {
+      for (const order of [
+        ["A", "C"],
+        ["C", "A"],
+      ]) {
+        const calls = order.map((t) => `${t}() {onClick: bump}`).join(", ");
+        const found = diags(tiles, calls);
+        expect(
+          found.map((e) => e.code),
+          calls,
+        ).toEqual(["W0213", "W0213", ...loops]);
+        const observed = Object.fromEntries(
+          order.map((t, i) => [t, found[i]?.message.match(/observed in body: [^)]*/)?.[0]]),
+        );
+        expect(observed, calls).toEqual({
+          A: "observed in body: box, column, row, stack, text",
+          C: "observed in body: box, stack, text",
+        });
+      }
     });
   });
 });

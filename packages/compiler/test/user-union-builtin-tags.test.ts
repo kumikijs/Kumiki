@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { errorsOf } from "./helpers/diagnostics.ts";
+import { errorsOf, nonExhaustiveMessage } from "./helpers/diagnostics.ts";
 import { withApp } from "./helpers/programs.ts";
 
 const program = (decls: string, body: string, caps = ""): string =>
@@ -118,21 +118,14 @@ describe("the place a let-bound tag lands checks it", () => {
   });
 
   it.each([
-    ["type Health = Ok | Degraded | Down", '| Degraded -> "slow"', '"Health" has no arm for Down'],
-    [
-      "type Health(T) = Ok | Down | Other(T)",
-      '| Down -> "down"',
-      '"Health(?)" has no arm for Other(_)',
-    ],
-  ])("a match the arms of `%s` decide has to cover it", (decls, arm, missing) => {
+    ["type Health = Ok | Degraded | Down", '| Degraded -> "slow"', "Health", "Down"],
+    ["type Health(T) = Ok | Down | Other(T)", '| Down -> "down"', "Health(?)", "Other(_)"],
+  ])("a match the arms of `%s` decide has to cover it", (decls, arm, type, values) => {
     const source = program(
       `${decls}\nslot label : Text = ""`,
       `let next = Ok\nlabel := match next with | Ok -> "fine" ${arm}`,
     );
-    expect(errors(source)).toEqual([
-      `E0227 This match on ${missing}, and a match used as a value has to evaluate to one of ` +
-        "its arms. Add the missing arms, or end with `_ -> …`",
-    ]);
+    expect(errors(source)).toEqual([`E0227 ${nonExhaustiveMessage(type, values)}`]);
   });
 
   it("a generic's parameter in a union it writes inline is undecided, beside a type of that name", () => {

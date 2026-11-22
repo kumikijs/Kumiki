@@ -17,7 +17,7 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
           fetch-depth: 2
@@ -26,7 +26,7 @@ jobs:
         id: base
         run: echo "sha=$(git rev-parse HEAD^1)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ steps.base.outputs.sha }}
           path: .bundle-size-base
@@ -34,7 +34,7 @@ jobs:
 
       - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: pnpm
@@ -64,7 +64,7 @@ jobs:
 
       - name: Comment on the PR
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require("node:fs");
