@@ -1,7 +1,7 @@
 import { perTable, type TypeEnv, typeToString } from "./assignable.ts";
 import { assertNever, type Pos, type TypeExpr } from "./ast.ts";
 import { expandNamed, GENERIC_SELF_NESTING_LIMIT, typeKey } from "./refinement-positions.ts";
-import { BUILTIN_TYPE_CONSTRUCTORS } from "./stdlib-types.ts";
+import { BUILTIN_TYPE_CONSTRUCTORS, type PrimName } from "./stdlib-types.ts";
 import type { KumikiError } from "./typecheck/context.ts";
 
 /** A type that is a Decoder, or holds one somewhere inside. */
@@ -27,6 +27,7 @@ function search<R>(
   env: TypeEnv,
   opaque: ReadonlySet<string>,
   found: (t: TypeExpr, whole: boolean) => R | undefined,
+  parts: (t: TypeApp) => readonly TypeExpr[] = (x) => x.args,
 ): R | undefined {
   const entered = new Set<string>();
   const entries = new Map<string, number>();
@@ -59,7 +60,7 @@ function search<R>(
       case "TypeRef":
         break;
       case "TypeApp":
-        if (BUILTIN_TYPE_CONSTRUCTORS.has(t.name)) push(t.args);
+        if (BUILTIN_TYPE_CONSTRUCTORS.has(t.name)) push(parts(t));
         break;
       case "TypeRecord":
         push(t.fields.map((f) => f.type));
@@ -77,6 +78,8 @@ function search<R>(
   }
   return undefined;
 }
+
+type TypeApp = TypeExpr & { kind: "TypeApp" };
 
 /** The names each node of `t` writes, a name in `skip` aside, and whether it writes the primitive. */
 function namesIn(
@@ -197,4 +200,73 @@ export function decoderKeyError(found: DecoderKey, pos: Pos, applied?: TypeExpr)
     message: `${applied ? `${typeToString(applied)}: ${message}` : `${message.charAt(0).toUpperCase()}${message.slice(1)}`} — it is an opaque handle`,
     pos,
   };
+}
+
+// A JSON body holds data, and a Decoder is a check the compiler builds, so no body decodes into one.
+const UNDECODABLE: ReadonlySet<PrimName> = new Set<PrimName>(["Decoder"]);
+
+/** A handle no JSON body decodes into, which a type is or holds. */
+type Undecodable = HeldDecoder & { readonly handle: PrimName };
+
+// A Map key or a Set element holding a Decoder is refused wherever it is written, so the walks
+// for an undecodable handle pass over it.
+function unkeyed(x: TypeApp, env: TypeEnv): readonly TypeExpr[] {
+  const key = x.args[0];
+  return (x.name === "Map" || x.name === "Set") && key && heldDecoder(key, env)
+    ? x.args.slice(1)
+    : x.args;
+}
+
+/** The first handle no JSON body decodes into that `t` is or holds. */
+function undecodable(t: TypeExpr, env: TypeEnv): Undecodable | undefined {
+  return search(
+    t,
+    env,
+    new Set(),
+    (x, whole) =>
+      x.kind === "TypePrim" && UNDECODABLE.has(x.name) ? { whole, handle: x.name } : undefined,
+    (x) => unkeyed(x, env),
+  );
+}
+
+const article = (name: string): string => (/^[AEIOU]/.test(name) ? "an" : "a");
+
+/** E0204 at `t`, which is or holds a handle no JSON body decodes into. */
+function undecodableError(t: TypeExpr, { whole, handle }: Undecodable): KumikiError {
+  const a = article(handle);
+  const what = whole
+    ? `${a.charAt(0).toUpperCase()}${a.slice(1)} ${handle} cannot`
+    : `${typeToString(t)} holds ${a} ${handle}, which cannot`;
+  return {
+    code: "E0204",
+    kind: "effect-id-misuse",
+    message: `${what} be decoded from JSON — it is an opaque handle`,
+    pos: t.pos,
+  };
+}
+
+/**
+ * E0204 at each part of `t`, the type a `Decoder.Json` decodes, that is or holds a handle no JSON
+ * body decodes into: the builtin constructors and records it writes are looked through, so each
+ * mistake is reported once, where it is written.
+ */
+export function undecodableErrors(t: TypeExpr, env: TypeEnv): KumikiError[] {
+  const errors: KumikiError[] = [];
+  const todo = [t];
+  // Pushed last to first, so the parts are reported in the order they are written.
+  const push = (ts: readonly TypeExpr[]): void => {
+    for (let i = ts.length - 1; i >= 0; i--) {
+      const part = ts[i];
+      if (part) todo.push(part);
+    }
+  };
+  for (let x = todo.pop(); x !== undefined; x = todo.pop()) {
+    if (x.kind === "TypeRecord") push(x.fields.map((f) => f.type));
+    else if (x.kind === "TypeApp" && BUILTIN_TYPE_CONSTRUCTORS.has(x.name)) push(unkeyed(x, env));
+    else {
+      const found = undecodable(x, env);
+      if (found) errors.push(undecodableError(x, found));
+    }
+  }
+  return errors;
 }

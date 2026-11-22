@@ -464,6 +464,82 @@ tile App = text("x")`);
   });
 });
 
+describe("a Decoder in the type Decoder.Json decodes is E0204", () => {
+  const DEFS = `type Dec = Decoder
+type Holder = {d: Decoder}
+type Box(T) = {v: T}
+type Note = {title: Text}
+type Phantom(T) = Int`;
+  const json = (type: string, extra = ""): string =>
+    mapped(`{key: "k", decode: Decoder.Json(${type})}`, "Text", `${DEFS}\n${extra}`);
+  /** Where `src` writes `part`, the first time `type` writes it, inside `Decoder.Json(type)`. */
+  const at = (src: string, type: string, part: string): string => {
+    const { line, col } = posOf(src, `Decoder.Json(${type})`);
+    return `${line}:${col + "Decoder.Json(".length + type.indexOf(part)}`;
+  };
+  const WHOLE = "A Decoder cannot be decoded from JSON — it is an opaque handle";
+  const held = (type: string): string =>
+    `${type} holds a Decoder, which cannot be decoded from JSON — it is an opaque handle`;
+
+  it.each([
+    ["a Decoder", "Decoder", "Decoder", WHOLE],
+    ["a List of them", "List(Decoder)", "Decoder", WHOLE],
+    ["an Option of one", "Option(Decoder)", "Decoder", WHOLE],
+    ["a Map to them", "Map(Text, Decoder)", "Decoder", WHOLE],
+    ["a record field", "{d: Decoder}", "Decoder", WHOLE],
+    ["a Tuple part", "Tuple(Int, Decoder)", "Decoder", WHOLE],
+    ["a Result's success", "Result(Decoder, Text)", "Decoder", WHOLE],
+    ["an alias of one", "Dec", "Dec", WHOLE],
+    ["an alias holding one", "Holder", "Holder", held("Holder")],
+    ["a generic applied to one", "Box(Decoder)", "Box(Decoder)", held("Box(Decoder)")],
+  ])("refuses %s, where it is written", (_what, type, part, message) => {
+    const src = json(type);
+    expect(locatedSummariesOf(src)).toEqual([`E0204 ${at(src, type, part)} ${message}`]);
+  });
+
+  it("refuses each one a type writes, once", () => {
+    const type = "{a: Decoder, b: List(Decoder)}";
+    const src = json(type);
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0204 ${at(src, type, "Decoder")} ${WHOLE}`,
+      `E0204 ${at(src, type, "Decoder)")} ${WHOLE}`,
+    ]);
+  });
+
+  it("leaves a Map key holding one to the key's refusal", () => {
+    const type = "Map(Decoder, Int)";
+    const src = json(type);
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0204 ${at(src, type, "Decoder")} A Decoder cannot be a Map key — it is an opaque handle`,
+    ]);
+  });
+
+  it("refuses a Map from and to them at its key and its value", () => {
+    const type = "Map(Decoder, Decoder)";
+    const src = json(type);
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0204 ${at(src, type, "Decoder")} A Decoder cannot be a Map key — it is an opaque handle`,
+      `E0204 ${at(src, type, "Decoder)")} ${WHOLE}`,
+    ]);
+  });
+
+  it("leaves a type definition keying a Set by one to its own refusal", () => {
+    const src = json("Bad", "type Bad = Set(Decoder)");
+    const { line, col } = posOf(src, "Decoder)");
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0204 ${line}:${col} A Decoder cannot be a Set element — it is an opaque handle`,
+    ]);
+  });
+
+  it.each([
+    ["a record", "Note"],
+    ["a List of them", "List(Note)"],
+    ["a generic that holds none of its argument", "Phantom(Decoder)"],
+  ])("takes %s", (_what, type) => {
+    expect(locatedSummariesOf(json(type))).toEqual([]);
+  });
+});
+
 describe("the walk that looks for a Decoder", () => {
   // Each instantiation along two growing branches is new, so a walk bounded only per path would
   // enter about 2^32 of them before it reaches the Decoder the last variant holds.
