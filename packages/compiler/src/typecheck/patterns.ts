@@ -6,7 +6,7 @@ import {
   unaliasType,
   writtenVariants,
 } from "../assignable.ts";
-import type { Expr, MatchArm, Pattern, TypeExpr } from "../ast.ts";
+import type { EndsOuterArm, Expr, MatchArm, Pattern, Pos, TypeExpr } from "../ast.ts";
 import { bindLocal, type Ctx, innerScope, type KumikiError, type SymbolTable } from "./context.ts";
 import { patternBinds } from "./nested-scopes.ts";
 
@@ -305,15 +305,113 @@ export function checkMatchCovers(
   if (uncovered === null || uncovered.length === 0) return;
   const shown = uncovered.slice(0, WITNESSES_SHOWN).map((w) => w.join(", "));
   const others = uncovered.length > WITNESSES_SHOWN ? ", among others" : "";
+  // `_ -> …` written after a match that ends the last arm would be that match's arm. The message
+  // names no position: `kumiki fix` tells errors apart by their message, and a fix that moves the
+  // lines would read as one that introduced this error.
+  const past = endsInOpenMatch(e)
+    ? ". The match that ends this match's last arm takes every arm written after it: put it in " +
+      "parentheses, `(match … with …)`, for an arm after it to be this match's"
+    : "";
   errors.push({
     code: "E0227",
     kind: "non-exhaustive-match",
     message:
       `This match on "${typeToString(scrutType)}" has no arm for ${shown.join(", ")}${others}, ` +
       "and a match used as a value has to evaluate to one of its arms. Add the missing arms, " +
-      "or end with `_ -> …`",
+      `or end with \`_ -> …\`${past}`,
     pos: e.pos,
   });
+}
+
+const at = (pos: Pos): string => `${pos.line}:${pos.col}`;
+
+/** True when `e`'s last arm ends in a match that nothing closes off before that. */
+function endsInOpenMatch(e: Expr & { kind: "MatchExpr" }): boolean {
+  let end = e.arms[e.arms.length - 1]?.body;
+  while (end) {
+    if (end.kind === "MatchExpr") return end.outer !== undefined;
+    if (end.kind === "BinOp" || end.kind === "UnaryOp") end = end.rhs;
+    else if (end.kind === "IfExpr") end = end.alternate;
+    else if (end.kind === "LetIn") end = end.body;
+    else return false;
+  }
+  return false;
+}
+
+/** How each form of `match` is closed off before the end of the arm it is written in. */
+const CLOSE_OFF = {
+  value: "put the inner match in parentheses: `(match … with …)`",
+  // Braces open a block only at the start of an arm's body, so they go around all its statements.
+  statement:
+    "put the arm's statements in braces, ending with the inner match: " +
+    "`-> { … match … with … }`",
+  tile: "move the inner match into a tile of its own and name that tile in the arm",
+} as const;
+
+type MatchForm = keyof typeof CLOSE_OFF;
+
+function patternText(p: Pattern): string {
+  switch (p.kind) {
+    case "PWildcard":
+      return "_";
+    case "PBind":
+      return p.name;
+    case "PVariant":
+      return p.binds.length === 0 ? p.name : `${p.name}(${p.binds.join(", ")})`;
+    case "PTuple":
+      return `(${p.items.map(patternText).join(", ")})`;
+  }
+}
+
+/**
+ * A `match` that ends an arm of another takes every arm written after it, the ones laid out for
+ * the other included, so the first of them its arms above already cover is reported. Callers run
+ * this only once every arm's pattern fits, as for E0227.
+ */
+export function checkArmsAfterNestedMatch(
+  m: EndsOuterArm & { arms: readonly { readonly pattern: Pattern }[]; pos: Pos },
+  form: MatchForm,
+  scrutType: TypeExpr | null,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  const { outer } = m;
+  if (outer === undefined) return;
+  const patterns = m.arms.map((arm) => arm.pattern);
+  const reached = patterns.findIndex(
+    (_, k) => k > 0 && covers(patterns.slice(0, k), scrutType, sym),
+  );
+  const arm = patterns[reached];
+  if (arm === undefined) return;
+  errors.push({
+    code: "W0219",
+    kind: "unreachable-nested-arm",
+    severity: "warning",
+    message:
+      `The arm \`${patternText(arm)}\` can never be reached: it belongs to the match at ` +
+      `${at(m.pos)}, whose arms above it already match every value. That match ends an arm of ` +
+      `the match at ${at(outer)}, so it takes every arm written after it. To give this arm to ` +
+      `the match at ${at(outer)}, ${CLOSE_OFF[form]}`,
+    pos: arm.pos,
+  });
+}
+
+/**
+ * True when every value `scrutType` holds is matched by one of `patterns`; false when that hinges
+ * on an undecidable type.
+ */
+function covers(
+  patterns: readonly Pattern[],
+  scrutType: TypeExpr | null,
+  sym: SymbolTable,
+): boolean {
+  const uncovered = uncoveredRows(
+    patterns.map((p) => [p]),
+    [scrutType],
+    sym,
+    1,
+  );
+  return uncovered !== null && uncovered.length === 0;
 }
 
 const isIrrefutable = (p: Pattern): boolean => p.kind === "PWildcard" || p.kind === "PBind";

@@ -123,6 +123,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | フォーム |
 | [W0217](./errors.md#w0217-name-beside-group-warning) | `name-beside-group` | tile | フォーム |
 | [W0218](./errors.md#w0218-shadowed-sub-route-warning) | `shadowed-sub-route` | tile | ルーティング |
+| [W0219](./errors.md#w0219-unreachable-nested-arm-warning) | `unreachable-nested-arm` | type | コア |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | 標準ライブラリ |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | 標準ライブラリ |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | HTTP/Storage |
