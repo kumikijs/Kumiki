@@ -1,5 +1,5 @@
-import type { AppShape, MountedApp } from "@kumikijs/runtime";
-import { mount } from "@kumikijs/runtime";
+import type { AppShape, MountedApp, ReducerSpec } from "@kumikijs/runtime";
+import { mount, renderToString } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bareApp } from "./helpers/app.ts";
 import { captureConsole } from "./helpers/console.ts";
@@ -72,5 +72,105 @@ describe("an effect error no reducer handles", () => {
     await tick(0);
     expect(app.live?.failed).toBe(true);
     expect(errors).toEqual([]);
+  });
+});
+
+/** Who takes the 503 `load` fails with at boot: nothing, or a reducer whose body does not apply. */
+type Taker =
+  | "nothing"
+  | "a panicking .err reducer"
+  | "a refused .err reducer"
+  | "a panicking 5xx reducer";
+
+const TAKER_PANICKED = "taker panicked";
+
+function bootFailingApp(taker: Taker): AppShape {
+  const panics = (): never => {
+    throw new Error(TAKER_PANICKED);
+  };
+  const reducers: ReducerSpec[] = [];
+  if (taker === "a panicking .err reducer" || taker === "a refused .err reducer") {
+    reducers.push({
+      name: "failed",
+      event: { kind: "effect", effect: "load", outcome: "err" },
+      apply:
+        taker === "a refused .err reducer"
+          ? () => ({ slots: { tries: 4 }, emits: [], rejected: [{ slot: "tries", value: 4 }] })
+          : panics,
+    });
+  }
+  if (taker === "a panicking 5xx reducer") {
+    reducers.push({
+      name: "serverDown",
+      event: { kind: "lifecycle", name: "app.http-5xx" },
+      apply: panics,
+    });
+  }
+  return bareApp({
+    slots: { tries: { value: 0 } },
+    effects: {
+      load: {
+        name: "load",
+        cap: "",
+        invoke: async () => ({ kind: "err", value: { status: 503, message: "busy" } }),
+      },
+    },
+    init: [{ effect: "load", args: [] }],
+    reducers,
+    ...(taker === "a panicking 5xx reducer" ? { http: { on5xx: "serverDown" } } : {}),
+    root: () => ({ kind: "column", children: [] }),
+  });
+}
+
+/** What a pass reported: its console errors, and where each panic it reported was. */
+type Reported = { errors: string[]; panickedIn: string[] };
+
+const PASSES: Record<"mount" | "server", (app: AppShape) => Promise<Reported>> = {
+  mount: async (app) => {
+    const errors = captureConsole("error");
+    const root = freshRoot();
+    const handle = mount(app, root);
+    await tick(0);
+    handle.dispose();
+    root.remove();
+    const panickedIn = errors.flatMap(
+      (e) => /^\[kumiki\] (?:panic|error) in (.+?): /.exec(e)?.[1] ?? [],
+    );
+    return { errors, panickedIn };
+  },
+  server: async (app) => {
+    const errors = captureConsole("error");
+    const { bootstrapEpisode } = await renderToString(app);
+    const panickedIn = bootstrapEpisode.steps.flatMap((s) =>
+      s.kind === "panic" ? (s.location ?? []) : [],
+    );
+    return { errors, panickedIn };
+  },
+};
+
+const NO_ERR_REDUCER = 'effect "load" returned an error with no .err reducer: busy';
+
+describe.each(
+  Object.keys(PASSES) as (keyof typeof PASSES)[],
+)("on the %s pass, a boot error", (pass) => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("that nothing takes is reported as having no .err reducer", async () => {
+    const { errors } = await PASSES[pass](bootFailingApp("nothing"));
+    expect(errors.filter((e) => e.includes("no .err reducer"))).toEqual([
+      `[kumiki] ${NO_ERR_REDUCER}`,
+    ]);
+  });
+
+  it.each([
+    ["a panicking .err reducer", ['reducer "failed"']],
+    ["a refused .err reducer", []],
+    ["a panicking 5xx reducer", ['reducer "serverDown"']],
+  ] as const)("taken by %s is that reducer's, and only its panic is reported", async (taker, panickedIn) => {
+    const reported = await PASSES[pass](bootFailingApp(taker));
+    expect(reported.errors.filter((e) => e.includes("no .err reducer"))).toEqual([]);
+    expect(reported.panickedIn).toEqual(panickedIn);
   });
 });

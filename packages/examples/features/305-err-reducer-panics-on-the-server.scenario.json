@@ -1,0 +1,16 @@
+{
+  "effects": {
+    "loadNote": [{ "outcome": "ok", "value": "hello" }],
+    "loadQuote": [{ "outcome": "ok", "value": "carpe diem" }]
+  },
+  "steps": [
+    {
+      "label": "both init requests answer, so neither reducer that would panic runs",
+      "expect": {
+        "noErrors": true,
+        "state": { "note": "hello", "quote": "carpe diem", "problem": "-" },
+        "domIncludes": ["note=hello", "quote=carpe diem", "problem=-"]
+      }
+    }
+  ]
+}

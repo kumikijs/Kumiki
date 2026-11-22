@@ -193,11 +193,9 @@ async function dispatchEmit(
       ) {
         continue;
       }
-      const applied = applyReducerOnSsr(r, live, app.slots, payload, logger, dirty);
-      if (applied) {
-        matched++;
-        followUps.push(...applied.emits);
-      }
+      // A reducer that panics or is refused still took the result, as a mount counts it.
+      matched++;
+      followUps.push(...applyReducerOnSsr(r, live, app.slots, payload, logger, dirty));
     }
     if (result.kind === "err" && app.http) {
       const status = readStatus(result.value);
@@ -213,11 +211,8 @@ async function dispatchEmit(
         if (name) {
           const r = app.reducers.find((x) => x.name === name);
           if (r) {
-            const applied = applyReducerOnSsr(r, live, app.slots, payload, logger, dirty);
-            if (applied) {
-              matched++;
-              followUps.push(...applied.emits);
-            }
+            matched++;
+            followUps.push(...applyReducerOnSsr(r, live, app.slots, payload, logger, dirty));
           }
         }
       }
@@ -234,6 +229,7 @@ async function dispatchEmit(
   }
 }
 
+/** What `r` emitted: nothing when it panicked or its batch was refused. */
 function applyReducerOnSsr(
   r: AppShape["reducers"][number],
   live: Record<string, unknown>,
@@ -241,7 +237,7 @@ function applyReducerOnSsr(
   payload: Record<string, unknown>,
   logger: EpisodeLogger,
   dirtyAcc: string[],
-): { emits: EmitSpec[] } | null {
+): EmitSpec[] {
   const outcome = withEnvRecord(() => r.apply(live, payload));
   const envReads = outcome.env.reads;
   if (!outcome.ok) {
@@ -252,14 +248,14 @@ function applyReducerOnSsr(
       name: r.name,
       ...(envReads.length > 0 ? { envReads } : {}),
     });
-    return null;
+    return [];
   }
   const applied = outcome.value;
   const { diffs, dirty, rejected } = computeSlotDiffs(live, applied, slotMetas);
   if (rejected.length > 0) {
     reportRejectedBatch(r.name, rejected);
     logger.recordReducer(r.name, [], [], envReads);
-    return { emits: [] };
+    return [];
   }
   logger.recordReducer(
     r.name,
@@ -268,5 +264,5 @@ function applyReducerOnSsr(
     envReads,
   );
   dirtyAcc.push(...dirty);
-  return { emits: applied.emits };
+  return applied.emits;
 }
