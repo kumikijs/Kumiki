@@ -106,6 +106,37 @@ effect load cap=storage.read
     ]);
   });
 
+  it("names the types in a Decoder.Json argument that also holds a value, and the value", () => {
+    const src = `type Item = {label: Text}
+slot limit : Int = 1
+effect load cap=storage.read
+    in=Unit
+    out=Result(Option(Text), Text)
+    policy=once
+    map-request={key: "items", decode: Decoder.Json({item: Item, n: limit}), extra: limit}
+`;
+    expect(refsOf(src, "effect.load").filter((r) => r.includes("@7:"))).toEqual([
+      "type.Item@7:60",
+      "slot.limit@7:69",
+      "slot.limit@7:85",
+    ]);
+  });
+
+  it("walks an argument after a Decoder.Json's first as a value", () => {
+    const src = `type Item = {label: Text}
+slot limit : Int = 1
+effect load cap=storage.read
+    in=Unit
+    out=Result(Option(Text), Text)
+    policy=once
+    map-request={key: "items", decode: Decoder.Json(Item, limit)}
+`;
+    expect(refsOf(src, "effect.load").filter((r) => r.includes("@7:"))).toEqual([
+      "type.Item@7:53",
+      "slot.limit@7:59",
+    ]);
+  });
+
   describe("a local binding shadows a definition of the same name", () => {
     const decl = `slot label : Text = ""
 slot items : List(Text) = []

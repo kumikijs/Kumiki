@@ -1,0 +1,30 @@
+{
+  "steps": [
+    {
+      "label": "the refinements written with tight negative literals hold their initial values",
+      "expect": {
+        "noErrors": true,
+        "state": { "sign": 0, "temp": 20 },
+        "domIncludes": ["sign: 0", "temp: 20"]
+      }
+    },
+    {
+      "label": "unary minus in an expression writes -1, which one-of(-1, 0, 1) lists",
+      "do": { "click": "#down" },
+      "expect": {
+        "noErrors": true,
+        "state": { "sign": -1 },
+        "domIncludes": ["sign: -1"]
+      }
+    },
+    {
+      "label": "unary minus writes -40.0, the lower bound between(-40.0, 60.0) includes",
+      "do": { "click": "#cold" },
+      "expect": {
+        "noErrors": true,
+        "state": { "temp": -40 },
+        "domIncludes": ["temp: -40"]
+      }
+    }
+  ]
+}
