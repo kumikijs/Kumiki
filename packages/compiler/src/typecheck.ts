@@ -117,12 +117,14 @@ function checkAll(
     elementIds: new Set(),
     constructorTags: new Set(constructorTags(program)),
     qualifiers: new Set(qualifierCandidates(program)),
-    judged: new WeakSet(),
-    reportsUnlessJudged: new Map(),
+    judgedVariants: new WeakSet(),
+    undefinedVariants: new Map(),
     fnResults: new Map(),
     fnLoops: new Set(),
     unionsByTag: unionsByTag(program.defs),
     tileKinds: tileKinds(tiles),
+    judgedMapLiterals: new WeakSet(),
+    decoderKeyedLiterals: new Map(),
   };
 
   for (const def of program.defs) {
@@ -193,8 +195,10 @@ function checkAll(
   checkDuplicateNames(program, errors);
 
   return errors.filter((d) => {
-    const at = sym.reportsUnlessJudged.get(d);
-    return at === undefined || !sym.judged.has(at);
+    const variant = sym.undefinedVariants.get(d);
+    if (variant !== undefined && sym.judgedVariants.has(variant)) return false;
+    const literal = sym.decoderKeyedLiterals.get(d);
+    return literal === undefined || !sym.judgedMapLiterals.has(literal);
   });
 }
 
