@@ -111,14 +111,9 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
       `error(field=…) cannot step through "._1": "Tuple(Text, Int)" has no fields. ${STEPS}`,
     ],
     [
-      "a misspelt step into a union",
-      `tile App = error(field=d.shape.nmae)`,
-      `error(field=…) cannot step through ".nmae": "Shape" has no fields. ${STEPS}`,
-    ],
-    [
-      "a variant's name as a step into a union",
-      `tile App = error(field=d.shape.Square)`,
-      `error(field=…) cannot step through ".Square": "Shape" has no fields. ${STEPS}`,
+      "a member as a step into a union",
+      `tile App = error(field=d.shape.length)`,
+      `error(field=…) cannot step through ".length": "Shape" has no fields. ${STEPS}`,
     ],
     [
       "a call",
@@ -129,11 +124,6 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
       "an index into a record",
       `tile App = error(field=form[0])`,
       `error(field=…) cannot step through an index into "Contact": a path's index names a List element or a Map entry ${SEE}`,
-    ],
-    [
-      "an index into a Tuple",
-      `tile App = error(field=r.pair[0])`,
-      `error(field=…) cannot step through an index into "Tuple(Text, Int)": a path's index names a List element or a Map entry ${SEE}`,
     ],
     [
       "no field at all",
@@ -222,6 +212,8 @@ test err-field =
 describe("a path another code reports is not E0230 as well", () => {
   it.each([
     ["a field the record lacks", `form.emial`, "E0108"],
+    ["a misspelt step into a union", `d.shape.nmae`, "E0108"],
+    ["a variant's name as a step into a union", `d.shape.Square`, "E0108"],
     ["a member named without its call", `form.email.contains`, "E0213"],
     ["a name that resolves to nothing", `nope`, "E0103"],
     ["a fn named without a call", `shout`, "E0127"],
@@ -230,6 +222,8 @@ describe("a path another code reports is not E0230 as well", () => {
     ["a computed Map key of another type", `m[i]`, "E0201"],
     ["a Map key of another type", `m[3]`, "E0201"],
     ["an index into a Set", `tags[0]`, "E0232"],
+    ["an index into a Tuple", `r.pair[0]`, "E0238"],
+    ["an index into an Int", `i[0]`, "E0238"],
     ["a call to a name no fn defines, such as a tile written as a value", `text("form")`, "E0116"],
   ])("leaves %s to %s", (_label, field, code) => {
     expect(codesOf(program(`tile App = error(field=${field})`))).toEqual([code]);

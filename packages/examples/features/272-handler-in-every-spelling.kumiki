@@ -1,0 +1,31 @@
+# Feature (language.md): an event handler written as a named argument binds
+# the reducer it names in each of its three spellings — `onClick=Bump`,
+# `onClick=Bump()` and `onClick=Bump {}` — whatever tile it is on. All three
+# are written on a user tile below, and the brace form on a builtin and on a
+# value builtin that reads its content from a positional argument (`editable`).
+#
+# `Bump` is subscribed to `Other`, which the scenario never clicks, so each
+# count is one the handler on the call delivered.
+
+slot count : Int  = 0
+slot note  : Text = ""
+
+reducer Bump on=ui.click(Other) do= count := count + 1
+
+tile Other           = button(text="other")
+tile Labeled in=Text = button(text=$1)
+
+tile App = column(
+             button(text="builtin", onClick=Bump {}),
+             Labeled(onClick=Bump, "bare"),
+             Labeled(onClick=Bump(), "call"),
+             Labeled(onClick=Bump {}, "braces"),
+             editable(bind=note, onInput=Bump {}) {id: "ed"},
+             Other,
+             text("count: " + count.show))
+           {pad: "lg", gap: "md"}
+
+app HandlerInEverySpelling
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

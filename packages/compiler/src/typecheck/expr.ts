@@ -1,7 +1,7 @@
 import { nearestName } from "@kumikijs/runtime/text-distance";
 import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
 import { type Expr, type FragmentShape, numberLiteral, type Pos, type TypeExpr } from "../ast.ts";
-import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
+import { isQualifierName, RUN_REDUCER, visitDecodedParts } from "../builtin-calls.ts";
 import { fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
 import { showShapeOf } from "../show-shape.ts";
 import {
@@ -64,12 +64,14 @@ import {
 } from "./members.ts";
 import { laterDeclaration } from "./nested-scopes.ts";
 import {
+  checkArmsAfterNestedMatch,
   checkMatchCovers,
   checkPatternAgainstType,
   checkPatternBindsAreDistinct,
   matchedType,
 } from "./patterns.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
+import { resolveType } from "./types.ts";
 
 /** The type one iteration of `for x in iter` binds, given the iterated expression. */
 export function elementTypeOf(iter: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
@@ -403,18 +405,17 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkIndexStep(inferType(e.base, sym, ctx), e.index, "read", e.index.pos, sym, errors, ctx);
       return;
     }
-    case "Call":
+    case "Call": {
       if (ctx.kind === "test" && e.callee === RUN_REDUCER && isBuiltinCall(e.callee, sym)) {
         reportRunReducerPosition(ctx, e.pos, errors);
         return;
       }
-      for (const a of e.args) {
-        if (e.callee === "Decoder.Json") checkTypeSpelling(a, sym, errors, ctx);
-        else checkExpr(a, sym, errors, ctx);
-      }
+      if (e.callee === "Decoder.Json") checkDecodedArgs(e.args, sym, errors, ctx);
+      else for (const a of e.args) checkExpr(a, sym, errors, ctx);
       checkCallee(e.callee, e.args, e.pos, sym, errors, ctx);
       for (const a of shownArgs(e)) noteShown(a, sym, ctx);
       return;
+    }
     case "MethodCall": {
       // The chained spelling of the same thing: `run-reducer(inc).run-reducer(dec)`.
       if (ctx.kind === "test" && e.method === RUN_REDUCER && isBuiltinCall(e.method, sym)) {
@@ -551,7 +552,10 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         if (errors.length > before) patternsFit = false;
         checkExpr(arm.body, sym, errors, inner);
       });
-      if (patternsFit) checkMatchCovers(e, scrutType, sym, errors);
+      if (patternsFit) {
+        checkMatchCovers(e, scrutType, sym, errors);
+        checkArmsAfterNestedMatch(e, "value", scrutType, sym, errors);
+      }
       return;
     }
     case "IfExpr":
@@ -598,19 +602,22 @@ function didYouMean(written: string, candidates: Iterable<string>): string {
   return near === null ? "" : ` — did you mean "${near}"?`;
 }
 
-// `Decoder.Json(T)` takes a type written in expression position, so its
-// capitalised names are a type's and not tags; codegen reads them back as one.
-function checkTypeSpelling(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
-  if (e.kind === "Variant") {
-    for (const p of e.payload) checkTypeSpelling(p, sym, errors, ctx);
-    return;
-  }
-  if (e.kind === "RecordLit") {
-    for (const f of e.fields) checkTypeSpelling(f.value, sym, errors, ctx);
-    return;
-  }
-  checkExpr(e, sym, errors, ctx);
+// Codegen decodes by the first argument, which parses as a value, so each part of it that spells a
+// type is resolved as one. An argument after the first is E0213: its capitalised names are left
+// unreported rather than read as variant tags.
+function checkDecodedArgs(
+  args: readonly Expr[],
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const [first, ...rest] = args;
+  const value = (v: Expr): void => checkExpr(v, sym, errors, ctx);
+  visitDecodedParts(first, (t) => resolveType(t, sym, errors), value);
+  for (const a of rest) visitDecodedParts(a, leftToTheCount, value);
 }
+
+const leftToTheCount = (): void => undefined;
 
 function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { kind: "Ref" } {
   return (
