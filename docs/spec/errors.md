@@ -790,7 +790,7 @@ A `Decoder` is the other handle ([Standard Library §2.1.3](./stdlib.md#_2-1-3-d
 
 A `Map` key or a `Set` element whose type is or holds a `Decoder` is this error too, where the type is written: a key keeps none of the check a `Decoder.Json(T)` is, so the one read back from `keys` or `to-list` is not the one put in, and handed on as a `decode` it decodes by none ([Standard Library §2.2.2](./stdlib.md#_2-2-2-set-t)). `Set(Decoder)` is reported at its `Decoder`, `Map({d: Decoder}, Int)` at its key type, and a generic applied to one at the application when its body keys by the parameter — `Bag(Decoder)` for a `type Bag(T) = Set(T)`. A body that keys by a `Decoder` itself is reported in the definition, once. A Map literal keyed by a `Decoder`, as `{Decoder.Text: 1}`, is reported at its first such key where no declared type judges the literal. Where one does, that type's own report stands alone: a `Map(Decoder, Int)` is refused where it is written, and a `Map(Text, Int)` gives the key `Expected Text but got Decoder`.
 
-A `Decoder` anywhere in the type a `Decoder.Json(T)` decodes is this error too: a JSON body holds data, and a `Decoder` is a check the compiler builds, so no body decodes into one ([HTTP §6.1.4](./http.md#_6-1-4-the-decoder-type)). Each one `T` writes is reported once, where it is written: `Decoder.Json(Decoder)` and `Decoder.Json({d: Decoder})` at the `Decoder`, the same inside a `List`, an `Option`, a `Map`'s value, a `Tuple` or a `Result`, and an alias or a generic that holds one at its name — `Holder` for a `type Holder = {d: Decoder}`, `Box(Decoder)` for a `type Box(T) = {v: T}`. A `Map` key or a `Set` element holding a `Decoder` there gets the key's report above, alone.
+A handle, an `EffectId` or a `Decoder`, anywhere in the type a `Decoder.Json(T)` decodes is this error too: a JSON body holds data, and a handle is what only the runtime makes — an `EffectId` names one dispatched effect, and a `Decoder` is a check the compiler builds — so no body decodes into one ([HTTP §6.1.4](./http.md#_6-1-4-the-decoder-type)). Each one `T` writes is reported once, where it is written: `Decoder.Json(Decoder)`, `Decoder.Json(EffectId)` and `Decoder.Json({d: Decoder})` at the handle, the same inside a `List`, an `Option`, a `Map`'s value, a `Tuple` or a `Result`, and an alias or a generic that holds one at its name — `Holder` for a `type Holder = {d: Decoder}`, `Box(EffectId)` for a `type Box(T) = {v: T}`. A `Map` key or a `Set` element holding a `Decoder` there gets the key's report above, alone; one that is or holds an `EffectId`, which a key may be elsewhere, is reported here, as `Map(EffectId, Int)` at its `EffectId`.
 
 > `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`
 > `<builtin>(...) cannot render <handle> — it is an opaque handle`
@@ -800,10 +800,10 @@ A `Decoder` anywhere in the type a `Decoder.Json(T)` decodes is this error too: 
 > `A <Map key | Set element> of type <T> cannot hold a Decoder — it is an opaque handle`
 > `<G>: a Decoder cannot be a <Map key | Set element> — it is an opaque handle`
 > `<G>: a <Map key | Set element> of type <T> cannot hold a Decoder — it is an opaque handle`
-> `A Decoder cannot be decoded from JSON — it is an opaque handle`
-> `<N> holds a Decoder, which cannot be decoded from JSON — it is an opaque handle`
+> `<A Decoder | An EffectId> cannot be decoded from JSON — it is an opaque handle`
+> `<N> holds <a Decoder | an EffectId>, which cannot be decoded from JSON — it is an opaque handle`
 
-`<builtin>` is the call that renders the handle, as written: `text`, `heading`, `button`, …, or `fmt`. `<handle>` is `EffectId` or `Decoder`, `<G>` the generic's application, as `Bag(Decoder)`, and `<N>` the alias or the generic's application `T` writes, as `Holder` or `Box(Decoder)`.
+`<builtin>` is the call that renders the handle, as written: `text`, `heading`, `button`, …, or `fmt`. `<handle>` is `EffectId` or `Decoder`, `<G>` the generic's application, as `Bag(Decoder)`, and `<N>` the alias or the generic's application `T` writes, as `Holder` or `Box(EffectId)`; it names the first handle it holds.
 
 **Fix**: Use `==` / `!=` to compare against `EffectId.none`, or pass the value to a cancel effect. To show whether a handle is held, render what the comparison answers — `text(if h == EffectId.none then "idle" else "loading")`, or `(h != EffectId.none).show`. See [EffectId](./stdlib.md#_2-1-1-1-effectid). For a `Decoder`, render and key by what chose it instead — the flag or the name a `fn` picks the decoder from — and decode that from JSON, picking the decoder from it.
 
@@ -1527,6 +1527,20 @@ Every use of the name is still checked against the declaration — an `emit`'s a
 Only an `effect` declaration is refused. Emitting a standard effect needs no declaration. A reducer, a slot or a `fn` spelled the same way is in another namespace, and an effect whose name merely starts or ends with one (`logger`, `toasts`, `navigate2`) is a name of its own.
 
 **Fix**: Rename the effect together with every `emit`, `app.init` entry and `on=<name>.ok` / `.err` reducer that meant it — `kumiki rename <file> effect.log logRequest` rewrites them all — and emit the standard effect under its own name where the built-in is what was meant. `kumiki rename` rewrites every use, whichever effect it was written for, so an `emit` written for the built-in keeps its `E0202` under the new name and the rename is refused; such a program is renamed by hand, leaving that `emit` as it is. A declaration that restates a standard effect (`effect navigate cap=nav.push in={path: Text, …}`) is deleted instead, since the standard effect needs none. Delete its line directly: `kumiki remove` counts the emits as references to the declaration and refuses.
+
+### E0239 `negative-theme-length`
+
+A `theme` writes a negative number as a `spacing` token or as a `breakpoints` width ([Style §4.2](./style.md#_4-2-design-tokens)). Reported at the number, which starts at its `-`, once per number.
+
+> `theme "<name>": spacing "<key>" is <n>, but a spacing token is 0 or more — pad and gap drop a negative length; write a negative margin in the tile's own style block (see docs/spec/style.md)`
+>
+> `theme "<name>": breakpoint "<key>" is <n>, and a minimum viewport width cannot be negative, so "<key>" is not a breakpoint at all — write a width of 0 or more (see docs/spec/style.md)`
+
+A spacing token and a breakpoint width are 0 or more, and a number in either section is px. `pad`, `pad-x`, `pad-y`, `gap`, `gap-x` and `gap-y` resolve a token to a padding or a gap, and neither can be negative: `nudge: -4` gives a `pad: "nudge"` the declaration `padding: -4px`, which is not valid CSS, so the browser drops it and the tile has no padding. A `style` block can read the same token as `@spacing.nudge` ([Style §4.3](./style.md#_4-3-token-references)), where `-4px` is a valid `margin-top`, but the rule is the token's, wherever it is read: a negative length is written in the `style` block itself. A negative breakpoint width is not a breakpoint ([Style §4.5](./style.md#_4-5-responsive)), yet it still takes the default's place under its key, so `md: -500` removes `md` rather than moving it, and a `{base: …, md: …}` map never resolves to its `md` value. Neither is an error at runtime, and the page only looks slightly off, so nothing but `check` names it.
+
+Only a number directly under `spacing` or `breakpoints` is checked. One nested deeper under `breakpoints` is no width. One nested deeper under `spacing` (`spacing: {tight: {x: -4}}`) is no token `pad` or `gap` can name, but a `style` block can still reach it as `@spacing.tight.x`, and this check does not read it. A string is not read either, so `nudge: "-4px"` and `md: "-500px"` are the same mistakes and are not reported. Every `theme` is checked, whether or not the app names it, since an `app.theme` slot can select any of them while the app runs ([Style §4.6](./style.md#_4-6-dark-mode)).
+
+**Fix**: Write the length or the width as 0 or more (`nudge: 4`, `md: 500`), or leave the key out to keep its default. A tile meant to pull outward writes the negative length in its own `style` block (`style: {margin-top: -4}`), where it is the CSS property's own value and not a token, so it no longer changes with the theme.
 
 ## E03xx — Capabilities and Purity
 

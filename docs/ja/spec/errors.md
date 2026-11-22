@@ -753,7 +753,7 @@ builtin に、決して描画されない引数が書かれている。値 built
 
 型が `Decoder` である、または `Decoder` を持つ `Map` のキーや `Set` の要素も、その型が書かれた位置でこのエラーになる：キーは `Decoder.Json(T)` であるチェックを何も保たないので、`keys` や `to-list` から読み戻したものは入れたものではなく、`decode` として渡すとどの decode も行わない（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。`Set(Decoder)` はその `Decoder` の位置で、`Map({d: Decoder}, Int)` はキーの型の位置で報告され、`Decoder` に適用されたジェネリックは、その本体がパラメータでキーを作るとき適用の位置で報告される — `type Bag(T) = Set(T)` に対する `Bag(Decoder)`。本体そのものが `Decoder` でキーを作るものは定義の中で 1 回報告される。`{Decoder.Text: 1}` のように `Decoder` をキーとする Map リテラルは、宣言された型がそのリテラルを判定しない位置では、そのような最初のキーの位置で報告される。判定する位置では、その型自身の報告だけが残る：`Map(Decoder, Int)` は書かれた位置で拒否され、`Map(Text, Int)` はキーに `Expected Text but got Decoder` を与える。
 
-`Decoder.Json(T)` が decode する型の中のどこにある `Decoder` もこのエラーになる：JSON の本文はデータを持ち、`Decoder` はコンパイラが組み立てるチェックなので、どの本文もそれには decode されない（[HTTP §6.1.4](./http.md#_6-1-4-decoder-型)）。`T` が書く 1 つ 1 つが、書かれた位置で 1 回ずつ報告される：`Decoder.Json(Decoder)` と `Decoder.Json({d: Decoder})` はその `Decoder` の位置で、`List`・`Option`・`Map` の値・`Tuple`・`Result` の中でも同じであり、`Decoder` を持つエイリアスやジェネリックはその名前の位置で報告される — `type Holder = {d: Decoder}` に対する `Holder`、`type Box(T) = {v: T}` に対する `Box(Decoder)`。そこで `Decoder` を持つ `Map` のキーや `Set` の要素には、上記のキーの報告だけが残る。
+`Decoder.Json(T)` が decode する型の中のどこにあるハンドル（`EffectId` か `Decoder`）もこのエラーになる：JSON の本文はデータを持ち、ハンドルはランタイムだけが作るもの —— `EffectId` は 1 つの dispatch された effect を指し、`Decoder` はコンパイラが組み立てるチェックである —— なので、どの本文もそれには decode されない（[HTTP §6.1.4](./http.md#_6-1-4-decoder-型)）。`T` が書く 1 つ 1 つが、書かれた位置で 1 回ずつ報告される：`Decoder.Json(Decoder)`・`Decoder.Json(EffectId)`・`Decoder.Json({d: Decoder})` はそのハンドルの位置で、`List`・`Option`・`Map` の値・`Tuple`・`Result` の中でも同じであり、ハンドルを持つエイリアスやジェネリックはその名前の位置で報告される — `type Holder = {d: Decoder}` に対する `Holder`、`type Box(T) = {v: T}` に対する `Box(EffectId)`。そこで `Decoder` を持つ `Map` のキーや `Set` の要素には、上記のキーの報告だけが残る。`EffectId` である、または `EffectId` を持つキーは、ほかの位置ではキーになれるので、ここで報告される：`Map(EffectId, Int)` はその `EffectId` の位置で報告される。
 
 > `Operator "<op>" cannot be applied to EffectId — only "==" / "!=" are defined`
 > `<builtin>(...) cannot render <handle> — it is an opaque handle`
@@ -763,10 +763,10 @@ builtin に、決して描画されない引数が書かれている。値 built
 > `A <Map key | Set element> of type <T> cannot hold a Decoder — it is an opaque handle`
 > `<G>: a Decoder cannot be a <Map key | Set element> — it is an opaque handle`
 > `<G>: a <Map key | Set element> of type <T> cannot hold a Decoder — it is an opaque handle`
-> `A Decoder cannot be decoded from JSON — it is an opaque handle`
-> `<N> holds a Decoder, which cannot be decoded from JSON — it is an opaque handle`
+> `<A Decoder | An EffectId> cannot be decoded from JSON — it is an opaque handle`
+> `<N> holds <a Decoder | an EffectId>, which cannot be decoded from JSON — it is an opaque handle`
 
-`<builtin>` はハンドルを描画する呼び出しを書かれたとおりに示す：`text`、`heading`、`button`、…、または `fmt`。`<handle>` は `EffectId` か `Decoder`、`<G>` は `Bag(Decoder)` のようなジェネリックの適用、`<N>` は `T` が書くエイリアスかジェネリックの適用（`Holder` や `Box(Decoder)` など）である。
+`<builtin>` はハンドルを描画する呼び出しを書かれたとおりに示す：`text`、`heading`、`button`、…、または `fmt`。`<handle>` は `EffectId` か `Decoder`、`<G>` は `Bag(Decoder)` のようなジェネリックの適用、`<N>` は `T` が書くエイリアスかジェネリックの適用（`Holder` や `Box(EffectId)` など）で、それが持つ最初のハンドルを示す。
 
 **修正**: `EffectId.none` との `==` / `!=` 比較に置き換えるか、cancel 用 effect に渡す。ハンドルを保持しているかどうかを表示するには、比較の答えを描画する —— `text(if h == EffectId.none then "idle" else "loading")`、または `(h != EffectId.none).show`。詳細は [EffectId](./stdlib.md#_2-1-1-1-effectid)。`Decoder` については、それを選んだもの — `fn` が decoder を選ぶ元のフラグや名前 — を代わりに描画し、それでキーを作り、それを JSON から decode して decoder を選ぶ。
 
@@ -1490,6 +1490,20 @@ fn f(x: Color, y: Size) -> Int = match x with | Red -> match y with | Small -> 1
 拒否されるのは `effect` 宣言だけである。標準 effect を emit するのに宣言は要らない。同じ綴りの reducer・slot・`fn` は別のネームスペースにあり、名前がこれらで始まる、あるいは終わるだけの effect（`logger`・`toasts`・`navigate2`）はそれ自身の名前である。
 
 **修正**：effect を、それを意図していたすべての `emit`・`app.init` のエントリ・`on=<name>.ok` / `.err` の reducer とともに改名する — `kumiki rename <file> effect.log logRequest` がそれらをすべて書き換える。組み込みを意図していた箇所では、標準 effect をそれ自身の名前で emit する。`kumiki rename` はどの effect のために書かれたかを問わずすべての使用を書き換えるので、組み込みのために書かれた `emit` は新しい名前のもとでも `E0202` が残り、改名は拒否される。そのようなプログラムは手で改名し、その `emit` はそのまま残す。標準 effect を書き写しただけの宣言（`effect navigate cap=nav.push in={path: Text, …}`）は改名せずに削除する。標準 effect に宣言は要らないからである。削除はその行を直接消して行う：`kumiki remove` は emit を宣言への参照と数えて拒否する。
+
+### E0239 `negative-theme-length`
+
+`theme` が、`spacing` トークンまたは `breakpoints` の幅として負の数値を書いている（[スタイル §4.2](./style.md#_4-2-design-tokens)）。その数値の位置（`-` から始まる）で、数値ごとに 1 件報告する。
+
+> `theme "<name>": spacing "<key>" is <n>, but a spacing token is 0 or more — pad and gap drop a negative length; write a negative margin in the tile's own style block (see docs/spec/style.md)`
+>
+> `theme "<name>": breakpoint "<key>" is <n>, and a minimum viewport width cannot be negative, so "<key>" is not a breakpoint at all — write a width of 0 or more (see docs/spec/style.md)`
+
+spacing トークンとブレイクポイントの幅は 0 以上であり、どちらのセクションでも数値は px である。`pad`・`pad-x`・`pad-y`・`gap`・`gap-x`・`gap-y` はトークンをパディングかギャップに解決し、どちらも負にはなれない：`nudge: -4` は `pad: "nudge"` に `padding: -4px` という宣言を与えるが、これは正しい CSS ではないのでブラウザはそれを捨て、タイルにはパディングが付かない。`style` ブロックは同じトークンを `@spacing.nudge` として読める（[スタイル §4.3](./style.md#_4-3-トークン参照)）。そこでは `-4px` は正しい `margin-top` になるが、この規則はどこで読まれるかによらずトークンのものである：負の長さは `style` ブロックそのものに書く。負のブレイクポイント幅はブレイクポイントではない（[スタイル §4.5](./style.md#_4-5-responsive)）。それでもそのキーでは既定値に取って代わるので、`md: -500` は `md` を動かすのではなく消し、`{base: …, md: …}` のマップは `md` の値に解決されることがなくなる。どちらも実行時のエラーではなく、ページが少しずれて見えるだけなので、`check` 以外にこれを名指すものは無い。
+
+検査するのは `spacing` または `breakpoints` の直下の数値だけである。`breakpoints` の下でそれより深く入れ子になった数値は幅ではない。`spacing` の下でそれより深く入れ子になった数値（`spacing: {tight: {x: -4}}`）は `pad` や `gap` が名指せるトークンではないが、`style` ブロックからは `@spacing.tight.x` としてなお届き、この検査はそれを読まない。文字列も読まないので、`nudge: "-4px"` と `md: "-500px"` は同じ誤りだが報告されない。アプリが名指しているかどうかにかかわらず、すべての `theme` を検査する。`app.theme` の slot は実行中にそのどれでも選べるからである（[スタイル §4.6](./style.md#_4-6-dark-mode)）。
+
+**修正**：長さや幅を 0 以上で書く（`nudge: 4`、`md: 500`）か、キーを省いて既定値を残す。外側へ引き寄せたいタイルは、負の長さを自身の `style` ブロックに書く（`style: {margin-top: -4}`）。そこではそれはトークンではなく CSS プロパティそのものの値なので、theme とともには変わらなくなる。
 
 ## E03xx — ケイパビリティと純粋性
 

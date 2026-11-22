@@ -118,6 +118,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0236](./errors.md#e0236-tile-as-content) | `tile-as-content` | tile | コア |
 | [E0237](./errors.md#e0237-tile-depth) | `tile-depth` | tile | コア |
 | [E0238](./errors.md#e0238-unindexable-read) | `unindexable-read` | all | コア |
+| [E0239](./errors.md#e0239-negative-theme-length) | `negative-theme-length` | app | スタイル |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | フォーム |
