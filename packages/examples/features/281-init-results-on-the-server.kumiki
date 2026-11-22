@@ -14,7 +14,7 @@
 # The scenario drives a mount, whose `ping` answers `pong`. What the server
 # serves, and the page hydrated from it, is pinned beside a mount by an
 # integration test in `packages/tests`, with an `http.post` provider that
-# throws.
+# throws and with providers that resolve to no result.
 
 slot themeAt : Text = "unset"
 slot quote   : Text = "none"
