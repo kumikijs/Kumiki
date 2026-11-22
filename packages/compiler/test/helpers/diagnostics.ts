@@ -78,6 +78,10 @@ export function textAt(source: string, at: { line: number; col: number }): strin
   return (source.split("\n")[at.line - 1] ?? "").slice(at.col - 1);
 }
 
+/** The errors of `src`, each as its code and the source text it was reported at. */
+export const pointedCodesOf = (src: string): Pick<Pointed, "code" | "text">[] =>
+  errorsOf(src).map((e) => ({ code: e.code, text: textAt(src, e.pos) }));
+
 /** Where `needle` first occurs, as the 1-based line/col diagnostics use. */
 export function posOf(source: string, needle: string): { line: number; col: number } {
   const idx = source.indexOf(needle);
@@ -89,7 +93,3 @@ export function posOf(source: string, needle: string): { line: number; col: numb
 /** The errors of `src`, each pointing at the source text it was reported at. */
 export const pointedErrorsOf = (src: string): Pointed[] =>
   errorsOf(src).map((e) => ({ code: e.code, message: e.message, text: textAt(src, e.pos) }));
-
-/** As {@link pointedErrorsOf}, each error as its code and that text alone. */
-export const pointedCodesOf = (src: string): Pick<Pointed, "code" | "text">[] =>
-  pointedErrorsOf(src).map(({ code, text }) => ({ code, text }));
