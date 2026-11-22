@@ -17,7 +17,12 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { assertNever, isTileExpr } from "./ast.ts";
-import { callsBuiltin, decodedType, RUN_REDUCER, typeMemberQualifier } from "./builtin-calls.ts";
+import {
+  callsBuiltin,
+  RUN_REDUCER,
+  typeMemberQualifier,
+  visitDecodedParts,
+} from "./builtin-calls.ts";
 import { tileNamedAt } from "./builtins.ts";
 import { isReservedTypeName } from "./stdlib-types.ts";
 import { eventParts, type RecordField, recordFieldsOf, testSections } from "./test-sections.ts";
@@ -208,9 +213,13 @@ class Walker {
         }
         // Codegen decodes by this argument, so its names are types, though it parses as a value.
         if (e.callee === "Decoder.Json") {
-          const t = decodedType(e.args[0]);
-          if (t) this.typeExpr(t);
-          else for (const a of e.args) this.expr(a, locals);
+          const [first, ...rest] = e.args;
+          visitDecodedParts(
+            first,
+            (t) => this.typeExpr(t),
+            (v) => this.expr(v, locals),
+          );
+          for (const a of rest) this.expr(a, locals);
           return;
         }
         // A reserved name's member is the built-in type's, whatever the program declares under it.
