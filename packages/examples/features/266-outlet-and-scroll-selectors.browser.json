@@ -1,0 +1,49 @@
+{
+  "steps": [
+    {
+      "label": "initial render: nothing has fired, and each scroll is a <div>",
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "" },
+        "elementState": {
+          "#fits": { "tagName": "DIV" },
+          "#pane": { "tagName": "DIV" }
+        }
+      }
+    },
+    {
+      "label": "a scroll whose content fits takes no focus, so its ui.focus reducer does not run",
+      "do": { "focus": "#fits" },
+      "expect": { "noErrors": true, "state": { "log": "" } }
+    },
+    {
+      "label": "an overflowing scroll takes focus, and its ui.focus reducer runs",
+      "do": { "focus": "#pane" },
+      "expect": { "noErrors": true, "focused": "#pane", "state": { "log": "pf " } }
+    },
+    {
+      "label": "and its ui.blur reducer when it loses focus",
+      "do": { "blur": "#pane" },
+      "expect": { "noErrors": true, "state": { "log": "pf pb " } }
+    },
+    {
+      "label": "the route puts Child in Shell's outlet",
+      "do": { "navigate": "/s/child" },
+      "expect": { "noErrors": true, "domIncludes": ["a route-outlet", "press"] }
+    },
+    {
+      "label": "a click on the routed button runs ui.click(Child), and not ui.click(Shell)",
+      "do": { "click": "#press" },
+      "expect": { "noErrors": true, "state": { "log": "pf pb c " } }
+    },
+    {
+      "label": "a click on Shell's own button runs ui.click(Shell)",
+      "do": { "click": "#shell" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "pf pb c s " },
+        "domIncludes": ["log: pf pb c s"]
+      }
+    }
+  ]
+}

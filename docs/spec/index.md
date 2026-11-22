@@ -117,11 +117,13 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0235](./errors.md#e0235-null-value) | `null-value` | all | core |
 | [E0236](./errors.md#e0236-tile-as-content) | `tile-as-content` | tile | core |
 | [E0237](./errors.md#e0237-tile-depth) | `tile-depth` | tile | core |
+| [E0238](./errors.md#e0238-unindexable-read) | `unindexable-read` | all | core |
 | [E0240](./errors.md#e0240-reserved-field-name) | `reserved-field-name` | all | core |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | core |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | stdlib |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | forms |
 | [W0217](./errors.md#w0217-name-beside-group-warning) | `name-beside-group` | tile | forms |
+| [W0218](./errors.md#w0218-shadowed-sub-route-warning) | `shadowed-sub-route` | tile | routing |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | stdlib |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | stdlib |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | http |

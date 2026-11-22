@@ -9,7 +9,6 @@ import {
   type TypeExpr,
 } from "../ast.ts";
 import { bindTarget } from "../bind-target.ts";
-import { errorField, fieldSegment } from "../error-field.ts";
 import { INPUT_BIND_TYPES, inputBindBase } from "../input-bind.ts";
 import { checkAgainst, checkIndexIsPlace, indexStep, unwrappedType } from "./against.ts";
 import {
@@ -318,8 +317,23 @@ export function checkInputBindType(
 }
 
 /**
+ * The `when` / `for` written as an error's `field=` that checkErrorField reports as E0230.
+ * Where the block writes the field, or a tile-test's expect leaves the block unread, E0230
+ * is about the block instead, and the `when` / `for` is left to the other checks.
+ */
+export function tileAsErrorField(
+  t: TileExpr & { kind: "TileCall" },
+  ctx: Ctx,
+): TileExpr | undefined {
+  if (t.name !== "error" || propOf(t, "field", ctx)) return undefined;
+  if (ctx.expectedTree && t.props.some((p) => p.name === "field")) return undefined;
+  const value = t.args.find((a) => a.name === "field")?.value;
+  return value && isTileExpr(value) ? value : undefined;
+}
+
+/**
  * Run after the field has been checked as a value, so what that read already
- * reported (E0103, E0127, E0108, E0213, an E0201 or E0232 at a key) is not reported again.
+ * reported (E0103, E0127, E0108, E0213, an E0201, E0232 or E0238 at a key) is not reported again.
  */
 export function checkErrorField(
   t: TileExpr & { kind: "TileCall" },
@@ -344,10 +358,10 @@ export function checkErrorField(
     return;
   }
   if (!written) {
-    const arg = t.args.find((a) => a.name === "field");
-    if (arg && isTileExpr(arg.value)) {
-      const kind = arg.value.kind === "TileFor" ? "for" : "when";
-      refuse(rootProblem(`a "${kind}"`, "it is a tile, not a slot"), arg.value.pos);
+    const tile = tileAsErrorField(t, ctx);
+    if (tile) {
+      const kind = tile.kind === "TileFor" ? "for" : "when";
+      refuse(rootProblem(`a "${kind}"`, "it is a tile, not a slot"), tile.pos);
     } else {
       refuse(
         `error() names no field, so it has no failure to show: field= names a slot, or a path into one ${see}`,
@@ -360,7 +374,7 @@ export function checkErrorField(
     errors.some(
       (e) => severityOf(e) === "error" && e.pos.line === pos.line && e.pos.col === pos.col,
     );
-  const field = errorField(written.value);
+  const field = bindTarget(written.value);
   const { root } = field;
   const notASlot = errorFieldRootProblem(root, sym, ctx);
   if (notASlot) {
@@ -368,7 +382,7 @@ export function checkErrorField(
       refuse(rootProblem(notASlot.named, notASlot.is, notASlot.fix), root.pos);
     return;
   }
-  const steps = `A path's steps are fields, ".get", and indices with a literal key ${see}`;
+  const steps = `A path's steps are fields, ".get", and indices ${see}`;
   // A type the checker cannot decide is reported where it is written (E0117).
   const undecided = (raw: TypeExpr | null): boolean => indexStep(raw, sym).kind === "undecidable";
   // The first step that names no place is the mistake; the steps after it have nothing to step into.
@@ -383,13 +397,6 @@ export function checkErrorField(
         return;
       case "Index": {
         if (reported(step.index.pos)) return;
-        if (fieldSegment(step) === null) {
-          refuse(
-            `error(field=…) cannot step through an index that is not a literal: a path names one element or entry by a literal key, such as [0] or ["k"] ${see}`,
-            step.index.pos,
-          );
-          return;
-        }
         const at = indexStep(inferType(step.base, sym, ctx), sym);
         if (at.kind === "undecidable") return;
         if (at.kind === "no-place") {
