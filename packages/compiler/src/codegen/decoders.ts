@@ -169,6 +169,9 @@ export function decoders(env: TypeEnv, refinements: NestedRefinements): Decoders
         return [unless("v instanceof Uint8Array", label)];
       case "File":
         return recordOf(FILE_FIELDS.fields, label, generics);
+      // JSON holds no decoder, and the checker refuses one in the type a `Decoder.Json(T)` reads.
+      case "Decoder":
+        return [`return ${fail(label)};`];
       default:
         assertNever(name);
         return [];
