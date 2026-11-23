@@ -6,7 +6,7 @@ import {
   unaliasType,
   unknownType,
 } from "../assignable.ts";
-import type { Expr, Lvalue, Pos, TypeExpr } from "../ast.ts";
+import type { Expr, Lvalue, NumberLiteral, Pos, TypeExpr } from "../ast.ts";
 import { numberLiteral } from "../ast.ts";
 import {
   BUILTIN_EFFECTS,
@@ -36,7 +36,12 @@ export function checkAgainst(
     return;
   }
   const d = unaliasType(declared, sym);
-  if (d === null || d.kind === "TypeRef") return; // opaque: a type parameter, or a name that resolves to nothing
+  if (d === null || d.kind === "TypeRef") {
+    // Opaque: a type written here that resolves to nothing is reported where it is written, and
+    // that report is the literal's too. `?` is a type nothing decided, which declares none.
+    if (d?.name !== "?") judgedLiteral(e, sym);
+    return;
+  }
 
   const mismatch = (at: Expr, actual: TypeExpr): void => {
     pushMismatch(
@@ -127,10 +132,10 @@ export function checkAgainst(
     }
     return;
   }
-  const literal = numberLiteral(e);
+  const judged = judgedLiteral(e, sym);
   const imprecise =
-    literal !== null && d.kind === "TypePrim" && d.name === "Int"
-      ? intLiteralPrecision(literal, e.pos)
+    judged !== null && d.kind === "TypePrim" && d.name === "Int"
+      ? intLiteralPrecision(judged.literal, judged.pos)
       : null;
   if (imprecise) {
     errors.push(imprecise);
@@ -146,6 +151,19 @@ export function checkAgainst(
   }
   const outside = domain?.(e);
   if (outside) pushMismatch(errors, code, outside, e.pos);
+}
+
+/**
+ * The number literal `e` is, or the one the signs before it negate (`-N` in `- -N`), recorded as
+ * one a declared type reads: it is judged here, and not again where no type is declared.
+ */
+function judgedLiteral(e: Expr, sym: SymbolTable): { literal: NumberLiteral; pos: Pos } | null {
+  let at = e;
+  while (at.kind === "UnaryOp" && at.op === "-" && numberLiteral(at) === null) at = at.rhs;
+  const literal = numberLiteral(at);
+  if (literal === null) return null;
+  sym.numberLiterals.judged.add(at);
+  return { literal, pos: at.pos };
 }
 
 /**
