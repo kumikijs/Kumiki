@@ -1,8 +1,9 @@
 import { nearestName } from "@kumikijs/runtime/text-distance";
 import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
-import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
+import { type Expr, type FragmentShape, numberLiteral, type Pos, type TypeExpr } from "../ast.ts";
 import { isQualifierName, RUN_REDUCER, visitDecodedParts } from "../builtin-calls.ts";
 import { fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
+import { decoderKeyError, heldDecoder, noEquality, undecodableErrors } from "../held-decoder.ts";
 import { showShapeOf } from "../show-shape.ts";
 import {
   type FragmentArgument,
@@ -49,6 +50,7 @@ import {
   isNumeric,
   isPrimNamed,
   KNOWN_TOKEN_GROUPS,
+  opaqueHandleOf,
   prim,
   qualifiedMember,
 } from "./infer.ts";
@@ -155,18 +157,19 @@ function unwrapRemedy(t: TypeExpr & { kind: "TypeApp" }, tags: string, sym: Symb
 }
 
 /** A handle's text is whatever the runtime represents it as, so a page that showed it would change when that does. */
-export function refuseRenderedEffectId(
+export function refuseRenderedHandle(
   value: Expr,
   renderer: string,
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  if (!isEffectId(inferType(value, sym, ctx), sym)) return;
+  const handle = opaqueHandleOf(inferType(value, sym, ctx), sym);
+  if (handle === undefined) return;
   errors.push({
     code: "E0204",
     kind: "effect-id-misuse",
-    message: `${renderer} cannot render EffectId — it is an opaque handle`,
+    message: `${renderer} cannot render ${handle} — it is an opaque handle`,
     pos: value.pos,
   });
 }
@@ -186,11 +189,16 @@ function shownValue(e: Expr): Expr | undefined {
 }
 
 export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  // A number literal, its sign included, is one leaf; one no declared type reads is held to the
+  // safe range after every definition is checked.
+  if (numberLiteral(e) !== null) {
+    sym.numberLiterals.met.add(e);
+    return;
+  }
   // Asked before the three spellings of `show` part company in the switch, so the exception is made once.
   const shown = shownValue(e);
-  if (shown) refuseRenderedEffectId(shown, ".show", sym, errors, ctx);
+  if (shown) refuseRenderedHandle(shown, ".show", sym, errors, ctx);
   switch (e.kind) {
-    case "Num":
     case "Str":
     case "Bool":
     case "Unit":
@@ -356,6 +364,10 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkExpr(e.rhs, sym, errors, ctx);
       if (!effectIdMisuse) checkBinOpOperands(e, sym, errors, ctx);
       if (e.op === "+" && isPrimNamed(binOpResult(e, sym, ctx), sym, "Text")) {
+        if (!effectIdMisuse) {
+          refuseRenderedHandle(e.lhs, 'Operator "+"', sym, errors, ctx);
+          refuseRenderedHandle(e.rhs, 'Operator "+"', sym, errors, ctx);
+        }
         noteShown(e.lhs, sym, ctx);
         noteShown(e.rhs, sym, ctx);
       }
@@ -391,6 +403,9 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         }
       } else checkExpr(e.base, sym, errors, ctx);
       classifyFieldAccess(e, sym, errors, ctx);
+      if (e.accessKind === "shortcut") {
+        refuseDecoderComparison(inferType(e.base, sym, ctx), e.field, e.pos, sym, errors);
+      }
       // The member, not a record's own field that happens to be named `show`.
       if (e.field === "show" && e.accessKind !== "field") noteShown(e.base, sym, ctx);
       return;
@@ -433,7 +448,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         if (rt && !recordUpdate && classifyMember(raw, e.method, sym) === "unknown") {
           errors.push(undefMemberError(raw, rt, e.method, e.pos, sym));
           lacksMember = true;
-        }
+        } else refuseDecoderComparison(raw, e.method, e.pos, sym, errors);
       }
       if (!lacksMember) {
         const min = METHOD_MIN_ARGS.get(e.method);
@@ -535,6 +550,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         checkExpr(ent.key, sym, errors, ctx);
         checkExpr(ent.value, sym, errors, ctx);
       }
+      refuseDecoderKeyedLiteral(e, sym, errors, ctx);
       return;
     case "MatchExpr": {
       checkExpr(e.scrutinee, sym, errors, ctx);
@@ -598,8 +614,9 @@ function didYouMean(written: string, candidates: Iterable<string>): string {
 }
 
 // Codegen decodes by the first argument, which parses as a value, so each part of it that spells a
-// type is resolved as one. An argument after the first is E0213: its capitalised names are left
-// unreported rather than read as variant tags.
+// type is resolved as one, and refused where it is or holds what no JSON body decodes into. An
+// argument after the first is E0213: its capitalised names are left unreported rather than read as
+// variant tags.
 function checkDecodedArgs(
   args: readonly Expr[],
   sym: SymbolTable,
@@ -610,9 +627,12 @@ function checkDecodedArgs(
   const value = (v: Expr): void => checkExpr(v, sym, errors, ctx);
   visitDecodedParts(first, (t) => resolveType(t, sym, errors), value);
   for (const a of rest) visitDecodedParts(a, leftToTheCount, value);
+  visitDecodedParts(first, (t) => errors.push(...undecodableErrors(t, sym)), checkedAbove);
 }
 
 const leftToTheCount = (): void => undefined;
+
+const checkedAbove = (): void => undefined;
 
 function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { kind: "Ref" } {
   return (
@@ -678,6 +698,50 @@ function orderingFamily(t: TypeExpr | null, sym: SymbolTable): string | null {
   if (isPrimNamed(t, sym, "Text")) return "text";
   if (isPrimNamed(t, sym, "Time")) return "time";
   return null;
+}
+
+// The List members that compare elements with `==`. A Set's and a Map's members compare keys,
+// but a key type holding a Decoder is refused where it is written, and a Map literal's at its key.
+const COMPARING_LIST_MEMBERS: ReadonlySet<string> = new Set(["contains", "unique"]);
+
+function refuseDecoderComparison(
+  receiver: TypeExpr | null,
+  member: string,
+  pos: Pos,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  if (!COMPARING_LIST_MEMBERS.has(member)) return;
+  const r = unaliasType(receiver, sym);
+  const element = r?.kind === "TypeApp" && r.name === "List" ? (r.args[0] ?? null) : null;
+  const held = heldDecoder(element, sym);
+  if (!element || !held) return;
+  errors.push({
+    code: "E0201",
+    kind: "type-mismatch",
+    message: `".${member}" cannot compare elements of type ${typeToString(element)}: ${noEquality(element, held)}`,
+    pos,
+  });
+}
+
+// What a written `Map(Decoder, V)` is refused for, reported once at the first key holding one, and
+// dropped when a declared type judges the literal: that type is refused itself, or it reports the
+// key's mismatch.
+function refuseDecoderKeyedLiteral(
+  e: Expr & { kind: "MapLit" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  for (const { key } of e.entries) {
+    const t = inferType(key, sym, ctx);
+    const held = heldDecoder(t, sym);
+    if (!t || !held) continue;
+    const report = decoderKeyError({ container: "Map", key: t, whole: held.whole }, key.pos);
+    errors.push(report);
+    sym.decoderKeyedLiterals.set(report, e);
+    return;
+  }
 }
 
 function checkSortKey(
@@ -776,11 +840,11 @@ function checkBinOpOperands(
     }
     return;
   }
-  const incomparable = (): void => {
+  const incomparable = (why = ""): void => {
     errors.push({
       code: "E0201",
       kind: "type-mismatch",
-      message: `Operator "${e.op}" cannot compare ${typeToString(lt as TypeExpr)} with ${typeToString(rt as TypeExpr)}`,
+      message: `Operator "${e.op}" cannot compare ${typeToString(lt as TypeExpr)} with ${typeToString(rt as TypeExpr)}${why}`,
       pos: e.pos,
     });
   };
@@ -793,6 +857,14 @@ function checkBinOpOperands(
     return;
   }
   if (EQUALITY_OPS.has(e.op)) {
+    // A `Decoder.Json(T)` is its `T`'s check, or one sentinel for every `T` that carries none, so
+    // `==` would call the decoders of an `Int` and a `Text` the same, and an `Email`'s different.
+    const holder = [lt, rt].find((t) => heldDecoder(t, sym) !== undefined);
+    const held = heldDecoder(holder ?? null, sym);
+    if (holder && held && lt && rt) {
+      incomparable(`: ${noEquality(holder, held)}`);
+      return;
+    }
     if (!nominallyComparable(lt, rt, sym)) incomparable();
   }
 }

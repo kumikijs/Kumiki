@@ -1,6 +1,6 @@
 import { compile } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource, codesOf, pointedErrorsOf } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf, pointedCodesOf, pointedErrorsOf } from "./helpers/diagnostics.ts";
 import { withButtonApp, withReducer } from "./helpers/programs.ts";
 
 const appCodes = (defs: string, opts?: { caps: string }) => codesOf(withButtonApp(defs, opts));
@@ -261,8 +261,9 @@ describe("Int literal precision (E0217)", () => {
     ]);
   });
 
-  it("folds one sign into the literal, so `- -N` negates the literal `-N` and is not checked", () => {
-    expect(appCodes("slot s : Int = - -9007199254740993")).toEqual([]);
+  it("folds one sign into the literal, so `- -N` negates the literal `-N`, reported at its sign", () => {
+    const src = withButtonApp("slot s : Int = - -9007199254740993");
+    expect(pointedCodesOf(src)).toEqual([{ code: "E0217", text: "-9007199254740993" }]);
   });
 
   it("refuses to build a negative literal past the bound", () => {

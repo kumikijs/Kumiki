@@ -24,6 +24,7 @@ import {
   visitDecodedParts,
 } from "./builtin-calls.ts";
 import { tileNamedAt } from "./builtins.ts";
+import { isReservedTypeName } from "./stdlib-types.ts";
 import { eventParts, type RecordField, recordFieldsOf, testSections } from "./test-sections.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
@@ -221,9 +222,11 @@ class Walker {
           for (const a of rest) this.expr(a, locals);
           return;
         }
+        // A reserved name's member is the built-in type's, whatever the program declares under it.
         const qualifier = typeMemberQualifier(e.callee, e.args.length);
-        if (qualifier !== undefined) this.add("type", qualifier, e.pos);
-        else if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
+        if (qualifier !== undefined && !isReservedTypeName(qualifier)) {
+          this.add("type", qualifier, e.pos);
+        } else if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
         for (const a of e.args) this.expr(a, locals);
         return;
       }

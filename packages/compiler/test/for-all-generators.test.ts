@@ -211,6 +211,7 @@ describe("a for-all type the generator cannot build", () => {
     ["a union whose variant holds such a record", "Holder", '"Inf" has no finite value'],
     ["a File", "File", '"File" has none'],
     ["an EffectId", "EffectId", '"EffectId" has none'],
+    ["a Decoder", "Decoder", '"Decoder" has none'],
     ["a tuple holding a File", "Tuple(Int, File)", '"File" has none'],
     ["a FormData, whose FileV variant holds a File", "FormData", '"File" has none'],
     ["a FormValue, whose FileV variant holds a File", "FormValue", '"File" has none'],

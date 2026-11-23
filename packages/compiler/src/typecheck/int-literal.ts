@@ -1,5 +1,5 @@
-import type { NumberLiteral, Pos } from "../ast.ts";
-import type { KumikiError } from "./context.ts";
+import { type NumberLiteral, numberLiteral, type Pos } from "../ast.ts";
+import type { KumikiError, SymbolTable } from "./context.ts";
 
 const SAFE_RANGE = `${Number.MIN_SAFE_INTEGER} through ${Number.MAX_SAFE_INTEGER}`;
 
@@ -34,4 +34,18 @@ function precisionMessage({ value, raw }: NumberLiteral): string {
 /** The integer `raw` spells, or `null` for text that is not a sign and digits. */
 function writtenInteger(raw: string): bigint | null {
   return /^[+-]?\d+$/.test(raw) ? BigInt(raw) : null;
+}
+
+/**
+ * E0217 for each `Int` literal outside the safe range that no declared type read: a `let` value,
+ * an operand, the body of a `fn` with no `->`. Where nothing declares a type the literal has the
+ * type it is written as: `Int` with no point, `Float` with one, whatever value it holds. One a
+ * declared type read was judged there, once.
+ */
+export function checkUndeclaredIntLiterals(sym: SymbolTable, errors: KumikiError[]): void {
+  for (const e of sym.numberLiterals.met) {
+    const literal = sym.numberLiterals.judged.has(e) ? null : numberLiteral(e);
+    const imprecise = literal && isIntLiteral(literal) ? intLiteralPrecision(literal, e.pos) : null;
+    if (imprecise) errors.push(imprecise);
+  }
 }

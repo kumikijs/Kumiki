@@ -100,7 +100,18 @@ export type SymbolTable = {
   fnLoops: ReadonlySet<string>;
   /** The program's own unions, by each tag they declare: `unionsByTag`. */
   unionsByTag: ReadonlyMap<string, readonly TypeExpr[]>;
+  /**
+   * `met`: each number literal `checkExpr` meets. `judged`: each one a declared type reads, which
+   * `checkAgainst` records where it compares a value with that type (the literal, or the one its
+   * signs negate) and where the type is written but resolves to nothing. Once every definition is
+   * checked, `checkUndeclaredIntLiterals` holds each literal met and not judged to the safe range.
+   */
+  numberLiterals: { readonly met: Set<Expr>; readonly judged: Set<Expr> };
   app?: AppDef;
+  // The same for a Map literal keyed by a Decoder: a declared type that judged the literal is
+  // refused itself or reports the key's mismatch, so the literal's own E0204 is dropped.
+  judgedMapLiterals: WeakSet<Expr>;
+  decoderKeyedLiterals: Map<KumikiError, Expr>;
 };
 
 export type LocalBinder = "input" | "for";
