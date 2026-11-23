@@ -54,6 +54,8 @@ tuple       ::= '(' expr ',' expr (',' expr)* ')'  ; Tuple が型を付ける値
 comment     ::= '#' until-eol                    ; 1 行コメントのみ
 ```
 
+**式の中の数値リテラルが `Int` か `Float` かは、書き方で決まる。** `int` は `Int`、`float` は `Float` であり、JavaScript がそれをどの数として読むかには依らない。`1.0` は `Float` であり、`1` と読まれる `0.99999999999999999` も `Float` である。定義が式の外でとる整数は、読まれた数で検査されるので、そこでは `1.0` も通る: effect の `retry=` の回数、`property-test` の `count`、`motion` の `duration` と `iteration`、`len-lt` などの refinement がとる長さである。
+
 **`-` は識別子の文字でも引き算でもあり、最長一致で決める。** `page-size` / `base-url` / `on-401` / `count-1` はそれぞれ 1 つの名前であり、名前とリテラルの引き算を `count - 1` と書くのはそのためである。
 
 ::: details `count-1` の書き分けと、解決しなかった場合
@@ -315,7 +317,7 @@ type Nest(T) = Flat(T) | Deeper(Nest(List(T)))
 それ以外で汎化型の適用を展開する比較 —— 異なる汎化型どうし、または汎化型とそうでない型 —— は、両側を展開する。汎化型が**型引数を深く入れ子にする**とは、型引数が渡される先を body が適用する汎化型越しにたどると、より大きな型引数の内側でその型引数のいずれかへ戻ることをいう（`Nest` は `T` を `List(T)` として戻す）。どちらの側もそのような汎化型を適用していなければ、比較が出会う書かれたとおりの組は有限であり、汎化型が型引数をどう入れ替えたり巡回させたりしても、繰り返された組で終わる。どちらかの側が適用しているときは、下りの途中で、展開中の同じ先頭の組（両側で適用されている名前の組）へ、前回入ったときより大きな合計サイズで再入するたびに、その組について 1 回と数える。1 回の比較では、どのフィールドとペイロードも含めて先頭の組ごとに 64 回まで数え、65 回目以降の再入はすべて、繰り返された組と同じく「はい」と答える。大きくならなかった再入は数えない。この上限は不一致を「はい」に変えることしかないが、その答えはフィールドの順序で決まることがある：比較が終わらないフィールドがその組の回数を使い切ると、後のフィールドがその組への再入を経てしか届かない不一致は見逃される。こうした「はい」で分岐を結合した `if`・`match`・リストリテラルは、後の比較が拒否する型を持つことがある。
 
 5. **型引数はその定義にスコープされ**、同名のトップレベル定義を覆い隠す：`type Alias(Cents) = Cents` の body は型引数であり、ほかの場所で `Cents` が何と宣言されていようと関係しない。プリミティブの名前は例外であり、型を書く位置ではどこでもプリミティブとして読まれるので、`type Box(Int) = {v: Int}` のフィールドは `Int` である。
-6. **どのプログラムでもすでに型を意味している名前は、プログラムが宣言するものではない。** そうした名前は 3 つのグループからなる：プリミティブ（[§1.3.1](#_1-3-1-構文) の `primitive` の名前）、ビルトインの汎化型（[stdlib §2.1.2](./stdlib.md#_2-1-2-汎化型)）、そして値をランタイムまたは標準ライブラリが供給する 7 つのドメイン型 — `PanicInfo`・`RouteErrorInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue`（[stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）。`type Int = …`・`type Option = …`・`type PanicInfo = …` は [E0231](./errors.md#e0231-reserved-type-name) であり、その名前の使用はすべて組み込みの意味のままで、プログラム自身の型には独自の名前を付ける（`type AppPanic = …`・`type Box(T) = …`）。グループは型検査器自身の表なので、言語にプリミティブや型構築子が加われば、それも同時に予約される。標準ライブラリが宣言するほかのドメイン型 — `Url`・`Email`・`Uuid`・`FormData` — が名指すのは、プログラムだけが値を組み立てる型である（同じ表にある `File` はプリミティブであり、プリミティブとともに予約されている）。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はプログラムの型を意味する。
+6. **どのプログラムでもすでに型を意味している名前は、プログラムが宣言するものではない。** そうした名前は 3 つのグループからなる：プリミティブ（[§1.3.1](#_1-3-1-構文) の `primitive` の名前）、ビルトインの汎化型（[stdlib §2.1.2](./stdlib.md#_2-1-2-汎化型)）、そして値をランタイムまたは標準ライブラリが供給する 8 つのドメイン型 — `PanicInfo`・`RouteErrorInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue`・`Decoder`（[stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）。`type Int = …`・`type Option = …`・`type PanicInfo = …` は [E0231](./errors.md#e0231-reserved-type-name) であり、その名前の使用はすべて組み込みの意味のままで、プログラム自身の型には独自の名前を付ける（`type AppPanic = …`・`type Box(T) = …`）。グループは型検査器自身の表なので、言語にプリミティブや型構築子が加われば、それも同時に予約される。標準ライブラリが宣言するほかのドメイン型 — `Url`・`Email`・`Uuid`・`FormData` — が名指すのは、プログラムだけが値を組み立てる型である（同じ表にある `File` はプリミティブであり、プリミティブとともに予約されている）。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はプログラムの型を意味する。
 7. **`_tag` という名前のレコードフィールドは無い。** 実行時、バリアントは `_tag` フィールドにその名前を持つレコードであり（`Some(1)` は `{_tag: "Some", _0: 1}`）、ランタイムはこのフィールドでバリアントとレコードを見分けるので、これを持つレコードはバリアントとして読まれてしまう。レコード型でもレコードリテラルでも、そう名付けたフィールドは [E0240](./errors.md#e0240-reserved-field-name) である。それ以外の名前は — `tag`・`_tags`・`_0` も — プログラムのものである。
 
 ---
@@ -402,8 +404,14 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
 - 両者とも他の式と同様に検査される — key 中の未定義名は dispatch 時の実行時
   エラーではなく [E0103](./errors.md#e0103-undef-ref-undef-slot)
 - effect の capability が [http.md §6.6.1](./http.md#_6-6-1-request-fields) に行を
-  持つとき、`map-request` のレコードが書くフィールドはその capability のリクエストに
-  照らされる：リクエストに無いフィールドは [E0215](./errors.md#e0215-unknown-record-field)
+  持つとき、`map-request` のレコードリテラルまたはマップリテラルが書くフィールドは
+  その capability のリクエストに照らされる：リクエストに無いフィールドは
+  [E0215](./errors.md#e0215-unknown-record-field)、`Decoder` でない `decode` と、
+  キーで読む `indexed.read` に書かれた `Decoder.Text` / `Decoder.Bytes` は
+  [E0201](./errors.md#e0201-type-mismatch)。`map-request` の無い effect は入力を
+  そのままリクエストとしてハンドラに渡すので、その `in=` のレコードが宣言する
+  `decode` も `Decoder` に照らされる：`storage.read` 上の
+  `in={key: Text, decode: Text}` はその `Text` の位置で E0201 になる
 - `latest-per-key` の key は `emit` が実行された地点で評価される。key が読む slot は
   reducer 本体のその文までの書き込みを反映し、それ以降の書き込みは反映しない
   （[http.md §6.4](./http.md#_6-4-cancellation)）
@@ -421,6 +429,9 @@ map-expr        ::= record-literal       ; 高レベル effect → 低レベル�
     それ自身の間でしか成り立たない
 - `Set` の key はその `==` であり、その `==` 自体が Set の作られ方に依存するので、
   `Set` である key、または `Set` を持つ key も E0233 になる
+- `Decoder` には `==` が無く（[§1.9.4](#_1-9-4-演算子の型)）、key は
+  `Decoder.Json(T)` であるチェックを何も保たないので、`Decoder` である key、または
+  `Decoder` を持つ key も E0233 になる
 - それ以外の型はすべて key になる：`Text`、`Int`、`Bool`、`Time`、`Bytes`、
   `EffectId`、`Unit`、それらの上の `nominal` や refinement、そしてそれらから作られた
   レコード、タプル、`List`、`Map`、`Option`、`Result`、ユニオン —
@@ -1037,6 +1048,23 @@ items.fold(0, $1 + $2.price)               # ($1: acc, $2: elem)
 
 `EffectId` はこの表の外にある：適用できるのは `==` と `!=` だけである
 （[E0204](./errors.md#e0204-effect-id-misuse)）。
+
+`Decoder` もこの表の外にある：`Decoder` に適用できる演算子は無く、`Decoder` を
+持つ値にも `==` と `!=` は適用できない。`Decoder.Json(T)` はその `T` のチェックで
+あるか、チェックを持たないすべての `T` で同じ 1 つの値であるため、
+`Decoder.Json(Int) == Decoder.Json(Text)` は `true`、
+`Decoder.Json(Email) == Decoder.Json(Text)` は `false` になってしまう。いずれも
+[E0201](./errors.md#e0201-type-mismatch) である：`d == Decoder.Text` は
+`Operator "==" cannot compare Decoder with Decoder: a Decoder has no equality` で
+あり、`{d: Decoder}` ではメッセージがそれを持つ型を名指す。`Option(Decoder)` には
+`.is-some` か `.is-none` を、`List(Decoder)` には `.is-empty` を問う。
+`List.contains` と `List.unique` は `==` と同じように要素を比較するため、要素の型が
+`Decoder` である、または `Decoder` を持つ `List` ではどちらも E0201 になる：
+`ds.contains(d)` は
+`".contains" cannot compare elements of type Decoder: a Decoder has no equality` である。
+`Set` と `Map` のメンバはキーを比較するが、`Decoder` を持つキーの型は無い：書かれたものは
+[E0204](./errors.md#e0204-effect-id-misuse) であり、`{Decoder.Text: 1}` のように `Decoder` を
+キーとする Map リテラルも同じである（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）。
 
 ---
 
