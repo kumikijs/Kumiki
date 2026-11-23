@@ -1,0 +1,69 @@
+{
+  "steps": [
+    {
+      "label": "initial render: nothing has fired",
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "" },
+        "domIncludes": ["a scroll", "log: "]
+      }
+    },
+    {
+      "label": "a focus event on the scroll whose content fits reaches the listener lifted onto it",
+      "do": { "focus": "#fits" },
+      "expect": { "noErrors": true, "state": { "log": "ff " } }
+    },
+    {
+      "label": "focus on the scroll runs the ui.focus reducer lifted onto it",
+      "do": { "focus": "#pane" },
+      "expect": { "noErrors": true, "state": { "log": "ff pf " } }
+    },
+    {
+      "label": "a key on it runs the onKeyDown written on it",
+      "do": { "key": "#pane", "value": "a" },
+      "expect": { "noErrors": true, "state": { "log": "ff pf pk " } }
+    },
+    {
+      "label": "leaving it runs the ui.blur reducer lifted onto it",
+      "do": { "blur": "#pane" },
+      "expect": { "noErrors": true, "state": { "log": "ff pf pk pb " } }
+    },
+    {
+      "label": "focus on the input inside the other scroll runs ui.focus(List) once",
+      "do": { "focus": "#note" },
+      "expect": { "noErrors": true, "state": { "log": "ff pf pk pb lf " } }
+    },
+    {
+      "label": "a key in that input runs ui.key(List) once",
+      "do": { "key": "#note", "value": "x" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "ff pf pk pb lf t " },
+        "domIncludes": ["log: ff pf pk pb lf t "]
+      }
+    },
+    {
+      "label": "the route puts Child in Shell's outlet",
+      "do": { "navigate": "/s/child" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["a route-outlet", "shell", "press"],
+        "domExcludes": ["nothing routed"]
+      }
+    },
+    {
+      "label": "a click on the routed button runs ui.click(Child), and not ui.click(Shell)",
+      "do": { "click": "#press" },
+      "expect": { "noErrors": true, "state": { "log": "ff pf pk pb lf t c " } }
+    },
+    {
+      "label": "a click on Shell's own button runs ui.click(Shell)",
+      "do": { "click": "#shell" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "ff pf pk pb lf t c s " },
+        "domIncludes": ["log: ff pf pk pb lf t c s "]
+      }
+    }
+  ]
+}

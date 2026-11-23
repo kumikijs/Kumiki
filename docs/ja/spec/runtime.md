@@ -766,11 +766,13 @@ step が付く episode は、いま開いている episode ではなく、その
 
 effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.err($error, $key)` イベントとしてランタイムに通知。マッチする reducer が実行される。
 
-1 つのリクエストが配送する結果は**ちょうど 1 つ**である。invoke が例外を投げた場合は、それがそのリクエストの err になる。`Text` で失敗する effect（[http.md §6.7](./http.md#_6-7-storage-effects)）では、その `.err` reducer は投げられた値のテキストをその `Text` として受け取り、それ以外の effect では [stdlib.md §2.5](./stdlib.md#_2-5-standard-capabilities) の `{message: Text}` を受け取る。
+1 つのリクエストが配送する結果は**ちょうど 1 つ**である。invoke が例外を投げた場合は、それがそのリクエストの err になる。`{kind, value}` の結果以外のものに解決した invoke（`return` のないホストのプロバイダなど）も、例外を投げたものとして同じく err になる。`Text` で失敗する effect（[http.md §6.7](./http.md#_6-7-storage-effects)）では、その `.err` reducer は投げられた値のテキストをその `Text` として受け取り、それ以外の effect では [stdlib.md §2.5](./stdlib.md#_2-5-standard-capabilities) の `{message: Text}` を受け取る。
 
 その結果を配送している最中に、結果が実行する reducer の本体の外で throw されたものは、2 つ目の結果ではない。そこで throw しうるのは、その reducer が emit したものの dispatch や、その reducer を記録するホストの episode logger である。その後の描画でタイル自身が panic した場合は、描画がそれを捕捉し、`tile-render` の panic のままである。リクエストはその時点ですでに 1 つの結果を受け取っているので、そのリクエストに対して `.err` reducer は実行されない。この throw はアプリのエラーであり、reducer の panic と同じように報告される（[lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）。報告先は `console.error`、結果が属する episode の `panic` step、そして `app.error` であり、`category` は `"effect"`、`location` は effect を名指す（`effect "loadNote"`）。その後、reducer が書き込んだ内容でページが描画される。throw によってその描画が行われていなかった場合があるからであり、その描画が throw したものも同じように報告される。その結果に対する effect の他の reducer は、本体の panic の後と同じく、引き続き実行される。本体の中の panic は reducer の panic のままであり、`category` は `"reducer"`、`location` は `reducer "<name>"` となる。
 
 リクエストの起動の中で、その結果が実行する reducer の外で throw されたものも、同じように報告される。報告先は `console.error`、そのリクエストを引き受けた episode の `panic` step、そして `app.error` であり、`category` は `"effect"`、`location` は effect を名指す。そこで throw しうるのは、リクエストの `effect-start` や `effect-end` を記録するとき、あるいはその結果のスコープを閉じるときのホストの episode logger である。これはどの policy（[§10.4.3](#_10-4-3-policy-handling)）でも同じであり、`queue` では後ろに並んだエントリも引き続き実行される。
+
+サーバパス（[§10.6.1](#_10-6-1-ssr)）も、`app.init` の連鎖にある effect の結果を同じように配送する：effect は同じ `retry`（[§10.4.4](#_10-4-4-retry)）のもとで走り、throw した invoke は同じ `.err` の値で失敗し、マッチする reducer には同じ `$value` / `$error` と同じ `$key` が渡される。hydration は `app.init` を再実行しない（[§10.6.2](#_10-6-2-hydration)）ので、サーバが計算したものが hydrate されたページに残り、それはマウントが計算するものと同じである。
 
 ### 10.4.6 標準 capability の実装
 

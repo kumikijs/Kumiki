@@ -227,37 +227,96 @@ reducer go on=ui.click(Btn) do=
   });
 });
 
+// A call of each member on the probe's parameter for its receiver, one row per member that takes
+// arguments, so a member the table gains is a row here too.
+const rowsOf = (
+  receiver: string,
+  recv: string,
+  row: Readonly<Record<string, readonly (string | null)[]>>,
+) =>
+  Object.entries(row)
+    .filter(([, params]) => params.length > 0)
+    .map(([member, params]) => ({
+      name: `${receiver}.${member}`,
+      receiver,
+      member,
+      params,
+      n: params.length,
+      callWith: (args: readonly string[]) => `${recv}.${member}(${args.join(", ")})`,
+      call: (count: number, arg = "1") =>
+        `${recv}.${member}(${Array.from({ length: count }, () => arg).join(", ")})`,
+    }));
+const rows = [
+  ...rowsOf("Map", "m", RECEIVER_PARAMS.Map),
+  ...rowsOf("Set", "s", RECEIVER_PARAMS.Set),
+  ...rowsOf("List", "xs", RECEIVER_PARAMS.List),
+];
+
+/** A program whose one fn's body is `call`, with a parameter of each receiver to call it on. */
+const probe = (call: string): string =>
+  withApp(`fn probe(m: Map(Int, Int), mf: Map(Int, Float), fm: Map(Float, Int), s: Set(Int), xs: List(Int)) = ${call}
+tile App = column(text("x"))`);
+
+// A member argument the receiver types as an `Int` is an `Int` position, so a literal there past
+// the safe range is one E0217 at its sign, as it is as a slot's value or a Map literal's key.
+describe("an Int literal past the safe range as a member argument the receiver types", () => {
+  const BIG = "-9007199254740993";
+  const reported = (call: string) =>
+    pointedErrorsOf(probe(call)).map(({ code, text }) => ({ code, text }));
+
+  // A `self` parameter takes the literal inside a literal of the receiver's own type.
+  const pastBound = (receiver: string, param: string): readonly string[] =>
+    param !== "self" ? [BIG] : receiver === "Map" ? [`{${BIG}: 1}`, `{1: ${BIG}}`] : [`[${BIG}]`];
+  const inBound = (receiver: string, param: string | null): string =>
+    param !== "self" ? "1" : receiver === "Map" ? "{1: 1}" : "[1]";
+
+  // Each typed position of each call the arity allows, the short call of a member that reads one
+  // included, with the literal there and an argument in range everywhere else.
+  const calls = rows.flatMap(({ receiver, member, params, n, callWith }) =>
+    (readsShortCall(receiver, member) ? [n, n - 1] : [n]).flatMap((count) =>
+      params
+        .slice(0, count)
+        .flatMap((param, at) =>
+          param === null
+            ? []
+            : pastBound(receiver, param).map((literal) =>
+                callWith(
+                  params.slice(0, count).map((p, i) => (i === at ? literal : inBound(receiver, p))),
+                ),
+              ),
+        ),
+    ),
+  );
+
+  it.each(calls)("%s is one E0217, at the literal's sign", (call) => {
+    expect(reported(call)).toEqual([
+      { code: "E0217", text: expect.stringMatching(/^-9007199254740993/) },
+    ]);
+  });
+
+  // `get-or`'s default is no parameter the receiver types: it is read against what the call
+  // answers, the Map's value here.
+  it("reports Map.get-or's default, which the call's answer types, at its sign", () => {
+    expect(reported(`m.get-or(1, ${BIG})`)).toEqual([
+      { code: "E0217", text: expect.stringMatching(/^-9007199254740993/) },
+    ]);
+  });
+
+  // On `m` the key and the value are both `Int`, so only these rows tell one from the other.
+  it.each([
+    ["Map.insert's value", `mf.insert(1, ${BIG})`],
+    ["Map.update's value", `mf.update(2, ${BIG})`],
+    ["Map.insert's key", `fm.insert(${BIG}, 1)`],
+  ])("%s reports nothing where the parameter is a Float, which holds an approximation by nature", (_member, call) => {
+    expect(reported(call)).toEqual([]);
+  });
+});
+
 // A call given fewer arguments than a row lists has none read against it, unless `readsShortCall`
 // names its member, so a row longer than the arity `check` enforces would turn the check off for
 // every call that arity allows.
 describe("each row of the parameter table is the member's arity", () => {
-  /** A call of `member` on the parameter `recv`, one row per member that takes arguments. */
-  const rowsOf = (
-    receiver: string,
-    recv: string,
-    row: Readonly<Record<string, readonly (string | null)[]>>,
-  ) =>
-    Object.entries(row)
-      .filter(([, params]) => params.length > 0)
-      .map(([member, params]) => ({
-        name: `${receiver}.${member}`,
-        receiver,
-        member,
-        params,
-        n: params.length,
-        call: (count: number, arg = "1") =>
-          `${recv}.${member}(${Array.from({ length: count }, () => arg).join(", ")})`,
-      }));
-  const rows = [
-    ...rowsOf("Map", "m", RECEIVER_PARAMS.Map),
-    ...rowsOf("Set", "s", RECEIVER_PARAMS.Set),
-    ...rowsOf("List", "xs", RECEIVER_PARAMS.List),
-  ];
-  const codes = (call: string): string[] =>
-    codesOf(
-      withApp(`fn probe(m: Map(Int, Int), s: Set(Int), xs: List(Int)) = ${call}
-tile App = column(text("x"))`),
-    );
+  const codes = (call: string): string[] => codesOf(probe(call));
 
   // A member whose short call is read takes one, as `xs.slice(start)` runs to the list's end.
   const shortCalls = rows.filter(({ receiver, member }) => readsShortCall(receiver, member));
