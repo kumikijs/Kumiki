@@ -39,9 +39,8 @@ export function replaceText(
     const entry = store.byQName.get(qname);
     if (!entry) throw new Error(`Definition "${qname}" not found`);
     const from = entry.range.startLine;
-    const held =
-      wrote !== undefined && wrote.every((line, i) => store.lines[from - 1 + i] === line);
-    const to = held ? Math.max(entry.range.endLine, from + wrote.length - 1) : entry.range.endLine;
+    const held = wrote?.every((line, i) => store.lines[from - 1 + i] === line) ? wrote.length : 0;
+    const to = Math.max(entry.range.endLine, from + held - 1);
     const prev = store.lines.slice(from - 1, to).join("\n");
     const next = spliceLines(store.source, from, to, text.split("\n"));
     return commit(path, next, "replace", () => {
