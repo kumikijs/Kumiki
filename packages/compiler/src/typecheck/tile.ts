@@ -65,7 +65,7 @@ import {
   elementTypeOf,
   letInScope,
   noteShown,
-  refuseRenderedEffectId,
+  refuseRenderedHandle,
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
 import { nestedScopes } from "./nested-scopes.ts";
@@ -699,7 +699,7 @@ function checkTileCall(
   const tileContent = checkTileAsContent(t, sym, errors, ctx);
   const errorFieldTile = tileAsErrorField(t, ctx);
   for (const value of renderedText(t, ctx)) {
-    refuseRenderedEffectId(value, `${t.name}(...)`, sym, errors, ctx);
+    refuseRenderedHandle(value, `${t.name}(...)`, sym, errors, ctx);
   }
   checkIconName(t, sym, errors);
   checkButtonType(t, errors, ctx);

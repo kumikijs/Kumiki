@@ -144,7 +144,7 @@ function bindRootNotASlot(root: Expr, sym: SymbolTable, ctx: Ctx): RootReport | 
     case "Num":
     case "Bool":
       return notASlot(
-        `the literal ${root.kind === "Num" ? (root.raw ?? root.value) : root.value}`,
+        `the literal ${root.kind === "Num" ? root.raw : root.value}`,
         "a literal is a value",
         fix,
       );

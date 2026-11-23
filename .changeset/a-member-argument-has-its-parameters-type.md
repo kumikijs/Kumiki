@@ -19,7 +19,7 @@ Consequences worth knowing before upgrading:
 
 - A Map literal with bare keys is a record, and a record is not a `Map`. `m.merge({a: 1})` on a `Map(Text, Int)` merged the key `"a"` and is now E0201 (`Expected Map(Text, Int) but got {a: Int}`). Write `m.merge({"a": 1})`.
 - A `nominal` type's name written as a constructor is a variant tag. On a `Map(ItemId, Text)` over `nominal Int`, `items.insert(ItemId(1), "a")` stored the variant `{_tag: "ItemId", _0: 1}` as the key and is now E0201 (`Expected ItemId but got variant "ItemId"`). Write the base value: `items.insert(1, "a")`.
-- A literal receiver's type is the one inferred from the literal, and the argument is read against it. On a `List(Float)`, `[0].concat(prices)` is now E0201 (`Expected List(Int) but got List(Float)`), and `{1: "a"}.insert(2.5, "b")` on a `Map(Float, Text)` is E0201 at `2.5`, as `[1, 2].push(2.5)` already was. Start from the slot instead, `prices.prepend(0)`, or write the whole literal, `{1: "a", 2.5: "b"}`. `[0.0]` does not help: `0.0` is read as an `Int`.
+- A literal receiver's type is the one inferred from the literal, and the argument is read against it. On a `List(Float)`, `[0].concat(prices)` is now E0201 (`Expected List(Int) but got List(Float)`), and `{1: "a"}.insert(2.5, "b")` on a `Map(Float, Text)` is E0201 at `2.5`, as `[1, 2].push(2.5)` already was. Start from the slot instead, `prices.prepend(0)`, or write the whole literal, `{1: "a", 2.5: "b"}`. `[0.0].concat(prices)` works too: `0.0` is a `Float`.
 - A lookup now builds a list-literal key or member as a Set, but a write through the accumulator of a `fold` from `{}` still stores the literal as an array, so mixing the two answers differently:
 
   ```kumiki

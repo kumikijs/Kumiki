@@ -1,7 +1,7 @@
 import { feature } from "@kumikijs/examples";
 import { mount, renderToString } from "@kumikijs/runtime";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { freshRoot } from "./helpers/dom.ts";
+import { freshRoot, stubViewport } from "./helpers/dom.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("158-responsive-breakpoints");
@@ -15,14 +15,6 @@ app Resp
     routes = {"/" -> App, "/404" -> App}
     init   = []
 `;
-
-function viewport(width: number): void {
-  vi.spyOn(window, "matchMedia").mockImplementation((q: string) => {
-    const m = /min-width:\s*([\d.]+)(px|rem|em)\)/.exec(q);
-    const px = m ? Number(m[1]) * (m[2] === "px" ? 1 : 16) : Number.NaN;
-    return { matches: width >= px, media: q } as MediaQueryList;
-  });
-}
 
 /** An app whose theme declares only `breakpoints`, around a `cols` map. */
 const themed = (breakpoints: string, cols: string): string => `
@@ -52,7 +44,7 @@ async function styleAt(
   src: string | { file: string },
   width: number,
 ): Promise<{ tracks: Shown; spaced: Shown }> {
-  viewport(width);
+  stubViewport(width);
   const app = typeof src === "string" ? await loadSource(src) : await loadApp(src.file);
   const root = freshRoot();
   const handle = mount(app, root);
