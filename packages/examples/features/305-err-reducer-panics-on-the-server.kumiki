@@ -1,0 +1,49 @@
+# Feature (stdlib.md): a reducer that panics on an effect's error still takes it.
+#
+# An effect's `err` goes to the reducers wired for it: its `.err` reducers,
+# and for a 401, a 403 or a 5xx, the reducer `app.http` names. One that panics
+# there is reported as that panic. The error is not also reported as one that
+# "returned an error with no .err reducer", because a reducer took it. The
+# server pass counts these reducers as a mount does.
+#
+# `noteFailed` writes the label `labels` holds for the status it is handed,
+# and `labels` holds none for a 404, so a 404 makes it panic. `loadQuote` has
+# no `.err` reducer: a 5xx goes to `serverDown`, which writes the label for a
+# 503, and that read panics the same way.
+#
+# The scenario drives a mount whose requests answer, so nothing panics. An
+# integration test in `packages/tests` serves and mounts this app with
+# providers that answer `/note` with a 404 and `/quote` with a 503, and pins
+# that both passes report the two panics and no error without a reducer.
+
+slot note    : Text = "none"
+slot quote   : Text = "none"
+slot problem : Text = "-"
+slot labels  : Map(Int, Text) = {500: "server error"}
+
+effect loadNote cap=http.get
+                in=Unit
+                out=Result(Text, HttpError)
+                map-request={url: "/note", decode: Decoder.Text}
+
+effect loadQuote cap=http.get
+                 in=Unit
+                 out=Result(Text, HttpError)
+                 map-request={url: "/quote", decode: Decoder.Text}
+
+reducer noteOk     on=loadNote.ok($n, _)  do= note := $n
+reducer noteFailed on=loadNote.err($e, _) do= problem := labels[$e.status]
+reducer quoteOk    on=loadQuote.ok($q, _) do= quote := $q
+reducer serverDown on=app.http-5xx        do= problem := labels[503]
+
+tile App = column(
+             text("note=" + note),
+             text("quote=" + quote),
+             text("problem=" + problem))
+           {pad: "lg", gap: "sm"}
+
+app ErrReducerPanicsOnTheServer
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = [loadNote(), loadQuote()]
+    http   = {on-5xx: serverDown}

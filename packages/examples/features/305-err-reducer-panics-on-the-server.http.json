@@ -1,0 +1,4 @@
+{
+  "GET /note": { "text": "hello" },
+  "GET /quote": { "text": "carpe diem" }
+}
