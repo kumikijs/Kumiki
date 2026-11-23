@@ -1,0 +1,24 @@
+{
+  "effects": {
+    "loadQuote": [{ "outcome": "ok", "value": { "text": "Counted" } }]
+  },
+  "steps": [
+    {
+      "label": "nothing clicked yet",
+      "expect": {
+        "noErrors": true,
+        "state": { "clicks": 0, "quote": "none" },
+        "domIncludes": ["clicks: 0", "name: ada"]
+      }
+    },
+    {
+      "label": "a click counts and loads a quote through the effect with its whole-number retry",
+      "do": { "click": "#inc" },
+      "expect": {
+        "noErrors": true,
+        "state": { "clicks": 1, "quote": "Counted" },
+        "domIncludes": ["clicks: 1", "quote: Counted"]
+      }
+    }
+  ]
+}

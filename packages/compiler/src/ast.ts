@@ -94,6 +94,11 @@ export type MotionDef = {
   kind: "MotionDef";
   name: string;
   body: { [k: string]: ThemeValue };
+  /**
+   * The body's top-level entries that are numbers, as written: `duration` and `iteration` take an
+   * `Int`, and the number in the body cannot tell `300.0` from `300`.
+   */
+  numbers: ReadonlyMap<string, NumberLiteral>;
   /** Keys seen more than once in the body, at any nesting depth. */
   duplicateKeys?: DuplicateName[];
   pos: Pos;
@@ -272,6 +277,14 @@ export function assertNever(node: never): void {
 
 /** A number literal: the text it is written as, its sign included, and the number it was read as. */
 export type NumberLiteral = { readonly value: number; readonly raw: string };
+
+/**
+ * Whether a number literal is an `Int`: language.md's `int`, written with no point. The number it
+ * is read as cannot tell, since `0.99999999999999999` is read as 1.
+ */
+export function isIntLiteral(literal: NumberLiteral): boolean {
+  return !literal.raw.includes(".");
+}
 
 /**
  * The sign is part of a number literal (language.md), but the lexer emits it as

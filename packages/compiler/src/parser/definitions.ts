@@ -1,26 +1,28 @@
 import { isPositiveInt } from "@kumikijs/runtime/positive-int";
-import type {
-  Def,
-  DuplicateName,
-  EffectDef,
-  Expr,
-  FnDef,
-  MotionDef,
-  PolicyExpr,
-  Pos,
-  Program,
-  ReducerDef,
-  RetryExpr,
-  SlotDef,
-  Statement,
-  TestDef,
-  ThemeDef,
-  ThemeLeaf,
-  ThemeValue,
-  TileDef,
-  Token,
-  TypeDef,
-  TypeExpr,
+import {
+  type Def,
+  type DuplicateName,
+  type EffectDef,
+  type Expr,
+  type FnDef,
+  isIntLiteral,
+  type MotionDef,
+  type NumberLiteral,
+  type PolicyExpr,
+  type Pos,
+  type Program,
+  type ReducerDef,
+  type RetryExpr,
+  type SlotDef,
+  type Statement,
+  type TestDef,
+  type ThemeDef,
+  type ThemeLeaf,
+  type ThemeValue,
+  type TileDef,
+  type Token,
+  type TypeDef,
+  type TypeExpr,
 } from "../ast.ts";
 import { AppParser } from "./app.ts";
 import { ParseError } from "./token-stream.ts";
@@ -61,31 +63,35 @@ export class Parser extends AppParser {
     const name = this.eat("ident").value;
     this.eat("op", "=");
     const record: ThemeRecordReading = { duplicates: [], leaves: [] };
-    const body = this.parseThemeRecord(record, []);
-    const def: MotionDef = { kind: "MotionDef", name, body, pos: start.pos };
+    const numbers = new Map<string, NumberLiteral>();
+    const body = this.parseThemeRecord(record, [], numbers);
+    const def: MotionDef = { kind: "MotionDef", name, body, numbers, pos: start.pos };
     if (record.duplicates.length > 0) def.duplicateKeys = record.duplicates;
     return def;
   }
 
+  /** A `{ … }` of theme values; `numbers`, when given, gets its own number entries as written. */
   private parseThemeRecord(
     record: ThemeRecordReading,
     path: readonly string[],
+    numbers?: Map<string, NumberLiteral>,
   ): { [k: string]: ThemeValue } {
-    return this.descend(() => this.parseThemeRecordNested(record, path));
+    return this.descend(() => this.parseThemeRecordNested(record, path, numbers));
   }
 
   private parseThemeRecordNested(
     record: ThemeRecordReading,
     path: readonly string[],
+    numbers: Map<string, NumberLiteral> | undefined,
   ): { [k: string]: ThemeValue } {
     this.eat("op", "{");
     const out: { [k: string]: ThemeValue } = Object.create(null);
     if (!this.matchOp("}")) {
-      this.parseThemeEntry(out, record, path);
+      this.parseThemeEntry(out, record, path, numbers);
       while (this.matchOp(",")) {
         this.next();
         if (this.matchOp("}")) break;
-        this.parseThemeEntry(out, record, path);
+        this.parseThemeEntry(out, record, path, numbers);
       }
     }
     this.eat("op", "}");
@@ -96,6 +102,7 @@ export class Parser extends AppParser {
     out: { [k: string]: ThemeValue },
     record: ThemeRecordReading,
     path: readonly string[],
+    numbers: Map<string, NumberLiteral> | undefined,
   ): void {
     const keyTok = this.peek();
     if (keyTok.kind !== "ident" && keyTok.kind !== "kw" && keyTok.kind !== "str") {
@@ -105,6 +112,8 @@ export class Parser extends AppParser {
     const key = keyTok.value as string;
     if (Object.hasOwn(out, key)) record.duplicates.push({ name: key, pos: keyTok.pos });
     this.eat("op", ":");
+    // A repeated key keeps its last value (E0008 reports the repeat), and only a number is held.
+    numbers?.delete(key);
     const at = [...path, key];
     const v = this.peek();
     if (v.kind === "op" && v.value === "{") {
@@ -116,11 +125,12 @@ export class Parser extends AppParser {
       this.next();
       value = v.value;
     } else {
-      const n = this.tryEatSignedNumber();
+      const n = this.tryEatSignedNumberLit();
       if (n === undefined) {
         throw new ParseError(`Theme values must be string, number, or nested record`, v.pos);
       }
-      value = n;
+      value = n.value;
+      numbers?.set(key, n);
     }
     out[key] = value;
     record.leaves.push({ path: at, value, pos: v.pos });
@@ -436,11 +446,11 @@ export class Parser extends AppParser {
 
   private eatRetryCount(): number {
     const t = this.peek();
-    const n = this.eatSignedNumber();
-    if (n < 0 || !Number.isInteger(n)) {
-      throw new ParseError(`Retry count must be a whole number, 0 or more (got ${n})`, t.pos);
+    const n = this.eatSignedNumberLit();
+    if (!isIntLiteral(n) || !Number.isInteger(n.value) || n.value < 0) {
+      throw new ParseError(`Retry count must be a whole number, 0 or more (got ${n.raw})`, t.pos);
     }
-    return n;
+    return n.value;
   }
 
   private eatRetryFactor(): number {
@@ -563,7 +573,7 @@ export class Parser extends AppParser {
   private eatPropertyTestCount(name: string): number {
     const t = this.peek();
     const n = this.eatSignedNumberLit();
-    if (!isPositiveInt(n.value)) {
+    if (!isIntLiteral(n) || !isPositiveInt(n.value)) {
       throw new ParseError(
         `property-test "${name}" count must be a whole number, 1 or more (got ${n.raw})`,
         t.pos,

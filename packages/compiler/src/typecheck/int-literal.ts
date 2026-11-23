@@ -1,15 +1,7 @@
-import { type NumberLiteral, numberLiteral, type Pos } from "../ast.ts";
+import { isIntLiteral, type NumberLiteral, numberLiteral, type Pos } from "../ast.ts";
 import type { KumikiError, SymbolTable } from "./context.ts";
 
 const SAFE_RANGE = `${Number.MIN_SAFE_INTEGER} through ${Number.MAX_SAFE_INTEGER}`;
-
-/**
- * Whether a number literal is an `Int`: language.md's `int`, written with no point. The number it
- * is read as cannot tell, since `0.99999999999999999` is read as 1.
- */
-export function isIntLiteral(literal: NumberLiteral): boolean {
-  return !literal.raw.includes(".");
-}
 
 /**
  * E0217 for an `Int` literal outside the safe range, or `null`. A literal written with a point is

@@ -7,7 +7,7 @@ import {
   unknownType,
   writtenVariants,
 } from "../assignable.ts";
-import type { Expr, Pos, TypeExpr } from "../ast.ts";
+import { type Expr, isIntLiteral, type Pos, type TypeExpr } from "../ast.ts";
 import { isQualifierName, QUALIFIED_BUILTIN_CALLS, RUN_REDUCER } from "../builtin-calls.ts";
 import { qualifierType } from "../parse-reading.ts";
 import { hasMember, isOwnMember } from "../stdlib-members.ts";
@@ -16,7 +16,6 @@ import { getOrResultType, indexStep, unwrappedType } from "./against.ts";
 import { type Ctx, isBuiltinCall, type SymbolTable } from "./context.ts";
 import { binOpResult, letInScope } from "./expr.ts";
 import { fnResultType } from "./fn.ts";
-import { isIntLiteral } from "./int-literal.ts";
 import { memberReceivers } from "./members.ts";
 import { armScope, matchedType } from "./patterns.ts";
 import { RESERVED_SLOT_NAMES } from "./slot.ts";

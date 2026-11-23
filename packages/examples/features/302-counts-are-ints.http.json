@@ -1,0 +1,3 @@
+{
+  "GET /quote": { "json": { "text": "Counted" } }
+}

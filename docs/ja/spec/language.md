@@ -54,7 +54,7 @@ tuple       ::= '(' expr ',' expr (',' expr)* ')'  ; Tuple が型を付ける値
 comment     ::= '#' until-eol                    ; 1 行コメントのみ
 ```
 
-**式の中の数値リテラルが `Int` か `Float` かは、書き方で決まる。** `int` は `Int`、`float` は `Float` であり、JavaScript がそれをどの数として読むかには依らない。`1.0` は `Float` であり、`1` と読まれる `0.99999999999999999` も `Float` である。定義が式の外でとる整数は、読まれた数で検査されるので、そこでは `1.0` も通る: effect の `retry=` の回数、`property-test` の `count`、`motion` の `duration` と `iteration`、`len-lt` などの refinement がとる長さである。
+**数値リテラルが `Int` か `Float` かは、書き方で決まる。** `int` は `Int`、`float` は `Float` であり、JavaScript がそれをどの数として読むかには依らない。`1.0` は `Float` であり、`1` と読まれる `0.99999999999999999` も `Float` である。定義が式の外で整数をとる場所でも同じである: effect の `retry=` の回数、`property-test` の `count`、`motion` の `duration` と `iteration`、`len-lt` などの refinement がとる長さはいずれも `int` であり、そこに `1.0` を書くと `0.5` と同じエラーになる。
 
 **`-` は識別子の文字でも引き算でもあり、最長一致で決める。** `page-size` / `base-url` / `on-401` / `count-1` はそれぞれ 1 つの名前であり、名前とリテラルの引き算を `count - 1` と書くのはそのためである。
 
