@@ -64,21 +64,19 @@ tile B = button(text="b")
       ]);
     });
 
+    // A program's `type Decoder` is E0231, so this fixture does not check; the index still reads
+    // it, and a reserved name's type member names the built-in type, never the program's.
     describe("with a program's own `type Decoder`, a call on the namespace", () => {
       it.each([
         { call: "Decoder.Text", why: "a built-in call names no type", edges: [] },
-        // E0116, so this fixture does not check, but it is the case that fails if the namespace
-        // exclusion is dropped: `fresh` is a type member on any other qualifier.
-        { call: "Decoder.fresh()", why: "an argless fresh is E0116 and names no type", edges: [] },
-        {
-          call: "Decoder.show(raw)",
-          why: "show given its argument",
-          edges: ["type.Decoder@4:12"],
-        },
+        // The case that fails if the namespace exclusion is dropped: `fresh` is a type member on
+        // any other qualifier.
+        { call: "Decoder.fresh()", why: "an argless fresh names no type", edges: [] },
+        { call: "Decoder.show(raw)", why: "show given its argument names the built-in", edges: [] },
         {
           call: "Decoder.parse(raw)",
-          why: "parse given its argument",
-          edges: ["type.Decoder@4:12"],
+          why: "parse given its argument names the built-in",
+          edges: [],
         },
       ])("$call: $why", ({ call, edges }) => {
         const src = `type Decoder = nominal Text

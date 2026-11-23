@@ -54,17 +54,47 @@ export function failsWithText(cap: string): boolean {
   return TEXT_FAILURE_CAPABILITIES.has(cap);
 }
 
-const HTTP_READ = ["url", "headers", "query", "decode"];
-const HTTP_SEND = ["url", "headers", "query", "body", "decode"];
+/** A field of a request, and what the checker holds the value a literal writes for it to. */
+export type RequestField = {
+  readonly name: string;
+  /** The type its value must have; with none, the handler reads the value as it finds it. */
+  readonly type?: TypeExpr;
+  /** The calls building a value of `type` that the handler still fails on here, and why. */
+  readonly refused?: {
+    readonly calls: readonly string[];
+    readonly takes: string;
+    readonly why: string;
+  };
+};
+
+const field = (name: string): RequestField => ({ name });
+
+// The handler decodes the answer by `decode`, so a value no decoder built names no decoding.
+const DECODE: RequestField = { name: "decode", type: refType("Decoder") };
+
+// IndexedDB holds structured values, not text, so a read by key has nothing these two read.
+const RECORD_DECODE: RequestField = {
+  ...DECODE,
+  refused: {
+    calls: ["Decoder.Text", "Decoder.Bytes"],
+    takes: "Decoder.Json(T) or Decoder.None",
+    why: "an indexed.read by key reads a stored record, which has no text to read",
+  },
+};
+
+const HTTP_READ = [field("url"), field("headers"), field("query"), DECODE];
+const HTTP_SEND = [field("url"), field("headers"), field("query"), field("body"), DECODE];
 
 /** What the built-in `storage.read` / `session.read` handler reads, which codegen hands it. */
-export const STORAGE_READ_FIELDS = ["key", "decode"] as const;
+export const STORAGE_READ_FIELDS: readonly RequestField[] = [field("key"), DECODE];
+
+const STORAGE_WRITE = [field("key"), field("value")];
 
 /**
  * A request whose fields depend on whether it names `key`: the built-in `indexed.read` handler
  * reads one record by key when it does, and runs a query when it does not.
  */
-type ByKey = { withKey: readonly string[]; withoutKey: readonly string[] };
+type ByKey = { withKey: readonly RequestField[]; withoutKey: readonly RequestField[] };
 
 /**
  * The fields each capability's built-in handler reads, as http.md publishes them. A field outside
@@ -72,10 +102,11 @@ type ByKey = { withKey: readonly string[]; withoutKey: readonly string[] };
  * handed the same request and held to the same fields, and one that reads others belongs on a
  * custom capability. A capability not listed has no request schema: a custom one, a standard one
  * whose effects reach only a host provider, and `http.cancel`, which takes no `map-request` at all.
+ * A field's rule is its row's, since one name can be held to different values under two capabilities.
  */
-const REQUEST_FIELDS: ReadonlyMap<string, readonly string[] | ByKey> = new Map<
+const REQUEST_FIELDS: ReadonlyMap<string, readonly RequestField[] | ByKey> = new Map<
   string,
-  readonly string[] | ByKey
+  readonly RequestField[] | ByKey
 >([
   ["http.get", HTTP_READ],
   ["http.post", HTTP_SEND],
@@ -83,19 +114,22 @@ const REQUEST_FIELDS: ReadonlyMap<string, readonly string[] | ByKey> = new Map<
   ["http.patch", HTTP_SEND],
   ["http.delete", HTTP_SEND],
   ["storage.read", STORAGE_READ_FIELDS],
-  ["storage.write", ["key", "value"]],
+  ["storage.write", STORAGE_WRITE],
   ["session.read", STORAGE_READ_FIELDS],
-  ["session.write", ["key", "value"]],
+  ["session.write", STORAGE_WRITE],
   [
     "indexed.read",
-    { withKey: ["store", "key", "decode"], withoutKey: ["store", "index", "range"] },
+    {
+      withKey: [field("store"), field("key"), RECORD_DECODE],
+      withoutKey: [field("store"), field("index"), field("range")],
+    },
   ],
-  ["indexed.write", ["store", "key", "value"]],
-  ["indexed.delete", ["store", "key"]],
+  ["indexed.write", [field("store"), field("key"), field("value")]],
+  ["indexed.delete", [field("store"), field("key")]],
 ]);
 
 /** The request a literal names, as a message calls it, and the fields it may have. */
-export type RequestSchema = { request: string; fields: readonly string[] };
+export type RequestSchema = { request: string; fields: readonly RequestField[] };
 
 /** The schema of a request on `cap` whose literal names `names`; `undefined` when `cap` has none. */
 export function requestSchema(cap: string, names: readonly string[]): RequestSchema | undefined {
