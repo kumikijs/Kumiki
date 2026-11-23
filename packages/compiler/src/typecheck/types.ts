@@ -20,12 +20,14 @@ import { aliasTarget, forwardedParams } from "../def-graph.ts";
 import { decoderKey, decoderKeyError, heldDecoder } from "../held-decoder.ts";
 import { GENERIC_SELF_NESTING_LIMIT, scanPositions, typeKey } from "../refinement-positions.ts";
 import {
+  isCountArgument,
   type RefinementProblem,
   refinementBaseProblem,
   refinementProblem,
 } from "../refinements.ts";
 import { type ReservedTypeReason, reservedTypeReason } from "../stdlib-types.ts";
 import type { KumikiError, SymbolTable } from "./context.ts";
+import { intLiteralPrecision } from "./int-literal.ts";
 
 export function resolveType(
   t: TypeExpr,
@@ -131,8 +133,12 @@ function checkRefinement(
   errors: KumikiError[],
 ): void {
   if (!r) return;
-  const problem = refinementProblem(r) ?? baseProblem(r, inner, sym, typeParams);
-  if (!problem) return;
+  const base = refinedBase(inner, sym, typeParams);
+  const problem = refinementProblem(r) ?? baseProblem(r, base);
+  if (!problem) {
+    checkArgPrecision(r, base, errors);
+    return;
+  }
   if (problem.kind === "unimplemented-refinement") {
     errors.push({
       code: "E0803",
@@ -150,14 +156,45 @@ function checkRefinement(
   });
 }
 
-/** {@link refinementBaseProblem} for `r` over `inner`, as a checker problem. */
-function baseProblem(
-  r: Refinement,
+const isInt = (t: TypeExpr | null): boolean => t?.kind === "TypePrim" && t.name === "Int";
+
+// A number argument over an `Int` stands for an `Int`, and so does a count over any base: the check
+// is built from the number each literal was read as. Over a `Float` it is a `Float`, which holds an
+// approximation by nature. Over a type parameter it is judged where the generic is applied.
+function checkArgPrecision(r: Refinement, base: TypeExpr | null, errors: KumikiError[]): void {
+  const overInt = isInt(base);
+  for (const n of r.numbers ?? []) {
+    if (!overInt && !isCountArgument(r.pred, n.index)) continue;
+    const imprecise = intLiteralPrecision(n, n.pos);
+    if (imprecise) errors.push(imprecise);
+  }
+}
+
+/**
+ * {@link checkArgPrecision} for a refinement an application puts over `Int`, once however often
+ * the generic is applied: the literal is the definition's, reported where it is written.
+ */
+function checkAppliedPrecision(run: AppliedRun, r: Refinement): void {
+  if (run.sym.appliedPrecision.has(r)) return;
+  run.sym.appliedPrecision.add(r);
+  // A count's refinement tests text, so over `Int` it is E0804 and never gets here.
+  for (const n of r.numbers ?? []) {
+    const imprecise = intLiteralPrecision(n, n.pos);
+    if (imprecise) run.imprecise.push(imprecise);
+  }
+}
+
+/** The type a refinement over `inner` is written over, with each type parameter left opaque. */
+function refinedBase(
   inner: TypeExpr,
   sym: SymbolTable,
   typeParams: ReadonlySet<string>,
-): RefinementProblem | undefined {
-  const base = unaliasType(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
+): TypeExpr | null {
+  return unaliasType(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
+}
+
+/** {@link refinementBaseProblem} for `r` over `base`, as a checker problem. */
+function baseProblem(r: Refinement, base: TypeExpr | null): RefinementProblem | undefined {
   const message = base ? refinementBaseProblem(r, base) : undefined;
   return message ? { kind: "refinement-args-invalid", message } : undefined;
 }
@@ -183,11 +220,13 @@ function checkApplication(
     sym,
     reported: new Map(),
     out: [],
+    imprecise: [],
   };
   appliedBaseProblems(app.name, args, unapplied, run, { entered: null, from: null, walked: null });
   for (const message of run.out) {
     errors.push({ code: "E0804", kind: "refinement-args-invalid", message, pos: app.pos });
   }
+  errors.push(...run.imprecise);
 }
 
 type AppliedRun = {
@@ -195,6 +234,7 @@ type AppliedRun = {
   readonly sym: SymbolTable;
   readonly reported: Map<Refinement, Set<string>>;
   readonly out: string[];
+  readonly imprecise: KumikiError[];
 };
 
 type AppliedScope = {
@@ -358,6 +398,7 @@ function walkApplied(t: TypeExpr, at: AppliedBody, run: AppliedRun, todo: Applie
           const over = `${run.shown} applies it over ${typeToString(now)}`;
           const message = refinementBaseProblem(r, now, over);
           if (message) reportApplied(run, r, message);
+          else if (isInt(now) && !isInt(was)) checkAppliedPrecision(run, r);
         }
       }
       todo.push({ kind: "walk", t: t.inner, at });

@@ -1075,13 +1075,20 @@ A tag no union declares at all is reported here as well, because the declared ty
 
 ### E0217 `int-literal-precision`
 
-An `Int` position is given a literal outside the range JavaScript represents exactly, -9007199254740991 through 9007199254740991 (`Number.MIN_SAFE_INTEGER` through `Number.MAX_SAFE_INTEGER`). The literal is rounded on the way into the AST, so the program would run with a value that is not the one written.
+An `Int` position is given a literal outside the safe range, -9007199254740991 through 9007199254740991 (`Number.MIN_SAFE_INTEGER` through `Number.MAX_SAFE_INTEGER`): the range in which JavaScript holds every integer exactly and no other integer is read as it. Past it, most literals are rounded on the way into the AST, so the program would run with a value that is not the one written. A literal JavaScript still holds exactly there, such as 9007199254740992 (2^53), has a neighbour it does not: 9007199254740993 is read as 9007199254740992 too, so the program cannot tell the two apart, and arithmetic on the literal can round.
 
-> `Int literal <value> is not exactly representable and was rounded to <value>`
+A literal is at an `Int` position where `Int` is declared, and also where nothing declares a type — a `let` value, an operand of an operator, the body of a `fn` with no `->`, a receiver, an item of a list no type is declared for, an argument whose type nothing decides — since there it has the type it is written as ([§1.2](./language.md#_1-2-lexical)): a literal with no point is an `Int`, and one with a point is a `Float`, whatever value it holds. Where a `Float` is declared the literal is a `Float`, which holds an approximation by nature, and it is not held to the range; where another type is declared, that type judges it ([E0201](#e0201-type-mismatch)); and where the declared type names nothing, its [E0117](#e0117-undef-type) is the one report. A second sign changes none of this: in `- -9007199254740993` the declared type, or the absence of one, judges the literal `-9007199254740993` that the outer sign negates. Each literal is reported once, where it is written.
 
-The sign is part of the literal ([§1.2](./language.md#_1-2-lexical)), so a negative literal is held to the same bound in every position a positive one is, reported at its `-`, and named with its sign: `-9007199254740993` is reported as rounded to `-9007199254740992`.
+> `Int literal <literal> is outside the safe range -9007199254740991 through 9007199254740991 and was rounded to <value>`
+> `Int literal <literal> is outside the safe range -9007199254740991 through 9007199254740991: it is held exactly, but an integer next to it is not`
 
-A literal with a fractional part is [E0201](#e0201-type-mismatch) instead — that is a type mistake, not a precision one.
+The literal is named as written. The first message is for a literal that was rounded, and names every digit of the value it became; the second is for a literal held exactly, which is outside the range all the same.
+
+A refinement's number argument is held to the same bound where it stands for an `Int`: each number argument of `between` and `one-of` over an `Int` base, and the count of `len-eq` / `len-lt` / `len-gt` over any base ([§1.3.3](./language.md#_1-3-3-registered-refinement-predicates)). The check a refinement is built into compares with the number the literal was read as, so `Int where between(0, 9007199254740993)` would test `v <= 9007199254740992`; the literal is reported where it is written. A base that becomes `Int` where a generic is applied is an `Int` base too: `type R(T) = T where between(0, 9007199254740993)` is reported at the literal for `R(Int)`, once however many times the generic is applied over `Int`, and not for `R(Float)`. Over a `Float` base a bound is a `Float`, which holds an approximation by nature, and it is not held to the range, as a `Float` slot's value is not. A refinement [E0804](#e0804-refinement-args-invalid) reports is not held to the range as well: that message names the literal as written.
+
+The sign is part of the literal ([§1.2](./language.md#_1-2-lexical)), so a negative literal is held to the same bound in every position a positive one is, reported at its `-`, and named with its sign: `-9007199254740993` is reported as rounded to `-9007199254740992`, and `-9007199254740992` as held exactly.
+
+A literal written with a point is a `Float` ([§1.2](./language.md#_1-2-lexical)), whatever number it is read as — `1.0`, and `0.99999999999999999`, which is read as `1` — so where an `Int` is required it is [E0201](#e0201-type-mismatch) instead: that is a type mistake, not a precision one.
 
 **Fix**: Use a value inside the safe range, or carry the number as `Text`.
 
@@ -1530,17 +1537,21 @@ Only an `effect` declaration is refused. Emitting a standard effect needs no dec
 
 ### E0239 `negative-theme-length`
 
-A `theme` writes a negative number as a `spacing` token or as a `breakpoints` width ([Style §4.2](./style.md#_4-2-design-tokens)). Reported at the number, which starts at its `-`, once per number.
+A `theme` writes a negative number as a `spacing` token, a `radius` token, a `typography.size` token or a `breakpoints` width ([Style §4.2](./style.md#_4-2-design-tokens)). Reported at the number, which starts at its `-`, once per number.
 
 > `theme "<name>": spacing "<key>" is <n>, but a spacing token is 0 or more — pad and gap drop a negative length; write a negative margin in the tile's own style block (see docs/spec/style.md)`
 >
+> `theme "<name>": radius "<key>" is <n>, but a radius token is 0 or more — radius drops a negative length; write a length of 0 or more (see docs/spec/style.md)`
+>
+> `theme "<name>": typography size "<key>" is <n>, but a font size token is 0 or more — size drops a negative font size; write a font size of 0 or more (see docs/spec/style.md)`
+>
 > `theme "<name>": breakpoint "<key>" is <n>, and a minimum viewport width cannot be negative, so "<key>" is not a breakpoint at all — write a width of 0 or more (see docs/spec/style.md)`
 
-A spacing token and a breakpoint width are 0 or more, and a number in either section is px. `pad`, `pad-x`, `pad-y`, `gap`, `gap-x` and `gap-y` resolve a token to a padding or a gap, and neither can be negative: `nudge: -4` gives a `pad: "nudge"` the declaration `padding: -4px`, which is not valid CSS, so the browser drops it and the tile has no padding. A `style` block can read the same token as `@spacing.nudge` ([Style §4.3](./style.md#_4-3-token-references)), where `-4px` is a valid `margin-top`, but the rule is the token's, wherever it is read: a negative length is written in the `style` block itself. A negative breakpoint width is not a breakpoint ([Style §4.5](./style.md#_4-5-responsive)), yet it still takes the default's place under its key, so `md: -500` removes `md` rather than moving it, and a `{base: …, md: …}` map never resolves to its `md` value. Neither is an error at runtime, and the page only looks slightly off, so nothing but `check` names it.
+A `spacing`, `radius` or `typography.size` token and a breakpoint width are 0 or more, and a number in any of the four is px. `pad`, `pad-x`, `pad-y`, `gap`, `gap-x` and `gap-y` resolve a spacing token to a padding or a gap, `radius` a radius token to a corner radius and `size` a font size token to a font size, and none of them can be negative: `nudge: -4` gives a `pad: "nudge"` the declaration `padding: -4px`, which is not valid CSS, so the browser drops it and the tile has no padding. In the same way a `radius: "soft"` over `soft: -4` keeps the corners it has without the prop, and a `size: "tiny"` over `tiny: -4` keeps the font size it has without the prop. A `style` block can read the same spacing token as `@spacing.nudge` ([Style §4.3](./style.md#_4-3-token-references)), where `-4px` is a valid `margin-top`, but the rule is the token's, wherever it is read: a negative length is written in the `style` block itself. The same holds for a radius or font size token read as `@radius.soft` or `@typography.size.tiny`. A negative breakpoint width is not a breakpoint ([Style §4.5](./style.md#_4-5-responsive)), yet it still takes the default's place under its key, so `md: -500` removes `md` rather than moving it, and a `{base: …, md: …}` map never resolves to its `md` value. None of these is an error at runtime, and the page only looks slightly off, so nothing but `check` names it.
 
-Only a number directly under `spacing` or `breakpoints` is checked. One nested deeper under `breakpoints` is no width. One nested deeper under `spacing` (`spacing: {tight: {x: -4}}`) is no token `pad` or `gap` can name, but a `style` block can still reach it as `@spacing.tight.x`, and this check does not read it. A string is not read either, so `nudge: "-4px"` and `md: "-500px"` are the same mistakes and are not reported. Every `theme` is checked, whether or not the app names it, since an `app.theme` slot can select any of them while the app runs ([Style §4.6](./style.md#_4-6-dark-mode)).
+Only a number directly under `spacing`, `radius`, `typography.size` or `breakpoints` is checked. One nested deeper under `breakpoints` is no width. One nested deeper under any of the other three (`spacing: {tight: {x: -4}}`) is no token a prop can name, but a `style` block can still reach it as `@spacing.tight.x`, and this check does not read it. The rest of `typography` (`family`, `weight`, `line-height`) holds no lengths and is not checked. A string is not read either, so `nudge: "-4px"` and `md: "-500px"` are the same mistakes and are not reported. Every `theme` is checked, whether or not the app names it, since an `app.theme` slot can select any of them while the app runs ([Style §4.6](./style.md#_4-6-dark-mode)).
 
-**Fix**: Write the length or the width as 0 or more (`nudge: 4`, `md: 500`), or leave the key out to keep its default. A tile meant to pull outward writes the negative length in its own `style` block (`style: {margin-top: -4}`), where it is the CSS property's own value and not a token, so it no longer changes with the theme.
+**Fix**: Write the length, the size or the width as 0 or more (`nudge: 4`, `soft: 4`, `tiny: 11`, `md: 500`), or leave the key out to keep its default. A tile meant to pull outward writes the negative length in its own `style` block (`style: {margin-top: -4}`), where it is the CSS property's own value and not a token, so it no longer changes with the theme.
 
 ## E03xx — Capabilities and Purity
 
@@ -1895,6 +1906,8 @@ A registered predicate is written with arguments it cannot be built into a check
 > `Refinement "<pred>" tests <text | a number | text or a number> but is written over <base>, so no value satisfies it`
 > `Refinement "one-of" lists <literal> (argument <i>) but is written over <base>, so no value equals it`
 > `Refinement "<pred>" tests <what> but <G(args)> applies it over <base>, so no value satisfies it`
+
+An argument is named as written, its sign included: `len-eq(-9007199254740993)` names `-9007199254740993`, not the number it was read as.
 
 The arity and the shape of each argument are in the table at [§1.3.3](./language.md#_1-3-3-registered-refinement-predicates). A refinement **no** value can satisfy is the same defect as one **every** value satisfies — both take the slot's guarantee away from the program that relies on it — and an argument that is not what the predicate takes produces one or the other: `between(5, 1)` and `len-eq(2.5)` refuse every value, `len-gt(-1)` accepts every one (`v.length > -1` is true of `""`), and `one-of()` has nothing to admit. `between(0, "x")` is the sharpest case: the emitted check used to read `v >= 0 && v <= x`, whose second half is not a comparison against a bound but a reference to a name nothing declares, so the first write or the first `error(field=…)` render threw a `ReferenceError`. `len-lt(0)` takes a legal count and still refuses every text, since no length is below zero.
 

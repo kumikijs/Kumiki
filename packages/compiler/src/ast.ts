@@ -270,24 +270,32 @@ export function assertNever(node: never): void {
   void node;
 }
 
+/** A number literal: the text it is written as, its sign included, and the number it was read as. */
+export type NumberLiteral = { readonly value: number; readonly raw: string };
+
 /**
  * The sign is part of a number literal (language.md), but the lexer emits it as
  * its own operator, so `-1` reaches the AST as a negation of `1`. One leading `-`
  * is folded in: `- -1` is the negation of the literal `-1`, so it is `null` here.
  * Parentheses leave no node, so `-(1)` is the literal `-1`.
  */
-export function numberLiteral(e: Expr): { value: number; raw: string } | null {
-  if (e.kind === "Num") return { value: e.value, raw: e.raw ?? String(e.value) };
+export function numberLiteral(e: Expr): NumberLiteral | null {
+  if (e.kind === "Num") return { value: e.value, raw: e.raw };
   if (e.kind === "UnaryOp" && e.op === "-" && e.rhs.kind === "Num") {
-    return { value: -e.rhs.value, raw: `-${e.rhs.raw ?? String(e.rhs.value)}` };
+    return { value: -e.rhs.value, raw: `-${e.rhs.raw}` };
   }
   return null;
 }
+
+/** A refinement's number argument as written, where it starts, and its place in `args`. */
+export type RefinementNumber = NumberLiteral & { readonly index: number; readonly pos: Pos };
 
 export type Refinement = {
   kind: "Refinement";
   pred: string;
   args: (number | string)[];
+  /** Each number among `args`, as written. A refinement the compiler builds itself has none. */
+  numbers?: readonly RefinementNumber[];
   pos: Pos;
 };
 
@@ -387,7 +395,7 @@ export type Expr = ExprForm & {
 };
 
 type ExprForm =
-  | { kind: "Num"; value: number; raw?: string; pos: Pos }
+  | { kind: "Num"; value: number; raw: string; pos: Pos }
   | { kind: "Str"; value: string; pos: Pos }
   | { kind: "Bool"; value: boolean; pos: Pos }
   | { kind: "Unit"; pos: Pos }

@@ -1,6 +1,6 @@
 import { nearestName } from "@kumikijs/runtime/text-distance";
 import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
-import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
+import { type Expr, type FragmentShape, numberLiteral, type Pos, type TypeExpr } from "../ast.ts";
 import { isQualifierName, RUN_REDUCER, visitDecodedParts } from "../builtin-calls.ts";
 import { fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
 import { decoderKeyError, heldDecoder, noEquality, undecodableErrors } from "../held-decoder.ts";
@@ -189,11 +189,16 @@ function shownValue(e: Expr): Expr | undefined {
 }
 
 export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  // A number literal, its sign included, is one leaf; one no declared type reads is held to the
+  // safe range after every definition is checked.
+  if (numberLiteral(e) !== null) {
+    sym.numberLiterals.met.add(e);
+    return;
+  }
   // Asked before the three spellings of `show` part company in the switch, so the exception is made once.
   const shown = shownValue(e);
   if (shown) refuseRenderedHandle(shown, ".show", sym, errors, ctx);
   switch (e.kind) {
-    case "Num":
     case "Str":
     case "Bool":
     case "Unit":

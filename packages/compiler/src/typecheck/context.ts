@@ -6,6 +6,7 @@ import {
   type FragmentShape,
   type Pos,
   type ReducerDef,
+  type Refinement,
   type SlotDef,
   type TileDef,
   type TileExpr,
@@ -88,12 +89,24 @@ export type SymbolTable = {
   // undef-variant for the same variant is dropped: one mistake, one diagnostic.
   judgedVariants: WeakSet<Expr>;
   undefinedVariants: Map<KumikiError, Expr>;
+  /**
+   * The refinements over a type parameter an application has put over `Int` and held to the safe
+   * range, so that a literal past it is reported once however often its generic is applied.
+   */
+  appliedPrecision: WeakSet<Refinement>;
   /** The result of each `fn` declared without `->`, read off its body once per check. */
   fnResults: Map<string, TypeExpr | null>;
   /** The `fn`s that can reach themselves through the `fn`s they call: those E0006 reports. */
   fnLoops: ReadonlySet<string>;
   /** The program's own unions, by each tag they declare: `unionsByTag`. */
   unionsByTag: ReadonlyMap<string, readonly TypeExpr[]>;
+  /**
+   * `met`: each number literal `checkExpr` meets. `judged`: each one a declared type reads, which
+   * `checkAgainst` records where it compares a value with that type (the literal, or the one its
+   * signs negate) and where the type is written but resolves to nothing. Once every definition is
+   * checked, `checkUndeclaredIntLiterals` holds each literal met and not judged to the safe range.
+   */
+  numberLiterals: { readonly met: Set<Expr>; readonly judged: Set<Expr> };
   app?: AppDef;
   // The same for a Map literal keyed by a Decoder: a declared type that judged the literal is
   // refused itself or reports the key's mismatch, so the literal's own E0204 is dropped.

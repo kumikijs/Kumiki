@@ -1038,13 +1038,20 @@ variant コンストラクタが、宣言された union 型に無いタグを�
 
 ### E0217 `int-literal-precision`
 
-`Int` の位置に、JavaScript が正確に表現できる範囲（-9007199254740991 から 9007199254740991 まで、`Number.MIN_SAFE_INTEGER` から `Number.MAX_SAFE_INTEGER`）を外れるリテラルが与えられた。リテラルは AST に載る時点で丸められるため、そのまま実行すれば書かれた値とは違う値で動く。
+`Int` の位置に、安全な範囲（-9007199254740991 から 9007199254740991 まで、`Number.MIN_SAFE_INTEGER` から `Number.MAX_SAFE_INTEGER`）を外れるリテラルが与えられた。安全な範囲とは、JavaScript がすべての整数を正確に保持し、ほかのどの整数もその整数として読まれない範囲である。その外では、ほとんどのリテラルが AST に載る時点で丸められるため、そのまま実行すれば書かれた値とは違う値で動く。その外でも JavaScript が正確に保持するリテラル、たとえば 9007199254740992（2^53）には、保持されない隣の整数がある。9007199254740993 も 9007199254740992 と読まれるので、プログラムは両者を区別できず、そのリテラルに対する算術は丸められうる。
 
-> `Int literal <value> is not exactly representable and was rounded to <value>`
+リテラルが `Int` の位置にあるのは、`Int` が宣言されている位置と、型を宣言するものが何もない位置 — `let` の値、演算子のオペランド、`->` のない `fn` の本体、レシーバ、型が宣言されていないリストの要素、型が何からも決まらない引数 — である。後者ではリテラルは書かれたとおりの型を持つからである（[§1.2](./language.md#_1-2-字句)）。小数点のないリテラルは `Int` であり、小数点のあるリテラルはどんな値を持っていても `Float` である。`Float` が宣言されている位置ではリテラルは `Float` であり、もともと近似値を持つものなので、この範囲には照らさない。それ以外の型が宣言されている位置では、その型がリテラルを判定する（[E0201](#e0201-type-mismatch)）。宣言された型が何も指していない位置では、その [E0117](#e0117-undef-type) だけが報告される。2 つ目の符号があっても変わらない。`- -9007199254740993` では、宣言された型が（宣言がなければそのことが）、外側の符号が反転するリテラル `-9007199254740993` を判定する。各リテラルは書かれた位置で 1 回だけ報告される。
 
-符号はリテラルの一部である（[§1.2](./language.md#_1-2-字句)）。そのため負のリテラルも、正のリテラルが判定されるすべての位置で同じ範囲に照らして判定され、`-` の位置で、符号付きで報告される。`-9007199254740993` は `-9007199254740992` に丸められたと報告される。
+> `Int literal <literal> is outside the safe range -9007199254740991 through 9007199254740991 and was rounded to <value>`
+> `Int literal <literal> is outside the safe range -9007199254740991 through 9007199254740991: it is held exactly, but an integer next to it is not`
 
-小数部を持つリテラルは精度ではなく型の誤りなので、[E0201](#e0201-type-mismatch) を報告する。
+リテラルは書かれたとおりに示される。1 つ目のメッセージは丸められたリテラルのもので、丸められた先の値をすべての桁で示す。2 つ目は正確に保持されるリテラルのもので、それでも範囲の外にあることに変わりはない。
+
+refinement の数値引数も、`Int` を表す位置では同じ範囲に照らして判定される。`Int` を基底とする `between` と `one-of` の数値引数すべてと、どの基底でも `len-eq` / `len-lt` / `len-gt` の文字数がそれにあたる（[§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語)）。refinement が組み込まれる検査は、リテラルが読まれた数と比べるので、`Int where between(0, 9007199254740993)` は `v <= 9007199254740992` を判定することになる。リテラルは書かれた位置で報告される。generic の適用で `Int` になる基底も `Int` の基底である。`type R(T) = T where between(0, 9007199254740993)` は `R(Int)` に対してリテラルの位置で報告され、generic が `Int` の上に何度適用されても報告は 1 回で、`R(Float)` に対しては報告されない。`Float` を基底とする境界は `Float` であり、もともと近似値を持つものなので、`Float` の slot の値と同じく、この範囲には照らさない。[E0804](#e0804-refinement-args-invalid) が報告する refinement も、この範囲には照らさない。そのメッセージがリテラルを書かれたとおりに示す。
+
+符号はリテラルの一部である（[§1.2](./language.md#_1-2-字句)）。そのため負のリテラルも、正のリテラルが判定されるすべての位置で同じ範囲に照らして判定され、`-` の位置で、符号付きで報告される。`-9007199254740993` は `-9007199254740992` に丸められたと報告され、`-9007199254740992` は正確に保持されると報告される。
+
+小数点を付けて書かれたリテラルは、どの数として読まれても `Float` である（[§1.2](./language.md#_1-2-字句)）。`1.0` も、`1` と読まれる `0.99999999999999999` もそうである。そのため `Int` が求められる位置では、精度ではなく型の誤りとして [E0201](#e0201-type-mismatch) を報告する。
 
 **修正**：安全範囲内の値を使うか、その数値を `Text` として持つ。
 
@@ -1493,17 +1500,21 @@ fn f(x: Color, y: Size) -> Int = match x with | Red -> match y with | Small -> 1
 
 ### E0239 `negative-theme-length`
 
-`theme` が、`spacing` トークンまたは `breakpoints` の幅として負の数値を書いている（[スタイル §4.2](./style.md#_4-2-design-tokens)）。その数値の位置（`-` から始まる）で、数値ごとに 1 件報告する。
+`theme` が、`spacing` トークン・`radius` トークン・`typography.size` トークン・`breakpoints` の幅のいずれかとして負の数値を書いている（[スタイル §4.2](./style.md#_4-2-design-tokens)）。その数値の位置（`-` から始まる）で、数値ごとに 1 件報告する。
 
 > `theme "<name>": spacing "<key>" is <n>, but a spacing token is 0 or more — pad and gap drop a negative length; write a negative margin in the tile's own style block (see docs/spec/style.md)`
 >
+> `theme "<name>": radius "<key>" is <n>, but a radius token is 0 or more — radius drops a negative length; write a length of 0 or more (see docs/spec/style.md)`
+>
+> `theme "<name>": typography size "<key>" is <n>, but a font size token is 0 or more — size drops a negative font size; write a font size of 0 or more (see docs/spec/style.md)`
+>
 > `theme "<name>": breakpoint "<key>" is <n>, and a minimum viewport width cannot be negative, so "<key>" is not a breakpoint at all — write a width of 0 or more (see docs/spec/style.md)`
 
-spacing トークンとブレイクポイントの幅は 0 以上であり、どちらのセクションでも数値は px である。`pad`・`pad-x`・`pad-y`・`gap`・`gap-x`・`gap-y` はトークンをパディングかギャップに解決し、どちらも負にはなれない：`nudge: -4` は `pad: "nudge"` に `padding: -4px` という宣言を与えるが、これは正しい CSS ではないのでブラウザはそれを捨て、タイルにはパディングが付かない。`style` ブロックは同じトークンを `@spacing.nudge` として読める（[スタイル §4.3](./style.md#_4-3-トークン参照)）。そこでは `-4px` は正しい `margin-top` になるが、この規則はどこで読まれるかによらずトークンのものである：負の長さは `style` ブロックそのものに書く。負のブレイクポイント幅はブレイクポイントではない（[スタイル §4.5](./style.md#_4-5-responsive)）。それでもそのキーでは既定値に取って代わるので、`md: -500` は `md` を動かすのではなく消し、`{base: …, md: …}` のマップは `md` の値に解決されることがなくなる。どちらも実行時のエラーではなく、ページが少しずれて見えるだけなので、`check` 以外にこれを名指すものは無い。
+`spacing`・`radius`・`typography.size` のトークンとブレイクポイントの幅は 0 以上であり、この 4 つのどれでも数値は px である。`pad`・`pad-x`・`pad-y`・`gap`・`gap-x`・`gap-y` は spacing トークンをパディングかギャップに、`radius` は radius トークンを角の半径に、`size` はフォントサイズのトークンをフォントサイズに解決し、どれも負にはなれない：`nudge: -4` は `pad: "nudge"` に `padding: -4px` という宣言を与えるが、これは正しい CSS ではないのでブラウザはそれを捨て、タイルにはパディングが付かない。同じように、`soft: -4` に対する `radius: "soft"` はその prop が無いときの角のまま、`tiny: -4` に対する `size: "tiny"` はその prop が無いときのフォントサイズのままになる。`style` ブロックは同じ spacing トークンを `@spacing.nudge` として読める（[スタイル §4.3](./style.md#_4-3-トークン参照)）。そこでは `-4px` は正しい `margin-top` になるが、この規則はどこで読まれるかによらずトークンのものである：負の長さは `style` ブロックそのものに書く。`@radius.soft` や `@typography.size.tiny` として読む radius やフォントサイズのトークンも同じである。負のブレイクポイント幅はブレイクポイントではない（[スタイル §4.5](./style.md#_4-5-responsive)）。それでもそのキーでは既定値に取って代わるので、`md: -500` は `md` を動かすのではなく消し、`{base: …, md: …}` のマップは `md` の値に解決されることがなくなる。いずれも実行時のエラーではなく、ページが少しずれて見えるだけなので、`check` 以外にこれを名指すものは無い。
 
-検査するのは `spacing` または `breakpoints` の直下の数値だけである。`breakpoints` の下でそれより深く入れ子になった数値は幅ではない。`spacing` の下でそれより深く入れ子になった数値（`spacing: {tight: {x: -4}}`）は `pad` や `gap` が名指せるトークンではないが、`style` ブロックからは `@spacing.tight.x` としてなお届き、この検査はそれを読まない。文字列も読まないので、`nudge: "-4px"` と `md: "-500px"` は同じ誤りだが報告されない。アプリが名指しているかどうかにかかわらず、すべての `theme` を検査する。`app.theme` の slot は実行中にそのどれでも選べるからである（[スタイル §4.6](./style.md#_4-6-dark-mode)）。
+検査するのは `spacing`・`radius`・`typography.size`・`breakpoints` の直下の数値だけである。`breakpoints` の下でそれより深く入れ子になった数値は幅ではない。ほかの 3 つの下でそれより深く入れ子になった数値（`spacing: {tight: {x: -4}}`）は prop が名指せるトークンではないが、`style` ブロックからは `@spacing.tight.x` としてなお届き、この検査はそれを読まない。`typography` のそれ以外（`family`、`weight`、`line-height`）は長さを持たないので検査しない。文字列も読まないので、`nudge: "-4px"` と `md: "-500px"` は同じ誤りだが報告されない。アプリが名指しているかどうかにかかわらず、すべての `theme` を検査する。`app.theme` の slot は実行中にそのどれでも選べるからである（[スタイル §4.6](./style.md#_4-6-dark-mode)）。
 
-**修正**：長さや幅を 0 以上で書く（`nudge: 4`、`md: 500`）か、キーを省いて既定値を残す。外側へ引き寄せたいタイルは、負の長さを自身の `style` ブロックに書く（`style: {margin-top: -4}`）。そこではそれはトークンではなく CSS プロパティそのものの値なので、theme とともには変わらなくなる。
+**修正**：長さ・サイズ・幅を 0 以上で書く（`nudge: 4`、`soft: 4`、`tiny: 11`、`md: 500`）か、キーを省いて既定値を残す。外側へ引き寄せたいタイルは、負の長さを自身の `style` ブロックに書く（`style: {margin-top: -4}`）。そこではそれはトークンではなく CSS プロパティそのものの値なので、theme とともには変わらなくなる。
 
 ## E03xx — ケイパビリティと純粋性
 
@@ -1858,6 +1869,8 @@ test inf-has-no-value =
 > `Refinement "<pred>" tests <text | a number | text or a number> but is written over <base>, so no value satisfies it`
 > `Refinement "one-of" lists <literal> (argument <i>) but is written over <base>, so no value equals it`
 > `Refinement "<pred>" tests <what> but <G(args)> applies it over <base>, so no value satisfies it`
+
+引数は符号を含めて書かれたとおりに示される。`len-eq(-9007199254740993)` は、読まれた数ではなく `-9007199254740993` を示す。
 
 各述語の引数個数と形は [§1.3.3](./language.md#_1-3-3-登録済み-refinement-述語) の表にある。**どの値も**満たせない refinement は、**あらゆる値が**満たす refinement と同じ欠陥であり — どちらも slot の保証を、それに依存するプログラムから奪う — 述語が取らない形の引数はそのどちらかを生む：`between(5, 1)` と `len-eq(2.5)` はあらゆる値を拒否し、`len-gt(-1)` はあらゆる値を受理し（`v.length > -1` は `""` に対しても真）、`one-of()` は受理する候補を持たない。最も鋭いのは `between(0, "x")` で、生成されるチェックは `v >= 0 && v <= x` となり、その後半は境界との比較ではなく宣言のない名前への参照なので、最初の書き込みか最初の `error(field=…)` 描画で `ReferenceError` を投げていた。`len-lt(0)` は正しい個数を取りながら、0 未満の長さは存在しないので、やはりあらゆるテキストを拒否する。
 
