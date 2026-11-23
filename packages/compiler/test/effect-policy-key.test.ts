@@ -353,6 +353,7 @@ describe("a latest-per-key key of a type not keyed by its value is E0233", () =>
   const FILE =
     "a File, and two Files with the same name, size and type are one key, while == holds only of a File and itself";
   const SET = "a Set, whose == depends on how it was built";
+  const DECODER = "a Decoder, and a key keeps none of the check a Decoder.Json(T) runs";
   it.each([
     ["a Float", "Float", "$1", "Float", FLOAT],
     ["a Float slot", "Text", "ratio", "Float", FLOAT],
@@ -393,6 +394,8 @@ describe("a latest-per-key key of a type not keyed by its value is E0233", () =>
       "FormValue",
       HOLDS_FLOAT,
     ],
+    ["a Decoder", "Decoder", "$1", "Decoder", `it is ${DECODER}`],
+    ["a record holding a Decoder", "{d: Decoder}", "$1", "{d: Decoder}", `it holds ${DECODER}`],
     ["a Set", "Set(Text)", "$1", "Set(Text)", `it is ${SET}`],
     ["a List of Sets", "List(Set(Text))", "$1", "List(Set(Text))", `it holds ${SET}`],
     [

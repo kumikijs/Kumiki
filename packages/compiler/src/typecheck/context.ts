@@ -108,6 +108,10 @@ export type SymbolTable = {
    */
   numberLiterals: { readonly met: Set<Expr>; readonly judged: Set<Expr> };
   app?: AppDef;
+  // The same for a Map literal keyed by a Decoder: a declared type that judged the literal is
+  // refused itself or reports the key's mismatch, so the literal's own E0204 is dropped.
+  judgedMapLiterals: WeakSet<Expr>;
+  decoderKeyedLiterals: Map<KumikiError, Expr>;
 };
 
 export type LocalBinder = "input" | "for";

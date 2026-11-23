@@ -12,10 +12,10 @@ export type Decode = (typeof SENTINELS)[number] | DecodeCheck;
 export type NotADecoder = { refused: string };
 
 /**
- * A missing or `null` `decode` is JSON. Anything else that is no decoder is refused:
- * `map-request` builds an ordinary record, so `decode` can hold any value, and read as some
- * fallback decoding it would deliver a value of a type the effect does not declare, with nothing
- * reporting it.
+ * A missing or `null` `decode` is JSON. Anything else that is no decoder is refused: the checker
+ * holds a `decode` a literal writes to `Decoder`, but one computed at run time (in a request a
+ * `fn` returns, a slot holds, or `$1` is) can hold any value, and read as some fallback decoding
+ * it would deliver a value of a type the effect does not declare, with nothing reporting it.
  */
 export function decodeOf(decode: unknown): Decode | NotADecoder {
   if (decode === undefined || decode === null) return "json";
