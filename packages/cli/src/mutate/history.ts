@@ -1,5 +1,5 @@
+import { LexError, lex, type Token } from "@kumikijs/compiler";
 import { loadSource, requireSourceFile } from "../store.ts";
-import { escapeRegExp } from "../text.ts";
 import { withWriteLock } from "../write-lock.ts";
 import { assemble, bodyOf, nameSites, respell, splitQname } from "./definition-text.ts";
 import { type DefSpec, type OpLogEntry, type OpLogOptions, readOpLog } from "./op-log.ts";
@@ -178,9 +178,26 @@ function removedDefs(
   return [first, ...rest];
 }
 
-/** Whether `text` starts with `<layer> <name>`, as a whole definition does and a body does not. */
+/**
+ * Whether `text` opens with the tokens `<layer> <name>`, as a whole definition does and a body does
+ * not. Read as tokens, so a comment between the two does not hide them. `theme` and `motion` lex as
+ * names, the other layers as keywords.
+ */
 function isWholeDefinition(layer: string, name: string, text: string): boolean {
-  return new RegExp(`^\\s*${layer}\\s+${escapeRegExp(name)}(?![A-Za-z0-9_-])`).test(text);
+  let tokens: Token[];
+  try {
+    tokens = lex(text);
+  } catch (e) {
+    if (e instanceof LexError) return false;
+    throw e;
+  }
+  const [opening, named] = tokens;
+  return (
+    (opening?.kind === "kw" || opening?.kind === "ident") &&
+    opening.value === layer &&
+    named?.kind === "ident" &&
+    named.value === name
+  );
 }
 
 function writableBody(spec: DefSpec): DefSpec {

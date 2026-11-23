@@ -117,6 +117,57 @@ describe("patch revert of an op on definitions written by hand", () => {
     expect(read(file)).toBe(renamed(seedCopy(EXAMPLE), qname, to));
   });
 
+  it.each([
+    {
+      what: "after its keyword on the keyword's line",
+      source: "slot # the count\n    count : Int = 0\n",
+      qname: "slot.count",
+      body: "Int = 5",
+    },
+    {
+      what: "on a line of its own after its keyword",
+      source: "slot\n    # the count\n    count : Int = 0\n",
+      qname: "slot.count",
+      body: "Int = 5",
+    },
+    {
+      what: "on the line before its keyword",
+      source: "# the count\nslot count : Int = 0\n",
+      qname: "slot.count",
+      body: "Int = 5",
+    },
+    {
+      what: "after a theme's opening word, which lexes as a name",
+      source: 'theme # the light one\n    Light = {colors: {bg: "#ffffff"}}\n',
+      qname: "theme.Light",
+      body: '{colors: {bg: "#000000"}}',
+    },
+  ])("puts the file back after a replace of a definition with a comment $what", ({
+    source,
+    qname,
+    body,
+  }) => {
+    const file = seed(source);
+    const opId = replaceDef(file, qname, body).opId;
+
+    patchRevert(file, opId);
+
+    expect(read(file)).toBe(source);
+  });
+
+  it("refuses a logged `prev` that does not lex, writing nothing", () => {
+    const file = seed("slot count : Int = 0\n");
+    const opId = replaceDef(file, "slot.count", "Int = 5").opId;
+    rewriteLogEntry(file, opId, (e) => {
+      e.prev = '"unterminated';
+    });
+    const before = snapshot(file);
+
+    expect(() => patchRevert(file, opId)).toThrowError(/^replace rejected: Parse\/lex failed/);
+
+    expect(snapshot(file)).toEqual(before);
+  });
+
   it("puts the text back under the name a rename has given since, when that name is on the line after its keyword", () => {
     const file = seed("slot\n    count : Int = 0\n");
     const opId = replaceDef(file, "slot.count", "Int = 5").opId;
