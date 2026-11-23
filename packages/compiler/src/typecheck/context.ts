@@ -6,6 +6,7 @@ import {
   type FragmentShape,
   type Pos,
   type ReducerDef,
+  type Refinement,
   type SlotDef,
   type TileDef,
   type TileExpr,
@@ -88,6 +89,11 @@ export type SymbolTable = {
   // undef-variant for the same variant is dropped: one mistake, one diagnostic.
   judgedVariants: WeakSet<Expr>;
   undefinedVariants: Map<KumikiError, Expr>;
+  /**
+   * The refinements over a type parameter an application has put over `Int` and held to the safe
+   * range, so that a literal past it is reported once however often its generic is applied.
+   */
+  appliedPrecision: WeakSet<Refinement>;
   /** The result of each `fn` declared without `->`, read off its body once per check. */
   fnResults: Map<string, TypeExpr | null>;
   /** The `fn`s that can reach themselves through the `fn`s they call: those E0006 reports. */

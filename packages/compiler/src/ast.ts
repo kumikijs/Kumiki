@@ -286,10 +286,15 @@ export function numberLiteral(e: Expr): NumberLiteral | null {
   return null;
 }
 
+/** A refinement's number argument as written, where it starts, and its place in `args`. */
+export type RefinementNumber = NumberLiteral & { readonly index: number; readonly pos: Pos };
+
 export type Refinement = {
   kind: "Refinement";
   pred: string;
   args: (number | string)[];
+  /** Each number among `args`, as written. A refinement the compiler builds itself has none. */
+  numbers?: readonly RefinementNumber[];
   pos: Pos;
 };
 
