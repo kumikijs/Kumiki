@@ -1,0 +1,45 @@
+# Feature: a `@token` in a `style` block reads the active theme and falls back
+# exactly as the matching shorthand prop does. `Short` writes the shorthands
+# and `Refs` the `@` references, so under either theme the two cards carry the
+# same padding, border radius, shadow, background and font size. `Light`
+# leaves `radius` and `shadow` out, so both cards take the built-in `md`
+# radius (8px) and `sm` shadow; `Dark` sets them, and both cards follow it.
+
+slot themeName : Text = "Light"
+
+reducer toggle on=ui.click(ToggleBtn) do= themeName := if themeName == "Light" then "Dark" else "Light"
+
+tile ToggleBtn = button(text="Toggle theme", onClick=toggle)
+tile Short = box(text("shorthands")) {
+    pad: "md", radius: "md", shadow: "sm", bg: "surface", size: "lg", id: "short"
+}
+tile Refs = box(text("references")) {
+    style: {
+        padding:       @spacing.md,
+        border-radius: @radius.md,
+        box-shadow:    @shadow.sm,
+        background:    @colors.surface,
+        font-size:     @typography.size.lg
+    },
+    id: "refs"
+}
+tile App = page(text("theme: " + themeName), ToggleBtn, Short, Refs)
+
+theme Light = {
+    colors:     {surface: "#fafafa"},
+    spacing:    {md: "12px"},
+    typography: {size: {lg: "22px"}}
+}
+theme Dark = {
+    colors:     {surface: "#1c1c1c"},
+    spacing:    {md: "20px"},
+    radius:     {md: "2px"},
+    shadow:     {sm: "0 0 0 1px #444444"},
+    typography: {size: {lg: "24px"}}
+}
+
+app TokenRefsTheme
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    theme  = themeName

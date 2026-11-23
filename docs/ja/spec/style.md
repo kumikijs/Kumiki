@@ -111,7 +111,7 @@ tile Card = box(
             }
 ```
 
-`@colors.surface` は theme から解決される。テーマ切り替え時に自動で再描画される。
+`@colors.surface` は theme から解決される。テーマ切り替え時に自動で再描画される。有効な theme が省いたキーは、対応する短縮プロパティ（[§4.3.1](#_4-3-1-shorthand-properties)）と同じ組み込みの既定値を取る：`@radius.md` は `radius: "md"` と、`@shadow.sm` は `shadow: "sm"` と同じに解決され、`@spacing` は `pad`、`@colors` は `bg`、`@typography.size` は `size` と同様である。
 
 ### 4.3.1 短縮プロパティ {#_4-3-1-shorthand-properties}
 

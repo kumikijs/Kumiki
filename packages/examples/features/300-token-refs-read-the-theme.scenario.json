@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "label": "the app mounts under its first theme and shows both cards",
+      "expect": { "noErrors": true, "domIncludes": ["theme: Light", "shorthands", "references"] }
+    },
+    {
+      "label": "the toggle switches the theme and both cards survive the repaint",
+      "do": { "clickText": "Toggle theme" },
+      "expect": {
+        "noErrors": true,
+        "state": { "themeName": "Dark" },
+        "domIncludes": ["theme: Dark", "shorthands", "references"]
+      }
+    }
+  ]
+}
