@@ -2,10 +2,11 @@
 #
 # JavaScript represents every integer from -9007199254740991 through
 # 9007199254740991 exactly and distinctly. Past either end a literal may be
-# rounded to a neighbour, so E0217 reports a literal written where an Int is
-# declared. The bound is the same on both sides: each literal below, written as
-# `-9007199254740993` instead, is E0217 exactly as `9007199254740993` is — in a
-# slot, a record field, a list item, a payload, an argument and a write alike.
+# rounded to a neighbour, so E0217 reports an Int literal written where an Int
+# is declared, or where nothing declares a type. The bound is the same on both
+# sides: each literal below, written as `-9007199254740993` instead, is E0217
+# exactly as `9007199254740993` is — in a slot, a record field, a list item, a
+# payload, an argument and a write alike.
 #
 # `-floor` in the `flip` reducer negates a name rather than writing a literal,
 # so the check leaves it to the operator.

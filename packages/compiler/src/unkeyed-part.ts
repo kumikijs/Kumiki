@@ -4,7 +4,7 @@ import { expandNamed, GENERIC_SELF_NESTING_LIMIT, typeKey } from "./refinement-p
 import { BUILTIN_TYPE_CONSTRUCTORS } from "./stdlib-types.ts";
 
 export type UnkeyedPart = {
-  readonly part: "Float" | "File" | "Set";
+  readonly part: "Float" | "File" | "Set" | "Decoder";
   /** The type is that part itself, rather than holding it somewhere inside. */
   readonly whole: boolean;
 };
@@ -13,8 +13,10 @@ export type UnkeyedPart = {
 // with sorted fields. That is `==` but for Float and File. `NaN` is one key yet not `==` to
 // itself, and inside a structured value JSON writes `NaN` and both infinities as `null`. A File's
 // JSON is its name, size and type, while `==` holds only of a File and itself. A Set's key is its
-// `==`, which itself depends on how the Set was built. A Map stores its keys by `entryKey`
-// already, so its key and `==` agree there, and only its values are walked.
+// `==`, which itself depends on how the Set was built. A key keeps none of the check a
+// `Decoder.Json(T)` is: alone it is the function's source, and inside a structured value JSON
+// writes it as `null`. A Map stores its keys by `entryKey` already, so its key and `==` agree
+// there, and only its values are walked.
 // A named type is walked through what it stands for, and a part the checker cannot decide is not
 // judged. The walk ends because an instantiation met again on its own path is not entered again,
 // nor is a generic nested in itself past the limit a type applying itself to a growing argument
@@ -35,7 +37,9 @@ export function unkeyedPart(key: TypeExpr | null, env: TypeEnv): UnkeyedPart | n
     };
     switch (t.kind) {
       case "TypePrim":
-        return t.name === "Float" || t.name === "File" ? { part: t.name, whole } : null;
+        return t.name === "Float" || t.name === "File" || t.name === "Decoder"
+          ? { part: t.name, whole }
+          : null;
       case "TypeRef":
       case "TypeApp": {
         const body = expandNamed(t, env);

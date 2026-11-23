@@ -40,7 +40,7 @@ const VALUE: Record<string, string> = {
   headers: `{"X-A": "1"}`,
   query: `{"q": $1}`,
   body: `Json($1)`,
-  decode: "Decoder.Text",
+  decode: "Decoder.Json(Text)",
   key: "$1",
   value: "$1",
   store: `"s"`,

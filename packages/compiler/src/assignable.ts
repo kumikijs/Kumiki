@@ -549,7 +549,7 @@ export function typeSize(t: TypeExpr | null): number {
 }
 
 /** `build`, run once for each symbol table and kept for as long as the table lives. */
-function perTable<T>(build: (env: TypeEnv) => T): (env: TypeEnv) => T {
+export function perTable<T>(build: (env: TypeEnv) => T): (env: TypeEnv) => T {
   const built = new WeakMap<TypeEnv["types"], T>();
   return (env) => {
     const kept = built.get(env.types);
