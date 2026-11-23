@@ -279,8 +279,9 @@ export function makeEffectDispatcher(
       void launch(eff, input, id);
     },
     // Ends everything first and records after: recording a cancel can commit an episode, which
-    // runs the logger's `onEpisode`, and nothing that does may leave an effect running. A commit
-    // that throws does not keep the others from committing: the first throw is rethrown after.
+    // runs the logger's `onCommit` and `onEpisode`, and nothing that does may leave an effect
+    // running. A commit that throws does not keep the others from committing: the first throw is
+    // rethrown after.
     dispose(): void {
       disposed = true;
       const cancelled: [token: string, name: string][] = [];

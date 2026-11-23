@@ -63,24 +63,24 @@ export function recordDispatch(app: AppShape, reducer: string): EpisodeLogEntry[
 
 /**
  * An episode logger with a deterministic clock and ids that collects each episode as `onEpisode`
- * is handed it, in the order its trigger began, then hands it to `onCommit`.
+ * is handed it, in the order its trigger began, then hands it to `onHandOver`.
  */
-export function recordingLogger(onCommit?: (ep: Episode) => void): {
+export function recordingLogger(onHandOver?: (ep: Episode) => void): {
   logger: EpisodeLogger;
-  committed: Episode[];
+  handedOver: Episode[];
 } {
-  const committed: Episode[] = [];
+  const handedOver: Episode[] = [];
   let t = 1000;
   let seq = 0;
   const logger = createEpisodeLogger({
     now: () => ++t,
     idGen: () => `ep_${(seq++).toString().padStart(4, "0")}`,
     onEpisode: (ep) => {
-      committed.push(ep);
-      onCommit?.(ep);
+      handedOver.push(ep);
+      onHandOver?.(ep);
     },
   });
-  return { logger, committed };
+  return { logger, handedOver };
 }
 
 /** Replay `episodes` against `app`'s live map with no mocks. */
