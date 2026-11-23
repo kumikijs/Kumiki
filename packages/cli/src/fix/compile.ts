@@ -577,8 +577,15 @@ export function gateComposed(
   return { remaining, warnings: advisory(diagnostics) };
 }
 
+/** A `line:col` a message names, such as where E0103's name is declared later. */
+const POSITION_IN_MESSAGE = /\b\d+:\d+\b/g;
+
+/**
+ * Who a diagnostic is, wherever it sits: a repair that moves lines or columns moves the positions
+ * a message names as well as the diagnostic's own, so neither may make a moved diagnostic new.
+ */
 function diagnosticKey(e: KumikiError): string {
-  return JSON.stringify([e.code, e.kind, e.message]);
+  return JSON.stringify([e.code, e.kind, e.message.replace(POSITION_IN_MESSAGE, "L:C")]);
 }
 
 /** The diagnostics of `a` left over once each one in `b` cancels an equal one. */

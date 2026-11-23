@@ -52,7 +52,10 @@ compares the two sets as multisets. Position is deliberately not part of it: a
 rewrite shorter than what it replaced shifts every diagnostic to its right, and
 a repair that inserts lines shifts every diagnostic below it, so a
 position-keyed comparison reads an untouched diagnostic as one the repair
-created. The message is what tells two diagnostics of one code apart, which matters
+created. A position the message itself names is left out the same way: `E0103`'s
+"declared later, at 8:28" names where the declaration is, and a repair that moves
+lines or columns moves that too, so the gate reads each `line:col` in a message as
+any position. The message is what tells two diagnostics of one code apart, which matters
 when a second repair balances the per-code counts: reword one `E0211` and
 resolve one `E0119`, and counting codes alone reports a clean repair while the
 reworded diagnostic is still there. Counting rather than set membership is what
