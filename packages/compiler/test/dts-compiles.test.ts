@@ -218,3 +218,26 @@ describe("the standard library's Route", () => {
     expect(tscDiagnostics(gen)).toEqual([]);
   });
 });
+
+describe("the standard library's Decoder", () => {
+  // What `.gen.ts` hands a host: a provider is given these as a request's `decode`.
+  const gen = dtsOf(`slot d : Decoder = Decoder.Text${APP_TAIL}`);
+  const holding = (value: string): string =>
+    `${gen}\nexport const held: KumikiSlots["d"] = ${value};\n`;
+
+  it.each([
+    ["a sentinel a decoder lowers to", '"text"'],
+    [
+      "the check a Decoder.Json(T) lowers to",
+      '(v) => (v === null ? { kind: "between", args: [0, 599], path: [] } : undefined)',
+    ],
+  ])("takes %s", (_what, value) => {
+    expect(tscDiagnostics(holding(value))).toEqual([]);
+  });
+
+  it("refuses a text no decoder lowers to", () => {
+    const diagnostics = tscDiagnostics(holding('"TEXT"'));
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toContain(`Type '"TEXT"' is not assignable`);
+  });
+});

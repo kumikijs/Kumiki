@@ -19,6 +19,7 @@ import { letInScope, type MismatchCode, pushMismatch } from "./expr.ts";
 import { container, inferType, isKnown, isPrimNamed, prim } from "./infer.ts";
 import { intLiteralPrecision } from "./int-literal.ts";
 import { armScope, matchedType } from "./patterns.ts";
+import { checkEmittedRequest } from "./request-fields.ts";
 
 export function checkAgainst(
   e: Expr,
@@ -51,6 +52,7 @@ export function checkAgainst(
       at.pos,
     );
   };
+  if (e.kind === "MapLit") sym.judgedMapLiterals.add(e);
 
   if (d.kind === "TypeApp" && (d.name === "List" || d.name === "Set") && e.kind === "ListLit") {
     if (d.name === "Set") e.asSet = true;
@@ -583,6 +585,9 @@ export function checkEmitTarget(
     return;
   }
   checkAgainst(arg, inType, sym, errors, ctx, "E0202", omittable);
+  if (cap !== null && !sym.effects.get(effect)?.mapRequest) {
+    checkEmittedRequest(arg, cap, sym, errors, ctx);
+  }
 }
 
 type Omittable = (field: { readonly name: string; readonly type: TypeExpr }) => boolean;

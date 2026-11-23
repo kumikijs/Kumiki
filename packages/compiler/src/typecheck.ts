@@ -127,6 +127,8 @@ function checkAll(
     unionsByTag: unionsByTag(program.defs),
     numberLiterals: { met: new Set(), judged: new Set() },
     tileKinds: tileKinds(tiles),
+    judgedMapLiterals: new WeakSet(),
+    decoderKeyedLiterals: new Map(),
   };
 
   for (const def of program.defs) {
@@ -200,7 +202,9 @@ function checkAll(
 
   return errors.filter((d) => {
     const variant = sym.undefinedVariants.get(d);
-    return variant === undefined || !sym.judgedVariants.has(variant);
+    if (variant !== undefined && sym.judgedVariants.has(variant)) return false;
+    const literal = sym.decoderKeyedLiterals.get(d);
+    return literal === undefined || !sym.judgedMapLiterals.has(literal);
   });
 }
 

@@ -1,4 +1,5 @@
 import type { IndexedDbStore, KeyKind, ShowShape } from "@kumikijs/runtime";
+import type { PrimName } from "./stdlib-types.ts";
 
 export type Pos = { line: number; col: number };
 
@@ -226,7 +227,7 @@ export type AppDef = {
 export type TypeExpr =
   | {
       kind: "TypePrim";
-      name: "Int" | "Text" | "Bool" | "Unit" | "Float" | "Time" | "Bytes" | "File" | "EffectId";
+      name: PrimName;
       pos: Pos;
     }
   | { kind: "TypeRef"; name: string; pos: Pos }
