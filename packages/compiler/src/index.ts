@@ -46,7 +46,6 @@ export {
   parseFailure,
 } from "./compile.ts";
 export { generateDts } from "./dts.ts";
-export type { FieldSegment } from "./error-field.ts";
 export { applyRefine, type GenDescData } from "./for-all-generator.ts";
 export { LexError, lex } from "./lexer.ts";
 export { ParseError, parse } from "./parser.ts";

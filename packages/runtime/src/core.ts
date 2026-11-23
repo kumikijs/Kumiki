@@ -11,9 +11,9 @@ export {
 export {
   abortedHttpError,
   emitId,
-  invokeOnce,
   overridableInvoke,
   readStatus,
+  runEffect,
   standInValue,
 } from "./core/effects.ts";
 export {

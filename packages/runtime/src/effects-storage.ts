@@ -1,6 +1,6 @@
 import type { EffectResult } from "./core.ts";
 import { decodeOf, decodeRead } from "./effects-decode.ts";
-import { _stdlibCore } from "./stdlib.ts";
+import { _stdlibCore, isFileValue } from "./stdlib.ts";
 
 type Backend = "localStorage" | "sessionStorage";
 
@@ -131,6 +131,19 @@ function attempt(backend: Backend, call: string, run: (s: Storage) => void): Eff
   }
 }
 
+// A `File` is its fields beside `_file`, the picked file, which JSON writes as `{}`. One with no
+// file in `_file` (decoded from JSON) has nothing to lose and is stored as its JSON, `_file: {}`
+// included.
+function heldFile(v: unknown): { _file: Blob; name?: unknown } | undefined {
+  if (v === null || typeof v !== "object" || v instanceof Uint8Array) return undefined;
+  if (isFileValue(v)) return v;
+  for (const x of Array.isArray(v) ? v : Object.values(v)) {
+    const file = heldFile(x);
+    if (file) return file;
+  }
+  return undefined;
+}
+
 function writeTo(backend: Backend, cap: string, input: unknown): EffectResult {
   if (typeof input !== "object" || input === null) {
     return failed(`${cap}: the request is not a record (got ${String(input)})`);
@@ -142,6 +155,13 @@ function writeTo(backend: Backend, cap: string, input: unknown): EffectResult {
   }
   const at = JSON.stringify(key);
   if (!("value" in req)) return attempt(backend, `removeItem(${at})`, (s) => s.removeItem(key));
+  const file = heldFile(req.value);
+  if (file) {
+    const name = JSON.stringify(String(file.name));
+    return failed(
+      `${cap}: the value for ${at} holds the File ${name}, and ${backend} would keep only its name, size and type, not the file; nothing was stored`,
+    );
+  }
   const raw = encodeStored(req.value);
   if (raw === undefined) {
     return failed(`${cap}: the value for ${at} cannot be stored (got ${String(req.value)})`);

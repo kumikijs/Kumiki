@@ -1,5 +1,11 @@
-import type { AppShape, CapabilityProvider, EffectResult, EffectSpec } from "@kumikijs/runtime";
-import { createEpisodeLogger, hydrate, renderToString } from "@kumikijs/runtime";
+import type {
+  AppShape,
+  CapabilityProvider,
+  EffectResult,
+  EffectSpec,
+  ReducerSpec,
+} from "@kumikijs/runtime";
+import { createEpisodeLogger, hydrate, mount, renderToString } from "@kumikijs/runtime";
 import type { Mock } from "vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { captureConsole } from "./helpers/console.ts";
@@ -211,5 +217,102 @@ describe("after hydration", () => {
     expect(ran).toEqual([]);
     expect(handle.episodes()[0]?.trigger.kind).toBe("ssr.hydrate");
     handle.dispose();
+  });
+});
+
+type Delivery = {
+  /** What `load` answers on each attempt, in turn. */
+  answers: ReadonlyArray<() => unknown>;
+  retry?: EffectSpec["retry"];
+  /** The reducer that writes the bind into `got`: `load`'s `.ok` or `.err`, or `app.http`'s 5xx one. */
+  on: "ok" | "err" | "5xx";
+  bind: "$1" | "$2";
+};
+
+/** An app whose init emits `load("draft")`, with one reducer that writes `bind` into `got`. */
+function deliveryApp(d: Delivery): AppShape {
+  const answers = [...d.answers];
+  const load: EffectSpec = {
+    name: "load",
+    cap: "http.get",
+    invoke: async () => {
+      const answer = answers.shift();
+      if (!answer) throw new Error("load made an attempt it had no answer for");
+      return answer() as EffectResult;
+    },
+    ...(d.retry ? { retry: d.retry } : {}),
+  };
+  const apply: ReducerSpec["apply"] = (_live, payload) => ({
+    slots: { got: payload[d.bind] },
+    emits: [],
+  });
+  const reducer: ReducerSpec =
+    d.on === "5xx"
+      ? { name: "serverDown", event: { kind: "lifecycle", name: "app.http-5xx" }, apply }
+      : { name: "loaded", event: { kind: "effect", effect: "load", outcome: d.on }, apply };
+  return {
+    slots: { got: { value: "none" } },
+    caps: ["http.get"],
+    effects: { load },
+    init: [{ effect: "load", args: ["draft"] }],
+    reducers: [reducer],
+    ...(d.on === "5xx" ? { http: { on5xx: "serverDown" } } : {}),
+    root: () => ({ kind: "text", text: "page" }),
+  };
+}
+
+const unavailable = (): EffectResult => ({ kind: "err", value: { status: 503, message: "busy" } });
+
+describe("the SSR pass delivers an effect's result as a mount does", () => {
+  it.each<[string, Delivery, unknown]>([
+    [
+      "hands .ok the emit's input as $2",
+      { answers: [() => ({ kind: "ok", value: "stored" })], on: "ok", bind: "$2" },
+      "draft",
+    ],
+    [
+      "makes the attempts retry= names after a 503",
+      {
+        answers: [unavailable, () => ({ kind: "ok", value: "second" })],
+        retry: { kind: "linear", n: 2, ms: 1 },
+        on: "ok",
+        bind: "$1",
+      },
+      "second",
+    ],
+    [
+      "fails an invoke that throws with {message}",
+      {
+        answers: [
+          () => {
+            throw new Error("down");
+          },
+        ],
+        on: "err",
+        bind: "$1",
+      },
+      { message: "Error: down" },
+    ],
+    [
+      "fails an invoke that resolves to no result as one that throws",
+      { answers: [() => undefined], on: "err", bind: "$1" },
+      { message: "Error: the http.get provider returned undefined, not {kind, value}" },
+    ],
+    [
+      "hands the app.http 5xx reducer the emit's input as $2",
+      { answers: [unavailable], on: "5xx", bind: "$2" },
+      "draft",
+    ],
+  ])("%s", async (_what, d, got) => {
+    const { snapshot } = await renderToString(deliveryApp(d));
+    expect(snapshot.slots.got).toEqual(got);
+
+    const app = deliveryApp(d);
+    const handle = mount(app, freshRoot());
+    try {
+      await vi.waitFor(() => expect(app.live?.got).toEqual(got));
+    } finally {
+      handle.dispose();
+    }
   });
 });
