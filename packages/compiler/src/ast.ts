@@ -1,4 +1,5 @@
 import type { IndexedDbStore, KeyKind, ShowShape } from "@kumikijs/runtime";
+import type { PrimName } from "./stdlib-types.ts";
 
 export type Pos = { line: number; col: number };
 
@@ -67,10 +68,22 @@ export type TestDef = {
 
 export type ThemeValue = string | number | { [k: string]: ThemeValue };
 
+/**
+ * A string or number a `theme` body holds: the keys that lead to it, and the position of its first
+ * token, a negative number's `-`.
+ */
+export type ThemeLeaf = { path: readonly string[]; value: string | number; pos: Pos };
+
 export type ThemeDef = {
   kind: "ThemeDef";
   name: string;
   body: { [k: string]: ThemeValue };
+  /**
+   * Every string and number the body is written with, in source order, a duplicate key's included.
+   * In `body` a duplicate key's later entry replaces the earlier one, so a leaf's path can lead to
+   * nothing there.
+   */
+  leaves: ThemeLeaf[];
   /** Keys seen more than once in the body, at any nesting depth. */
   duplicateKeys?: DuplicateName[];
   pos: Pos;
@@ -214,7 +227,7 @@ export type AppDef = {
 export type TypeExpr =
   | {
       kind: "TypePrim";
-      name: "Int" | "Text" | "Bool" | "Unit" | "Float" | "Time" | "Bytes" | "File" | "EffectId";
+      name: PrimName;
       pos: Pos;
     }
   | { kind: "TypeRef"; name: string; pos: Pos }
@@ -257,24 +270,32 @@ export function assertNever(node: never): void {
   void node;
 }
 
+/** A number literal: the text it is written as, its sign included, and the number it was read as. */
+export type NumberLiteral = { readonly value: number; readonly raw: string };
+
 /**
  * The sign is part of a number literal (language.md), but the lexer emits it as
  * its own operator, so `-1` reaches the AST as a negation of `1`. One leading `-`
  * is folded in: `- -1` is the negation of the literal `-1`, so it is `null` here.
  * Parentheses leave no node, so `-(1)` is the literal `-1`.
  */
-export function numberLiteral(e: Expr): { value: number; raw: string } | null {
-  if (e.kind === "Num") return { value: e.value, raw: e.raw ?? String(e.value) };
+export function numberLiteral(e: Expr): NumberLiteral | null {
+  if (e.kind === "Num") return { value: e.value, raw: e.raw };
   if (e.kind === "UnaryOp" && e.op === "-" && e.rhs.kind === "Num") {
-    return { value: -e.rhs.value, raw: `-${e.rhs.raw ?? String(e.rhs.value)}` };
+    return { value: -e.rhs.value, raw: `-${e.rhs.raw}` };
   }
   return null;
 }
+
+/** A refinement's number argument as written, where it starts, and its place in `args`. */
+export type RefinementNumber = NumberLiteral & { readonly index: number; readonly pos: Pos };
 
 export type Refinement = {
   kind: "Refinement";
   pred: string;
   args: (number | string)[];
+  /** Each number among `args`, as written. A refinement the compiler builds itself has none. */
+  numbers?: readonly RefinementNumber[];
   pos: Pos;
 };
 
@@ -374,7 +395,7 @@ export type Expr = ExprForm & {
 };
 
 type ExprForm =
-  | { kind: "Num"; value: number; raw?: string; pos: Pos }
+  | { kind: "Num"; value: number; raw: string; pos: Pos }
   | { kind: "Str"; value: string; pos: Pos }
   | { kind: "Bool"; value: boolean; pos: Pos }
   | { kind: "Unit"; pos: Pos }
