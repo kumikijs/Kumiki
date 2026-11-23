@@ -377,9 +377,9 @@ episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
                  | 'no-errors' ':' bool
 ```
 
-`slots-equal: from-log` は最終 slot をログが記録した値と比較する。レコードを書けば、比較する slot とその期待値をそれで名指す。
+`slots-equal: from-log` は最終 slot をログが記録した値と比較する：各 slot について、ログが episode を並べた順で、その slot を名指す最後の `slot-diffs` エントリの `after` である。レコードを書けば、比較する slot とその期待値をそれで名指す。
 
-ログの episode は、`kumiki replay` と同じく、ログに並んだ順 — trigger が始まった順 — に 1 つずつ丸ごと replay される（[runtime.md §10.5.3](./runtime.md#_10-5-3-replay)）。したがって、実行が後の trigger より後に受け取った effect の結果は、replay ではその trigger より先に `.ok` / `.err` reducer に届き、その reducer がその trigger の書いた値から計算する slot は、ログの記録とは異なる値で終わることがある。
+ログの episode は、`kumiki replay` と同じく、ログに並んだ順 — trigger が始まった順 — に 1 つずつ丸ごと replay される（[runtime.md §10.5.3](./runtime.md#_10-5-3-replay)）。したがって、実行が後の trigger より後に受け取った effect の結果は、replay ではその trigger より先に `.ok` / `.err` reducer に届き、その reducer がその trigger の書いた値から計算する slot は、ログの記録とは異なる値で終わることがあり、テストは失敗する。その reducer と後の trigger の両方が書く slot では失敗しない：ログでは trigger の diff が reducer の diff より後に来るので、`from-log` は trigger の値を期待し、replay もその値で終わるため、実行が reducer の値で終わっていてもテストは通る。
 
 bind したコントロールが書いた slot は、その書き込みの `bind` step に記録される（[runtime.md §10.5.1](./runtime.md#_10-5-1-structure-of-an-episode)）。`from-log` は reducer の書いた値を `reducer` step から読むのと同じく、その値をその step の `slot-diffs` から読む。したがって、どの reducer も後に続かない入力で終わるログは、フィールドの slot を入力された値で期待し、書き込みをやり直す replay もそこで終わる。
 

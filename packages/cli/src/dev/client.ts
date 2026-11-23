@@ -6,6 +6,7 @@ import {
   mount,
   type RuntimeDiagnostic,
 } from "@kumikijs/runtime";
+import { postInOrder } from "/@kumiki-dev/episode-post.ts";
 import { installDevPanel } from "/@kumiki-dev/panel.ts";
 
 const root = document.getElementById("app");
@@ -13,17 +14,17 @@ if (!root) throw new Error("kumiki dev: #app container missing from index.html")
 
 let currentApp: AppShape = InitialApp;
 
+// The panel follows each episode as it commits; the log takes them in the order their triggers
+// began, one request at a time, so the server appends them in that order.
 const logger = createEpisodeLogger({
-  onEpisode(ep: Episode) {
-    panel.push();
-    void fetch("/__kumiki/episode", {
+  onCommit: (ep: Episode) => panel.push(ep),
+  onEpisode: postInOrder((body) =>
+    fetch("/__kumiki/episode", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(ep),
-    }).catch(() => {
-      // best-effort: dev only; a failed POST shouldn't break the page.
-    });
-  },
+      body,
+    }),
+  ),
 });
 
 const panel = installDevPanel({ logger, getApp: () => currentApp });

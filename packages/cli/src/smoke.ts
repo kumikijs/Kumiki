@@ -251,12 +251,14 @@ function episodeLogError(path: string, error: unknown): Error {
 }
 
 /**
- * The in-memory store keeps only the most recent N, so the file is appended as each episode
- * commits. A failed write is held, not thrown: the hook runs inside the runtime's commit, where
- * a throw would read as an error of the app. Nothing is appended after it, so the file has no
- * gap. The app's dispose cancels every effect it launched, so their episodes have committed by
- * the time the run returns (runtime.md). `close` stops the writing all the same, so
- * nothing that commits once the run is over is written, and gives back the held failure.
+ * The in-memory store keeps only the most recent N, so the file is appended from `onEpisode`,
+ * which hands each episode over in the order its trigger began, once every episode begun before
+ * it has committed (runtime.md). A failed write is held, not thrown: the hook runs inside the
+ * runtime's commit, where a throw would read as an error of the app. Nothing is appended after
+ * it, so the file has no gap. The app's dispose cancels every effect it launched, so their
+ * episodes have committed by the time the run returns (runtime.md). `close` stops the writing all
+ * the same, so nothing that commits once the run is over is written, and gives back the held
+ * failure.
  */
 export function fileEpisodeLogger(path: string): {
   logger: EpisodeLogger;

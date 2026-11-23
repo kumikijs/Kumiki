@@ -6,8 +6,9 @@
 # which its `debounce(300ms)` launches 300ms later. The answer, and the
 # `savedOk` it runs, belong to A's episode, so that episode stays open until
 # the answer lands. `pickB` writes x := "b" in an episode of its own, which is
-# done at once. B is done first, but it is not stored ahead of A: it waits
-# until A is done, and the log lists A, then B, the order the clicks came in.
+# done at once. B is done first. No store lists it ahead of A: `list()` puts
+# it after A, and the `--episode-log` file appends it only once A is done, so
+# the log lists A, then B, the order the clicks came in.
 # The fixture next to this file was recorded from the scenario with
 # `kumiki run --episode-log`. Replaying it runs pickA, then pickB, and ends at
 # x = "b", as the run did.

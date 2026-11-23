@@ -36,7 +36,7 @@ afterEach(() => {
 
 function recording(): { logger: EpisodeLogger; committed: Episode[] } {
   const committed: Episode[] = [];
-  return { logger: createEpisodeLogger({ onEpisode: (ep) => committed.push(ep) }), committed };
+  return { logger: createEpisodeLogger({ onCommit: (ep) => committed.push(ep) }), committed };
 }
 
 const kinds = (eps: Episode[]): string[] => eps.flatMap((ep) => ep.steps.map((s) => s.kind));
