@@ -13,21 +13,29 @@ function validate(
   path: string,
   before: string,
   src: string,
+  only: string | undefined,
 ): { ok: true } | { ok: false; message: string } {
+  let errors: ReturnType<typeof check>;
   try {
     const program = parse(lex(src));
-    const errors = check(program, { requireApp: false }).filter((d) => severityOf(d) === "error");
-    if (errors.length > 0) {
-      const summary = errors
-        .slice(0, 3)
-        .map((e) => `${e.code} ${e.message}`)
-        .join("; ");
-      return { ok: false, message: `Validation failed: ${summary}` };
-    }
+    errors = check(program, { requireApp: false }).filter((d) => severityOf(d) === "error");
   } catch (e) {
     return { ok: false, message: `Parse/lex failed: ${String(e)}` };
   }
-  const locked = touchedLockViolation(path, before, src);
+  const { changed, added } = definitionChanges(before, src);
+  // Reported first: a definition the write changed by mistake is why the checker may now object.
+  const others = changed.filter((q) => only !== undefined && q !== only);
+  if (others.length > 0) {
+    return { ok: false, message: `writing ${only} would change ${others.join(", ")} too` };
+  }
+  if (errors.length > 0) {
+    const summary = errors
+      .slice(0, 3)
+      .map((e) => `${e.code} ${e.message}`)
+      .join("; ");
+    return { ok: false, message: `Validation failed: ${summary}` };
+  }
+  const locked = lockViolation(path, [...changed, ...added].sort(compareQNames));
   return locked === undefined ? { ok: true } : { ok: false, message: locked };
 }
 
@@ -39,16 +47,18 @@ export function touchedLockViolation(
   before: string,
   after: string,
 ): string | undefined {
-  return lockViolation(path, touchedDefinitions(before, after));
+  const { changed, added } = definitionChanges(before, after);
+  return lockViolation(path, [...changed, ...added].sort(compareQNames));
 }
 
-function touchedDefinitions(before: string, after: string): string[] {
+/** The definitions of `before` that `after` holds otherwise or not at all, and those it adds. */
+function definitionChanges(before: string, after: string): { changed: string[]; added: string[] } {
   const a = definitionTexts(before);
   const b = definitionTexts(after);
-  const touched = new Set<string>();
-  for (const [q, text] of a) if (b.get(q) !== text) touched.add(q);
-  for (const q of b.keys()) if (!a.has(q)) touched.add(q);
-  return [...touched].sort(compareQNames);
+  return {
+    changed: [...a].filter(([q, text]) => b.get(q) !== text).map(([q]) => q),
+    added: [...b.keys()].filter((q) => !a.has(q)),
+  };
 }
 
 function definitionTexts(source: string): Map<string, string> {
@@ -69,10 +79,19 @@ function definitionTexts(source: string): Map<string, string> {
   return out;
 }
 
-/** Validates `next`, writes it, then logs the op; a failed log restores the file. */
-export function commit(path: string, next: string, verb: string, log: () => string): string {
+/**
+ * Validates `next`, writes it, then logs the op; a failed log restores the file. With `only`, a
+ * `next` that changes any definition but that one is rejected.
+ */
+export function commit(
+  path: string,
+  next: string,
+  verb: string,
+  log: () => string,
+  only?: string,
+): string {
   const before = readFileSync(path, "utf8");
-  const v = validate(path, before, next);
+  const v = validate(path, before, next, only);
   if (!v.ok) throw new Error(`${verb} rejected: ${v.message}`);
   atomicWriteFileSync(path, next);
   try {

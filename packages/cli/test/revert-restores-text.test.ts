@@ -12,14 +12,12 @@ import {
 } from "@kumikijs/cli";
 import { feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
-import { renamed, seed, seedCopy } from "./helpers/files.ts";
+import { read, renamed, seed, seedCopy } from "./helpers/files.ts";
 import { lastOp, rewriteLogEntry, snapshot } from "./helpers/op-log.ts";
 
 const EXAMPLE = feature("280-revert-restores-the-text");
 const ABC = "slot a : Int = 0\n\nslot   b : Int = 1\nslot c : Int = 2\n";
 const ORIGINAL = readFileSync(EXAMPLE, "utf8");
-
-const read = (file: string): string => readFileSync(file, "utf8");
 
 const replaceCount = (file: string): string => replaceDef(file, "slot.count", "N = 5").opId;
 const editReset = (file: string): string =>
@@ -127,6 +125,27 @@ describe("patch revert of an op on definitions written by hand", () => {
     patchRevert(file, opId);
 
     expect(read(file)).toBe("slot\n    total : Int = 0\n");
+  });
+
+  it("fails when the recorded text names the definition where a rename cannot respell it, writing nothing", () => {
+    const file = seed("slot count : Int = 0\n");
+    const opId = replaceDef(file, "slot.count", "Int = 5").opId;
+    renameDef(file, "slot.count", "total");
+    // `{count}` is the slot and the `for-all` value in one token, so a rename has no site for it.
+    rewriteLogEntry(file, opId, (e) => {
+      e.prev = `slot count : Int = 0
+test reads-it =
+    property-test
+        for-all   = {count: Int}
+        given     = {slots: {count}}
+        invariant = true`;
+    });
+    const before = snapshot(file);
+
+    expect(() => patchRevert(file, opId)).toThrowError(
+      "patch revert: cannot rename slot.count to total in the text the log recorded for it; nothing was written",
+    );
+    expect(snapshot(file)).toEqual(before);
   });
 
   it.each([

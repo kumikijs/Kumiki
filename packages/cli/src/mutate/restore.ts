@@ -23,8 +23,8 @@ export type RestoredDef = DefSpec & {
 
 /**
  * Writes `text` in place of `qname`'s definition, and logs it as a `replace`. When the file still
- * holds `wrote` from the definition's first token, it takes all of that, also the comments and
- * blank lines past the definition's last token.
+ * holds `wrote` from the definition's first token, up to a line break or the end of the file, it
+ * takes all of that, also the comments and blank lines past the definition's last token.
  */
 export function replaceText(
   path: string,
@@ -40,20 +40,32 @@ export function replaceText(
     if (!entry) throw new Error(`Definition "${qname}" not found`);
     const { start, end } = entry.range;
     const held = wrote === undefined ? undefined : joinLines(store.source, [wrote]);
+    const stop = start + (held?.length ?? 0);
     const to =
-      held !== undefined && store.source.startsWith(held, start)
-        ? Math.max(end, start + held.length)
+      held !== undefined && store.source.startsWith(held, start) && endsLine(store.source, stop)
+        ? Math.max(end, stop)
         : end;
     const prev = store.source.slice(start, to).split(/\r?\n/).join("\n");
     const next = withText(store, { ...entry, range: { ...entry.range, end: to } }, text);
-    return commit(path, next, "replace", () => {
-      const written = load(path);
-      const now = written.byQName.get(qname);
-      if (now === undefined) throw new Error(`the text written back does not define ${qname}`);
-      const body = bodyOf(written, now, "replace");
-      return logOp(path, { op: "replace", layer: entry.layer, name: entry.name, body, prev }, {});
-    });
+    return commit(
+      path,
+      next,
+      "replace",
+      () => {
+        const written = load(path);
+        const now = written.byQName.get(qname);
+        if (now === undefined) throw new Error(`the text written back does not define ${qname}`);
+        const body = bodyOf(written, now, "replace");
+        return logOp(path, { op: "replace", layer: entry.layer, name: entry.name, body, prev }, {});
+      },
+      qname,
+    );
   });
+}
+
+/** Whether `at` is where a line of `source` ends: at a line break, or at the end of the file. */
+function endsLine(source: string, at: number): boolean {
+  return at === source.length || source.startsWith("\n", at) || source.startsWith("\r\n", at);
 }
 
 /** Writes each definition back where it stood, and logs one `add` of the first `with` the rest. */
@@ -106,6 +118,10 @@ function placeText(source: string, d: RestoredDef): string {
 function writeAt(source: string, store: Store, line: number, d: RestoredDef): string {
   const count = store.lines.length;
   const atEnd = line > count || (line === count && store.lines[count - 1] === "");
+  // A byte order mark opens the file, so a text put back on its first line goes after it.
+  if (!atEnd && line === 1 && source.startsWith("﻿") && !d.text.startsWith("﻿")) {
+    return `﻿${spliceLines(source.slice(1), 1, 0, d.text.split("\n"))}`;
+  }
   if (!atEnd) return spliceLines(source, line, line - 1, d.text.split("\n"));
   return source + joinLines(source, [`${"\n".repeat(line - count)}${d.text}${d.last ? "" : "\n"}`]);
 }

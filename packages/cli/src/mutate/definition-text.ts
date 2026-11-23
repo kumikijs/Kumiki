@@ -107,50 +107,62 @@ function lineMate(store: Store, entry: DefEntry): "before" | "after" | undefined
   return undefined;
 }
 
-/** `source` without the definitions `qnames` name, each cut where it stands once those before it are. */
-export function withoutDefinitions(source: string, qnames: readonly string[]): string {
-  let next = source;
+/** A definition `withoutDefinitions` cut, as `store` held it, and the text the cut took. */
+export type Cut = { entry: DefEntry; text: string };
+
+/**
+ * `store.source` without the definitions `qnames` name, each cut where it stands once those
+ * before it are, and each cut in the order of `qnames`.
+ */
+export function withoutDefinitions(
+  store: Store,
+  qnames: readonly string[],
+): { source: string; cuts: Cut[] } {
+  let next = store.source;
+  const cuts: Cut[] = [];
   for (const q of qnames) {
-    const store = loadSource(next);
     const entry = store.byQName.get(q);
-    if (entry === undefined) throw new Error(`Definition "${q}" not found`);
-    next = withoutDefinition(store, entry);
+    const now = loadSource(next);
+    const here = now.byQName.get(q);
+    if (entry === undefined || here === undefined) throw new Error(`Definition "${q}" not found`);
+    const cut = withoutDefinition(now, here);
+    next = cut.source;
+    cuts.push({ entry, text: cut.text });
   }
-  return next;
+  return { source: next, cuts };
 }
 
 /**
- * `store.source` without the definition: without the lines it stands on, comments on them
- * included, when no other definition shares them; else without its text and the spaces between
- * it and the definition it shares a line with.
+ * `store.source` without the definition, and what it took: the lines it stands on, comments on
+ * them included, when no other definition shares them; else its text, and with it the spaces
+ * between it and the definition it shares a line with, the one before it when both sides do.
  */
-function withoutDefinition(store: Store, entry: DefEntry): string {
+function withoutDefinition(store: Store, entry: DefEntry): { source: string; text: string } {
   const { source, defs } = store;
   const at = defs.indexOf(entry);
   const { start, end, startLine, endLine } = entry.range;
+  const text = definitionText(store, entry);
   switch (lineMate(store, entry)) {
     case "before":
-      return source.slice(0, defs[at - 1]!.range.end) + source.slice(end);
+      return { source: source.slice(0, defs[at - 1]!.range.end) + source.slice(end), text };
     case "after":
-      return source.slice(0, start) + source.slice(defs[at + 1]!.range.start);
+      return { source: source.slice(0, start) + source.slice(defs[at + 1]!.range.start), text };
     default:
-      return spliceLines(source, startLine, endLine, []);
+      return {
+        source: spliceLines(source, startLine, endLine, []),
+        text: store.lines.slice(startLine - 1, endLine).join("\n"),
+      };
   }
 }
 
-/** What a `remove` records so that its revert can put the definition back where it stood. */
-export function removedText(
+/** Where a `remove` records a definition stood, so that its revert can put it back there. */
+export function removedPlace(
   store: Store,
   entry: DefEntry,
-): { text: string; after?: string; gap: number; last?: true } {
+): { after?: string; gap: number; last?: true } {
   const before = store.defs[store.defs.indexOf(entry) - 1];
   const { startLine, endLine } = entry.range;
   return {
-    // What `withoutDefinition` takes, short of the spaces beside a definition sharing a line.
-    text:
-      lineMate(store, entry) === undefined
-        ? store.lines.slice(startLine - 1, endLine).join("\n")
-        : definitionText(store, entry),
     ...(before === undefined ? {} : { after: `${before.layer}.${before.name}` }),
     // None when it starts on the line the one before it ends on: it goes back on the next line.
     gap: Math.max(0, startLine - (before?.range.endLine ?? 0) - 1),
@@ -204,7 +216,7 @@ function extractBody(layer: string, name: string, text: string): string {
   }
 }
 
-/** Every place `entry`'s name is spelled: on its own definition line and in each reference. */
+/** Every place `entry`'s name is spelled: the token after its keyword, and each reference. */
 export function nameSites(
   store: Store,
   entry: DefEntry,

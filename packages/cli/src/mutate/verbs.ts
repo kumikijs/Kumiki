@@ -18,7 +18,7 @@ import {
   headerOf,
   isDefinitionName,
   nameSites,
-  removedText,
+  removedPlace,
   respell,
   withHeader,
   withoutDefinitions,
@@ -109,12 +109,17 @@ function replaceDefLocked(
   const prev = definitionText(store, entry);
   const whole = withHeader(entry.layer, body, () => headerOf(store, entry, "replace"));
   const next = withText(store, entry, assemble(entry.layer, entry.name, whole));
-  const opId = commit(path, next, "replace", () =>
-    logOp(
-      path,
-      { op: "replace", layer: entry.layer, name: entry.name, body: whole, prev },
-      options,
-    ),
+  const opId = commit(
+    path,
+    next,
+    "replace",
+    () =>
+      logOp(
+        path,
+        { op: "replace", layer: entry.layer, name: entry.name, body: whole, prev },
+        options,
+      ),
+    qname,
   );
   const now = headerItems(load(path).byQName.get(qname)?.def);
   return { opId, dropped: headerItems(entry.def).filter((item) => !now.includes(item)) };
@@ -213,15 +218,15 @@ function removeSetLocked(
       `remove rejected: ${[...dangling].sort().join("; ")}, outside the definitions being removed (${set.join(", ")}); nothing was written`,
     );
   }
-  const entries = set.map((q) => store.byQName.get(q)).filter((e) => e !== undefined);
-  const [main, ...rest] = entries.map((e) => ({
+  const { source: next, cuts } = withoutDefinitions(store, set);
+  const [main, ...rest] = cuts.map(({ entry: e, text }) => ({
     layer: e.layer,
     name: e.name,
     body: bodyOf(store, e, "remove"),
-    ...removedText(store, e),
+    text,
+    ...removedPlace(store, e),
   }));
   if (main === undefined) throw new Error("remove rejected: nothing to remove");
-  const next = withoutDefinitions(store.source, set);
   const opId = commit(path, next, "remove", () =>
     logOp(
       path,
@@ -275,7 +280,7 @@ function renameDefLocked(
     );
   }
   if (own === undefined) {
-    throw new Error(`rename aborted: cannot locate "${old}" on its own definition line`);
+    throw new Error(`rename aborted: cannot locate "${old}" as the token after its keyword`);
   }
 
   const lines = respell(store.lines, [own, ...refs], old, newName, "rename");
@@ -306,23 +311,29 @@ function editDefLocked(path: string, qname: string, patch: unknown, options: OpL
   if (!entry) throw new Error(`Definition "${qname}" not found`);
   const prev = definitionText(store, entry);
   const next = withText(store, entry, patchedLines(prev.split("\n"), qname, patch).join("\n"));
-  return commit(path, next, "edit", () => {
-    const updatedStore = load(path);
-    const updatedEntry = updatedStore.byQName.get(qname);
-    const newBody = updatedEntry ? bodyOf(updatedStore, updatedEntry, "edit") : undefined;
-    return logOp(
-      path,
-      {
-        op: "edit",
-        layer: entry.layer,
-        name: entry.name,
-        patch,
-        ...(newBody !== undefined ? { body: newBody } : {}),
-        prev,
-      },
-      options,
-    );
-  });
+  return commit(
+    path,
+    next,
+    "edit",
+    () => {
+      const updatedStore = load(path);
+      const updatedEntry = updatedStore.byQName.get(qname);
+      const newBody = updatedEntry ? bodyOf(updatedStore, updatedEntry, "edit") : undefined;
+      return logOp(
+        path,
+        {
+          op: "edit",
+          layer: entry.layer,
+          name: entry.name,
+          patch,
+          ...(newBody !== undefined ? { body: newBody } : {}),
+          prev,
+        },
+        options,
+      );
+    },
+    qname,
+  );
 }
 
 export function patchedLines(target: readonly string[], qname: string, patch: unknown): string[] {

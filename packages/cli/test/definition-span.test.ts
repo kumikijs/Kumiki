@@ -1,9 +1,10 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import {
   editDef,
   listDefs,
   load,
   patchRevert,
+  readOpLog,
   removeDef,
   renameDef,
   replaceDef,
@@ -13,13 +14,11 @@ import {
 import { feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
 import { runCli } from "./helpers/cli.ts";
-import { APP_A, seed, seedCopy, storeOf } from "./helpers/files.ts";
+import { APP_A, read, seed, seedCopy, storeOf } from "./helpers/files.ts";
 import { lastOp } from "./helpers/op-log.ts";
 
 const EXAMPLE = feature("282-definition-token-span");
 const ORIGINAL = readFileSync(EXAMPLE, "utf8");
-
-const read = (file: string): string => readFileSync(file, "utf8");
 
 const DOUBLE = "fn double(x: Int) -> Int = x * 2";
 /** `fn double` and `slot step` on one line. */
@@ -74,13 +73,27 @@ describe("a definition is its text from its first token to its last", () => {
     }
   });
 
-  it("view --hash is the same whether a definition shares its line or not", () => {
+  it.each([
+    "fn.double",
+    "slot.step",
+    "tile.App",
+  ])("view --hash of %s is the same whether it shares its line or not", (qname) => {
     const apart = storeOf(ORIGINAL.replace(SHARED, `${DOUBLE}\nslot step : Int = 2`));
-    const together = load(EXAMPLE);
 
-    for (const qname of ["fn.double", "slot.step", "tile.App"]) {
-      expect(viewHash(together, qname), qname).toBe(viewHash(apart, qname));
-    }
+    expect(viewHash(load(EXAMPLE), qname)).toBe(viewHash(apart, qname));
+  });
+
+  // The op log keeps these digests, so they must not move. Each is what the store that read a
+  // definition by its lines gave it, with every definition on lines of its own and the string on one.
+  it.each([
+    ["slot.count", "22e063467235bb30"],
+    ["fn.double", "ab2d50e78bd9e739"],
+    ["slot.step", "e7e5c07902c20aad"],
+    ["slot.notes", "81d3ea3f959edbf8"],
+    ["reducer.inc", "b1f5ce9d49c66ef7"],
+    ["tile.App", "de7b700266d59450"],
+  ])("view --hash of %s is %s", (qname, digest) => {
+    expect(viewHash(load(EXAMPLE), qname)).toBe(digest);
   });
 
   it("view --hash reads a string over two lines as the one literal it is", () => {
@@ -174,8 +187,9 @@ describe("a write op writes the definition it names and no other", () => {
 
 // Nothing references either definition on the shared line, so a write that took the other one
 // with it would still pass validation.
+const HELPER_AND_C = "fn helper(x: Int) -> Int = x + 1   slot c : Int = 2";
 const UNREFERENCED = `slot a : Int = 0
-fn helper(x: Int) -> Int = x + 1   slot c : Int = 2
+${HELPER_AND_C}
 tile App = column(text("a=" + a))
 ${APP_A}`;
 
@@ -188,7 +202,7 @@ describe("a definition sharing its line with one nothing references", () => {
 
     removeDef(file, qname, false);
 
-    expect(read(file).split("\n")[1]).toBe(left);
+    expect(read(file)).toBe(UNREFERENCED.replace(HELPER_AND_C, left));
   });
 
   it("replace slot.c leaves fn.helper on the line", () => {
@@ -196,7 +210,175 @@ describe("a definition sharing its line with one nothing references", () => {
 
     replaceDef(file, "slot.c", "Int = 3");
 
-    expect(read(file).split("\n")[1]).toBe("fn helper(x: Int) -> Int = x + 1   slot c : Int = 3");
+    expect(read(file)).toBe(UNREFERENCED.replace("slot c : Int = 2", "slot c : Int = 3"));
+  });
+});
+
+const HELPER = "fn helper(x: Int) -> Int = x + 1";
+const C = "slot c : Int = 2";
+
+/** `fn helper` and `slot c` on one line, `slot c` first or second; nothing references either. */
+const sharing = (line: string): string => `slot a : Int = 0
+${line}
+tile App = column(text("a=" + a))
+${APP_A}`;
+const C_FIRST = sharing(`${C}   ${HELPER}`);
+const C_SECOND = sharing(`${HELPER}   ${C}`);
+
+const replaceC = (body: string) => (file: string) => replaceDef(file, "slot.c", body).opId;
+const editC = (replace: string) => (file: string) =>
+  editDef(file, "slot.c", { find: "2", replace });
+
+// A comment runs to the end of its line, so a text that ends in one, written where another
+// definition follows on the line, would take that one into the comment.
+describe("a write to a definition whose new text ends in a comment", () => {
+  it.each([
+    { what: "replace", run: replaceC("Int = 3 # was 2") },
+    { what: "replace with a comment line", run: replaceC("Int = 3\n# was 2") },
+    { what: "edit", run: editC("3 # bumped") },
+  ])("$what is rejected, writing nothing, when another definition follows it on its line", ({
+    run,
+  }) => {
+    const file = seed(C_FIRST);
+
+    expect(() => run(file)).toThrowError(/rejected: writing slot\.c would change fn\.helper too$/);
+
+    expect(read(file)).toBe(C_FIRST);
+    expect(readOpLog(file)).toEqual([]);
+  });
+
+  it.each([
+    { what: "replace", run: replaceC("Int = 3 # was 2"), to: "slot c : Int = 3 # was 2" },
+    { what: "edit", run: editC("3 # bumped"), to: "slot c : Int = 3 # bumped" },
+  ])("$what writes it when the definition ends its line, and the revert takes it out", ({
+    run,
+    to,
+  }) => {
+    const file = seed(C_SECOND);
+
+    const opId = run(file);
+    expect(read(file)).toBe(C_SECOND.replace(C, to));
+    patchRevert(file, opId);
+
+    expect(read(file)).toBe(C_SECOND);
+  });
+});
+
+describe("patch revert of a replace whose text is followed on its line", () => {
+  it("by the definition that shares the line puts back the text alone", () => {
+    const file = seed(C_FIRST);
+
+    patchRevert(file, replaceC("Int = 3")(file));
+
+    expect(read(file)).toBe(C_FIRST);
+  });
+
+  // Edited by hand, the comment the replace wrote is no longer all of what follows on its line.
+  it.each([
+    ["# a + 1", "slot c : Int = 2 # a + 1"],
+    ["# ab", "slot c : Int = 2 # ab"],
+  ])("by a comment edited to %s since leaves that comment after the text put back", (edited, back) => {
+    const source = "slot c : Int = 2\nslot d : Int = 5\n";
+    const file = seed(source);
+    const opId = replaceC("Int = 3 # a")(file);
+    writeFileSync(file, read(file).replace("# a", edited));
+
+    patchRevert(file, opId);
+
+    expect(read(file)).toBe(source.replace(C, back));
+  });
+});
+
+describe("a remove --cascade of definitions that share a line", () => {
+  const SOURCE = `slot count : Int = 0
+slot step : Int = 2   ${REDUCER}  # note
+tile IncBtn = button(text="+")
+`;
+
+  it("records each one as what it cut, the comment at the end of the line included", () => {
+    const file = seed(SOURCE);
+
+    removeDef(file, "slot.step", true);
+
+    expect(read(file)).toBe('slot count : Int = 0\ntile IncBtn = button(text="+")\n');
+    expect(lastOp(file).bodies?.map((b) => b.text)).toEqual([
+      "slot step : Int = 2",
+      `${REDUCER}  # note`,
+    ]);
+  });
+
+  it("puts each back on a line of its own on revert, and the comment with the one it ended", () => {
+    const file = seed(SOURCE);
+
+    patchRevert(file, removeDef(file, "slot.step", true).opId);
+
+    expect(read(file)).toBe(SOURCE.replace(`slot step : Int = 2   `, "slot step : Int = 2\n"));
+  });
+});
+
+describe("a definition that shares its line with the definitions on both sides", () => {
+  const SOURCE = `slot a : Int = 0   slot b : Int = 1   slot c : Int = 2
+tile App = column(text("a=" + a + c))
+${APP_A}`;
+
+  it("remove cuts it with the spaces toward the one before it", () => {
+    const file = seed(SOURCE);
+
+    removeDef(file, "slot.b", false);
+
+    expect(read(file)).toBe(SOURCE.replace("slot b : Int = 1   ", ""));
+  });
+
+  it("goes back on revert on the line after the one it shared", () => {
+    const file = seed(SOURCE);
+
+    patchRevert(file, removeDef(file, "slot.b", false).opId);
+
+    expect(read(file)).toBe(
+      SOURCE.replace("slot b : Int = 1   ", "").replace("Int = 2\n", "Int = 2\nslot b : Int = 1\n"),
+    );
+  });
+});
+
+describe("a shared first line of a file that starts with a byte order mark", () => {
+  const SOURCE = `\uFEFF${C}   ${HELPER}
+tile App = column(text("c"))
+${APP_A}`;
+
+  it("view prints the first definition without the mark", () => {
+    expect(viewDef(storeOf(SOURCE), "slot.c")).toBe(C);
+  });
+
+  it.each([
+    { what: "remove slot.c", run: (f: string) => removeDef(f, "slot.c", false).opId, to: HELPER },
+    { what: "replace slot.c", run: replaceC("Int = 3"), to: `slot c : Int = 3   ${HELPER}` },
+  ])("$what writes after the mark, and the revert puts the file back", ({ run, to }) => {
+    const file = seed(SOURCE);
+
+    const opId = run(file);
+    expect(read(file)).toBe(SOURCE.replace(`${C}   ${HELPER}`, to));
+    patchRevert(file, opId);
+
+    expect(read(file)).toBe(to === HELPER ? SOURCE.replace(`${C}   `, `${C}\n`) : SOURCE);
+  });
+});
+
+describe("a string that ends in an escaped backslash, right before the next definition", () => {
+  const S = 'slot s : Text = "a\\\\"';
+  const SOURCE = `${S}   ${C}
+tile App = column(text(s))
+${APP_A}`;
+
+  it("ends at its closing quote", () => {
+    expect(viewDef(storeOf(SOURCE), "slot.s")).toBe(S);
+  });
+
+  it("is left as it is by a replace of the next definition", () => {
+    const file = seed(SOURCE);
+
+    replaceC("Int = 3")(file);
+
+    expect(read(file)).toBe(SOURCE.replace(C, "slot c : Int = 3"));
   });
 });
 
@@ -284,5 +466,21 @@ describe("on a file saved with CRLF", () => {
     run(file);
 
     expect(read(file)).toBe(ORIGINAL.replace(from, to).replaceAll("\n", "\r\n"));
+  });
+
+  it.each(WRITES)("patch revert puts the file back byte for byte after $what", ({ run }) => {
+    const file = seed(CRLF);
+
+    patchRevert(file, run(file));
+
+    expect(read(file)).toBe(CRLF);
+  });
+
+  it("patch revert puts the file back byte for byte after a remove of a string over two lines", () => {
+    const file = seed(CRLF);
+
+    patchRevert(file, removeDef(file, "slot.notes", true).opId);
+
+    expect(read(file)).toBe(CRLF);
   });
 });

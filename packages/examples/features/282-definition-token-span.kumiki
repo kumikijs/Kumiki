@@ -7,8 +7,9 @@
 #   kumiki replace <file> slot.notes 'Text = "Counts up."'
 #
 # `fn double` and `slot step` share a line. `view fn.double` prints
-# `fn double(x: Int) -> Int = x * 2`, and `replace slot.step` and
-# `remove slot.step` write only `slot step`: `fn double` stays on the line.
+# `fn double(x: Int) -> Int = x * 2`, and `replace slot.step` writes only
+# `slot step`. `remove slot.step --cascade` also takes `reducer inc`, which
+# reads it, and `fn double` stays on the line through both.
 # The text of `slot notes` runs over two lines, and the second starts with
 # `#`. It is inside the string, not a comment, so `view slot.notes` prints
 # both lines and `replace slot.notes` writes over both.

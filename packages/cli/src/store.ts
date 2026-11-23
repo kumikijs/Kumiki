@@ -142,7 +142,7 @@ function buildEntries(program: Program, source: string, tokens: Token[]): DefEnt
     lineStarts.push(i + 1);
   }
   const offsetOf = (p: Pos): number => lineStarts[p.line - 1]! + p.col - 1;
-  // A definition's first token is its keyword, and its tokens run up to the next one's.
+  // A definition's first token is the word that opens it, and its tokens run up to the next one's.
   const firsts: number[] = [];
   let at = 0;
   for (const d of program.defs) {
