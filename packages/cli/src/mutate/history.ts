@@ -255,18 +255,17 @@ function recordedPrev(op: OpLogEntry): DefSpec | DefText | undefined {
 
 /** Writes back what the log recorded `op` replaced, for the definition now named `qname`. */
 function writeBack(path: string, prev: DefSpec | DefText, qname: string, op: OpLogEntry): string {
-  if ("text" in prev) return replaceText(path, qname, textFor(prev, qname), linesWritten(op, prev));
+  if ("text" in prev) return replaceText(path, qname, textFor(prev, qname), textWritten(op, prev));
   return replaceDef(path, qname, bodyFor(prev, qname)).opId;
 }
 
-/** The lines `op` wrote in place of the definition whose text was `prev`, as far as the log says. */
-function linesWritten(op: OpLogEntry, prev: DefText): string[] | undefined {
+/** The text `op` wrote in place of the definition whose text was `prev`, as far as the log says. */
+function textWritten(op: OpLogEntry, prev: DefText): string | undefined {
   if (op.op === "replace") {
-    return op.body === undefined ? undefined : assemble(op.layer, op.name, op.body).split(/\r?\n/);
+    return op.body === undefined ? undefined : assemble(op.layer, op.name, op.body);
   }
   try {
-    const lines = patchedLines(prev.text.split("\n"), `${op.layer}.${op.name}`, op.patch);
-    return lines.join("\n").split(/\r?\n/);
+    return patchedLines(prev.text.split("\n"), `${op.layer}.${op.name}`, op.patch).join("\n");
   } catch {
     // A patch that does not apply to the text it was logged with: not one an `edit` wrote.
     return undefined;

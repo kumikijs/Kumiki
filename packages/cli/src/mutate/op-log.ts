@@ -61,13 +61,22 @@ export type DefSpec = { layer: string; name: string; body: string };
 
 /** One definition as a `remove` deleted it; one logged before `text` existed has only its body. */
 export type RemovedDef = DefSpec & {
-  /** The definition as the file held it, from its first line to its last. */
+  /**
+   * What the remove cut: the lines it stood on, comments included, or its text from its first
+   * token to its last when another definition still shared one of them.
+   */
   text?: string;
   /** The definition it followed in the file; none for the first one. */
   after?: string;
-  /** How many lines lay between the end of `after`, or the file's start, and its first line. */
+  /**
+   * How many lines lay between the end of `after`, or the file's start, and its first line; 0 also
+   * when it started on the line `after` ended on.
+   */
   gap?: number;
-  /** `true` when it ended the file, with no line break after its last line. */
+  /**
+   * `true` when its last line ended the file, with no line break after it, even when another
+   * definition followed it on that line.
+   */
   last?: boolean;
 };
 

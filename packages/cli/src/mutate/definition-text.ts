@@ -1,5 +1,14 @@
 import { type Def, LexError, lex, type Pos, type Token } from "@kumikijs/compiler";
-import { type DefEntry, referenceSites, type Store, viewDef } from "../store.ts";
+import {
+  type DefEntry,
+  definitionText,
+  joinLines,
+  loadSource,
+  posInText,
+  referenceSites,
+  type Store,
+  spliceLines,
+} from "../store.ts";
 import { escapeRegExp } from "../text.ts";
 
 export function isDefinitionName(name: string): boolean {
@@ -33,7 +42,7 @@ function headerSpan(
   verb: string,
 ): { text: string; from: number; to: number } {
   const qname = `${entry.layer}.${entry.name}`;
-  const text = viewDef(store, qname) ?? "";
+  const text = definitionText(store, entry);
   const rhs = rightHandSide(entry.def);
   const lines = text.split("\n");
   // Positions relative to the definition's text: its first line is line 1.
@@ -41,11 +50,11 @@ function headerSpan(
     lines.slice(0, line - 1).reduce((n, l) => n + l.length + 1, 0) + col - 1;
   const tokens = lex(text);
   const [keyword, name, first] = tokens;
-  const line = rhs === undefined ? 0 : rhs.line - entry.range.startLine + 1;
-  const at = tokens.findIndex((t) => t.pos.line === line && t.pos.col === rhs?.col);
+  const inText = rhs === undefined ? undefined : posInText(entry, rhs);
+  const at = tokens.findIndex((t) => t.pos.line === inText?.line && t.pos.col === inText.col);
   const eq = tokens[at - 1];
   if (
-    rhs === undefined ||
+    inText === undefined ||
     keyword?.kind !== "kw" ||
     keyword.value !== entry.layer ||
     name?.kind !== "ident" ||
@@ -57,7 +66,11 @@ function headerSpan(
   ) {
     throw new Error(`${verb} rejected: cannot locate the header of ${qname}`);
   }
-  return { text, from: offset(first.pos.line, first.pos.col), to: offset(line, rhs.col) };
+  return {
+    text,
+    from: offset(first.pos.line, first.pos.col),
+    to: offset(inText.line, inText.col),
+  };
 }
 
 /** Where the parser put the right-hand side of a definition that has a header. */
@@ -77,23 +90,84 @@ export function headerOf(store: Store, entry: DefEntry, verb: string): string {
   return text.slice(from, to);
 }
 
-/** The definition as the file holds it, from its first line to its last. */
-export function definitionText(store: Store, entry: DefEntry): string {
-  return store.lines.slice(entry.range.startLine - 1, entry.range.endLine).join("\n");
+export { definitionText };
+
+/** `store.source` with `text` in place of the definition's, from its first token to its last. */
+export function withText(store: Store, entry: DefEntry, text: string): string {
+  const { source } = store;
+  const { start, end } = entry.range;
+  return source.slice(0, start) + joinLines(source, [text]) + source.slice(end);
 }
 
-/** What a `remove` records so that its revert can put the definition back where it stood. */
-export function removedText(
+/** The definition that ends on `entry`'s first line, or starts on its last, if any. */
+function lineMate(store: Store, entry: DefEntry): "before" | "after" | undefined {
+  const at = store.defs.indexOf(entry);
+  if (store.defs[at - 1]?.range.endLine === entry.range.startLine) return "before";
+  if (store.defs[at + 1]?.range.startLine === entry.range.endLine) return "after";
+  return undefined;
+}
+
+/** A definition `withoutDefinitions` cut, as `store` held it, and the text the cut took. */
+export type Cut = { entry: DefEntry; text: string };
+
+/**
+ * `store.source` without the definitions `qnames` name, each cut where it stands once those
+ * before it are, and each cut in the order of `qnames`.
+ */
+export function withoutDefinitions(
+  store: Store,
+  qnames: readonly string[],
+): { source: string; cuts: Cut[] } {
+  let next = store.source;
+  const cuts: Cut[] = [];
+  for (const q of qnames) {
+    const entry = store.byQName.get(q);
+    const now = loadSource(next);
+    const here = now.byQName.get(q);
+    if (entry === undefined || here === undefined) throw new Error(`Definition "${q}" not found`);
+    const cut = withoutDefinition(now, here);
+    next = cut.source;
+    cuts.push({ entry, text: cut.text });
+  }
+  return { source: next, cuts };
+}
+
+/**
+ * `store.source` without the definition, and what it took: the lines it stands on, comments on
+ * them included, when no other definition shares them; else its text, and with it the spaces
+ * between it and the definition it shares a line with, the one before it when both sides do.
+ */
+function withoutDefinition(store: Store, entry: DefEntry): { source: string; text: string } {
+  const { source, defs } = store;
+  const at = defs.indexOf(entry);
+  const { start, end, startLine, endLine } = entry.range;
+  const text = definitionText(store, entry);
+  switch (lineMate(store, entry)) {
+    case "before":
+      return { source: source.slice(0, defs[at - 1]!.range.end) + source.slice(end), text };
+    case "after":
+      return { source: source.slice(0, start) + source.slice(defs[at + 1]!.range.start), text };
+    default:
+      return {
+        source: spliceLines(source, startLine, endLine, []),
+        text: store.lines.slice(startLine - 1, endLine).join("\n"),
+      };
+  }
+}
+
+/** Where a `remove` records a definition stood, so that its revert can put it back there. */
+export function removedPlace(
   store: Store,
   entry: DefEntry,
-): { text: string; after?: string; gap: number; last?: true } {
+): { after?: string; gap: number; last?: true } {
   const before = store.defs[store.defs.indexOf(entry) - 1];
+  const { startLine, endLine } = entry.range;
   return {
-    text: definitionText(store, entry),
     ...(before === undefined ? {} : { after: `${before.layer}.${before.name}` }),
-    gap: entry.range.startLine - (before?.range.endLine ?? 0) - 1,
+    // None when it starts on the line the one before it ends on: it goes back on the next line.
+    gap: Math.max(0, startLine - (before?.range.endLine ?? 0) - 1),
     // A file that ends in a line break splits into one more line, an empty one.
-    ...(entry.range.endLine === store.lines.length ? { last: true } : {}),
+    ...(endLine === store.lines.length ? { last: true } : {}),
   };
 }
 
@@ -102,7 +176,7 @@ export function bodyOf(store: Store, entry: DefEntry, verb: string): string {
     const { text, from } = headerSpan(store, entry, verb);
     return text.slice(from).trimEnd();
   }
-  return extractBody(entry.layer, entry.name, viewDef(store, `${entry.layer}.${entry.name}`) ?? "");
+  return extractBody(entry.layer, entry.name, definitionText(store, entry));
 }
 
 export function headerItems(def: Def | undefined): string[] {
@@ -142,7 +216,7 @@ function extractBody(layer: string, name: string, text: string): string {
   }
 }
 
-/** Every place `entry`'s name is spelled: on its own definition line and in each reference. */
+/** Every place `entry`'s name is spelled: the token after its keyword, and each reference. */
 export function nameSites(
   store: Store,
   entry: DefEntry,
@@ -159,7 +233,7 @@ export function nameSites(
     }
     if (!reachable) unpositioned.push(from);
   }
-  return { own: defNamePos(store, entry, entry.name), refs, unpositioned };
+  return { own: entry.namePos, refs, unpositioned };
 }
 
 export function respell(
@@ -194,14 +268,6 @@ export function respell(
     out[line - 1] = next;
   }
   return out;
-}
-
-export function defNamePos(store: Store, entry: DefEntry, name: string): Pos | undefined {
-  const line = store.lines[entry.range.startLine - 1] ?? "";
-  const keywordCol = (entry.def as { pos?: Pos }).pos?.col ?? 1;
-  const from = keywordCol - 1 + entry.layer.length;
-  const at = line.indexOf(name, from);
-  return at < 0 ? undefined : { line: entry.range.startLine, col: at + 1 };
 }
 
 export function splitQname(qname: string): [string, string] {

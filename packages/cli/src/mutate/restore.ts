@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { joinLines, load, loadSource, type Store, spliceLines } from "../store.ts";
 import { withWriteLock } from "../write-lock.ts";
 import { commit } from "./commit.ts";
-import { bodyOf } from "./definition-text.ts";
+import { bodyOf, withText } from "./definition-text.ts";
 import { enforceLock } from "./locks.ts";
 import { type DefSpec, logOp } from "./op-log.ts";
 
@@ -23,14 +23,14 @@ export type RestoredDef = DefSpec & {
 
 /**
  * Writes `text` in place of `qname`'s definition, and logs it as a `replace`. When the file still
- * holds `wrote` from the definition's first line, it takes all of those lines, also the blank and
- * comment lines past the definition's end.
+ * holds `wrote` from the definition's first token, up to a line break or the end of the file, it
+ * takes all of that, also the comments and blank lines past the definition's last token.
  */
 export function replaceText(
   path: string,
   qname: string,
   text: string,
-  wrote: readonly string[] | undefined,
+  wrote: string | undefined,
 ): string {
   enforceLock(path, qname);
   return withWriteLock(path, () => {
@@ -38,19 +38,34 @@ export function replaceText(
     const store = load(path);
     const entry = store.byQName.get(qname);
     if (!entry) throw new Error(`Definition "${qname}" not found`);
-    const from = entry.range.startLine;
-    const held = wrote?.every((line, i) => store.lines[from - 1 + i] === line) ? wrote.length : 0;
-    const to = Math.max(entry.range.endLine, from + held - 1);
-    const prev = store.lines.slice(from - 1, to).join("\n");
-    const next = spliceLines(store.source, from, to, text.split("\n"));
-    return commit(path, next, "replace", () => {
-      const written = load(path);
-      const now = written.byQName.get(qname);
-      if (now === undefined) throw new Error(`the text written back does not define ${qname}`);
-      const body = bodyOf(written, now, "replace");
-      return logOp(path, { op: "replace", layer: entry.layer, name: entry.name, body, prev }, {});
-    });
+    const { start, end } = entry.range;
+    const held = wrote === undefined ? undefined : joinLines(store.source, [wrote]);
+    const stop = start + (held?.length ?? 0);
+    const to =
+      held !== undefined && store.source.startsWith(held, start) && endsLine(store.source, stop)
+        ? Math.max(end, stop)
+        : end;
+    const prev = store.source.slice(start, to).split(/\r?\n/).join("\n");
+    const next = withText(store, { ...entry, range: { ...entry.range, end: to } }, text);
+    return commit(
+      path,
+      next,
+      "replace",
+      () => {
+        const written = load(path);
+        const now = written.byQName.get(qname);
+        if (now === undefined) throw new Error(`the text written back does not define ${qname}`);
+        const body = bodyOf(written, now, "replace");
+        return logOp(path, { op: "replace", layer: entry.layer, name: entry.name, body, prev }, {});
+      },
+      qname,
+    );
   });
+}
+
+/** Whether `at` is where a line of `source` ends: at a line break, or at the end of the file. */
+function endsLine(source: string, at: number): boolean {
+  return at === source.length || source.startsWith("\n", at) || source.startsWith("\r\n", at);
 }
 
 /** Writes each definition back where it stood, and logs one `add` of the first `with` the rest. */
@@ -103,6 +118,10 @@ function placeText(source: string, d: RestoredDef): string {
 function writeAt(source: string, store: Store, line: number, d: RestoredDef): string {
   const count = store.lines.length;
   const atEnd = line > count || (line === count && store.lines[count - 1] === "");
+  // A byte order mark opens the file, so a text put back on its first line goes after it.
+  if (!atEnd && line === 1 && source.startsWith("﻿") && !d.text.startsWith("﻿")) {
+    return `﻿${spliceLines(source.slice(1), 1, 0, d.text.split("\n"))}`;
+  }
   if (!atEnd) return spliceLines(source, line, line - 1, d.text.split("\n"));
   return source + joinLines(source, [`${"\n".repeat(line - count)}${d.text}${d.last ? "" : "\n"}`]);
 }
