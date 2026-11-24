@@ -150,6 +150,7 @@ export {
   type KumikiElementOptions,
 } from "./element.ts";
 export {
+  type BindWrite,
   createEpisodeLogger,
   type Episode,
   type EpisodeLocalStorage,

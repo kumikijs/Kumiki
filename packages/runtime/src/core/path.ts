@@ -57,6 +57,27 @@ export function _setPathHelper(
   path: readonly PathSegment[],
   value: unknown,
 ): unknown {
+  return setPath(obj, path, value, false);
+}
+
+/**
+ * `_setPathHelper`, except that a path `obj` no longer has panics where that leaves `obj` as it
+ * is: an unwrap of a `None` or an `Err`, and a Map key it lacks with more path after it.
+ */
+export function setPathOrPanic(
+  obj: unknown,
+  path: readonly PathSegment[],
+  value: unknown,
+): unknown {
+  return setPath(obj, path, value, true);
+}
+
+function setPath(
+  obj: unknown,
+  path: readonly PathSegment[],
+  value: unknown,
+  strict: boolean,
+): unknown {
   if (path.length === 0) return value;
   const step = path[0] as PathSegment;
   const rest = path.slice(1);
@@ -65,12 +86,15 @@ export function _setPathHelper(
   if (!indexed && isUnwrapSegment(head)) {
     if (obj && typeof obj === "object" && "_tag" in obj) {
       const o = obj as { _tag: string; _0?: unknown };
-      if (o._tag === "None" || o._tag === "Err") return obj;
+      if (o._tag === "None" || o._tag === "Err") {
+        if (strict) throw new KumikiPanic(`${o._tag} holds no value to write through`);
+        return obj;
+      }
       if (o._tag === "Some" || o._tag === "Ok") {
-        return { ...o, _0: _setPathHelper(o._0, rest, value) };
+        return { ...o, _0: setPath(o._0, rest, value, strict) };
       }
     }
-    return _setPathHelper(obj, rest, value);
+    return setPath(obj, rest, value, strict);
   }
   if (Array.isArray(obj)) {
     const at = listPosition(obj, head);
@@ -79,16 +103,24 @@ export function _setPathHelper(
       throw new KumikiPanic(`Index ${at} of a List holds no value to write through`);
     }
     const out = [...obj];
-    out[at] = _setPathHelper(element, rest, value);
+    out[at] = setPath(element, rest, value, strict);
     return out;
   }
   if (typeof head === "number" && (obj === null || typeof obj !== "object")) {
     throw new KumikiPanic(`Index ${head} reaches no List or Map, but ${String(obj)}`);
   }
-  if (indexed && rest.length > 0 && !isEntryOf(obj, head)) return obj;
+  if (indexed && rest.length > 0 && !isEntryOf(obj, head)) {
+    if (strict) {
+      const shown = typeof head === "string" ? JSON.stringify(head) : entryKey(head);
+      throw new KumikiPanic(
+        `Key ${shown} is not in the Map, so it holds no value to write through`,
+      );
+    }
+    return obj;
+  }
   const cur = (obj && typeof obj === "object" ? obj : {}) as Record<string, unknown>;
   const key = entryKey(head);
-  return { ...cur, [key]: _setPathHelper(cur[key], rest, value) };
+  return { ...cur, [key]: setPath(cur[key], rest, value, strict) };
 }
 
 export function isEntryOf(m: unknown, key: unknown): boolean {

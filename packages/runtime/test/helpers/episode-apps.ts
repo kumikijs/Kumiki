@@ -49,17 +49,25 @@ export function mountLogged(app: AppShape, memoryMax = 10): LoggedMount {
 }
 
 /**
- * Mount `app` with an episode logger, dispatch `reducer` once, tear the mount down, and return
- * what was logged as it reads back from a log line (a JSON round trip).
+ * Mount `app` with an episode logger, let `drive` work the mount, tear it down, and return what
+ * was logged as it reads back from a log line (a JSON round trip).
  */
-export function recordDispatch(app: AppShape, reducer: string): EpisodeLogEntry[] {
-  const { logger, dispatch, dispose } = mountLogged(app);
+export function recordDriven(
+  app: AppShape,
+  drive: (mounted: LoggedMount) => void,
+): EpisodeLogEntry[] {
+  const mounted = mountLogged(app);
   try {
-    dispatch(reducer, {});
+    drive(mounted);
   } finally {
-    dispose();
+    mounted.dispose();
   }
-  return JSON.parse(JSON.stringify(logger.list())) as EpisodeLogEntry[];
+  return JSON.parse(JSON.stringify(mounted.logger.list())) as EpisodeLogEntry[];
+}
+
+/** {@link recordDriven}, dispatching `reducer` once. */
+export function recordDispatch(app: AppShape, reducer: string): EpisodeLogEntry[] {
+  return recordDriven(app, ({ dispatch }) => dispatch(reducer, {}));
 }
 
 /**

@@ -10,11 +10,7 @@ import {
 } from "./core.ts";
 import { isPositiveInt } from "./positive-int.ts";
 import { valueEqual } from "./stdlib.ts";
-import type {
-  EpisodeLogEntry,
-  EpisodeMockPolicy,
-  EpisodeReducerStep,
-} from "./testkit/episode-log.ts";
+import type { EpisodeLogEntry, EpisodeMockPolicy } from "./testkit/episode-log.ts";
 import {
   _jsonStr,
   compareReducerExpect,
@@ -313,7 +309,7 @@ export const _stdlibTest = {
       for (const ep of episodes) {
         for (const s of ep.steps) {
           if (s.kind === "reducer" || s.kind === "bind") {
-            const diffs = (s as EpisodeReducerStep)["slot-diffs"] ?? [];
+            const diffs = s["slot-diffs"] ?? [];
             for (const d of diffs) expectedSlots[d.name] = d.after;
           }
         }

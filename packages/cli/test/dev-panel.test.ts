@@ -123,18 +123,38 @@ describe("installDevPanel", () => {
     expect(document.querySelector(".kdp-steps")?.textContent).toContain("[reducer] inc");
   });
 
-  it("lists a bind write as its trigger and the slot it moved", () => {
+  it.each([
+    {
+      to: "the slot itself",
+      write: { slot: "draft", written: "milk", before: "", after: "milk" },
+      label: "draft",
+      diff: 'draft: "" → "milk"',
+    },
+    {
+      to: "a path",
+      write: {
+        slot: "form",
+        path: ["title"],
+        written: "milk",
+        before: { title: "" },
+        after: { title: "milk" },
+      },
+      label: "form.title",
+      diff: 'form: {"title":""} → {"title":"milk"}',
+    },
+  ])("lists a bind write to $to by its bind path, and the slot it moved", ({
+    write,
+    label,
+    diff,
+  }) => {
     const logger = createEpisodeLogger();
-    const app = { live: { draft: "" }, slots: { draft: { value: "" } } };
-    logger.recordBind(document.createElement("input"), app, "draft", "milk", undefined, "milk");
+    logger.recordBind({ control: document.createElement("input"), ...write });
     const panel = installDevPanel({ logger, getApp: emptyApp });
     panel.push(lastOf(logger));
     const head = document.querySelector(".kdp-episode-head") as HTMLElement;
-    expect(head.textContent).toContain("ui.input draft");
+    expect(head.textContent).toContain(`ui.input ${label}`);
     head.click();
-    expect(document.querySelector(".kdp-steps")?.textContent).toBe(
-      '[bind] draft  draft: "" → "milk"',
-    );
+    expect(document.querySelector(".kdp-steps")?.textContent).toBe(`[bind] ${label}  ${diff}`);
   });
 
   it("preserves slot values across an HMR-style remount by copying app.live", () => {

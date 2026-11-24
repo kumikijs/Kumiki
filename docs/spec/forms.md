@@ -54,6 +54,7 @@ reducer editTodo
 |---|---|
 | `input` | `Text` (`type=text/email/password/url/search/tel`, or any other field whose value is the text typed: `number/date/datetime-local/time/month/week/color`), `Int`/`Float` (`type=number`), `Time` (`type=date/datetime-local`) |
 | `textarea` | `Text` |
+| `editable` | `Text` (written back as the field's plain-text `textContent`) |
 | `select` | Any (same type as the `value` of `options`) |
 | `slider` | `Int` / `Float` |
 | `check` / `switch` | `Bool` |

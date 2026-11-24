@@ -21,6 +21,7 @@ export type PanicCategory =
   | "capability"
   | "tile-render"
   | "hydrate"
+  | "bind"
   | "unknown";
 
 export type PanicCauseLink = { message: string; stack?: string };
@@ -129,10 +130,21 @@ export type EpisodeLoggerOptions = {
   onEpisode?: (ep: Episode) => void;
 };
 
-/** What {@link EpisodeLogger.recordBind} reads of the app: the slot's value before, and whether it is volatile. */
-export type BindJournalApp = {
-  live?: Record<string, unknown>;
-  slots: Record<string, { value: unknown; volatile?: boolean | undefined } | undefined>;
+/** A write a bound control made, as {@link EpisodeLogger.recordBind} journals it. */
+export type BindWrite = {
+  /** The control that wrote: the event a choice writes on is `change`, the rest `input`. */
+  control: Element;
+  slot: string;
+  /** Where in the slot, for a control bound through a path; absent or empty for the slot itself. */
+  path?: readonly BindSegment[] | undefined;
+  /** What the control wrote, at `path`. */
+  written: unknown;
+  /** The whole slot before the write. */
+  before: unknown;
+  /** The whole slot after it. */
+  after: unknown;
+  /** The slot is `volatile`: the write is not journalled. */
+  volatile?: boolean | undefined;
 };
 
 /** An episode the ring holds, and its place among the episodes its logger opened. */
@@ -148,18 +160,11 @@ export type EpisodeLogger = {
     envReads?: readonly EnvRead[],
   ): void;
   /**
-   * Journal a write a bound control is about to make, as an episode of its own: `after` is the
-   * slot's value once it lands, `value` what the control wrote at `path`. A write with no control
-   * behind it, or to a `volatile` slot, is not journalled.
+   * Journal a write a bound control made, once the slot has taken it, as an episode of its own
+   * that commits as it opens: `onCommit` and `onEpisode` are handed it before this returns, after
+   * any episode begun earlier. A write to a `volatile` slot is not journalled.
    */
-  recordBind(
-    control: Element | undefined,
-    app: BindJournalApp,
-    slot: string,
-    after: unknown,
-    path: readonly BindSegment[] | undefined,
-    value: unknown,
-  ): void;
+  recordBind(write: BindWrite): void;
   recordEffectStart(name: string, args: unknown): string;
   recordEffectEnd(token: string, name: string, result: "ok" | "err", value: unknown): () => void;
   recordEffectCancel(targetId: string): void;
@@ -359,8 +364,8 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
         ts: now(),
       });
     },
-    recordBind(control, app, slot, after, path = [], value) {
-      if (!control || app.slots[slot]?.volatile) return;
+    recordBind({ control, slot, path = [], written, before, after, volatile }) {
+      if (volatile) return;
       const ts = now();
       // Committed as it opens: a bind runs no reducer and emits nothing, so nothing follows it.
       const ep: Episode = {
@@ -371,8 +376,8 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
             kind: "bind",
             slot,
             ...(path.length > 0 ? { path: [...path] } : {}),
-            value,
-            "slot-diffs": [{ name: slot, before: app.live?.[slot], after }],
+            value: written,
+            "slot-diffs": [{ name: slot, before, after }],
             ts,
           },
         ],

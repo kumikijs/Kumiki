@@ -413,7 +413,7 @@ FAIL  replay-renamed (Nms)
   diff at:  episodes
 ```
 
-replay にはそのような episode を走らせる手段がなく（[ランタイム §10.5.3](./runtime.md#_10-5-3-replay)）、replay されない episode は panic もエラーも起こさないので、`no-panics` / `no-errors` だけでは、それを何もテストしないものにした改名そのものの上で成り立ってしまう。ログを記録し直すか、reducer にログの持つ名前を付ける。`name` のない入口の `reducer` step も同じように失敗させ、その報告は `reducer step <n> has no name` である。入口の reducer がまったくない `ssr.hydrate` の bootstrap は reducer が 1 つも走らなかった episode であり、クリーンに replay される。bind したコントロールの書き込みが記録した episode は、その書き込みを replay する。それ以外の episode に入口の reducer がなければ、`no reducer step` で失敗させる。その理由はランタイム §10.5.3 にある。
+replay にはそのような episode を走らせる手段がなく（[ランタイム §10.5.3](./runtime.md#_10-5-3-replay)）、replay されない episode は panic もエラーも起こさないので、`no-panics` / `no-errors` だけでは、それを何もテストしないものにした改名そのものの上で成り立ってしまう。ログを記録し直すか、reducer にログの持つ名前を付ける。`name` のない入口の `reducer` step も同じように失敗させ、その報告は `reducer step <n> has no name` である。プログラムがもう宣言していない slot を名指す `bind` step（`no slot named "<name>"`）、`slot` のない `bind` step、`reducer` step と同じ episode にある `bind` step も同じように失敗させる。入口の reducer がまったくない `ssr.hydrate` の bootstrap は reducer が 1 つも走らなかった episode であり、クリーンに replay される。bind したコントロールの書き込みが記録した episode は、その書き込みを replay する。それ以外の episode に入口の reducer がなければ、`no reducer step` で失敗させる。その理由はランタイム §10.5.3 にある。
 
 ## 8.7 ランナー
 
