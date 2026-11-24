@@ -1,18 +1,20 @@
 import {
+  _setPathHelper,
   batchRejections,
   bindLabel,
   type EffectSpec,
   type EnvRead,
   emptyRoute,
+  entryKey,
   KumikiPanic,
   type PanicCategory,
   type PanicCauseLink,
+  type PathGap,
   panicInfo,
   type ReducerSpec,
   type RefinementNaming,
   type RefinementRejection,
   reportRejectedBatch,
-  setPathOrPanic,
   slotAccepts,
   standInValue,
   withEnvReplay,
@@ -539,6 +541,13 @@ function unwritableBind(ep: EpisodeLogEntry, app: ReplayApp): MissingEntryReduce
   return undefined;
 }
 
+/** A path the replayed slot no longer has is a panic, where the live write leaves the slot. */
+function panicAtGap(gap: PathGap): never {
+  if ("tag" in gap) throw new KumikiPanic(`${gap.tag} holds no value to write through`);
+  const shown = typeof gap.key === "string" ? JSON.stringify(gap.key) : entryKey(gap.key);
+  throw new KumikiPanic(`Key ${shown} is not in the Map, so it holds no value to write through`);
+}
+
 /**
  * Make each recorded bind write again: the value at its path, over the slot as replay has left
  * it, so a reducer that now writes the rest of the slot differently shows. A write the program's
@@ -558,7 +567,7 @@ function replayBinds(
     const before = app.live[b.slot];
     let after: unknown;
     try {
-      after = b.path?.length ? setPathOrPanic(before ?? {}, b.path, b.value) : b.value;
+      after = b.path?.length ? _setPathHelper(before ?? {}, b.path, b.value, panicAtGap) : b.value;
     } catch (e) {
       // The path names what the replayed slot no longer holds: an index past its end, a key its
       // Map lacks, or the inside of a `None`. Anything else is not the log's doing.

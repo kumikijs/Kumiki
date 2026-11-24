@@ -44,8 +44,8 @@ export {
   entryKey,
   isEntryOf,
   listPosition,
+  type PathGap,
   type PathSegment,
-  setPathOrPanic,
 } from "./core/path.ts";
 export { PatchRequiresRebuild, WRAPPING_TILE_KINDS } from "./core/reconcile.ts";
 export {
