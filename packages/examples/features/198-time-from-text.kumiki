@@ -10,7 +10,7 @@
 # with no zone (the local clock) and date-only is the instant it names, so
 # `utc` and `offset` hold the same one.
 #
-# `stamps` is filled from a JSON payload whose `at` fields are text, and
+# `stamps` is requested from a JSON payload whose `at` fields are text, and
 # `Decoder.Json` reads a `Time` field by the same grammar. "1" is no instant
 # there either, rather than a millisecond after the epoch, so the payload is no
 # `List(Stamp)`: `loadStamps.err` gets `decode failed: expected Time at [0].at`

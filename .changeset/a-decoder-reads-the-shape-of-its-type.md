@@ -1,5 +1,6 @@
 ---
 "@kumikijs/compiler": minor
+"@kumikijs/runtime": patch
 ---
 
 `Decoder.Json(T)` checks that a decoded value is a `T` (its records, lists, options, maps, unions and nominal types, not only the predicates `T` carries) and reads a `Time` field from ISO 8601 text, so a body of the wrong shape is the effect's `.err` instead of an `.ok` typed as `T`.
@@ -11,8 +12,8 @@ before: .ok($u)   →  "ok name= id+1=71"
 after:  .err($e)  →  $e.message == "decode failed: expected Int at .id"
 ```
 
-A field that is absent is `decode failed: missing at .name`. The value is checked in the form the program holds it in, the form `Json(v)` sends and storage writes, so an `Option` is `{"_tag": "None"}` / `{"_tag": "Some", "_0": …}` and a JSON `null` is no `None`. Fields the type does not declare are kept. A decode failure is not retried, as before.
+A field that is absent is `decode failed: missing at .name`. The value is checked in the form the program holds it in, the form `Json(v)` sends and storage writes, so an `Option` is `{"_tag": "None"}` / `{"_tag": "Some", "_0": …}` and a JSON `null` is no `None`. A record, a `Map` and a `Set` are plain objects, so a stored `Bytes` or an IndexedDB `Date` is none of them, and an `Int` may be `NaN` or infinite, as one computed from a `Float` and stored can be. Fields the type does not declare are kept. A decode failure is not retried, as before, and a body nested deeper than the check can walk is a decode failure too, where it used to reach `.err` as a bare `RangeError` with no body.
 
 A `Time` position reads text by `Time.parse`'s grammar and is written back as the instant, so `plus`, `diff`, `to-ms` and the comparisons work on a time the server sent as `"2026-03-07T10:00:00Z"`. A JSON number is milliseconds. Anything else, digits in a string included (`"1772877600000"`), is `decode failed: expected Time at .<field>`. A `T` that is a `Time` itself is read from a number only.
 
-The same check runs on `storage.read`, `session.read` and `indexed.read`. A host provider for a read capability now receives `decode` as a function for every `Decoder.Json(T)` whose argument names a type, not only for a `T` with predicates. It returns `undefined` or the first failure, as before (`kind` is now also `expected <T>` or `missing`), and writes each instant it reads from text into the value it was given.
+The same check runs on `storage.read`, `session.read` and `indexed.read`. A host provider for a read capability now receives `decode` as a function for every `Decoder.Json(T)` whose argument names a type, not only for a `T` with predicates. It returns `undefined` or the first failure, as before (`kind` is now also `expected <T>` or `missing`), and writes each instant it reads from text into the value it was given, so a provider must deliver that same value: a copy it checked instead still holds the text. `decode` throws on a frozen value that holds a `Time` as text.

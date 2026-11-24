@@ -14,7 +14,7 @@
   },
   "steps": [
     {
-      "label": "a body that is no User reaches .err naming the field, and a Time read from text is an instant",
+      "label": "`.err` shows the response's status and the first position that does not fit; `.ok` reads the instant",
       "expect": {
         "noErrors": true,
         "state": {

@@ -16,7 +16,7 @@
   },
   "steps": [
     {
-      "label": "text outside Time.parse's grammar is no instant, decoded or parsed; text in it is the instant it names",
+      "label": "text outside Time.parse's grammar is no instant and text in it is the instant it names; `.err` shows the first position that does not fit",
       "expect": {
         "noErrors": true,
         "state": {

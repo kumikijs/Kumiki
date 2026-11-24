@@ -7,10 +7,10 @@
 #
 # The fixture beside this file answers `/api/user` with
 # `{"id": "7", "title": "not a user"}`. That is no `User`, so `loadUser.ok`
-# never runs and `$u.id + 1` cannot be "71": `.err` gets an `HttpError` whose
-# `message` names the first position that does not fit,
-# `decode failed: expected Int at .id`, with the response's own status and its
-# text in `body`. A response arrived, so `retry=` does not send it again.
+# never runs: `.err` gets an `HttpError` whose `message` names the first
+# position that does not fit, `decode failed: expected Int at .id`, with the
+# response's own status and its text in `body`. A response arrived, so `retry=`
+# does not send it again.
 #
 # JSON has no time, so a `Time` position reads ISO 8601 text in
 # `Time.parse`'s grammar as the instant it names, and a JSON number as that many

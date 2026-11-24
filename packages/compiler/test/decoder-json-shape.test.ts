@@ -12,6 +12,8 @@ type Page(T) = {items: List(T), next: Option(Int)}
 type Due     = nominal Time
 type Stamp   = {at: Time}
 type When    = At(Time) | Never
+type Memo    = {text: Text where nonempty}
+type Nest(A) = {v: A, next: Option(Nest(List(A)))}
 `;
 
 /** A program whose one storage read decodes with `decoder`. */
@@ -131,6 +133,30 @@ describe("Decoder.Json(T) refuses a value that is not a T", () => {
       value: { items: [{ id: 1 }], next: { _tag: "None" } },
       refused: failure("missing", ["items", 0, "name"]),
     },
+    { t: "Tuple(Int, Text)", value: [1, "a", 3], refused: failure("expected Tuple(Int, Text)") },
+    { t: "Memo", value: { text: 5 }, refused: failure("expected Text", ["text"]) },
+    {
+      t: "Map(Float, Int)",
+      value: { "1.50": 1 },
+      refused: failure("expected Float", [{ key: "1.50" }]),
+    },
+    {
+      t: "Map(Time, Int)",
+      value: { "1.5": 1 },
+      refused: failure("expected Time", [{ key: "1.5" }]),
+    },
+    { t: "Map(Int, Int)", value: { "-0": 1 }, refused: failure("expected Int", [{ key: "-0" }]) },
+    {
+      t: "File",
+      value: { name: "a.txt", size: "3", type: "text/plain" },
+      refused: failure("expected Int", ["size"]),
+    },
+    { t: "File", value: "a.txt", refused: failure("expected File") },
+    {
+      t: "Nest(Int)",
+      value: { v: "1", next: { _tag: "None" } },
+      refused: failure("expected Int", ["v"]),
+    },
   ])("refuses $value as $t", async ({ t, value, refused }) => {
     expect((await checkOf(t))(value)).toEqual(refused);
   });
@@ -152,10 +178,141 @@ describe("Decoder.Json(T) refuses a value that is not a T", () => {
     { t: "Tree", value: { v: 1, kids: [{ v: 2, kids: [] }] } },
     { t: "Page(User)", value: { items: [{ id: 1, name: "a" }], next: { _tag: "Some", _0: 2 } } },
     { t: "Time", value: AT },
+    { t: "Shape", value: { _tag: "Square", _0: 1, _1: 2 } },
+    { t: "Map(Float, Int)", value: { "1.5": 1, NaN: 2, "-Infinity": 3 } },
+    { t: "Map(Time, Int)", value: { [AT]: 1 } },
+    {
+      t: "File",
+      value: { name: "a.txt", size: 3, type: "text/plain", _file: {} },
+    },
+    {
+      t: "Nest(Int)",
+      value: { v: 1, next: { _tag: "Some", _0: { v: [2], next: { _tag: "None" } } } },
+    },
   ])("takes $value as $t, unchanged", async ({ t, value }) => {
     const copy = structuredClone(value);
     expect((await checkOf(t))(value)).toBeUndefined();
     expect(value).toEqual(copy);
+  });
+});
+
+// A storage tag or an IndexedDB clone can hand back an object JSON never makes.
+describe("Decoder.Json(T) takes only a plain object as a record, a Map or a Set", () => {
+  it.each([
+    {
+      t: "Map(Int, Int)",
+      value: new Uint8Array([0, 1, 2]),
+      refused: failure("expected Map(Int, Int)"),
+    },
+    {
+      t: "{m: Map(Int, Int)}",
+      value: { m: new Uint8Array([0, 1, 2]) },
+      refused: failure("expected Map(Int, Int)", ["m"]),
+    },
+    { t: "Set(Int)", value: new Uint8Array(0), refused: failure("expected Set(Int)") },
+    { t: "Set(Int)", value: new Date(0), refused: failure("expected Set(Int)") },
+    {
+      t: "Map(Text, Int)",
+      value: new Map([["a", 1]]),
+      refused: failure("expected Map(Text, Int)"),
+    },
+    { t: "User", value: new Date(0), refused: failure("expected User") },
+  ])("refuses $value as $t", async ({ t, value, refused }) => {
+    expect((await checkOf(t))(value)).toEqual(refused);
+  });
+
+  it("takes an object with no prototype", async () => {
+    const value = Object.assign(Object.create(null), { id: 7, name: "Ann" });
+    expect((await checkOf("User"))(value)).toBeUndefined();
+  });
+});
+
+// `(-1.0).sqrt.floor` is an `Int` that is `NaN`, and storage keeps it.
+describe("Decoder.Json(T) takes a number that is not finite where the program can hold one", () => {
+  it.each([
+    { t: "Int", value: Number.NaN },
+    { t: "{n: Int}", value: { n: Number.NEGATIVE_INFINITY } },
+    { t: "Cents", value: Number.POSITIVE_INFINITY },
+    { t: "Stamp", value: { at: Number.NaN } },
+    { t: "Map(Int, Text)", value: { NaN: "x", Infinity: "y", "-Infinity": "z" } },
+    { t: "Set(Time)", value: { NaN: true } },
+    // A structured key holds a number that is not finite as `null`.
+    { t: "Map(Tuple(Float, Int), Text)", value: { "[null,null]": "x" } },
+    { t: "Set({at: Time})", value: { '{"at":null}': true, [`{"at":${AT}}`]: true } },
+  ])("takes $value as $t, unchanged", async ({ t, value }) => {
+    const copy = structuredClone(value);
+    expect((await checkOf(t))(value)).toBeUndefined();
+    expect(value).toEqual(copy);
+  });
+
+  it.each([
+    { t: "Int", value: null, refused: failure("expected Int") },
+    {
+      t: "Map(Int, Text)",
+      value: { nan: "x" },
+      refused: failure("expected Int", [{ key: "nan" }]),
+    },
+    {
+      t: "Set({at: Time})",
+      value: { '{"at":"2026-03-07T10:00:00Z"}': true },
+      refused: failure("expected Time", [{ member: '{"at":"2026-03-07T10:00:00Z"}' }, "at"]),
+    },
+  ])("still refuses $value as $t", async ({ t, value, refused }) => {
+    expect((await checkOf(t))(value)).toEqual(refused);
+  });
+});
+
+// `Unit`, `Bytes` and `File` have no text of their own, so a key of one is stored as a structured
+// key is: `Unit` as `"null"`, the others as their JSON.
+describe("Decoder.Json(T) reads a key with no text of its own as it is stored", () => {
+  it.each([
+    { t: "Set(Unit)", value: { null: true } },
+    { t: "Map(Bytes, Int)", value: { '{"0":0,"1":1,"2":2}': 1 } },
+    {
+      t: "Map(File, Int)",
+      value: { '{"_file":{},"name":"a.txt","size":3,"type":"text/plain"}': 1 },
+    },
+  ])("takes $value as $t", async ({ t, value }) => {
+    expect((await checkOf(t))(value)).toBeUndefined();
+  });
+
+  it.each([
+    { t: "Set(Unit)", value: { x: true }, refused: failure("expected Unit", [{ member: "x" }]) },
+    {
+      t: "Map(Bytes, Int)",
+      value: { hello: 1 },
+      refused: failure("expected Bytes", [{ key: "hello" }]),
+    },
+    {
+      t: "Map(File, Int)",
+      value: { hello: 1 },
+      refused: failure("expected File", [{ key: "hello" }]),
+    },
+    {
+      t: "Map(File, Int)",
+      value: { '{"name":"a.txt"}': 1 },
+      refused: failure("missing", [{ key: '{"name":"a.txt"}' }, "size"]),
+    },
+  ])("refuses $value as $t", async ({ t, value, refused }) => {
+    expect((await checkOf(t))(value)).toEqual(refused);
+  });
+});
+
+// `Nest` applies itself to a growing argument, so every level is a type of its own to check.
+describe("Decoder.Json(T) checks a growing generic 32 levels down", () => {
+  /** A `Nest(Int)` holding `bottom` after `depth` steps of `next._0`, its `v`s empty lists. */
+  const nested = (depth: number, bottom: unknown, top = true): unknown =>
+    depth === 0
+      ? bottom
+      : { v: top ? 0 : [], next: { _tag: "Some", _0: nested(depth - 1, bottom, false) } };
+
+  it("refuses a value 31 levels down", async () => {
+    const refused = (await checkOf("Nest(Int)"))(nested(31, "garbage"));
+    expect(refused?.kind).toMatch(/^expected Nest\(/);
+  });
+
+  it("takes any value past 32 levels, unchecked", async () => {
+    expect((await checkOf("Nest(Int)"))(nested(32, "garbage"))).toBeUndefined();
   });
 });
 
@@ -197,6 +354,20 @@ describe("Decoder.Json(T) reads a Time position by Time.parse's grammar", () => 
 
   it("names a nominal Time by its own name", async () => {
     expect((await checkOf("{at: Due}"))({ at: "soon" })).toEqual(failure("expected Due", ["at"]));
+  });
+
+  // A host provider calls the check on the value it delivers, so it sees what the check did.
+  it("leaves the instants it read before the position it refuses", async () => {
+    const value = { a: "2026-03-07T10:00:00Z", b: "2026-03-07T10:00:01Z", m: { "-0": 5 } };
+    const check = await checkOf("{a: Time, b: Time, m: Map(Int, Int)}");
+    expect(check(value)).toEqual(failure("expected Int", ["m", { key: "-0" }]));
+    expect(value).toEqual({ a: AT, b: AT + 1000, m: { "-0": 5 } });
+  });
+
+  it("throws on a frozen value that holds a Time as text", async () => {
+    const check = await checkOf("Stamp");
+    expect(() => check(Object.freeze({ at: "2026-03-07T10:00:00Z" }))).toThrow(TypeError);
+    expect(check(Object.freeze({ at: AT }))).toBeUndefined();
   });
 
   it("reads a Time that is the whole value from a number only", async () => {

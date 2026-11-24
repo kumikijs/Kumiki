@@ -37,6 +37,7 @@ app D
 
 const USER = program("type User = {id: Int, name: Text}", "User");
 const BOOKING = program("type Booking = {iso: Time, ms: Time, off: Time}", "Booking");
+const TREE = program("type Tree = {v: Int, kids: List(Tree)}", "Tree");
 
 type Settled = { got: unknown; err: unknown; calls: number };
 
@@ -49,9 +50,8 @@ describe("Decoder.Json(T) through the built-in http handler", () => {
     useHttpFixture(null);
   });
 
-  /** Click Go against a 200 answering `body`, and return what `.ok` and `.err` stored. */
-  async function answer(src: string, body: unknown): Promise<Settled> {
-    const text = JSON.stringify(body);
+  /** Click Go against a 200 answering `text`, and return what `.ok` and `.err` stored. */
+  async function answer(src: string, body: unknown, text = JSON.stringify(body)): Promise<Settled> {
     double = stubFetch(() => new Response(text, { status: 200 }));
     const app = await loadSource(src);
     return withMounted(app, async (root) => {
@@ -106,6 +106,23 @@ describe("Decoder.Json(T) through the built-in http handler", () => {
     expect(settled.err).toEqual(refused(`decode failed: expected Time at .${field}`, body));
   });
 
+  // `JSON.parse` takes text nested this deep, and a recursive type's check overflows the stack on it.
+  it("refuses a body nested deeper than the check can walk as a decode failure", async () => {
+    const depth = 50_000;
+    const text = `${'{"v":0,"kids":['.repeat(depth)}${"]}".repeat(depth)}`;
+    const settled = await answer(TREE, undefined, text);
+    expect(settled.got).toEqual({ _tag: "None" });
+    expect(settled.err).toEqual({
+      _tag: "Some",
+      _0: {
+        status: 200,
+        message: expect.stringMatching(/^decode failed: RangeError/),
+        body: { _tag: "Some", _0: text },
+      },
+    });
+    expect(settled.calls).toBe(1);
+  });
+
   it("shows example 284's refusal and the instant it read, through its own fixture", async () => {
     useHttpFixture(readHttpFixture(EXAMPLE));
     const app = await loadApp(EXAMPLE);
@@ -121,14 +138,33 @@ describe("Decoder.Json(T) through the built-in http handler", () => {
 });
 
 describe("Decoder.Json(T) through the built-in storage handler", () => {
-  it("refuses a stored value of the wrong shape with the Text its out= declares", async () => {
-    const app = await loadSource(`type Count = {n: Int}
-slot why : Text = ""
+  // A stored tag can read back as an object JSON never makes, such as the bytes of a `Bytes`.
+  it.each([
+    {
+      what: "a field of the wrong type",
+      type: "{n: Int}",
+      stored: JSON.stringify({ n: "1" }),
+      why: "decode failed: expected Int at .n",
+    },
+    {
+      what: "a Bytes in place of a Map",
+      type: "Map(Int, Int)",
+      stored: '~{"$bytes":"AAEC"}',
+      why: "decode failed: expected Map(Int, Int)",
+    },
+    {
+      what: "a Bytes in place of a Map field",
+      type: "{m: Map(Int, Int)}",
+      stored: '~{"m":{"$bytes":"AAEC"}}',
+      why: "decode failed: expected Map(Int, Int) at .m",
+    },
+  ])("refuses $what with the Text its out= declares", async ({ type, stored, why }) => {
+    const app = await loadSource(`slot why : Text = ""
 
 effect load cap=storage.read
             in=Unit
-            out=Result(Option(Count), Text)
-            map-request={key: "count", decode: Decoder.Json(Count)}
+            out=Result(Option(${type}), Text)
+            map-request={key: "count", decode: Decoder.Json(${type})}
 
 reducer boot on=app.start      do= emit load()
 reducer bad  on=load.err($e, _) do= why := $e
@@ -140,12 +176,12 @@ app S
     routes = {"/" -> App, "/404" -> App}
     init   = []
 `);
-    localStorage.setItem("count", JSON.stringify({ n: "1" }));
-    const why = await withMounted(app, async () => {
+    localStorage.setItem("count", stored);
+    const seen = await withMounted(app, async () => {
       const live = defined(app.live, "the app's live map") as Record<string, unknown>;
       await waitUntil(() => live.why !== "", { timeoutMs: 3000 });
       return live.why;
     });
-    expect(why).toBe("decode failed: expected Int at .n");
+    expect(seen).toBe(why);
   });
 });

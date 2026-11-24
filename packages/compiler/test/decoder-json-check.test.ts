@@ -1,6 +1,8 @@
+import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { defined } from "./helpers/defined.ts";
 import { builtSummariesOf, codesOf, locatedOf, posOf } from "./helpers/diagnostics.ts";
-import { compileOrFail, decodeHandedBy } from "./helpers/module.ts";
+import { decodeHandedBy, loadApp } from "./helpers/module.ts";
 
 const TYPES = `
 type NoteId = nominal Text where uuid
@@ -92,11 +94,28 @@ describe("Decoder.Json(T) carries T's check to the handler", () => {
     });
   });
 
-  it("walks the predicates with a slot's helper for the same type, not a second copy", () => {
-    const slot = "slot notes : Map(NoteId, Note) = {}";
-    const walks = (decoder: string) =>
-      compileOrFail(program(decoder, slot)).match(/const _rq\d+ = /g)?.length;
-    expect(walks("Decoder.Json(Map(NoteId, Note))")).toBe(walks('Decoder.Json("Plain")'));
+  it.each([
+    { what: "a key", value: { k3j9x: { id: UUID, text: "a" } } },
+    { what: "an entry's field", value: { [UUID]: { id: UUID, text: "" } } },
+    { what: "a nominal field", value: { [UUID]: { id: "x", text: "a" } } },
+  ])("refuses a predicate on $what as a slot of the same type does", async ({ value }) => {
+    const src = program("Decoder.Json(Map(NoteId, Note))", "slot notes : Map(NoteId, Note) = {}");
+    const decode = (await decodeHandedBy(src)) as Check;
+    const { slots } = await loadApp<AppShape>(src, "decoder-slot");
+    const slot = defined(slots.notes?.refineFailure, "the slot's failure reader");
+    expect(decode(value)).toBeDefined();
+    expect(decode(value)).toEqual(slot(value));
+  });
+
+  // A shape is checked before the predicates, so a field that is absent is `missing`, not refused
+  // by the predicate its type carries.
+  it("answers a missing field before any predicate", async () => {
+    const check = (await decodeOf("Decoder.Json(Map(NoteId, Note))")) as Check;
+    expect(check({ [UUID]: { id: UUID } })).toEqual({
+      kind: "missing",
+      args: [],
+      path: [{ entry: UUID }, "text"],
+    });
   });
 });
 
