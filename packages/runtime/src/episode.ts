@@ -21,6 +21,7 @@ export type PanicCategory =
   | "capability"
   | "tile-render"
   | "hydrate"
+  /** Replay's own: a bound control's write it cannot make again. No recorded step carries it. */
   | "bind"
   | "unknown";
 
