@@ -190,7 +190,6 @@ export function decoders(env: TypeEnv, refinements: NestedRefinements): Decoders
         case "Float":
           return [number('typeof v === "number"')];
         case "Text":
-        case "EffectId":
           return [unless('typeof v === "string"', label)];
         case "Bool":
           return [unless('typeof v === "boolean"', label)];
@@ -200,7 +199,9 @@ export function decoders(env: TypeEnv, refinements: NestedRefinements): Decoders
           return [unless(inKey ? `${plain()}(v)` : "v instanceof Uint8Array", label)];
         case "File":
           return recordOf(FILE_FIELDS.fields, label, generics);
-        // JSON holds no decoder, and the checker refuses one in the type a `Decoder.Json(T)` reads.
+        // JSON holds no decoder or effect id, and the checker refuses either in the type a
+        // `Decoder.Json(T)` reads.
+        case "EffectId":
         case "Decoder":
           return [`return ${fail(label)};`];
         default:
