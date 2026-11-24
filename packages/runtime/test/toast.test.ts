@@ -1,5 +1,5 @@
 import type { CapabilityRegistry, TileCtx, TileNode } from "@kumikijs/runtime";
-import { installToast, renderToString, statusTiles } from "@kumikijs/runtime";
+import { installToast, renderToString, statusTiles, TOAST_STACK_SELECTOR } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bareApp } from "./helpers/app.ts";
 import { defined } from "./helpers/defined.ts";
@@ -35,10 +35,14 @@ describe("the toast effect", () => {
     expect(banner()?.textContent).toBe("Saved");
   });
 
-  it("is a polite live region", async () => {
+  // `status` is atomic, so a region holding the button would read "Failed, Dismiss".
+  it("is a polite live region that holds the text and not the dismiss button", async () => {
     await fire({ kind: "error", text: "Failed" });
-    expect(banner()?.getAttribute("role")).toBe("status");
-    expect(banner()?.getAttribute("aria-live")).toBe("polite");
+    const region = defined(banner()?.querySelector("[role='status']"), "the live region");
+    expect(region.getAttribute("aria-live")).toBe("polite");
+    expect(region.textContent).toBe("Failed");
+    expect(region.querySelector("button")).toBeNull();
+    expect(banner()?.querySelectorAll("[aria-live]")).toHaveLength(1);
   });
 
   const some = (ms: number) => ({ _tag: "Some", _0: ms });
@@ -171,21 +175,14 @@ describe("the toast effect", () => {
     expect(seen).not.toHaveBeenCalled();
   });
 
-  it("stacks toasts shown together in one element fixed to the bottom-right, oldest first", async () => {
+  // Where the stack lands on screen is the browser tier's to see.
+  it("stacks toasts shown together in one element in <body>, oldest first", async () => {
     await fire({ kind: "error", text: "Failed" });
     await fire({ kind: "success", text: "Saved" });
     expect(texts()).toEqual(["Failed", "Saved"]);
-    const stack = defined(banners()[0]?.parentElement, "the stack");
-    expect(banners().map((b) => b.parentElement)).toEqual([stack, stack]);
-    expect(stack.matches("body > [data-kumiki-toast-stack]")).toBe(true);
-    const { position, bottom, right, display, flexDirection } = stack.style;
-    expect({ position, bottom, right, display, flexDirection }).toEqual({
-      position: "fixed",
-      bottom: "24px",
-      right: "24px",
-      display: "flex",
-      flexDirection: "column",
-    });
+    const stacks = document.querySelectorAll(`body > ${TOAST_STACK_SELECTOR}`);
+    expect(stacks).toHaveLength(1);
+    expect(banners().map((b) => b.parentElement)).toEqual([stacks[0], stacks[0]]);
     // Placed by the stack's flow, so a banner that leaves frees its place.
     expect(banners().map((b) => b.style.position)).toEqual(["", ""]);
   });
@@ -230,6 +227,45 @@ describe("the toast effect", () => {
     vi.advanceTimersByTime(3_001);
     expect(texts()).toEqual(["Failed"]);
     expect(document.activeElement).toBe(dismissButton(banner()));
+  });
+
+  // Otherwise focus falls to <body>, the commonest case: a lone error toast, Tab, then Escape.
+  it.each<[string, (b: HTMLElement) => void]>([
+    ["is dismissed", (b) => pressEscape(dismissButton(b))],
+    ["runs out of time", () => vi.advanceTimersByTime(3_001)],
+  ])("gives focus back to where it came from when the last toast %s", async (_, leave) => {
+    const own = pageButton();
+    own.focus();
+    await fire({ kind: "info", text: "Saved" });
+    dismissButton(banner()).focus();
+    leave(defined(banner(), "the toast"));
+    expect(banner()).toBeNull();
+    expect(document.activeElement).toBe(own);
+  });
+
+  it("gives focus back after the toasts that took a place in turn have gone", async () => {
+    const own = pageButton();
+    own.focus();
+    for (const text of ["a", "b", "c"]) await fire({ kind: "error", text });
+    dismissButton(banners()[1] ?? null).focus();
+    for (const left of [["a", "c"], ["a"], []]) {
+      pressEscape(defined(document.activeElement, "the focused button"));
+      expect(texts()).toEqual(left);
+    }
+    expect(document.activeElement).toBe(own);
+  });
+
+  it.each<[string, (own: HTMLElement) => void]>([
+    ["is no longer on the page", (own) => own.remove()],
+    ["was nothing", (own) => own.blur()],
+  ])("lets focus fall to the page when where it came from %s", async (_, lose) => {
+    const own = pageButton();
+    own.focus();
+    lose(own);
+    await fire({ kind: "error", text: "Failed" });
+    dismissButton(banner()).focus();
+    pressEscape(dismissButton(banner()));
+    expect(document.activeElement).toBe(document.body);
   });
 
   it("leaves focus where it is when the toast that goes did not hold it", async () => {

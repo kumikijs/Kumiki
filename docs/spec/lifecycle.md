@@ -331,9 +331,9 @@ reducer notifySave
 
 `kind` is one of `info` / `success` / `warn` / `error`, and reaches the DOM as `data-level` — the runtime attaches no appearance to it. If `duration` is unspecified, the default per kind applies (info 3s, success 3s, warn 5s, error 0 = stays until dismissed); `Some(Duration.ms(0))` asks for the same thing explicitly.
 
-The runtime has a built-in tile that manages a toast stack at the bottom-right of the screen. Toasts shown at the same time are stacked, never drawn over one another: the newest sits nearest the corner, and when one leaves, the others close the gap.
+The `toast` effect keeps one stack at the bottom-right of the screen: an element of its own in `<body>`, not a tile and apart from the `toast` tile, that comes with the first banner and goes with the last. Toasts shown at the same time are stacked, never drawn over one another: the newest sits nearest the corner, and when one leaves, the others close the gap. The stack takes no pointer itself, so the page under the gaps between banners can still be clicked.
 
-Every toast can be dismissed, whatever its duration: by its dismiss button, whose accessible name is "Dismiss", or by Escape while that button has focus. Escape pressed anywhere else is left to the page, so a toast never takes it from the app's own key handlers or from a dialog, and the press that dismisses a toast goes no further. When the toast that leaves, dismissed or timed out, held focus, focus moves to the toast that takes its place — the one below it, or the one above when it was the newest — rather than falling to the page.
+Every toast the runtime draws can be dismissed, whatever its duration: by its dismiss button, whose accessible name is "Dismiss", or by Escape while that button has focus. Escape pressed anywhere else is left to the page, so a toast never takes it from the app's own key handlers or from a dialog, and the press that dismisses a toast goes no further. When the toast that leaves, dismissed or timed out, held focus, focus moves before the banner goes: to the toast that takes its place — the one below it, or the one above when it was the newest — or, when no toast does, back to the element that had focus before it moved into the toasts. Focus falls to the page only when that element is no longer on the page, or focus came into the toasts from nowhere.
 
 ---
 
@@ -347,7 +347,7 @@ Every toast can be dismissed, whatever its duration: by its dismiss button, whos
 | A `label {for: "x"}` must name an `id="x"` that exists | [E0705](./errors.md#e0705-a11y-label-for), under `--strict-a11y` |
 | Keyboard operations (Tab/Enter/Esc) are automatic in the runtime | Runtime guarantee |
 | Focus management: `modal` traps focus | Runtime guarantee |
-| `aria-live` regions: automatic for `toast` (`role="status"`, polite) and `error` (`role="alert"`, assertive) — the tiles and the `toast` effect's banner alike, client and server | Runtime guarantee |
+| `aria-live` regions: automatic for `toast` (`role="status"`, polite) and `error` (`role="alert"`, assertive) — the tiles and the `toast` effect's banner alike, client and server; in the banner the region is its text alone, not the dismiss button beside it | Runtime guarantee |
 
 The checked rows are **off by default and errors when on**: without `--strict-a11y` the compiler filters them out entirely rather than reporting them as warnings, so a build is silent about them; with the flag they fail the build. The runtime guarantees hold either way.
 

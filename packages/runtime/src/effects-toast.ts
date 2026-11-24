@@ -25,14 +25,26 @@ const BANNER_STYLE =
 const DISMISS_STYLE =
   "display:flex;padding:4px;border:0;border-radius:4px;background:none;color:inherit;cursor:pointer;";
 
+/**
+ * The stack, holding where focus was before it last came in from the page. Kept on the element, so
+ * every runtime copy on the page that shares the stack reads the same one.
+ */
+type Stack = HTMLElement & { kumikiFocusCameFrom?: HTMLElement | null };
+
 /** The document's one stack, opened by the first toast that needs it. Looked up rather than kept:
  * the page may have taken it away, as a test that empties `<body>` does. */
-function stack(): HTMLElement {
-  const open = document.querySelector<HTMLElement>("[data-kumiki-toast-stack]");
+function stack(): Stack {
+  const open = document.querySelector<Stack>("[data-kumiki-toast-stack]");
   if (open) return open;
-  const el = document.createElement("div");
+  const el: Stack = document.createElement("div");
   el.dataset.kumikiToastStack = "";
   el.style.cssText = STACK_STYLE;
+  el.addEventListener("focusin", (e) => {
+    const from = e.relatedTarget;
+    if (!(from instanceof Node && el.contains(from))) {
+      el.kumikiFocusCameFrom = from instanceof HTMLElement ? from : null;
+    }
+  });
   document.body.appendChild(el);
   return el;
 }
@@ -71,28 +83,35 @@ function show(t: ToastInput): void {
   banner.style.cssText = BANNER_STYLE;
   banner.dataset.kumikiToast = "";
   if (t.kind) banner.dataset.level = t.kind;
-  banner.setAttribute("role", "status");
-  banner.setAttribute("aria-live", "polite");
+  // The live region holds the text alone: `status` is atomic, and would read the button's name out
+  // with it.
+  const said = document.createElement("span");
+  said.setAttribute("role", "status");
+  said.setAttribute("aria-live", "polite");
+  said.textContent = t.text ?? "";
   const dismiss = document.createElement("button");
   dismiss.type = "button";
   dismiss.dataset.kumikiToastDismiss = "";
   dismiss.setAttribute("aria-label", "Dismiss");
   dismiss.style.cssText = DISMISS_STYLE;
   dismiss.appendChild(cross());
-  banner.append(t.text ?? "", dismiss);
+  banner.append(said, dismiss);
   const home = stack();
   home.appendChild(banner);
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const leave = (): void => {
     clearTimeout(timer);
-    // Focus that would fall to <body> goes to the toast taking this one's place instead.
-    const heir = banner.contains(document.activeElement)
-      ? (banner.nextElementSibling ?? banner.previousElementSibling)
-      : null;
+    // Focus that would fall to <body> goes to the toast taking this one's place, or back where it
+    // came from when none does. It moves before the banner goes, so it never passes through <body>.
+    if (banner.contains(document.activeElement)) {
+      const heir = banner.nextElementSibling ?? banner.previousElementSibling;
+      const back = home.kumikiFocusCameFrom;
+      const next = heir ? heir.querySelector<HTMLElement>("[data-kumiki-toast-dismiss]") : back;
+      if (next?.isConnected) next.focus();
+    }
     banner.remove();
     if (!home.firstElementChild) home.remove();
-    heir?.querySelector<HTMLElement>("[data-kumiki-toast-dismiss]")?.focus();
   };
   dismiss.addEventListener("click", leave);
   // On the banner, not the document: Escape pressed anywhere else stays the page's, and the press

@@ -49,6 +49,16 @@ test("toasts shown together stack at the bottom-right, and close the gap one lea
   for (const b of [error, info]) {
     expect(Math.abs(b.x + b.width - (view.width - 24))).toBeLessThanOrEqual(1);
   }
+  // The stack spans the gap between them, and a pointer there still reaches the page.
+  const under = await page.evaluate(
+    ({ x, y }) => {
+      const el = document.elementFromPoint(x, y);
+      if (!el) return "nothing";
+      return el.closest("[data-kumiki-toast-stack]") ? "the stack" : "the page";
+    },
+    { x: info.x + info.width - 12, y: (error.y + error.height + info.y) / 2 },
+  );
+  expect(under).toBe("the page");
 
   await page.locator("[data-kumiki-toast][data-level='info'] [data-kumiki-toast-dismiss]").click();
   await expect(page.locator("[data-kumiki-toast]")).toHaveCount(1);
@@ -57,7 +67,7 @@ test("toasts shown together stack at the bottom-right, and close the gap one lea
 });
 
 for (const key of ["Escape", "Enter"]) {
-  test(`a keyboard user reaches a toast's dismiss button with Tab and dismisses it with ${key}`, async ({
+  test(`a keyboard user reaches a toast's dismiss button with Tab, dismisses it with ${key}, and is back where they were`, async ({
     page,
   }) => {
     const report = await runOnPage(page, SOURCE, { steps: [{ do: { clickText: "Show error" } }] });
@@ -67,5 +77,7 @@ for (const key of ["Escape", "Enter"]) {
     await expect(page.getByRole("button", { name: "Dismiss" })).toBeFocused();
     await page.keyboard.press(key);
     await expect(page.locator("[data-kumiki-toast]")).toHaveCount(0);
+    // No toast took its place, so focus goes back to the button it came from, not to <body>.
+    await expect(page.getByRole("button", { name: "Show error" })).toBeFocused();
   });
 }

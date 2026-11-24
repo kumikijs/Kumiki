@@ -3,7 +3,12 @@
 // otherwise drop that overlay from every scenario without a word.
 
 import type { AppShape, BuiltinInstaller, CapabilityRegistry } from "@kumikijs/runtime";
-import { installConfirm, installToast, RUNTIME_OVERLAY_SELECTORS } from "@kumikijs/runtime";
+import {
+  installConfirm,
+  installToast,
+  RUNTIME_OVERLAY_SELECTORS,
+  TOAST_STACK_SELECTOR,
+} from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { defined } from "./helpers/defined.ts";
 
@@ -54,4 +59,14 @@ describe("RUNTIME_OVERLAY_SELECTORS", () => {
       expect(marked[0]?.textContent).toBe(p.shows);
     });
   }
+});
+
+// A run takes away the stack it emptied, and finds it by this.
+describe("TOAST_STACK_SELECTOR", () => {
+  it("matches the element in <body> that holds a toast's banner", () => {
+    const shown = added(installToast, "toast", { kind: "info", text: "Saved" });
+    const stack = shown.find((el) => el.matches("[data-kumiki-toast]"))?.parentElement;
+    expect(stack?.matches(TOAST_STACK_SELECTOR)).toBe(true);
+    expect(stack?.parentElement).toBe(document.body);
+  });
 });
