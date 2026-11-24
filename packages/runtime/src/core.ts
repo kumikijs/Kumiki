@@ -13,6 +13,7 @@ export {
   emitId,
   overridableInvoke,
   readStatus,
+  runEffect,
   standInValue,
 } from "./core/effects.ts";
 export {

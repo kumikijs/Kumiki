@@ -150,19 +150,8 @@ export function makeEffectDispatcher(
     const run: Run = { name: eff.name, token, ctl };
     state.inflight.set(id, ctl);
     state.runs.add(run);
-    let outcome: "ok" | "err";
-    let value: unknown;
-    try {
-      // Read inside the try, so a provider that returns no result is an err as well.
-      const res = await runWithRetry(eff, input, caps, ctl.signal);
-      outcome = res.kind;
-      value = res.value;
-    } catch (e) {
-      // An invoke that throws is this request's err: a `Text` for an effect that fails with
-      // `Text`, `{message}` for any other.
-      outcome = "err";
-      value = standInValue(eff, "err", { message: String(e) });
-    }
+    // An invoke that throws, or resolves to no result, is already this request's err here.
+    const { kind: outcome, value } = await runEffect(eff, input, caps, ctl.signal);
     // Released before its result is delivered, so a cancel the `.ok` / `.err` reducers emit finds
     // a request that is over. Under `latest` a newer request may hold the id by now.
     if (state.inflight.get(id) === ctl) {
@@ -367,28 +356,51 @@ export function standInValue(
   return outcome === "err" && eff?.errText ? eff.errText(value) : (value ?? null);
 }
 
-async function runWithRetry(
+/**
+ * The result one run of `eff` delivers: its invoke, attempted again as `eff.retry` says, with an
+ * attempt that throws or resolves to no result read as its err. It never rejects. The live
+ * dispatcher and the server pass both run an effect through here, so the two deliver the same
+ * result.
+ */
+export async function runEffect(
   eff: EffectSpec,
   input: unknown,
   caps: CapabilityRegistry,
   signal?: AbortSignal,
 ): Promise<EffectResult> {
-  const policy = eff.retry;
-  if (!policy) return eff.invoke(input, caps, signal);
-  let last: EffectResult = await eff.invoke(input, caps, signal);
-  for (let attempt = 1; attempt < policy.n; attempt++) {
-    if (last.kind !== "err" || last.final) return last;
-    if (signal?.aborted) return last;
-    const status = readStatus(last.value);
-    const retriable = status === null || status === 0 || status >= 500;
-    if (!retriable) return last;
-    const delay = policy.kind === "linear" ? policy.ms : policy.ms * policy.factor ** (attempt - 1);
-    // An abort during the wait has no attempt running to answer it, so the aborted err
-    // comes from here.
-    if (!(await sleep(delay, signal))) return { kind: "err", value: abortedErr(eff) };
-    last = await eff.invoke(input, caps, signal);
+  try {
+    const policy = eff.retry;
+    let last = resultOf(eff, await eff.invoke(input, caps, signal));
+    if (!policy) return last;
+    for (let attempt = 1; attempt < policy.n; attempt++) {
+      if (last.kind !== "err" || last.final) return last;
+      if (signal?.aborted) return last;
+      const status = readStatus(last.value);
+      const retriable = status === null || status === 0 || status >= 500;
+      if (!retriable) return last;
+      const delay =
+        policy.kind === "linear" ? policy.ms : policy.ms * policy.factor ** (attempt - 1);
+      // An abort during the wait has no attempt running to answer it, so the aborted err
+      // comes from here.
+      if (!(await sleep(delay, signal))) return { kind: "err", value: abortedErr(eff) };
+      last = resultOf(eff, await eff.invoke(input, caps, signal));
+    }
+    return last;
+  } catch (e) {
+    // An invoke that throws is this request's err: a `Text` for an effect that fails with `Text`,
+    // `{message}` for any other.
+    return { kind: "err", value: standInValue(eff, "err", { message: String(e) }) };
   }
-  return last;
+}
+
+// A host provider is not type-checked, so what it resolves to may be no result at all, such as
+// the `undefined` of one with no `return`. That is thrown, to be the attempt's err as a throw is.
+function resultOf(eff: EffectSpec, got: unknown): EffectResult {
+  const kind = (got as { kind?: unknown } | null | undefined)?.kind;
+  if (kind === "ok" || kind === "err") return got as EffectResult;
+  const shown =
+    typeof got === "object" && got !== null ? "an object with no ok or err kind" : String(got);
+  throw new Error(`effect "${eff.name}" resolved to ${shown}, not {kind, value}`);
 }
 
 /**
