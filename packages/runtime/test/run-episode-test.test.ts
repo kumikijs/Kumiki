@@ -375,23 +375,25 @@ describe("a `volatile` slot under `slots-equal`", () => {
 
   const recorded = recordDispatch(makeLastClickApp(true), "inc");
 
+  /** A log of one `inc` that wrote `count` and the slot `diff` names. */
+  function incLog(diff: { name: string; before: unknown; after: unknown }): EpisodeLogEntry[] {
+    return [
+      {
+        ...incEpisode(1),
+        steps: [
+          {
+            kind: "reducer",
+            name: "inc",
+            "slot-diffs": [{ name: "count", before: 0, after: 1 }, diff],
+            emits: [],
+          },
+        ],
+      },
+    ];
+  }
+
   /** A log recorded before `lastClick` was volatile, from an `inc` that wrote another value. */
-  const recordedBeforeVolatile: EpisodeLogEntry[] = [
-    {
-      ...incEpisode(1),
-      steps: [
-        {
-          kind: "reducer",
-          name: "inc",
-          "slot-diffs": [
-            { name: "count", before: 0, after: 1 },
-            { name: "lastClick", before: "", after: "tapped" },
-          ],
-          emits: [],
-        },
-      ],
-    },
-  ];
+  const recordedBeforeVolatile = incLog({ name: "lastClick", before: "", after: "tapped" });
 
   function lastClickTest(
     volatile: boolean,
@@ -430,6 +432,17 @@ describe("a `volatile` slot under `slots-equal`", () => {
       expected: "tapped",
       actual: "clicked",
     });
+  });
+
+  it("still compares a slot an older log wrote that the program no longer declares", () => {
+    const result = lastClickTest(
+      true,
+      "from-log",
+      incLog({ name: "dropped", before: "", after: "kept" }),
+    );
+    expect(result.pass).toBe(false);
+    expect(result.diffAt).toBe("slots.dropped");
+    expect(result.leaf).toEqual({ expected: "kept", actual: undefined });
   });
 
   it.each([
