@@ -100,3 +100,60 @@ app M
     expect(page).toContain("shown: same=true bytes=aGk=");
   });
 });
+
+/** A program that stores `value`, a `type`, and reads it back with `Decoder.Json(type)`. */
+const roundTrip = (types: string, type: string, value: string): string => `${types}
+slot sent  : ${type} = ${value}
+slot shown : Text = "idle"
+
+effect save cap=storage.write in=${type} out=Result(Unit, Text) map-request={key: "rt", value: $1}
+effect load cap=storage.read in=Unit out=Result(Option(${type}), Text) map-request={key: "rt", decode: Decoder.Json(${type})}
+
+reducer goSave on=ui.click(SaveBtn) do= emit save(sent)
+reducer goLoad on=ui.click(LoadBtn) do= emit load()
+reducer saved on=save.ok(_, _) do= shown := "saved"
+reducer loaded on=load.ok($o, _) do=
+    match $o with
+      | Some(v) -> shown := "got " + v.show
+      | None -> shown := "got nothing"
+reducer failed on=load.err($e, _) do= shown := "got err " + $e
+
+tile SaveBtn = button(text="Save")
+tile LoadBtn = button(text="Load")
+tile App = column(SaveBtn, LoadBtn, text("sent: " + sent.show), text("shown: " + shown))
+
+app R
+    caps = [storage.read, storage.write]
+    routes = {"/" -> App, "/404" -> App}
+    init = []
+`;
+
+// What a program stores, it reads back: `Decoder.Json(T)` checks the form `storage-write` writes.
+describe("a value storage-write stored is a T to Decoder.Json(T)", () => {
+  it.each([
+    { what: "a Set", type: "Set(Int)", value: "[3, 1, 2]" },
+    { what: "a Map with Int keys", type: "Map(Int, Text)", value: '{1: "a", -2: "b"}' },
+    { what: "a Map with tuple keys", type: "Map(Tuple(Int, Int), Text)", value: '{(1, 2): "x"}' },
+    { what: "a Set of records", type: "Set({n: Int, s: Text})", value: '[{n: 1, s: "a"}]' },
+    { what: "a Unit field", type: "{u: Unit}", value: "{u: ()}" },
+    { what: "a Set of Unit", type: "Set(Unit)", value: "[()]" },
+    {
+      what: "a user union",
+      types: "type Shape = Circle(Float) | Square(Float, Float) | Dot",
+      type: "List(Shape)",
+      value: "[Square(1.0, 2.0), Dot, Circle(0.5)]",
+    },
+    { what: "an Option(Time)", type: "Option(Time)", value: 'Time.parse("2026-03-07T10:00:00Z")' },
+    // `(-1.0).sqrt.floor` is an `Int` that is `NaN`.
+    { what: "an Int that is NaN", type: "{n: Int}", value: "{n: (-1.0).sqrt.floor}" },
+    { what: "a Set of Ints holding NaN", type: "Set(Int)", value: "[(-1.0).sqrt.floor, 1]" },
+  ])("reads back $what", async ({ types = "", type, value }) => {
+    const page = await run(await loadSource(roundTrip(types, type, value)), [
+      ["Save", "shown: saved"],
+      ["Load", "shown: got"],
+    ]);
+    const sent = /sent: (.*)shown:/.exec(page)?.[1];
+    expect(sent).toBeTruthy();
+    expect(page).toContain(`shown: got ${sent}`);
+  });
+});

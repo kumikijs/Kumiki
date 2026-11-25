@@ -1067,9 +1067,10 @@ the reading every rule in the check keeps.
 ([E0204](./errors.md#e0204-effect-id-misuse)).
 
 `Decoder` is outside it too: no operator applies to a `Decoder`, nor `==` and
-`!=` to a value that holds one. A `Decoder.Json(T)` is its `T`'s check, or one
-value for every `T` that carries none, so `Decoder.Json(Int) == Decoder.Json(Text)`
-would be `true` and `Decoder.Json(Email) == Decoder.Json(Text)` `false`. Each
+`!=` to a value that holds one. A `Decoder.Json(T)` is its `T`'s check, the same
+function for the same `T`, and the `"json"` sentinel for every argument that
+names no type, so `Decoder.Json("a") == Decoder.Json("b")` would be `true` and
+`Decoder.Json(Int) == Decoder.Json(Text)` `false`. Each
 is [E0201](./errors.md#e0201-type-mismatch): `d == Decoder.Text` is
 `Operator "==" cannot compare Decoder with Decoder: a Decoder has no equality`,
 and on a `{d: Decoder}` the message names the type that holds it. Ask an
