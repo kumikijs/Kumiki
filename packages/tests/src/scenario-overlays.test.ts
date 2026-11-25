@@ -2,7 +2,13 @@
 // example corpus runs, so a run reads the overlays that appear during it and
 // leaves the document as it found it.
 
-import { type AppShape, type MountedApp, runScenario, type Scenario } from "@kumikijs/runtime";
+import {
+  type AppShape,
+  type MountedApp,
+  runScenario,
+  type Scenario,
+  TOAST_STACK_SELECTOR,
+} from "@kumikijs/runtime";
 import { afterEach, describe, expect, it } from "vitest";
 import { dialogs, overlays, removeOverlays } from "./helpers/confirm.ts";
 import { mountApp, withRoot } from "./helpers/dom.ts";
@@ -135,7 +141,8 @@ describe("a run reads only the overlays that appear during it, and cleans up aft
           if (n instanceof Element && overlays().includes(n)) opened.push(n);
       }
     });
-    observer.observe(document.body, { childList: true });
+    // The whole subtree: a toast's banner goes into the stack, not straight into <body>.
+    observer.observe(document.body, { childList: true, subtree: true });
     const report = await run({
       steps: [{ do: { clickText: "Notify" } }, { do: { clickText: "Ask" } }],
     });
@@ -144,11 +151,31 @@ describe("a run reads only the overlays that appear during it, and cleans up aft
     expect(opened.map((el) => el.matches("[data-kumiki-toast]"))).toEqual([true, false]);
     // The toast's own timer has seconds left, and the dialog was never answered.
     expect(opened.filter((el) => el.isConnected)).toEqual([]);
+    // Nor the stack the toast went into, which the overlays do not match.
+    expect(document.querySelector(TOAST_STACK_SELECTOR)).toBeNull();
   });
 
   it("removes a toast `init` raised", async () => {
     await run({ steps: [{ expect: { domIncludes: ["Welcome back"] } }] }, await load(INIT_SRC));
     expect(overlays()).toEqual([]);
+    expect(document.querySelector(TOAST_STACK_SELECTOR)).toBeNull();
+  });
+
+  it("leaves the stack when it still holds a toast another app raised", async () => {
+    const other = (await load()) as AppShape & Partial<MountedApp>;
+    const { root, handle } = mountApp(other);
+    try {
+      other._dispatch?.("notify", {});
+      const theirs = overlays();
+      expect(theirs).toHaveLength(1);
+      const report = await run({ steps: [{ do: { clickText: "Notify" } }] });
+      expect(report.ok).toBe(true);
+      const stack = document.querySelector(TOAST_STACK_SELECTOR);
+      expect(stack ? Array.from(stack.children) : null).toEqual(theirs);
+    } finally {
+      handle.dispose();
+      root.remove();
+    }
   });
 
   // The shape's seams belong to whichever mount owns it now, so a dialog left

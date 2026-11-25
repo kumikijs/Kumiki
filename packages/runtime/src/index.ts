@@ -162,7 +162,7 @@ export {
   type PanicStep,
   type SlotDiff,
 } from "./episode.ts";
-export { RUNTIME_OVERLAY_SELECTORS } from "./overlays.ts";
+export { RUNTIME_OVERLAY_SELECTORS, TOAST_STACK_SELECTOR } from "./overlays.ts";
 export { routing } from "./router.ts";
 export {
   partialMatch,
