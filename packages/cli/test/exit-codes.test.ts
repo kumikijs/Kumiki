@@ -33,6 +33,11 @@ app Demo
 /** The warning above plus a repairable typo — the two must not interfere. */
 const WARN_AND_FIXABLE = WARN_ONLY.replace("count.show", "cnt.show");
 
+/** A line that starts no definition: a parse error, so no diagnostic at all. */
+const UNPARSABLE = `slot count : Int = 0
+= = =
+`;
+
 /** No `app`, so E0003 — a diagnostic `planFixes` has no repair branch for. */
 const UNFIXABLE = `slot count : Int = 0
 tile App = column(heading("Count: " + count.show))
@@ -427,6 +432,20 @@ describe("kumiki list", () => {
     const { stdout, code } = runCli(["list", write("list-empty.kumiki", CLEAN), "motion"]);
     expect(stdout.trim()).toBe("");
     expect(code).toBe(0);
+  });
+
+  it.each([
+    { filter: "no filter", rest: [] },
+    { filter: "a filter", rest: ["slot"] },
+  ])("fails for a file that does not parse, with $filter", SPAWN, ({ rest }) => {
+    const { stdout, stderr, code } = runCli([
+      "list",
+      write("list-broken.kumiki", UNPARSABLE),
+      ...rest,
+    ]);
+    expect(stderr).toContain("Parse error at 2:1");
+    expect(stdout).toBe("");
+    expect(code).toBe(1);
   });
 });
 
