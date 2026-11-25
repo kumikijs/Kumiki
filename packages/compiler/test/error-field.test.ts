@@ -26,6 +26,7 @@ slot book  : Map(Text, Contact)              = {}
 slot r     : Pair                            = {pair: ("", 0)}
 slot d     : Drawing                         = {shape: Circle(0)}
 slot i     : Int                             = 0
+slot pick  : Text                            = "b"
 slot tags  : Set(Text where email)           = Set.empty
 fn shout(t: Text) -> Text = t
 `;
@@ -34,7 +35,7 @@ const diagnosticsOf = (tile: string): string[][] =>
   checkSource(program(tile)).map((e) => [e.code, e.kind, e.message]);
 const SEE = "(see docs/spec/forms.md)";
 const ROOT_TAIL = "field= names a slot, or a path into one";
-const STEPS = `A path's steps are fields, ".get", and indices with a literal key ${SEE}`;
+const STEPS = `A path's steps are fields, ".get", and indices ${SEE}`;
 const E0230 = (message: string): string[] => ["E0230", "error-field-not-path", message];
 
 describe("a field= that is not a slot or a path into one is E0230", () => {
@@ -110,14 +111,9 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
       `error(field=…) cannot step through "._1": "Tuple(Text, Int)" has no fields. ${STEPS}`,
     ],
     [
-      "a misspelt step into a union",
-      `tile App = error(field=d.shape.nmae)`,
-      `error(field=…) cannot step through ".nmae": "Shape" has no fields. ${STEPS}`,
-    ],
-    [
-      "a variant's name as a step into a union",
-      `tile App = error(field=d.shape.Square)`,
-      `error(field=…) cannot step through ".Square": "Shape" has no fields. ${STEPS}`,
+      "a member as a step into a union",
+      `tile App = error(field=d.shape.length)`,
+      `error(field=…) cannot step through ".length": "Shape" has no fields. ${STEPS}`,
     ],
     [
       "a call",
@@ -125,19 +121,9 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
       `error(field=…) cannot step through ".trim()": a call is not a step of a path. ${STEPS}`,
     ],
     [
-      "an index computed from a value",
-      `tile App = error(field=xs[i])`,
-      `error(field=…) cannot step through an index that is not a literal: a path names one element or entry by a literal key, such as [0] or ["k"] ${SEE}`,
-    ],
-    [
       "an index into a record",
       `tile App = error(field=form[0])`,
       `error(field=…) cannot step through an index into "Contact": a path's index names a List element or a Map entry ${SEE}`,
-    ],
-    [
-      "an index into a Tuple",
-      `tile App = error(field=r.pair[0])`,
-      `error(field=…) cannot step through an index into "Tuple(Text, Int)": a path's index names a List element or a Map entry ${SEE}`,
     ],
     [
       "no field at all",
@@ -165,12 +151,6 @@ describe("a field= that is not a slot or a path into one is E0230", () => {
       ),
     ]);
   });
-
-  it("points at an index's key", () => {
-    const tile = `tile App = error(field=rows[i].email)`;
-    const [e] = checkSource(program(tile)).filter((x) => x.code === "E0230");
-    expect(e?.pos.col).toBe(`tile App = error(field=rows[`.length + 1);
-  });
 });
 
 describe("a slot, or a path into one, is accepted", () => {
@@ -191,8 +171,18 @@ describe("a slot, or a path into one, is accepted", () => {
     ["a List element through an Option's payload", `maybe.get[1]`],
     ["an element of an element", `grid[0][1]`],
     ["a field of a Map entry", `book["b"].age`],
+    ["a List element at an index a slot holds", `xs[i]`],
+    ["a field of a List element at a computed index", `rows[i + 1].email`],
+    ["a Map entry at a key a slot holds", `book[pick].age`],
+    ["an element of an element, each at a computed index", `grid[i][i * 2]`],
   ])("accepts %s", (_label, field) => {
     expect(codesOf(program(`tile App = error(field=${field})`))).toEqual([]);
+  });
+
+  it("accepts a Map entry at the key a for binds", () => {
+    expect(
+      codesOf(program(`tile App = column(for k in book.keys error(field=book[k].age))`)),
+    ).toEqual([]);
   });
 
   it("reports a field written in the block of a tile-test's expected tree, which reads none", () => {
@@ -222,12 +212,18 @@ test err-field =
 describe("a path another code reports is not E0230 as well", () => {
   it.each([
     ["a field the record lacks", `form.emial`, "E0108"],
+    ["a misspelt step into a union", `d.shape.nmae`, "E0108"],
+    ["a variant's name as a step into a union", `d.shape.Square`, "E0108"],
     ["a member named without its call", `form.email.contains`, "E0213"],
     ["a name that resolves to nothing", `nope`, "E0103"],
     ["a fn named without a call", `shout`, "E0127"],
     ["a List index that is not an Int", `xs["a"]`, "E0201"],
+    ["a computed List index that is not an Int", `xs[pick]`, "E0201"],
+    ["a computed Map key of another type", `m[i]`, "E0201"],
     ["a Map key of another type", `m[3]`, "E0201"],
     ["an index into a Set", `tags[0]`, "E0232"],
+    ["an index into a Tuple", `r.pair[0]`, "E0238"],
+    ["an index into an Int", `i[0]`, "E0238"],
     ["a call to a name no fn defines, such as a tile written as a value", `text("form")`, "E0116"],
   ])("leaves %s to %s", (_label, field, code) => {
     expect(codesOf(program(`tile App = error(field=${field})`))).toEqual([code]);
@@ -257,6 +253,8 @@ describe("the error node names its slot and the path into it", () => {
     [`m["a"]`, "m", [{ at: "a" }]],
     ["n[-1]", "n", [{ at: -1 }]],
     ["b[true]", "b", [{ at: true }]],
+    ["rows[i + 2].email", "rows", [{ at: 2 }, "email"]],
+    ["book[pick].age", "book", [{ at: "b" }, "age"]],
   ])("lowers %s to the slot %s and the path %j", async (field, slot, path) => {
     const node = await errorNode(`error(field=${field})`);
     expect([node.field, node.path]).toEqual([slot, path]);

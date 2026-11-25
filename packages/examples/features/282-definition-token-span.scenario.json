@@ -1,0 +1,30 @@
+{
+  "steps": [
+    {
+      "label": "the notes render both lines of their text, the one starting with # too",
+      "expect": {
+        "noErrors": true,
+        "state": { "count": 0, "step": 2, "notes": "Counts up by two.\n## Doubled" },
+        "domIncludes": ["Counts up by two.\n## Doubled", "Count: 0", "Doubled: 0"]
+      }
+    },
+    {
+      "label": "+ counts up by the step that shares a line with fn double",
+      "do": { "clickText": "+" },
+      "expect": {
+        "noErrors": true,
+        "state": { "count": 2 },
+        "domIncludes": ["Count: 2", "Doubled: 4"]
+      }
+    },
+    {
+      "label": "and again",
+      "do": { "clickText": "+" },
+      "expect": {
+        "noErrors": true,
+        "state": { "count": 4 },
+        "domIncludes": ["Count: 4", "Doubled: 8"]
+      }
+    }
+  ]
+}

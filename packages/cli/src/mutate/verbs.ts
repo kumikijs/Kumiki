@@ -13,12 +13,16 @@ import { commit, compareQNames } from "./commit.ts";
 import {
   assemble,
   bodyOf,
+  definitionText,
   headerItems,
   headerOf,
   isDefinitionName,
   nameSites,
+  removedPlace,
   respell,
   withHeader,
+  withoutDefinitions,
+  withText,
 } from "./definition-text.ts";
 import { enforceLock } from "./locks.ts";
 import {
@@ -102,16 +106,20 @@ function replaceDefLocked(
   const store = load(path);
   const entry = store.byQName.get(qname);
   if (!entry) throw new Error(`Definition "${qname}" not found`);
-  const prev = bodyOf(store, entry, "replace");
+  const prev = definitionText(store, entry);
   const whole = withHeader(entry.layer, body, () => headerOf(store, entry, "replace"));
-  const inserted = assemble(entry.layer, entry.name, whole).split(/\r?\n/);
-  const next = spliceLines(store.source, entry.range.startLine, entry.range.endLine, inserted);
-  const opId = commit(path, next, "replace", () =>
-    logOp(
-      path,
-      { op: "replace", layer: entry.layer, name: entry.name, body: whole, prev },
-      options,
-    ),
+  const next = withText(store, entry, assemble(entry.layer, entry.name, whole));
+  const opId = commit(
+    path,
+    next,
+    "replace",
+    () =>
+      logOp(
+        path,
+        { op: "replace", layer: entry.layer, name: entry.name, body: whole, prev },
+        options,
+      ),
+    qname,
   );
   const now = headerItems(load(path).byQName.get(qname)?.def);
   return { opId, dropped: headerItems(entry.def).filter((item) => !now.includes(item)) };
@@ -210,18 +218,15 @@ function removeSetLocked(
       `remove rejected: ${[...dangling].sort().join("; ")}, outside the definitions being removed (${set.join(", ")}); nothing was written`,
     );
   }
-  const entries = set.map((q) => store.byQName.get(q)).filter((e) => e !== undefined);
-  const [main, ...rest] = entries.map((e) => ({
+  const { source: next, cuts } = withoutDefinitions(store, set);
+  const [main, ...rest] = cuts.map(({ entry: e, text }) => ({
     layer: e.layer,
     name: e.name,
     body: bodyOf(store, e, "remove"),
+    text,
+    ...removedPlace(store, e),
   }));
   if (main === undefined) throw new Error("remove rejected: nothing to remove");
-  // Bottom up, so the line numbers of the entries still to cut stay valid.
-  let next = store.source;
-  for (const e of [...entries].sort((a, b) => b.range.startLine - a.range.startLine)) {
-    next = spliceLines(next, e.range.startLine, e.range.endLine, []);
-  }
   const opId = commit(path, next, "remove", () =>
     logOp(
       path,
@@ -275,7 +280,7 @@ function renameDefLocked(
     );
   }
   if (own === undefined) {
-    throw new Error(`rename aborted: cannot locate "${old}" on its own definition line`);
+    throw new Error(`rename aborted: cannot locate "${old}" as the token after its keyword`);
   }
 
   const lines = respell(store.lines, [own, ...refs], old, newName, "rename");
@@ -304,34 +309,34 @@ function editDefLocked(path: string, qname: string, patch: unknown, options: OpL
   const store = load(path);
   const entry = store.byQName.get(qname);
   if (!entry) throw new Error(`Definition "${qname}" not found`);
-  const prev = bodyOf(store, entry, "edit");
-  const target = store.lines.slice(entry.range.startLine - 1, entry.range.endLine);
-  const next = spliceLines(
-    store.source,
-    entry.range.startLine,
-    entry.range.endLine,
-    patchedLines(target, qname, patch),
+  const prev = definitionText(store, entry);
+  const next = withText(store, entry, patchedLines(prev.split("\n"), qname, patch).join("\n"));
+  return commit(
+    path,
+    next,
+    "edit",
+    () => {
+      const updatedStore = load(path);
+      const updatedEntry = updatedStore.byQName.get(qname);
+      const newBody = updatedEntry ? bodyOf(updatedStore, updatedEntry, "edit") : undefined;
+      return logOp(
+        path,
+        {
+          op: "edit",
+          layer: entry.layer,
+          name: entry.name,
+          patch,
+          ...(newBody !== undefined ? { body: newBody } : {}),
+          prev,
+        },
+        options,
+      );
+    },
+    qname,
   );
-  return commit(path, next, "edit", () => {
-    const updatedStore = load(path);
-    const updatedEntry = updatedStore.byQName.get(qname);
-    const newBody = updatedEntry ? bodyOf(updatedStore, updatedEntry, "edit") : undefined;
-    return logOp(
-      path,
-      {
-        op: "edit",
-        layer: entry.layer,
-        name: entry.name,
-        patch,
-        ...(newBody !== undefined ? { body: newBody } : {}),
-        prev,
-      },
-      options,
-    );
-  });
 }
 
-function patchedLines(target: readonly string[], qname: string, patch: unknown): string[] {
+export function patchedLines(target: readonly string[], qname: string, patch: unknown): string[] {
   if (isFindReplacePatch(patch)) {
     return replaceFirst(target.join("\n"), patch.find, patch.replace, `in ${qname}`).split("\n");
   }

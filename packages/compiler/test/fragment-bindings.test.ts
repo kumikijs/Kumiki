@@ -67,6 +67,7 @@ describe("$1 is the element a List hands its fragment", () => {
     expect(diagnostics(defs, `xs.fold("", loud($1))`, "Text", '""')).toEqual([]);
     expect(diagnostics(defs, "xs.fold(0, loud($1))", "Text", '""')).toEqual([
       "E0201 Expected Text but got Int",
+      "E0201 Expected Int but got Text",
     ]);
   });
 });
@@ -115,6 +116,164 @@ app A
     expect(diagnostics(defs, "m.entries.filter(keep($1, $2))", "List(Tuple(Text, Int))")).toEqual([
       "E0201 Expected Int but got Text",
     ]);
+  });
+});
+
+describe("$1 is the member a Set's filter hands its fragment", () => {
+  const SET = "slot s : Set(Int) = [10, 20]";
+  const IDS = "type Ids = Set(Int)\nslot ids : Ids = [10, 20]";
+  const PAIRS = "slot p : Set(Tuple(Int, Text)) = []";
+  const WHOLE = 'a Set\'s .filter hands each member whole, as "$1"';
+
+  it.each([
+    { name: "a Set", defs: SET, rhs: "s.filter($1.size > 0)", res: "Set(Int)" },
+    { name: "an alias of a Set", defs: IDS, rhs: "ids.filter($1.size > 0)", res: "Ids" },
+  ])("reports a member of $name used as a value it is not", ({ defs, rhs, res }) => {
+    expect(diagnostics(defs, rhs, res)).toEqual([
+      'E0108 Type "Int" has no member ".size" — it is a member of Map / Set',
+    ]);
+  });
+
+  it.each([
+    { name: "a Set", defs: SET, rhs: "s.filter($1 > 15)", res: "Set(Int)" },
+    { name: "an alias of a Set", defs: IDS, rhs: "ids.filter($1 > 12)", res: "Ids" },
+  ])("records the fragment over $name as handed an entry's key alone", ({ defs, rhs, res }) => {
+    const ast = parse(lex(program(defs, rhs, res)));
+    expect(check(ast)).toEqual([]);
+    expect(shapesOf(ast, "filter")).toEqual(["key"]);
+  });
+
+  it.each([
+    { name: "a member", res: "Set(Int)", rhs: "s.filter($1 > 15 & $2)" },
+    {
+      name: "a pair member, which is not taken apart",
+      res: "Set(Tuple(Int, Text))",
+      rhs: `p.filter($2 == "a")`,
+    },
+  ])("binds no second positional beside $name", ({ res, rhs }) => {
+    expect(diagnostics(`${SET}\n${PAIRS}`, rhs, res)).toEqual([
+      `E0103 "$2" is not bound here — ${WHOLE}`,
+    ]);
+  });
+
+  it.each([
+    {
+      name: "a member",
+      defs: SET,
+      params: "n: Int, b: Bool",
+      rhs: "s.filter(keep)",
+      res: "Set(Int)",
+    },
+    {
+      name: "a pair member, which is not taken apart",
+      defs: PAIRS,
+      params: "n: Int, t: Text",
+      rhs: "p.filter(keep)",
+      res: "Set(Tuple(Int, Text))",
+    },
+  ])("refuses a fn that takes a second positional beside $name", ({ defs, params, rhs, res }) => {
+    expect(diagnostics(`fn keep(${params}) -> Bool = true\n${defs}`, rhs, res)).toEqual([
+      `E0213 Function "keep" expects 2 argument(s) but .filter on "${res}" supplies 1 — ${WHOLE}`,
+    ]);
+  });
+});
+
+describe("fold's accumulator is the wider of the init's type and the fragment's result", () => {
+  const PS = "slot ps : List(Float) = [1.5, 2.5]";
+  const XS = "slot xs : List(Int) = [1, 2, 3]";
+
+  it.each([
+    {
+      name: "an Int init and a Float result, which is a Float",
+      defs: PS,
+      rhs: "ps.fold(0, $1 + $2)",
+      res: "Float",
+      slotInit: "0.0",
+    },
+    {
+      name: "an Int init and an Int result",
+      defs: XS,
+      rhs: "xs.fold(0, $1 + $2)",
+      res: "Int",
+      slotInit: "0",
+    },
+    {
+      name: "a Float init and an Int result, which fits it",
+      defs: XS,
+      rhs: "xs.fold(0.5, $2)",
+      res: "Float",
+      slotInit: "0.0",
+    },
+    {
+      name: "an Int init and an if whose branches are an Int and a Float",
+      defs: PS,
+      rhs: "ps.fold(0, if $2 > 2.0 then $1 + $2 else $1)",
+      res: "Float",
+      slotInit: "0.0",
+    },
+    {
+      name: "an Int init and an if whose branches are a Float and an Int",
+      defs: PS,
+      rhs: "ps.fold(0, if $2 > 2.0 then $1 else $1 + $2)",
+      res: "Float",
+      slotInit: "0.0",
+    },
+    {
+      name: "a record init whose Int field the fn's record widens to a Float",
+      defs: `type Sum = {n: Float}\nfn step(acc: Sum, p: Float) -> Sum = {n: acc.n + p}\n${PS}`,
+      rhs: "ps.fold({n: 0}, step)",
+      res: "Sum",
+      slotInit: "{n: 0.0}",
+    },
+    {
+      name: "a widened record whose next reading widens it again",
+      defs: PS,
+      rhs: "ps.fold({a: 0, b: 0}, let r = $1 in {a: r.b, b: r.a + $2}).a",
+      res: "Float",
+      slotInit: "0.0",
+    },
+  ])("accepts $name", ({ defs, rhs, res, slotInit }) => {
+    expect(diagnostics(defs, rhs, res, slotInit)).toEqual([]);
+  });
+
+  it.each([
+    {
+      name: "an if answering [] or a push onto a List(Text) init, which stays a List(Text)",
+      defs: `slot names : List(Text) = []\n${XS}`,
+      rhs: "xs.fold(names, if $2 > 0 then [] else $1.push($2))",
+      res: "List(Text)",
+      slotInit: "[]",
+      want: ["E0201 Expected Text but got Int"],
+    },
+    {
+      name: "an if answering None or a Some onto an Option(Text) init, which stays an Option(Text)",
+      defs: `slot o : Option(Text) = None\n${XS}`,
+      rhs: "xs.fold(o, if $2 > 0 then None else Some($2))",
+      res: "Option(Text)",
+      slotInit: "None",
+      want: ["E0201 Expected Text but got Int"],
+    },
+    {
+      name: "the show of a Map init, a Text the Map is not",
+      defs: `slot m : Map(Text, Int) = {"a": 1}\n${XS}`,
+      rhs: "xs.fold(m, $1.show)",
+      res: "Text",
+      slotInit: '""',
+      want: ["E0201 Expected Map(Text, Int) but got Text"],
+    },
+  ])("reports $name", ({ defs, rhs, res, slotInit, want }) => {
+    expect(diagnostics(defs, rhs, res, slotInit)).toEqual(want);
+  });
+
+  it("reports a result neither type fits, at the fragment or at the fn's name", () => {
+    const step = "fn step(acc: Int, x: Int) -> Text = (acc + x).show";
+    const at = (rhs: string) => pointedErrorsOf(program(`${step}\n${XS}`, rhs, "Text", '""'));
+    const mismatch = (text: string) => [
+      { code: "E0201", message: "Expected Int but got Text", text },
+    ];
+    expect(at("xs.fold(0, $1.show)")).toEqual(mismatch("$1.show)"));
+    expect(at("xs.fold(0, step)")).toEqual(mismatch("step)"));
+    expect(at("xs.fold(0, step($1, $2))")).toEqual(mismatch("step($1, $2))"));
   });
 });
 
@@ -170,6 +329,42 @@ describe("a fn named as the fragment is checked as the call it stands for", () =
       want: ["E0201 Expected Text but got Int"],
     },
     {
+      name: "a Set's member, which its filter hands the fn",
+      defs: `fn loud(x: Text) -> Bool = x != ""\nslot s : Set(Int) = [10, 20]`,
+      inline: "s.filter(loud($1))",
+      bare: "s.filter(loud)",
+      res: "Set(Int)",
+      slotInit: "[]",
+      want: ["E0201 Expected Text but got Int"],
+    },
+    {
+      name: "a fn over a Set's member type",
+      defs: "fn big(n: Int) -> Bool = n > 15\nslot s : Set(Int) = [10, 20]",
+      inline: "s.filter(big($1))",
+      bare: "s.filter(big)",
+      res: "Set(Int)",
+      slotInit: "[]",
+      want: [],
+    },
+    {
+      name: "a Set member that is a pair, which is handed whole, as a Map's key is",
+      defs: "fn big(n: Int) -> Bool = n > 15\nslot s : Set(Tuple(Int, Text)) = []",
+      inline: "s.filter(big($1))",
+      bare: "s.filter(big)",
+      res: "Set(Tuple(Int, Text))",
+      slotInit: "[]",
+      want: ["E0201 Expected Int but got Tuple(Int, Text)"],
+    },
+    {
+      name: "a Bytes Set member, which is not read back as its type, so nothing is checked",
+      defs: "fn big(n: Int) -> Bool = n > 15\nslot s : Set(Bytes) = []",
+      inline: "s.filter(big($1))",
+      bare: "s.filter(big)",
+      res: "Set(Bytes)",
+      slotInit: "[]",
+      want: [],
+    },
+    {
       name: "fold's parameters of the init's type and the element's",
       defs: STEP("Int", "Int"),
       inline: "xs.fold(0, step($1, $2))",
@@ -203,7 +398,52 @@ describe("a fn named as the fragment is checked as the call it stands for", () =
       bare: 'xs.fold("", step)',
       res: "Int",
       slotInit: "0",
+      want: ["E0201 Expected Int but got Text", "E0201 Expected Text but got Int"],
+    },
+    {
+      name: "fold's fn answering a Text from an Int init, which fit neither way",
+      defs: `fn step(acc: Int, x: Int) -> Text = (acc + x).show\n${XS}`,
+      inline: "xs.fold(0, step($1, $2))",
+      bare: "xs.fold(0, step)",
+      res: "Text",
+      slotInit: '""',
       want: ["E0201 Expected Int but got Text"],
+    },
+    {
+      name: "fold's fn answering the Float an Int init widens to, which its first parameter must take",
+      defs: "fn step(acc: Int, p: Float) -> Float = p\nslot ps : List(Float) = []",
+      inline: "ps.fold(0, step($1, $2))",
+      bare: "ps.fold(0, step)",
+      res: "Float",
+      slotInit: "0.0",
+      want: ["E0201 Expected Int but got Float"],
+    },
+    {
+      name: "fold's fn whose Int parameter a Float init does not narrow to",
+      defs: `fn step(acc: Int, x: Int) -> Int = x\n${XS}`,
+      inline: "xs.fold(0.5, step($1, $2))",
+      bare: "xs.fold(0.5, step)",
+      res: "Int",
+      slotInit: "0",
+      want: ["E0201 Expected Int but got Float"],
+    },
+    {
+      name: "fold's fn answering the List(Int) that fills an empty List init",
+      defs: `fn step(acc: List(Text), x: Int) -> List(Int) = [x]\n${XS}`,
+      inline: "xs.fold([], step($1, $2))",
+      bare: "xs.fold([], step)",
+      res: "List(Int)",
+      slotInit: "[]",
+      want: ["E0201 Expected List(Text) but got List(Int)"],
+    },
+    {
+      name: "fold's fn answering the Option(Int) that fills a None init",
+      defs: `fn step(acc: Option(Text), x: Int) -> Option(Int) = Some(x)\n${XS}`,
+      inline: "xs.fold(None, step($1, $2))",
+      bare: "xs.fold(None, step)",
+      res: "Option(Int)",
+      slotInit: "None",
+      want: ["E0201 Expected Option(Text) but got Option(Int)"],
     },
     {
       name: "fold from an Int into a nominal Int",
@@ -266,7 +506,7 @@ describe("a fn named as the fragment is checked as the call it stands for", () =
       bare: "xs.fold([], into)",
       res: "Set(Int)",
       slotInit: "[]",
-      want: ["E0201 Expected Set(Int) but got List(?)"],
+      want: ["E0201 Expected Set(Int) but got List(?)", "E0201 Expected List(?) but got Set(Int)"],
     },
     {
       name: "fold into a Set from a typed Set",
@@ -329,6 +569,7 @@ describe("a fn named as the fragment is checked as the call it stands for", () =
       Option: "Option(Int)",
       Result: "Result(Int, Text)",
       Map: "Map(Text, Int)",
+      Set: "Set(Int)",
     };
     const bound: Record<string, readonly string[]> = {
       "List.filter": ["Int"],
@@ -345,6 +586,7 @@ describe("a fn named as the fragment is checked as the call it stands for", () =
       "Result.flat-map": ["Int"],
       "Result.map": ["Int"],
       "Result.map-err": ["Text"],
+      "Set.filter": ["Int"],
     };
     const rows: string[] = [];
     for (const [method, fragment] of Object.entries(FRAGMENT_ARGUMENTS)) {
@@ -367,7 +609,7 @@ tile App = text("x")`),
         expect(errors("probe"), `${row}(probe)`).toEqual(want);
       }
     }
-    // Every fragment method, on each receiver language.md lists it for. A `Set`'s `filter` has none.
+    // Every fragment method, on each receiver language.md lists it for.
     expect(rows.sort()).toEqual(Object.keys(bound).sort());
   });
 });
@@ -390,14 +632,5 @@ describe("where the lowering's reading is not certain, nothing is bound", () => 
       expect(diagnostics(defs, "xs.fold({}, step)", acc, "{}"), acc).toEqual([]);
       expect(diagnostics(defs, "xs.fold({}, step($1, $2))", acc, "{}"), acc).toEqual([]);
     }
-  });
-
-  it("a Set's filter, which stdlib.md gives no binding", () => {
-    // `_s.filter` hands a Set's predicate each member as an `[element, true]` entry, the element
-    // read back as its type. A one-positional row would bind `$1` to that whole entry.
-    const defs = `${LOUD}\nslot s : Set(Int) = []`;
-    expect(diagnostics(defs, "s.filter(loud)", "Set(Int)")).not.toContain(
-      "E0201 Expected Text but got Int",
-    );
   });
 });
