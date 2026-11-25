@@ -541,7 +541,7 @@ reducer typed on=ui.key(RefBox) do= ...          # wired onto the input, both wa
 
 The tiles a subscription reaches are decided by the path a descendant is rendered under, not by the descendant alone: a `Leaf` rendered *beside* `RefBox` is not inside it and receives no handler from it. When several enclosing tiles subscribe to one event on one descendant, [§1.6.4](#_1-6-4-invariants) Invariant 3 applies as usual — every match fires, in definition order.
 
-A handler written for that same event on a *call site* of the descendant tile (`Btn {onClick: r}`) **joins** the lifted subscriptions rather than replacing them: `r` and every enclosing tile's reducer all fire, in definition order ([§1.7.3](#_1-7-3-event-handler-props)). So a subscription on a container reaches *every* descendant that fires the event, a button with its own handler included: `ui.click(TodoRow)` on a row holding a checkbox and a delete button runs on both. Subscribe to the narrowest tile the event means — `ui.click(TodoCheck)` with `tile TodoCheck = check(...)` — rather than to the row around it.
+A handler written for that same event on a *call site* of the descendant tile (`Btn {onClick: r}`) **joins** the lifted subscriptions rather than replacing them: `r` and every enclosing tile's reducer all fire, in definition order ([§1.7.3](#_1-7-3-event-handler-props)). So a subscription on a container reaches *every* descendant that hands the event to a reducer, a button with its own handler included: `ui.click(TodoRow)` on a row holding a checkbox and a delete button runs on both. Subscribe to the narrowest tile the event means — `ui.click(TodoCheck)` with `tile TodoCheck = check(...)` — rather than to the row around it.
 
 ### 1.6.3 lvalue Semantics
 

@@ -711,7 +711,7 @@ describe("selector id mismatch (E0212, strictSelectorId)", () => {
   it.each([
     "toolbar",
     "label",
-  ])("names the elements a click subscription is wired onto, for an id on one it is not (%s)", (id) => {
+  ])("lists the ids of the elements that hand click to a reducer, for an id on an element that does not (%s)", (id) => {
     const src = `
       slot log : Text = ""
       reducer hit on=ui.click(Toolbar#${id}) do= log := log + "hit;"
