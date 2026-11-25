@@ -33,6 +33,7 @@ export {
   readHttpFixture,
   useHttpFixture,
 } from "./harness.ts";
+export { type LoadedApp, loadApp } from "./load.ts";
 export {
   addDef,
   CASCADE_HELP,
@@ -56,8 +57,6 @@ export {
 } from "./mutate.ts";
 export {
   type Coverage,
-  type LoadedApp,
-  loadApp,
   runCmd,
   runScenarioSource,
   runTests,

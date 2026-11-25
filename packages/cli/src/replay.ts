@@ -7,7 +7,7 @@ import {
   type ReplayEvent,
   replayEpisodes,
 } from "@kumikijs/runtime";
-import { compileForLoad, ensureDom, printWarnings } from "./smoke.ts";
+import { compileForLoad, ensureDom, printWarnings } from "./load.ts";
 import { messageOf } from "./text.ts";
 
 export type ReplayCmdOptions = {
