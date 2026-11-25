@@ -314,34 +314,41 @@ describe("runReducerTestFlow (reducer-test effect mocks)", () => {
     expect(r.diffAt).toContain("unhandled");
   });
 
-  describe("a throw from a reducer it runs", () => {
-    /** The flow app, with the `.ok` reducer replaced by one that throws `thrown`. */
-    const throwing = (thrown: unknown): FlowApp => {
-      const app = makeFlowApp();
-      for (const r of app.reducers) {
-        if (r.name === "userLoaded")
-          r.apply = () => {
-            throw thrown;
-          };
-      }
-      return app;
-    };
-    const mocks: FlowInput["mocks"] = { loadUser: { outcome: "ok", value: { id: "u1" } } };
-    /** What `run` threw, so a value that is not an `Error` can be compared too. */
-    const thrownBy = (go: () => unknown): unknown => {
-      try {
-        go();
-      } catch (e) {
-        return e;
-      }
-      throw new Error("nothing was thrown");
-    };
+  /** The flow app, with the reducer named `reducerName` replaced by one that throws `thrown`. */
+  const throwing = (reducerName: string, thrown: unknown): FlowApp => {
+    const app = makeFlowApp();
+    for (const r of app.reducers) {
+      if (r.name === reducerName)
+        r.apply = () => {
+          throw thrown;
+        };
+    }
+    return app;
+  };
+  /** What `run` threw, so a value that is not an `Error` can be compared too. */
+  const thrownBy = (go: () => unknown): unknown => {
+    try {
+      go();
+    } catch (e) {
+      return e;
+    }
+    throw new Error("nothing was thrown");
+  };
+  const okMock: FlowInput["mocks"] = { loadUser: { outcome: "ok", value: { id: "u1" } } };
 
+  // The target and the reducers its mocked results reach share one catch today; a row for each
+  // keeps that true if the loop is restructured.
+  describe.each<[string, string, FlowInput["mocks"]]>([
+    ["the target", "fetchUser", okMock],
+    ["an .ok reducer", "userLoaded", okMock],
+    ["an .err reducer", "userFailed", { loadUser: { outcome: "err", value: "boom" } }],
+  ])("a throw from %s", (_from, reducerName, mocks) => {
     it.each<[string, KumikiPanic, string]>([
       ["a panic, as its message", new KumikiPanic("boom"), 'panic: "boom"'],
       ["a panic with no message, as its kind", new KumikiPanic(""), 'panic: "KumikiPanic"'],
     ])("reports %s, as the test's unexpected panic", (_, panic, actual) => {
-      expect(run(throwing(panic), { mocks, expect: expected({ users: {} }) })).toEqual({
+      const r = run(throwing(reducerName, panic), { mocks, expect: expected({ users: {} }) });
+      expect(r).toEqual({
         name: "t",
         pass: false,
         expected: '{"users":{}}',
@@ -355,13 +362,15 @@ describe("runReducerTestFlow (reducer-test effect mocks)", () => {
       ["a value", { a: 1 }],
       ["a value with a message", { message: "m" }],
     ])("lets %s that is not a panic out, as a throw in the test's body", (_, thrown) => {
-      expect(thrownBy(() => run(throwing(thrown), { mocks, expect: expected({}) }))).toBe(thrown);
+      const go = () => run(throwing(reducerName, thrown), { mocks, expect: expected({}) });
+      expect(thrownBy(go)).toBe(thrown);
     });
 
     it("so a test that expects a panic is not passed by a throw that is not one", () => {
       const fault = new TypeError("x.map is not a function");
       const expectsPanic: FlowInput["expect"] = { kind: "panic", message: "not a function" };
-      expect(thrownBy(() => run(throwing(fault), { mocks, expect: expectsPanic }))).toBe(fault);
+      const go = () => run(throwing(reducerName, fault), { mocks, expect: expectsPanic });
+      expect(thrownBy(go)).toBe(fault);
     });
   });
 });
