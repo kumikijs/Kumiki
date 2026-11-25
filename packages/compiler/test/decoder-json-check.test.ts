@@ -1,7 +1,8 @@
 import type { AppShape } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
+import { defined } from "./helpers/defined.ts";
 import { builtSummariesOf, codesOf, locatedOf, posOf } from "./helpers/diagnostics.ts";
-import { compileOrFail, importModule, LOADABLE } from "./helpers/module.ts";
+import { decodeHandedBy, loadApp } from "./helpers/module.ts";
 
 const TYPES = `
 type NoteId = nominal Text where uuid
@@ -43,31 +44,19 @@ const program = (decoder: string, extra = ""): string =>
 type Check = (v: unknown) => { kind: string; args: unknown[]; path: unknown[] } | undefined;
 
 /** The `decode` the compiled `load` effect hands its capability. */
-async function decodeOf(decoder: string): Promise<unknown> {
-  const mod = await importModule<{ default: AppShape }>(
-    compileOrFail(program(decoder), LOADABLE),
-    "decoder",
-  );
-  const load = mod.default.effects.load;
-  if (!load) throw new Error("the program no longer declares `load`");
-  let seen: { decode?: unknown } | undefined;
-  const caps = {
-    provider: () => async (req: { decode?: unknown }) => {
-      seen = req;
-      return { kind: "ok", value: null };
-    },
-  } as unknown as Parameters<typeof load.invoke>[1];
-  await load.invoke(undefined, caps, new AbortController().signal);
-  if (!seen) throw new Error("the effect did not reach its provider");
-  return seen.decode;
-}
+const decodeOf = (decoder: string): Promise<unknown> => decodeHandedBy(program(decoder));
 
 const UUID = "0b8f2c1e-3d4a-4f5b-8c6d-7e8f9a0b1c2d";
 
 describe("Decoder.Json(T) carries T's check to the handler", () => {
-  it("a T with no predicate keeps the json sentinel", async () => {
-    expect(await decodeOf("Decoder.Json(Plain)")).toBe("json");
-    expect(await decodeOf("Decoder.Json(Map(Text, List(Plain)))")).toBe("json");
+  it("a T with no predicate is still a check, of its shape", async () => {
+    const check = (await decodeOf("Decoder.Json(Map(Text, List(Plain)))")) as Check;
+    expect(typeof check).toBe("function");
+    expect(check({ a: [{ n: 1, s: "x" }] })).toBeUndefined();
+  });
+
+  it("keeps the json sentinel only for an argument that names no type", async () => {
+    expect(await decodeOf('Decoder.Json("Plain")')).toBe("json");
   });
 
   it("an argument with a value inside it spells no T, so it keeps the json sentinel", async () => {
@@ -137,13 +126,28 @@ describe("Decoder.Json(T) carries T's check to the handler", () => {
     expect(check(refused)).toEqual({ kind, args: [], path });
   });
 
-  it("is the same helper as a slot of the same type, not a second copy", () => {
-    const out = compileOrFail(
-      program("Decoder.Json(Map(NoteId, Note))", "slot notes : Map(NoteId, Note) = {}"),
-    );
-    const helper = /"decode": (_rq\d+)/.exec(out)?.[1];
-    expect(helper).toBeDefined();
-    expect(out).toContain(`refineFailure: ${helper}`);
+  it.each([
+    { what: "a key", value: { k3j9x: { id: UUID, text: "a" } } },
+    { what: "an entry's field", value: { [UUID]: { id: UUID, text: "" } } },
+    { what: "a nominal field", value: { [UUID]: { id: "x", text: "a" } } },
+  ])("refuses a predicate on $what as a slot of the same type does", async ({ value }) => {
+    const src = program("Decoder.Json(Map(NoteId, Note))", "slot notes : Map(NoteId, Note) = {}");
+    const decode = (await decodeHandedBy(src)) as Check;
+    const { slots } = await loadApp<AppShape>(src, "decoder-slot");
+    const slot = defined(slots.notes?.refineFailure, "the slot's failure reader");
+    expect(decode(value)).toBeDefined();
+    expect(decode(value)).toEqual(slot(value));
+  });
+
+  // A shape is checked before the predicates, so a field that is absent is `missing`, not refused
+  // by the predicate its type carries.
+  it("answers a missing field before any predicate", async () => {
+    const check = (await decodeOf("Decoder.Json(Map(NoteId, Note))")) as Check;
+    expect(check({ [UUID]: { id: UUID } })).toEqual({
+      kind: "missing",
+      args: [],
+      path: [{ entry: UUID }, "text"],
+    });
   });
 });
 

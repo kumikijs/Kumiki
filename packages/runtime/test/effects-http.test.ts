@@ -613,4 +613,20 @@ describe("the HttpError's body", () => {
     stubFetch(respond);
     expect(await failure(httpFetch("POST", { url: "/r", ...input }))).toEqual({ status, body });
   });
+
+  // A recursive type's check overflows the stack on a value nested deep enough.
+  it("refuses a 2xx whose check throws as a decode failure carrying the text", async () => {
+    stubFetch(() => new Response("[[[1]]]", { status: 200 }));
+    const tooDeep = () => {
+      throw new RangeError("Maximum call stack size exceeded");
+    };
+    expect(await httpFetch("GET", { url: "/r", decode: tooDeep })).toMatchObject({
+      kind: "err",
+      value: {
+        status: 200,
+        message: "decode failed: RangeError: Maximum call stack size exceeded",
+        body: some("[[[1]]]"),
+      },
+    });
+  });
 });

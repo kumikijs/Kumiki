@@ -11,7 +11,7 @@ import { dispatchFault } from "./dispatch-check.ts";
 import type { EpisodeLogger } from "./episode.ts";
 import type { AppShape, EffectResult, RuntimeDiagnostic } from "./index.ts";
 import { mount } from "./index.ts";
-import { RUNTIME_OVERLAY_SELECTORS, TOAST_SELECTOR } from "./overlays.ts";
+import { RUNTIME_OVERLAY_SELECTORS, TOAST_SELECTOR, TOAST_STACK_SELECTOR } from "./overlays.ts";
 import { stateMismatches, textMismatches } from "./scenario/expect.ts";
 import {
   type Action,
@@ -199,8 +199,11 @@ export async function runScenario(
     } catch {
       // The report is already built. A fault on the way out is worth less than the run it would replace, and the same choice `smoke` makes.
     }
-    // Disposing closed every confirm the app left open. A toast leaves only when its timer fires, which may be seconds away, and it may not outlive the report in a shared document.
+    // Disposing closed every confirm the app left open. A toast leaves when it is dismissed or its timer fires, which may be seconds away or, for an `error` toast, never, and it may not outlive the report in a shared document. Nor may the stack it leaves empty; one still holding another app's toast stays.
     for (const el of opened()) if (el.matches(TOAST_SELECTOR)) el.remove();
+    for (const el of document.querySelectorAll(TOAST_STACK_SELECTOR)) {
+      if (!el.firstElementChild) el.remove();
+    }
     console.error = origConsoleError;
     w.removeEventListener?.("error", onError);
     w.removeEventListener?.("unhandledrejection", onRejection);

@@ -52,10 +52,17 @@ export function listPosition(list: readonly unknown[], index: unknown): number {
   throw new KumikiPanic(`Index ${shown} is out of range for a List of length ${list.length}`);
 }
 
+/**
+ * What a write through a path finds nothing to write through, where it leaves the value as it is:
+ * the `None` or `Err` it would unwrap, or a Map key it lacks with more path after it.
+ */
+export type PathGap = { tag: string } | { key: unknown };
+
 export function _setPathHelper(
   obj: unknown,
   path: readonly PathSegment[],
   value: unknown,
+  atGap?: (gap: PathGap) => void,
 ): unknown {
   if (path.length === 0) return value;
   const step = path[0] as PathSegment;
@@ -65,12 +72,15 @@ export function _setPathHelper(
   if (!indexed && isUnwrapSegment(head)) {
     if (obj && typeof obj === "object" && "_tag" in obj) {
       const o = obj as { _tag: string; _0?: unknown };
-      if (o._tag === "None" || o._tag === "Err") return obj;
+      if (o._tag === "None" || o._tag === "Err") {
+        atGap?.({ tag: o._tag });
+        return obj;
+      }
       if (o._tag === "Some" || o._tag === "Ok") {
-        return { ...o, _0: _setPathHelper(o._0, rest, value) };
+        return { ...o, _0: _setPathHelper(o._0, rest, value, atGap) };
       }
     }
-    return _setPathHelper(obj, rest, value);
+    return _setPathHelper(obj, rest, value, atGap);
   }
   if (Array.isArray(obj)) {
     const at = listPosition(obj, head);
@@ -79,16 +89,19 @@ export function _setPathHelper(
       throw new KumikiPanic(`Index ${at} of a List holds no value to write through`);
     }
     const out = [...obj];
-    out[at] = _setPathHelper(element, rest, value);
+    out[at] = _setPathHelper(element, rest, value, atGap);
     return out;
   }
   if (typeof head === "number" && (obj === null || typeof obj !== "object")) {
     throw new KumikiPanic(`Index ${head} reaches no List or Map, but ${String(obj)}`);
   }
-  if (indexed && rest.length > 0 && !isEntryOf(obj, head)) return obj;
+  if (indexed && rest.length > 0 && !isEntryOf(obj, head)) {
+    atGap?.({ key: head });
+    return obj;
+  }
   const cur = (obj && typeof obj === "object" ? obj : {}) as Record<string, unknown>;
   const key = entryKey(head);
-  return { ...cur, [key]: _setPathHelper(cur[key], rest, value) };
+  return { ...cur, [key]: _setPathHelper(cur[key], rest, value, atGap) };
 }
 
 export function isEntryOf(m: unknown, key: unknown): boolean {

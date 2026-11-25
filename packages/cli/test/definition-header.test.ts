@@ -245,14 +245,14 @@ describe("a comment after the name", () => {
     expect(textOf(file, "type.Box")).toBe("type Box(T) = {v: T, n: Int}");
   });
 
-  it("does not stop a removed tile with clauses from coming back", () => {
+  it("does not stop a removed tile with clauses from coming back, comment and all", () => {
     const file = seed(COMMENTED);
     removeDef(file, "tile.H", false);
 
     patchRevert(file, lastOpId(file));
 
     expect(tileOf(file, "tile.H").errorBoundary).toBe("Oops");
-    expect(textOf(file, "tile.H")).toBe("tile H error-boundary=Oops = heading(name)");
+    expect(readFileSync(file, "utf8")).toBe(COMMENTED);
   });
 });
 

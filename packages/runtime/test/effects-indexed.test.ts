@@ -153,6 +153,18 @@ describe("indexed-* happy path with in-memory mock", () => {
     });
   });
 
+  it("a point read whose Decoder.Json check throws is a decode failure", async () => {
+    const localCfg: IndexedDbCfg = { ...cfg, name: "happy-db-decode-throws" };
+    await indexedWrite({ store: "notes", key: "a", value: { body: "" } }, localCfg);
+    const tooDeep = () => {
+      throw new RangeError("Maximum call stack size exceeded");
+    };
+    expect(await indexedRead({ store: "notes", key: "a", decode: tooDeep }, localCfg)).toEqual({
+      kind: "err",
+      value: "decode failed: RangeError: Maximum call stack size exceeded",
+    });
+  });
+
   // A record is no text: `Decoder.Text` and `Decoder.Bytes` cannot read one, and `Decoder.None`
   // answers only whether it is there. Each holds whether or not the key is.
   it.each<[string, unknown, EffectResult, EffectResult]>([
