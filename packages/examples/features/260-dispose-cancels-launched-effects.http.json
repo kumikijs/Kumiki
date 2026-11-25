@@ -1,0 +1,6 @@
+{
+  "GET /quote": [
+    { "status": 503, "text": "busy" },
+    { "json": { "text": "Fresh quote", "author": "B" } }
+  ]
+}

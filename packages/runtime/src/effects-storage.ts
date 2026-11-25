@@ -1,6 +1,6 @@
 import type { EffectResult } from "./core.ts";
-import { type Decode, decodeRefusal } from "./effects-decode.ts";
-import { _stdlibCore } from "./stdlib.ts";
+import { decodeOf, decodeRead } from "./effects-decode.ts";
+import { _stdlibCore, isFileValue } from "./stdlib.ts";
 
 type Backend = "localStorage" | "sessionStorage";
 
@@ -79,23 +79,39 @@ function decodeStored(raw: string): unknown {
   return raw.startsWith(TAGGED) ? JSON.parse(raw.slice(TAGGED.length), untag) : JSON.parse(raw);
 }
 
+// What `storage-write` stores for a `Bytes` is that one value in the tagged form, so
+// `Decoder.Bytes` reads it back as those bytes. Any other text, tagged or not, is its UTF-8.
+function bytesOf(raw: string): Uint8Array {
+  const stored = raw.startsWith(TAGGED) ? decodedOrUndefined(raw) : undefined;
+  return stored instanceof Uint8Array ? stored : _stdlibCore.bytesFromText(raw);
+}
+
+function decodedOrUndefined(raw: string): unknown {
+  try {
+    return decodeStored(raw);
+  } catch {
+    return undefined;
+  }
+}
+
 async function readFrom(backend: Backend, input: unknown): Promise<EffectResult> {
   try {
-    const { key, decode } = input as { key: string; decode?: Decode };
-    const raw = globalThis[backend].getItem(key);
+    const req = input as { key: string; decode?: unknown };
+    const decode = decodeOf(req.decode);
+    if (typeof decode === "object") return failed(decode.refused);
+    const raw = globalThis[backend].getItem(req.key);
     if (raw === null) return { kind: "ok", value: _stdlibCore.None };
-    let value: unknown;
-    try {
-      value = decodeStored(raw);
-    } catch (e) {
-      const at = JSON.stringify(key);
-      return failed(
-        `decode failed: the text under ${at} in ${backend} is not a stored value (${String(e)})`,
-      );
-    }
-    const refused = decodeRefusal(decode, value);
-    if (refused) return { kind: "err", value: refused };
-    return { kind: "ok", value: _stdlibCore.Some(value) };
+    // The tagged form is JSON's, so a JSON decoding reads it, and `Decoder.Text` delivers the
+    // stored text as it is.
+    const decoded = await decodeRead(decode, {
+      text: async () => raw,
+      bytes: async () => bytesOf(raw),
+      parse: decodeStored,
+      unparsed: (e) =>
+        `the text under ${JSON.stringify(req.key)} in ${backend} is not a stored value (${String(e)})`,
+    });
+    if (!decoded.ok) return failed(decoded.message);
+    return { kind: "ok", value: _stdlibCore.Some(decoded.value) };
   } catch (e) {
     return { kind: "err", value: String(e) };
   }
@@ -115,6 +131,19 @@ function attempt(backend: Backend, call: string, run: (s: Storage) => void): Eff
   }
 }
 
+// A `File` is its fields beside `_file`, the picked file, which JSON writes as `{}`. One with no
+// file in `_file` (decoded from JSON) has nothing to lose and is stored as its JSON, `_file: {}`
+// included.
+function heldFile(v: unknown): { _file: Blob; name?: unknown } | undefined {
+  if (v === null || typeof v !== "object" || v instanceof Uint8Array) return undefined;
+  if (isFileValue(v)) return v;
+  for (const x of Array.isArray(v) ? v : Object.values(v)) {
+    const file = heldFile(x);
+    if (file) return file;
+  }
+  return undefined;
+}
+
 function writeTo(backend: Backend, cap: string, input: unknown): EffectResult {
   if (typeof input !== "object" || input === null) {
     return failed(`${cap}: the request is not a record (got ${String(input)})`);
@@ -126,6 +155,13 @@ function writeTo(backend: Backend, cap: string, input: unknown): EffectResult {
   }
   const at = JSON.stringify(key);
   if (!("value" in req)) return attempt(backend, `removeItem(${at})`, (s) => s.removeItem(key));
+  const file = heldFile(req.value);
+  if (file) {
+    const name = JSON.stringify(String(file.name));
+    return failed(
+      `${cap}: the value for ${at} holds the File ${name}, and ${backend} would keep only its name, size and type, not the file; nothing was stored`,
+    );
+  }
   const raw = encodeStored(req.value);
   if (raw === undefined) {
     return failed(`${cap}: the value for ${at} cannot be stored (got ${String(req.value)})`);

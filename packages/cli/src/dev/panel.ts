@@ -1,4 +1,10 @@
-import type { AppShape, EpisodeLogger, EpisodeStep } from "@kumikijs/runtime";
+import {
+  type AppShape,
+  type Episode,
+  type EpisodeLogger,
+  type EpisodeStep,
+  isUnhandledPanic,
+} from "@kumikijs/runtime";
 
 type Options = {
   logger: EpisodeLogger;
@@ -44,7 +50,8 @@ const STYLE = `
 `;
 
 export function installDevPanel(opts: Options): {
-  push(): void;
+  /** Refresh for `committed`, the episode that just committed; the overlay follows it. */
+  push(committed: Episode): void;
   onRemount(): void;
   showError(message: string, location?: string): void;
 } {
@@ -177,14 +184,17 @@ export function installDevPanel(opts: Options): {
     document.body.appendChild(overlay);
   }
 
-  function maybeShowOverlay(): void {
-    const all = opts.logger.list();
-    const latest = all.length > 0 ? all[all.length - 1] : undefined;
-    const lastStep = latest?.steps[latest.steps.length - 1];
-    if (latest && latest.status === "panic" && lastStep && lastStep.kind === "panic") {
+  // The episode that committed last, not the last one `list()` holds: that one is the episode
+  // whose trigger began last, and an earlier episode that waited on an effect commits after it.
+  function maybeShowOverlay(committed: Episode): void {
+    // By `handled`, not by status or the last step: an episode whose only panic a boundary caught
+    // is `status: "panic"`, a dispatch records steps after an unhandled panic, and a caught one
+    // can land last.
+    const panic = committed.steps.find(isUnhandledPanic);
+    if (panic) {
       if (overlay) return;
-      showOverlay("Kumiki panic", lastStep.message, lastStep.location ?? "");
-    } else if (overlay && latest && latest.status === "completed") {
+      showOverlay("Kumiki panic", panic.message, panic.location ?? "");
+    } else {
       dismissOverlay();
     }
   }
@@ -193,10 +203,10 @@ export function installDevPanel(opts: Options): {
   renderInspector();
 
   return {
-    push() {
+    push(committed) {
       renderTimeline();
       if (!inspectorBody.hidden) renderInspector();
-      maybeShowOverlay();
+      maybeShowOverlay(committed);
     },
     onRemount() {
       renderInspector();
@@ -261,8 +271,10 @@ function formatStep(step: EpisodeStep): string {
       return `[effect-cancel] ${step.targetId}`;
     case "signal-update":
       return `[signal-update] dirty=[${step["dirty-slots"].join(",")}]`;
-    case "panic":
-      return `[panic] ${step.message}${step.location ? `  @ ${step.location}` : ""}`;
+    case "panic": {
+      const where = step.location ? `  @ ${step.location}` : "";
+      return `[panic] ${step.message}${where}${isUnhandledPanic(step) ? "" : "  (handled)"}`;
+    }
   }
 }
 

@@ -1,21 +1,30 @@
-import type { BinOp, Expr, Pattern, Pos, Token } from "../ast.ts";
+import type { BinOp, EndsOuterArm, Expr, Pattern, Pos, Token } from "../ast.ts";
 import { qualifiedCallee, readsBareMemberAsCall } from "../builtin-calls.ts";
 import { ParseError } from "./token-stream.ts";
 import { TypeParser } from "./types.ts";
 
+type MatchNode<K, B> = {
+  kind: K;
+  scrutinee: Expr;
+  arms: { pattern: Pattern; body: B }[];
+  pos: Pos;
+} & EndsOuterArm;
+
 /** Stays in step with the AST's spelling of the prefix operators. */
 type UnaryOp = Extract<Expr, { kind: "UnaryOp" }>["op"];
 
-// Being a whole value is what keeps these from naming a record field, so `{true: "on"}` is a Map.
-const VALUE_KEYWORDS: ReadonlyMap<string, (pos: Pos) => Expr> = new Map([
+// Being a whole expression is what keeps these from naming a record field, so `{true: "on"}` is a
+// Map. `null` is no value, but is read here so the checker reports it wherever it is written.
+const EXPRESSION_KEYWORDS: ReadonlyMap<string, (pos: Pos) => Expr> = new Map([
   ["true", (pos: Pos): Expr => ({ kind: "Bool", value: true, pos })],
   ["false", (pos: Pos): Expr => ({ kind: "Bool", value: false, pos })],
   ["now", (pos: Pos): Expr => ({ kind: "Call", callee: "now", args: [], pos })],
+  ["null", (pos: Pos): Expr => ({ kind: "Null", pos })],
 ]);
 
 function fieldNameOf(t: Token): string | undefined {
   if (t.kind === "ident") return t.value;
-  if (t.kind === "kw" && !VALUE_KEYWORDS.has(t.value)) return t.value;
+  if (t.kind === "kw" && !EXPRESSION_KEYWORDS.has(t.value)) return t.value;
   return undefined;
 }
 
@@ -45,16 +54,16 @@ export class ExpressionParser extends TypeParser {
   }
 
   protected parseLogicOr(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseLogicAnd();
-    let built = 0;
     while (this.matchOp("||") || (this.matchOp("|") && !this.looksLikeMatchArm())) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       const op = "|" as BinOp;
       this.next();
-      const rhs = this.parseLogicAnd();
+      const rhs = this.under(() => this.parseLogicAnd());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
 
@@ -88,54 +97,54 @@ export class ExpressionParser extends TypeParser {
   }
 
   protected parseLogicAnd(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseCmp();
-    let built = 0;
     while (this.matchOp("&&") || this.matchOp("&")) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       this.next();
-      const rhs = this.parseCmp();
+      const rhs = this.under(() => this.parseCmp());
       lhs = { kind: "BinOp", op: "&", lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
 
   protected parseCmp(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseAdd();
-    let built = 0;
     while (this.matchAnyOp(["==", "!=", "<", ">", "<=", ">="])) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       const op = this.eat("op").value as BinOp;
-      const rhs = this.parseAdd();
+      const rhs = this.under(() => this.parseAdd());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
 
   protected parseAdd(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseMul();
-    let built = 0;
     while (this.matchAnyOp(["+", "-"])) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       const op = this.eat("op").value as BinOp;
-      const rhs = this.parseMul();
+      const rhs = this.under(() => this.parseMul());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
 
   protected parseMul(): Expr {
+    const chain = this.startChain();
     let lhs = this.parseUnary();
-    let built = 0;
     while (this.matchAnyOp(["*", "/", "%"])) {
-      built += 1;
-      this.widen(built);
+      this.chainStep(chain);
       const op = this.eat("op").value as BinOp;
-      const rhs = this.parseUnary();
+      const rhs = this.under(() => this.parseUnary());
       lhs = { kind: "BinOp", op, lhs, rhs, pos: lhs.pos };
     }
+    this.endChain(chain);
     return lhs;
   }
 
@@ -147,8 +156,15 @@ export class ExpressionParser extends TypeParser {
       else if (this.matchT("ident", "not")) prefixes.push({ op: "!", pos: this.next().pos });
       else break;
     }
-    this.widen(prefixes.length);
+    // The run's nodes sit over an operand read at this level, whose depth is known only once it
+    // is read: the run is charged alone first, then on top of the operand, both at the operand's
+    // first token.
+    const at = this.peek().pos;
+    this.charge(prefixes.length, at);
+    if (prefixes.length === 0) return this.parsePostfix();
+    const enclosing = this.measure();
     let e = this.parsePostfix();
+    this.charge(this.measured(enclosing) + prefixes.length, at);
     for (const prefix of prefixes.reverse()) {
       e = { kind: "UnaryOp", op: prefix.op, rhs: e, pos: prefix.pos };
     }
@@ -156,24 +172,23 @@ export class ExpressionParser extends TypeParser {
   }
 
   protected parsePostfix(): Expr {
+    const chain = this.startChain();
     let e = this.parsePrimary();
-    let built = 0;
     while (true) {
       if (this.matchOp(".")) {
-        built += 1;
-        this.widen(built);
+        this.chainStep(chain);
         const dotTok = this.next();
         const fldTok = this.peek();
         if (e.kind === "Num" && fldTok.pos.line !== dotTok.pos.line) {
           throw new ParseError(
-            `A float needs digits after the decimal point — write "${e.raw ?? e.value}.0"`,
+            `A float needs digits after the decimal point — write "${e.raw}.0"`,
             e.pos,
           );
         }
         if (fldTok.kind !== "ident" && fldTok.kind !== "kw") {
           if (e.kind === "Num") {
             throw new ParseError(
-              `A float needs digits after the decimal point — write "${e.raw ?? e.value}.0"`,
+              `A float needs digits after the decimal point — write "${e.raw}.0"`,
               e.pos,
             );
           }
@@ -217,8 +232,7 @@ export class ExpressionParser extends TypeParser {
           e = { kind: "FieldAccess", base: e, field: fld, pos: e.pos };
         }
       } else if (this.matchOp("[")) {
-        built += 1;
-        this.widen(built);
+        this.chainStep(chain);
         this.next();
         const idx = this.parseExpr();
         this.eat("op", "]");
@@ -227,6 +241,7 @@ export class ExpressionParser extends TypeParser {
         break;
       }
     }
+    this.endChain(chain);
     return e;
   }
 
@@ -240,10 +255,10 @@ export class ExpressionParser extends TypeParser {
       this.next();
       return { kind: "Str", value: t.value, pos: t.pos };
     }
-    const valueKeyword = t.kind === "kw" ? VALUE_KEYWORDS.get(t.value) : undefined;
-    if (valueKeyword) {
+    const expressionKeyword = t.kind === "kw" ? EXPRESSION_KEYWORDS.get(t.value) : undefined;
+    if (expressionKeyword) {
       this.next();
-      return valueKeyword(t.pos);
+      return expressionKeyword(t.pos);
     }
     if (t.kind === "kw" && t.value === "if") {
       return this.parseIfExpr();
@@ -260,8 +275,13 @@ export class ExpressionParser extends TypeParser {
         this.next();
         return { kind: "Unit", pos: t.pos };
       }
-      const inner = this.parseExpr();
+      const at = this.peek().pos;
+      const enclosing = this.measure();
+      const inner = this.group(() => this.parseExprNested());
+      const below = this.measured(enclosing);
       if (this.matchOp(",")) {
+        // A tuple is a node, with its first item under it as the others are.
+        this.charge(below + 1, at);
         this.next();
         const items: [Expr, Expr, ...Expr[]] = [inner, this.parseExpr()];
         while (this.matchOp(",")) {
@@ -401,24 +421,33 @@ export class ExpressionParser extends TypeParser {
 
   protected parseLetIn(): Expr {
     const start = this.eat("kw", "let");
-    const name = this.eat("ident").value;
+    const nameTok = this.eat("ident");
     this.eat("op", "=");
     const value = this.parseExpr();
     this.eat("kw", "in");
     const body = this.parseExpr();
-    return { kind: "LetIn", name, value, body, pos: start.pos };
+    return {
+      kind: "LetIn",
+      name: nameTok.value,
+      namePos: nameTok.pos,
+      value,
+      body,
+      pos: start.pos,
+    };
   }
 
   protected parseMatchExpr(): Expr {
-    return { kind: "MatchExpr", ...this.parseMatch(() => this.parseExpr()) };
+    return this.parseMatch("MatchExpr", () => this.parseExpr());
   }
 
+  /**
+   * The match that finished last and the index of the token after it, for a match finishing at
+   * that same index to link.
+   */
+  private endedMatch: { node: EndsOuterArm; at: number } | undefined;
+
   // The value, statement and tile forms share this, so each holds a `match` to one arm or more.
-  protected parseMatch<B>(parseBody: () => B): {
-    scrutinee: Expr;
-    arms: { pattern: Pattern; body: B }[];
-    pos: Pos;
-  } {
+  protected parseMatch<K extends string, B>(kind: K, parseBody: () => B): MatchNode<K, B> {
     const start = this.eat("kw", "match");
     const scrutinee = this.parseExpr();
     this.eat("kw", "with");
@@ -430,7 +459,12 @@ export class ExpressionParser extends TypeParser {
       arms.push({ pattern, body: parseBody() });
     }
     if (arms.length === 0) throw new ParseError("match requires at least one arm", start.pos);
-    return { scrutinee, arms, pos: start.pos };
+    const node: MatchNode<K, B> = { kind, scrutinee, arms, pos: start.pos };
+    // No token lies between that match's end and this one's, so nothing closed it off: it ends
+    // this match's last arm.
+    if (this.endedMatch?.at === this.i) this.endedMatch.node.outer = start.pos;
+    this.endedMatch = { node, at: this.i };
+    return node;
   }
 
   protected parsePattern(): Pattern {
@@ -515,7 +549,9 @@ export class ExpressionParser extends TypeParser {
         if (fieldName === undefined) {
           if (keyTok.kind === "kw") {
             throw new ParseError(
-              `\`${keyTok.value}\` is a value, not a record field name`,
+              keyTok.value === "null"
+                ? "`null` is not a record field name, and not a value — Kumiki has no null"
+                : `\`${keyTok.value}\` is a value, not a record field name`,
               keyTok.pos,
             );
           }

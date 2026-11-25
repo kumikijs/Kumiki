@@ -75,7 +75,7 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0113](./errors.md#e0113-sub-routes-without-outlet) | `sub-routes-without-outlet` | tile | ルーティング |
 | [E0114](./errors.md#e0114-sub-routes-without-wildcard-parent) | `sub-routes-without-wildcard-parent` | tile | ルーティング |
 | [E0115](./errors.md#e0115-reserved-slot-name) | `reserved-slot-name` | slot | コア |
-| [E0116](./errors.md#e0116-undef-call) | `undef-call` | fn | コア |
+| [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier) | `undef-call` / `undef-variant` / `undef-qualifier` | fn | コア |
 | [E0117](./errors.md#e0117-undef-type) | `undef-type` | type | コア |
 | [E0118](./errors.md#e0118-undef-theme) | `undef-theme` | app | スタイル |
 | [E0119](./errors.md#e0119-route-bind-out-of-scope) | `route-bind-out-of-scope` | reducer | ルーティング |
@@ -114,10 +114,17 @@ AI 編集の CRDT op（add / replace / remove / rename、[§9.3.1](./ai-edit.md#
 | [E0229](./errors.md#e0229-bind-target-not-slot) | `bind-target-not-slot` | tile | フォーム |
 | [E0231](./errors.md#e0231-reserved-type-name) | `reserved-type-name` | type | コア |
 | [E0234](./errors.md#e0234-reserved-effect-name) | `reserved-effect-name` | effect | 標準ライブラリ |
+| [E0235](./errors.md#e0235-null-value) | `null-value` | all | コア |
+| [E0236](./errors.md#e0236-tile-as-content) | `tile-as-content` | tile | コア |
+| [E0237](./errors.md#e0237-tile-depth) | `tile-depth` | tile | コア |
+| [E0238](./errors.md#e0238-unindexable-read) | `unindexable-read` | all | コア |
+| [E0239](./errors.md#e0239-negative-theme-length) | `negative-theme-length` | app | スタイル |
 | [W0213](./errors.md#w0213-handler-on-inert-tile-warning) | `handler-on-inert-tile` | tile | コア |
 | [W0214](./errors.md#w0214-fmt-placeholder-argument-mismatch-warning) | `fmt-placeholder-argument-mismatch` | all | 標準ライブラリ |
 | [W0216](./errors.md#w0216-selection-beside-bind-warning) | `selection-beside-bind` | tile | フォーム |
 | [W0217](./errors.md#w0217-name-beside-group-warning) | `name-beside-group` | tile | フォーム |
+| [W0218](./errors.md#w0218-shadowed-sub-route-warning) | `shadowed-sub-route` | tile | ルーティング |
+| [W0219](./errors.md#w0219-unreachable-nested-arm-warning) | `unreachable-nested-arm` | type | コア |
 | [E0301](./errors.md#e0301-missing-capability) | `missing-capability` | effect | 標準ライブラリ |
 | [E0302](./errors.md#e0302-unknown-capability) | `unknown-capability` | app | 標準ライブラリ |
 | [E0303](./errors.md#e0303-invalid-cancel-target) | `invalid-cancel-target` | effect | HTTP/Storage |

@@ -11,7 +11,7 @@ import {
   UNQUALIFIED_BUILTIN_CALLS,
 } from "../src/builtin-calls.ts";
 import { jsBinding } from "../src/codegen/context.ts";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf, messagesOf, posOf } from "./helpers/diagnostics.ts";
 import { compileOrFail, fnLowering } from "./helpers/module.ts";
 
 function inReducer(expr: string): string {
@@ -68,6 +68,158 @@ describe("E0116 undef-call", () => {
 
   it("still walks the arguments", () => {
     expect(codesOf(inReducer("a := doubel(missing)")).sort()).toEqual(["E0103", "E0116"]);
+  });
+});
+
+// A `map-request` field other than `decode` is a position no declared type judges, so a
+// capitalised name there is decided by its own resolution alone. `Status` is declared below
+// its first use.
+function inRequest(request: string): string {
+  return `slot s : Status = Idle
+effect load cap=http.post in=Unit out=Result(Text, HttpError) map-request=${request}
+reducer go on=ui.click(B) do= emit load()
+tile B = button(text="b")
+tile App = column(B, text(s.show))
+app A caps=[http.post] routes={"/" -> App, "/404" -> App} init=[]
+type Status = Idle | Busy
+`;
+}
+
+// A `let` in a reducer body: the other position no declared type judges.
+function inLet(expr: string): string {
+  return `slot t : Text = ""
+reducer go on=ui.click(B) do= let v = ${expr}
+    t := "x"
+tile B = button(text="b")
+tile App = column(B, text(t))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+type Status = Idle | Busy
+type Load(T) = Waiting | Loaded(T)
+type Cents = nominal Int
+`;
+}
+
+describe("E0116 undef-variant / undef-qualifier", () => {
+  it.each([
+    {
+      name: "a tag no type declares",
+      request: '{url: "/x", body: Nonsense}',
+      at: "Nonsense",
+      kind: "undef-variant",
+      message: 'Reference to undefined variant "Nonsense"',
+    },
+    {
+      name: "the qualifier of a bare member when the qualifier names nothing",
+      request: '{url: "/x", body: Decodr.None}',
+      at: "Decodr.None",
+      kind: "undef-qualifier",
+      message:
+        'Reference to undefined qualifier "Decodr" in "Decodr.None" — did you mean "Decoder"?',
+    },
+  ])("reports $name", ({ request, at, kind, message }) => {
+    const src = inRequest(request);
+    expect(checkSource(src)).toEqual([{ code: "E0116", kind, message, pos: posOf(src, at) }]);
+  });
+
+  it.each(["Nonsense", "Decodr.None"])("refuses to build %s", (expr) => {
+    expect(compile(inFn(expr), { runtimeSpecifier: "./runtime.js" })).toMatchObject({
+      kind: "fail",
+      errors: [{ code: "E0116" }],
+    });
+  });
+
+  it.each([
+    ["Idel", 'Reference to undefined variant "Idel" — did you mean "Idle"?'],
+    ["Loadd(1)", 'Reference to undefined variant "Loadd" — did you mean "Loaded"?'],
+    ["Som(1)", 'Reference to undefined variant "Som" — did you mean "Some"?'],
+    ['Jsn({"a": 1})', 'Reference to undefined variant "Jsn" — did you mean "Json"?'],
+    ["Idel.show", 'Reference to undefined qualifier "Idel" in "Idel.show" — did you mean "Idle"?'],
+  ])("suggests the closest declared or built-in name for %s", (expr, message) => {
+    expect(messagesOf(inLet(expr))).toEqual([message]);
+  });
+
+  // A nominal has no construction form, so `Cents(1)` is a variant record where
+  // a number belongs, and a `Map(Cents, …)` keyed by it never meets `1`.
+  it.each([
+    ["Cents(1)", "Cents"],
+    ["Status", "Status"],
+  ])("reports a type's name written as a constructor: %s", (expr, name) => {
+    expect(messagesOf(inLet(expr))).toEqual([`Reference to undefined variant "${name}"`]);
+  });
+
+  it("accepts every tag a type declares, wherever the type is written", () => {
+    // Every `let` is a position no type judges, so only the tag's own resolution
+    // stands between it and a report.
+    const src = `slot inline : Red | Green = Red
+slot rec : {mode: On | Off} = {mode: Off}
+slot t : Text = ""
+reducer go on=ui.click(B) do= let a = Busy
+    let b = Loaded(1)
+    let c = Green
+    let d = On
+    let e = Some(1)
+    let f = None
+    let g = Ok(1)
+    let h = Err("x")
+    let i = TextV("x")
+    let j = Idle.show
+    let k = Time.now
+    t := match a with | Idle -> "i" | Busy -> "b"
+tile B = button(text="b")
+tile App = column(B, text(t))
+app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
+type Status = Idle | Busy
+type Load(T) = Waiting | Loaded(T)
+`;
+    expect(codesOf(src)).toEqual([]);
+  });
+
+  it.each([
+    'Json({"a": 1})',
+    'Form({"a": "b"})',
+    'Multipart({"a": TextV("b")})',
+    'Text("t")',
+    'Bytes(Bytes.from-text("b"))',
+    "Empty",
+  ])("accepts the HttpBody variant %s as a request body", (body) => {
+    expect(codesOf(inRequest(`{url: "/x", body: ${body}, decode: Decoder.Text}`))).toEqual([]);
+  });
+
+  it.each([
+    "Status",
+    "Map(Text, Status)",
+    "{id: Text, s: Status}",
+    "List(Text)",
+  ])("reads the argument of Decoder.Json(%s) as the type it spells", (type) => {
+    expect(codesOf(inRequest(`{url: "/x", decode: Decoder.Json(${type})}`))).toEqual([]);
+  });
+
+  // The declared type names the tags the position takes, so its report is the
+  // more precise one; a second at the same name would be one mistake reported twice.
+  it.each([
+    ["slot s : Status = Zork", "E0216"],
+    ["slot n : Int = Zork", "E0201"],
+    ["reducer r on=app.start do= emit save(Zork)", "E0216"],
+  ])("leaves the tag in %s to the declared type's %s", (defs, code) => {
+    const src = `${defs}
+effect save cap=storage.write in=Status out=Result(Unit, Text)
+tile App = column(text("a"))
+app A caps=[storage.write] routes={"/" -> App, "/404" -> App} init=[]
+type Status = Idle | Busy
+`;
+    expect(codesOf(src)).toEqual([code]);
+  });
+
+  it("leaves a capitalised reducer named by confirm to the reducer-name report", () => {
+    const src = `slot n : Int = 0
+reducer Yes on=app.start do= n := 1
+reducer no on=app.start do= n := 2
+reducer ask on=ui.click(B) do= emit confirm({title: "sure?", onYes: Yes, onNo: no})
+tile B = button(text="ask")
+tile App = column(B, text(n.show))
+app A caps=[notification.show] routes={"/" -> App, "/404" -> App} init=[]
+`;
+    expect(codesOf(src)).toEqual(["E0202"]);
   });
 });
 
@@ -549,7 +701,8 @@ describe("a qualified stdlib member is read the same way without its parentheses
   it("reads a member that takes an argument, written bare, as a call with none", () => {
     for (const [name, arity] of QUALIFIED_BUILTIN_CALLS) {
       if (arity.min === 0) continue;
-      expect(codesOf(inReducer(`t := (${name}).show`)), name).toEqual(["E0213"]);
+      // Bound by a `let`, not shown: rendering a `Decoder` is E0204 of its own.
+      expect(codesOf(inLet(name)), name).toEqual(["E0213"]);
     }
   });
 
@@ -584,18 +737,6 @@ describe("a qualified stdlib member is read the same way without its parentheses
       expect(codesOf(inReducer(`t := (${where}).show`)), where).toEqual(["E0116"]);
     }
     expect(codesOf(inReducer("t := (Decoder.if(a)).show"))).toEqual(["E0116"]);
-  });
-
-  it("claims the qualifier position and not the name", () => {
-    const src = `type Decoder = Short | Long
-slot d : Decoder = Short
-slot t : Text = ""
-reducer pick on=ui.click(B) do= d := Long
-tile B = button(text="b")
-tile App = column(B, text(t), text(d.show))
-app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
-`;
-    expect(codesOf(src)).toEqual([]);
   });
 
   it("leaves a listed name usable as a value and as a pattern", () => {
@@ -645,8 +786,8 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   }
 
   it("the constant that carries a payload type is an argument short without it", () => {
-    expect(codesOf(inReducer("t := (Decoder.Json).show"))).toEqual(["E0213"]);
-    expect(codesOf(inReducer("t := (Decoder.Json(Text)).show"))).toEqual([]);
+    expect(codesOf(inLet("Decoder.Json"))).toEqual(["E0213"]);
+    expect(codesOf(inLet("Decoder.Json(Text)"))).toEqual([]);
   });
 
   it("reports a misspelt member of a listed namespace", () => {
@@ -659,7 +800,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
   });
 
   it("accepts the constants themselves", () => {
-    expect(codesOf(inReducer("t := (Decoder.None).show"))).toEqual([]);
+    expect(codesOf(inLet("Decoder.None"))).toEqual([]);
     expect(codesOf(inReducer("a := [EffectId.none].length"))).toEqual([]);
   });
 });
@@ -983,8 +1124,8 @@ describe("the qualifier of a type-member call", () => {
     expect(codesOf(inReducer("t := Probe.frish()"))).toEqual(["E0116"]);
   });
 
-  it("reports a namespace that is not a type either", () => {
-    expect(codesOf(inReducer('t := Decoder.parse(t).get-or("")'))).toEqual(["E0117"]);
+  it("reports a namespace whose type has no reading of a text", () => {
+    expect(codesOf(inReducer("t := Decoder.parse(t).show"))).toEqual(["E0802"]);
   });
 
   it("keeps a qualified E0116's message shape readable too", () => {

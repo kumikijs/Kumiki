@@ -22,13 +22,40 @@ export const errorCodesOf = (src: string): string[] => errorsOf(src).map((e) => 
 export const locatedSummariesOf = (src: string): string[] =>
   checkSource(src).map((e) => `${e.code} ${e.pos.line}:${e.pos.col} ${e.message}`);
 
-/** E0231's message for a program's own definition of the standard library's `name`. */
-export const reservedTypeNameMessage = (name: string): string =>
-  `Type "${name}" collides with the standard library's ${name}; uses of it never see this type`;
+/** E0231's message for a program's own definition of `name`, which already means `meaning`. */
+export const reservedTypeNameMessage = (name: string, meaning = "the standard library's"): string =>
+  `Type "${name}" collides with ${meaning} ${name}; uses of it never see this type`;
 
 /** E0234's message for a program's own `effect` under the standard effect `name`. */
 export const reservedEffectNameMessage = (name: string): string =>
   `Effect "${name}" collides with the built-in effect ${name}; emits of it never run this effect`;
+
+/** E0235's message, for a `null` written where an expression goes. */
+export const nullValueMessage =
+  "`null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one";
+
+/** E0236's message, for a tile as `builtin`'s content, where `shown` is that builtin showing a value. */
+export const tileAsContentMessage = (builtin: string, shown: string): string =>
+  `A tile is not a value: ${builtin} shows a value as its content, so this tile is never ` +
+  `rendered. Write the tile as a child of a container — \`column(when(c, …))\` — or show a ` +
+  `value — \`${shown}\``;
+
+/** E0201's message, for a tile written as `tile`'s named argument `name`. */
+export const tileAsPropMessage = (tile: string, name: string): string =>
+  `Named argument "${name}" on tile "${tile}" is a prop, and a prop's value cannot be a tile — ` +
+  `nothing renders it. Write the tile as a positional child of a container — ` +
+  `\`column(when(c, …))\` — or pass a value — \`${tile}(${name}=…)\``;
+
+/** The message of the one diagnostic `src` reports under `code`; none, or more than one, throws. */
+export function soleMessageOf(code: string, src: string, opts?: CheckOptions): string {
+  const found = checkSource(src, opts).filter((e) => e.code === code);
+  const [only] = found;
+  if (only === undefined || found.length > 1) {
+    const messages = found.map((e) => e.message).join(" | ");
+    throw new Error(`expected one ${code}, got ${found.length}: ${messages}`);
+  }
+  return only.message;
+}
 
 /** Each diagnostic as `"<code> <message>"`. */
 export const summariesOf = (src: string): string[] =>
@@ -57,6 +84,10 @@ export function textAt(source: string, at: { line: number; col: number }): strin
   return (source.split("\n")[at.line - 1] ?? "").slice(at.col - 1);
 }
 
+/** The errors of `src`, each as its code and the source text it was reported at. */
+export const pointedCodesOf = (src: string): Pick<Pointed, "code" | "text">[] =>
+  errorsOf(src).map((e) => ({ code: e.code, text: textAt(src, e.pos) }));
+
 /** Where `needle` first occurs, as the 1-based line/col diagnostics use. */
 export function posOf(source: string, needle: string): { line: number; col: number } {
   const idx = source.indexOf(needle);
@@ -68,3 +99,12 @@ export function posOf(source: string, needle: string): { line: number; col: numb
 /** The errors of `src`, each pointing at the source text it was reported at. */
 export const pointedErrorsOf = (src: string): Pointed[] =>
   errorsOf(src).map((e) => ({ code: e.code, message: e.message, text: textAt(src, e.pos) }));
+
+/** As {@link pointedErrorsOf}, warnings included. */
+export const pointedDiagnosticsOf = (src: string): Pointed[] =>
+  checkSource(src).map((e) => ({ code: e.code, message: e.message, text: textAt(src, e.pos) }));
+
+/** E0227's message, for a value match on `type` that has no arm for `values`. */
+export const nonExhaustiveMessage = (type: string, values: string): string =>
+  `This match on "${type}" has no arm for ${values}, and a match used as a value has to evaluate ` +
+  "to one of its arms. Add the missing arms, or end with `_ -> …`";

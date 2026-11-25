@@ -178,7 +178,14 @@ export class StatementParser extends ExpressionParser {
       this.eat("kw", "in");
       const iter = this.parseExpr();
       const body = this.parseStatementBody();
-      return { kind: "ForStmt", bind: bindTok.value, iter, body, pos: start.pos };
+      return {
+        kind: "ForStmt",
+        bind: bindTok.value,
+        bindPos: bindTok.pos,
+        iter,
+        body,
+        pos: start.pos,
+      };
     }
     if (this.matchKw("if")) {
       const start = this.next();
@@ -193,7 +200,7 @@ export class StatementParser extends ExpressionParser {
       return { kind: "IfStmt", cond, consequent: thenBody, alternate: elseBody, pos: start.pos };
     }
     if (this.matchKw("match")) {
-      return { kind: "MatchStmt", ...this.parseMatch(() => this.parseStatementBody()) };
+      return this.parseMatch("MatchStmt", () => this.parseStatementBody());
     }
     if (this.matchOp("(") && this.matchTAt(1, "op", ")")) {
       const tok = this.next();
@@ -202,10 +209,10 @@ export class StatementParser extends ExpressionParser {
     }
     if (this.matchKw("let")) {
       const start = this.next();
-      const name = this.eat("ident").value;
+      const nameTok = this.eat("ident");
       this.eat("op", "=");
       const rhs = this.parseExpr();
-      return { kind: "LetStmt", name, rhs, pos: start.pos };
+      return { kind: "LetStmt", name: nameTok.value, namePos: nameTok.pos, rhs, pos: start.pos };
     }
     if (this.matchKw("emit")) {
       const start = this.next();
@@ -271,19 +278,17 @@ export class StatementParser extends ExpressionParser {
   }
 
   protected parseLvalue(): Lvalue {
+    const chain = this.startChain();
     const tok = this.eat("ident");
     let lv: Lvalue = { kind: "LSlot", name: tok.value, pos: tok.pos };
-    let built = 0;
     while (true) {
       if (this.matchOp(".")) {
-        built += 1;
-        this.widen(built);
+        this.chainStep(chain);
         this.next();
         const f = this.eat("ident");
         lv = { kind: "LField", base: lv, field: f.value, pos: f.pos };
       } else if (this.matchOp("[")) {
-        built += 1;
-        this.widen(built);
+        this.chainStep(chain);
         const t = this.next();
         const idx = this.parseExpr();
         this.eat("op", "]");
@@ -292,6 +297,7 @@ export class StatementParser extends ExpressionParser {
         break;
       }
     }
+    this.endChain(chain);
     return lv;
   }
 }

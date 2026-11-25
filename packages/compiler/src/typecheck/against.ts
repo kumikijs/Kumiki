@@ -6,7 +6,7 @@ import {
   unaliasType,
   unknownType,
 } from "../assignable.ts";
-import type { Expr, Lvalue, Pos, TypeExpr } from "../ast.ts";
+import type { Expr, Lvalue, NumberLiteral, Pos, TypeExpr } from "../ast.ts";
 import { numberLiteral } from "../ast.ts";
 import {
   BUILTIN_EFFECTS,
@@ -17,7 +17,9 @@ import {
 import type { Ctx, KumikiError, SymbolTable } from "./context.ts";
 import { letInScope, type MismatchCode, pushMismatch } from "./expr.ts";
 import { container, inferType, isKnown, isPrimNamed, prim } from "./infer.ts";
+import { intLiteralPrecision } from "./int-literal.ts";
 import { armScope, matchedType } from "./patterns.ts";
+import { checkEmittedRequest } from "./request-fields.ts";
 
 export function checkAgainst(
   e: Expr,
@@ -35,7 +37,12 @@ export function checkAgainst(
     return;
   }
   const d = unaliasType(declared, sym);
-  if (d === null || d.kind === "TypeRef") return; // opaque: a type parameter, or a name that resolves to nothing
+  if (d === null || d.kind === "TypeRef") {
+    // Opaque: a type written here that resolves to nothing is reported where it is written, and
+    // that report is the literal's too. `?` is a type nothing decided, which declares none.
+    if (d?.name !== "?") judgedLiteral(e, sym);
+    return;
+  }
 
   const mismatch = (at: Expr, actual: TypeExpr): void => {
     pushMismatch(
@@ -45,6 +52,7 @@ export function checkAgainst(
       at.pos,
     );
   };
+  if (e.kind === "MapLit") sym.judgedMapLiterals.add(e);
 
   if (d.kind === "TypeApp" && (d.name === "List" || d.name === "Set") && e.kind === "ListLit") {
     if (d.name === "Set") e.asSet = true;
@@ -126,20 +134,13 @@ export function checkAgainst(
     }
     return;
   }
-  const literal = numberLiteral(e);
-  if (
-    literal !== null &&
-    d.kind === "TypePrim" &&
-    d.name === "Int" &&
-    Number.isInteger(literal.value) &&
-    !Number.isSafeInteger(literal.value)
-  ) {
-    errors.push({
-      code: "E0217",
-      kind: "int-literal-precision",
-      message: `Int literal ${literal.raw} is not exactly representable and was rounded to ${literal.value}`,
-      pos: e.pos,
-    });
+  const judged = judgedLiteral(e, sym);
+  const imprecise =
+    judged !== null && d.kind === "TypePrim" && d.name === "Int"
+      ? intLiteralPrecision(judged.literal, judged.pos)
+      : null;
+  if (imprecise) {
+    errors.push(imprecise);
     return;
   }
 
@@ -152,6 +153,19 @@ export function checkAgainst(
   }
   const outside = domain?.(e);
   if (outside) pushMismatch(errors, code, outside, e.pos);
+}
+
+/**
+ * The number literal `e` is, or the one the signs before it negate (`-N` in `- -N`), recorded as
+ * one a declared type reads: it is judged here, and not again where no type is declared.
+ */
+function judgedLiteral(e: Expr, sym: SymbolTable): { literal: NumberLiteral; pos: Pos } | null {
+  let at = e;
+  while (at.kind === "UnaryOp" && at.op === "-" && numberLiteral(at) === null) at = at.rhs;
+  const literal = numberLiteral(at);
+  if (literal === null) return null;
+  sym.numberLiterals.judged.add(at);
+  return { literal, pos: at.pos };
 }
 
 /**
@@ -260,6 +274,7 @@ function checkVariantAgainst(
   ctx: Ctx,
   code: MismatchCode,
 ): void {
+  sym.judgedVariants.add(e);
   const payloadsOf = (): TypeExpr[] | "unknown-tag" | null => {
     if (d.kind === "TypeUnion") {
       const v = d.variants.find((variant) => variant.name === e.name);
@@ -450,15 +465,25 @@ export function checkIndexStep(
     checkIndexIsPlace(step, { index, pos }, "assign", errors);
     return;
   }
-  // A record read through a literal key has its field's type (`inferType`); no other receiver
-  // with no places has a type to read, and none of them is reported yet.
-  if (!isSet(step.base)) return;
-  errors.push({
-    code: "E0232",
-    kind: "index-into-set",
-    message: `Cannot read through an index into "${typeToString(step.raw)}": a Set has members, not places — use .has`,
-    pos,
-  });
+  // A record read through a literal key has its field's type (`inferType`), and through a
+  // computed key a value of no type; no other receiver with no places has a value to read.
+  if (!readRefused(step.base)) return;
+  const into = `Cannot read through an index into "${typeToString(step.raw)}"`;
+  errors.push(
+    isSet(step.base)
+      ? {
+          code: "E0232",
+          kind: "index-into-set",
+          message: `${into}: a Set has members, not places — use .has`,
+          pos,
+        }
+      : {
+          code: "E0238",
+          kind: "unindexable-read",
+          message: `${into}: an index names a place only in a Map or a List`,
+          pos,
+        },
+  );
 }
 
 /** An index step a write goes through, on the left of `:=` or in a `bind=` target. */
@@ -469,8 +494,8 @@ export function checkIndexIsPlace(
   errors: KumikiError[],
 ): void {
   if (step.kind !== "no-place") return;
-  // A bound control reads its target before it writes it, and that read is E0232 on a Set.
-  if (verb === "bind" && isSet(step.base)) return;
+  // A bound control reads its target before it writes it, and that read is the one report.
+  if (verb === "bind" && readRefused(step.base)) return;
   errors.push({
     code: "E0602",
     kind: "unassignable-member",
@@ -481,6 +506,11 @@ export function checkIndexIsPlace(
 
 function isSet(base: TypeExpr): boolean {
   return base.kind === "TypeApp" && base.name === "Set";
+}
+
+/** Whether an index read into `base`, which has no places, is reported: one into a record is not. */
+function readRefused(base: TypeExpr): boolean {
+  return base.kind !== "TypeRecord";
 }
 
 function noPlaceMessage(
@@ -555,6 +585,9 @@ export function checkEmitTarget(
     return;
   }
   checkAgainst(arg, inType, sym, errors, ctx, "E0202", omittable);
+  if (cap !== null && !sym.effects.get(effect)?.mapRequest) {
+    checkEmittedRequest(arg, cap, sym, errors, ctx);
+  }
 }
 
 type Omittable = (field: { readonly name: string; readonly type: TypeExpr }) => boolean;

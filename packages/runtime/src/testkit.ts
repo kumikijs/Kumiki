@@ -8,6 +8,7 @@ import {
   reportRejectedBatch,
   standInValue,
 } from "./core.ts";
+import { isPositiveInt } from "./positive-int.ts";
 import { valueEqual } from "./stdlib.ts";
 import type {
   EpisodeLogEntry,
@@ -19,6 +20,7 @@ import {
   compareReducerExpect,
   type ReducerExpect,
   type TestResult,
+  unexpectedPanic,
 } from "./testkit/expect.ts";
 import {
   _hashStr,
@@ -30,6 +32,14 @@ import {
 import { type ReplayApp, replayEpisodes, type SlotMetaLike, seedRoute } from "./testkit/replay.ts";
 import { serializeTileNode, tileStructEqual } from "./testkit/tile-match.ts";
 import { WILD, WILD_KEY, WILD_MEMBERS, WILD_SLOT_KEYS } from "./testkit/wildcard.ts";
+
+// String, not JSON, for a number: JSON writes -0 as 0 and NaN/Infinity as null. A string keeps its
+// quotes so "5" reads apart from 5, and a bigint keeps its `n` for the same reason.
+function _countStr(v: unknown): string {
+  if (typeof v === "bigint") return `${v}n`;
+  if (typeof v !== "number") return _jsonStr(v);
+  return Object.is(v, -0) ? "-0" : String(v);
+}
 
 // `before` must be the whole table `resetLive` built: that is what puts a slot the test neither
 // seeds nor writes in the answer. `runReducerTest` and `runReducerStep` share it so the two agree
@@ -68,6 +78,8 @@ function failureWay(e: unknown): string {
 }
 
 export const _stdlibTest = {
+  /** Whether a throw in the code under test is a panic, which is the test's outcome. */
+  isPanic,
   /** The wildcard map-key sentinel; codegen lowers a `<any-id>` map key to it. */
   WILD_KEY,
   /** The Set-literal wildcard count; codegen lowers the `<any-id>` members of a Set literal to it. */
@@ -109,12 +121,24 @@ export const _stdlibTest = {
     name: string;
     vars: Record<string, GenDesc>;
     trial: (binds: Record<string, unknown>) => boolean;
-    count?: number;
+    count?: number | undefined;
     shrink?: boolean;
     seed?: number;
   }): TestResult {
     const { name, vars, trial } = input;
-    const count = input.count ?? 100;
+    const count = input.count === undefined ? 100 : input.count;
+    // The parser refuses such a count in source, but a definition built without the parser
+    // lands here.
+    if (!isPositiveInt(count)) {
+      return {
+        name,
+        pass: false,
+        expected: "count is a whole number, 1 or more",
+        actual: `count = ${_countStr(count)}`,
+        diffAt: "(count)",
+        cases: 0,
+      };
+    }
     const doShrink = input.shrink ?? true;
     const rng = _rng(input.seed ?? _hashStr(name));
     const failure = (b: Record<string, unknown>): { reason?: string; way: string } | undefined => {
@@ -337,8 +361,16 @@ export const _stdlibTest = {
     }
     return { name, pass: true };
   },
-  /** Structurally compare a rendered tile against the expected tile structure. */
-  runTileTest(input: { name: string; actual: unknown; expected: unknown }): TestResult {
+  /** A tile-test has no form that expects a panic, so a panic as its target renders is always unexpected. */
+  runTileTest(input: {
+    name: string;
+    actual: unknown;
+    panic: string | null;
+    expected: unknown;
+  }): TestResult {
+    if (input.panic !== null) {
+      return unexpectedPanic(input.name, serializeTileNode(input.expected), input.panic);
+    }
     const cmp = tileStructEqual(input.expected, input.actual);
     return {
       name: input.name,

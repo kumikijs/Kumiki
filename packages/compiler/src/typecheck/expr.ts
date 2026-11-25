@@ -1,12 +1,15 @@
+import { nearestName } from "@kumikijs/runtime/text-distance";
 import { elementType, nominallyComparable, typeToString, unaliasType } from "../assignable.ts";
-import type { Expr, FragmentShape, Pos, TypeExpr } from "../ast.ts";
-import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
+import { type Expr, type FragmentShape, numberLiteral, type Pos, type TypeExpr } from "../ast.ts";
+import { isQualifierName, RUN_REDUCER, visitDecodedParts } from "../builtin-calls.ts";
 import { fragmentCall, KNOWN_METHODS, METHOD_MIN_ARGS } from "../codegen.ts";
+import { decoderKeyError, heldDecoder, noEquality, undecodableErrors } from "../held-decoder.ts";
 import { showShapeOf } from "../show-shape.ts";
 import {
   type FragmentArgument,
   fragmentArgument,
   fragmentBinds,
+  readsShortCall,
   receiverParams,
   TYPE_ARGUMENT_OF,
 } from "../stdlib-members.ts";
@@ -19,14 +22,23 @@ import {
   checkRecordUpdate,
   getOrResultType,
 } from "./against.ts";
-import { arithmeticHint, checkCallee, endedScopeHint, reportRunReducerPosition } from "./callee.ts";
+import {
+  arithmeticHint,
+  checkCallee,
+  endedScopeHint,
+  laterScopeHint,
+  reportRunReducerPosition,
+} from "./callee.ts";
 import {
   bindLocal,
   type Ctx,
+  checkArms,
+  endScope,
   innerScope,
   isBuiltinCall,
   type KumikiError,
   type SymbolTable,
+  severityOf,
   wildcardText,
 } from "./context.ts";
 import { currentFnName } from "./fn.ts";
@@ -38,10 +50,12 @@ import {
   isNumeric,
   isPrimNamed,
   KNOWN_TOKEN_GROUPS,
+  opaqueHandleOf,
   prim,
   qualifiedMember,
 } from "./infer.ts";
 import {
+  accumulatorType,
   classifyFieldAccess,
   classifyMember,
   fragmentBindings,
@@ -50,13 +64,16 @@ import {
   keyKindOfReader,
   undefMemberError,
 } from "./members.ts";
+import { laterDeclaration } from "./nested-scopes.ts";
 import {
+  checkArmsAfterNestedMatch,
   checkMatchCovers,
   checkPatternAgainstType,
   checkPatternBindsAreDistinct,
   matchedType,
 } from "./patterns.ts";
 import { routeInAppInitMessage } from "./route-chain.ts";
+import { resolveType } from "./types.ts";
 
 /** The type one iteration of `for x in iter` binds, given the iterated expression. */
 export function elementTypeOf(iter: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
@@ -74,7 +91,7 @@ export function checkIterationTarget(
   const before = errors.length;
   checkExpr(iter, sym, errors, ctx);
   const atTarget = (p: Pos) => p.line === iter.pos.line && p.col === iter.pos.col;
-  if (errors.slice(before).some((e) => e.severity !== "warning" && atTarget(e.pos))) return;
+  if (errors.slice(before).some((e) => severityOf(e) === "error" && atTarget(e.pos))) return;
   const written = inferType(iter, sym, ctx);
   const target = written && nonListTarget(written, sym);
   if (!target) return;
@@ -140,18 +157,19 @@ function unwrapRemedy(t: TypeExpr & { kind: "TypeApp" }, tags: string, sym: Symb
 }
 
 /** A handle's text is whatever the runtime represents it as, so a page that showed it would change when that does. */
-export function refuseRenderedEffectId(
+export function refuseRenderedHandle(
   value: Expr,
   renderer: string,
   sym: SymbolTable,
   errors: KumikiError[],
   ctx: Ctx,
 ): void {
-  if (!isEffectId(inferType(value, sym, ctx), sym)) return;
+  const handle = opaqueHandleOf(inferType(value, sym, ctx), sym);
+  if (handle === undefined) return;
   errors.push({
     code: "E0204",
     kind: "effect-id-misuse",
-    message: `${renderer} cannot render EffectId — it is an opaque handle`,
+    message: `${renderer} cannot render ${handle} — it is an opaque handle`,
     pos: value.pos,
   });
 }
@@ -171,14 +189,30 @@ function shownValue(e: Expr): Expr | undefined {
 }
 
 export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx: Ctx): void {
+  // A number literal, its sign included, is one leaf; one no declared type reads is held to the
+  // safe range after every definition is checked.
+  if (numberLiteral(e) !== null) {
+    sym.numberLiterals.met.add(e);
+    return;
+  }
   // Asked before the three spellings of `show` part company in the switch, so the exception is made once.
   const shown = shownValue(e);
-  if (shown) refuseRenderedEffectId(shown, ".show", sym, errors, ctx);
+  if (shown) refuseRenderedHandle(shown, ".show", sym, errors, ctx);
   switch (e.kind) {
-    case "Num":
     case "Str":
     case "Bool":
     case "Unit":
+      return;
+    case "Null":
+      // The one report about it: `inferType` leaves its type undecided, which fits wherever it
+      // lands. An expression around it that mismatches on its own still prints that type, as `?`.
+      errors.push({
+        code: "E0235",
+        kind: "null-value",
+        message:
+          "`null` is not a value — Kumiki has no null. Where a value may be absent, declare Option(T) and write None for no value, Some(x) for one",
+        pos: e.pos,
+      });
       return;
     case "Ref": {
       if (
@@ -253,25 +287,38 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         return;
       }
       if (e.name === "$2" && ctx.oneValueFragment !== undefined) {
-        const { method, hides } = ctx.oneValueFragment;
+        const { method, hides, shape } = ctx.oneValueFragment;
         errors.push({
           code: "E0103",
           kind: "undef-ref",
           message: hides
             ? `"$2" is not bound here — the .${method} fragment is handed one value, "$1", and its positionals hide the enclosing "$2": refer to that value by its name`
-            : `"$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
+            : shape === "key"
+              ? `"$2" is not bound here — ${wholeMember(method)}`
+              : `"$2" is not bound here — the .${method} fragment is handed one value, "$1"; "$2" is bound only over ${PAIR_BINDERS}`,
           pos: e.pos,
         });
         return;
       }
-      const ended = ctx.endedScopes?.get(e.name);
+      const ended = ctx.endedScopes.get(e.name);
       if (ended !== undefined) {
         errors.push({
           code: "E0103",
           kind: "undef-ref",
-          message: `Reference to undefined name "${e.name}"${endedScopeHint(e.name, ended)}`,
+          message: `Reference to undefined name "${e.name}"${endedScopeHint(e.name, ended, ctx)}`,
           pos: e.pos,
           endedScope: ended.kind,
+        });
+        return;
+      }
+      const later = laterDeclaration(ctx.nestedScopes, e.name, e.pos);
+      if (later !== undefined) {
+        errors.push({
+          code: "E0103",
+          kind: "undef-ref",
+          message: `Reference to undefined name "${e.name}"${laterScopeHint(later, ctx)}`,
+          pos: e.pos,
+          laterScope: later.kind,
         });
         return;
       }
@@ -284,6 +331,18 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     }
     case "Variant":
+      // Codegen builds a variant from any spelling, so a tag no type declares is
+      // a record that equals nothing and reads `undefined` off every field.
+      if (!sym.constructorTags.has(e.name)) {
+        const report: KumikiError = {
+          code: "E0116",
+          kind: "undef-variant",
+          message: `Reference to undefined variant "${e.name}"${didYouMean(e.name, sym.constructorTags)}`,
+          pos: e.pos,
+        };
+        errors.push(report);
+        sym.undefinedVariants.set(report, e);
+      }
       for (const p of e.payload) checkExpr(p, sym, errors, ctx);
       return;
     case "BinOp": {
@@ -305,6 +364,10 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkExpr(e.rhs, sym, errors, ctx);
       if (!effectIdMisuse) checkBinOpOperands(e, sym, errors, ctx);
       if (e.op === "+" && isPrimNamed(binOpResult(e, sym, ctx), sym, "Text")) {
+        if (!effectIdMisuse) {
+          refuseRenderedHandle(e.lhs, 'Operator "+"', sym, errors, ctx);
+          refuseRenderedHandle(e.rhs, 'Operator "+"', sym, errors, ctx);
+        }
         noteShown(e.lhs, sym, ctx);
         noteShown(e.rhs, sym, ctx);
       }
@@ -325,8 +388,24 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     }
     case "FieldAccess":
-      checkExpr(e.base, sym, errors, ctx);
+      // A bare `Q.member`'s `Q` is resolved as a qualifier (a tag, a type or a
+      // call namespace), not as the variant it parsed as: a type is no tag, and
+      // a misspelt one is reported once.
+      if (e.base.kind === "Variant" && e.base.payload.length === 0) {
+        if (!sym.qualifiers.has(e.base.name)) {
+          errors.push({
+            code: "E0116",
+            kind: "undef-qualifier",
+            message: `Reference to undefined qualifier "${e.base.name}" in "${e.base.name}.${e.field}"${didYouMean(e.base.name, sym.qualifiers)}`,
+            pos: e.base.pos,
+          });
+          return;
+        }
+      } else checkExpr(e.base, sym, errors, ctx);
       classifyFieldAccess(e, sym, errors, ctx);
+      if (e.accessKind === "shortcut") {
+        refuseDecoderComparison(inferType(e.base, sym, ctx), e.field, e.pos, sym, errors);
+      }
       // The member, not a record's own field that happens to be named `show`.
       if (e.field === "show" && e.accessKind !== "field") noteShown(e.base, sym, ctx);
       return;
@@ -336,15 +415,17 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       checkIndexStep(inferType(e.base, sym, ctx), e.index, "read", e.index.pos, sym, errors, ctx);
       return;
     }
-    case "Call":
+    case "Call": {
       if (ctx.kind === "test" && e.callee === RUN_REDUCER && isBuiltinCall(e.callee, sym)) {
         reportRunReducerPosition(ctx, e.pos, errors);
         return;
       }
-      for (const a of e.args) checkExpr(a, sym, errors, ctx);
+      if (e.callee === "Decoder.Json") checkDecodedArgs(e.args, sym, errors, ctx);
+      else for (const a of e.args) checkExpr(a, sym, errors, ctx);
       checkCallee(e.callee, e.args, e.pos, sym, errors, ctx);
       for (const a of shownArgs(e)) noteShown(a, sym, ctx);
       return;
+    }
     case "MethodCall": {
       // The chained spelling of the same thing: `run-reducer(inc).run-reducer(dec)`.
       if (ctx.kind === "test" && e.method === RUN_REDUCER && isBuiltinCall(e.method, sym)) {
@@ -367,7 +448,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         if (rt && !recordUpdate && classifyMember(raw, e.method, sym) === "unknown") {
           errors.push(undefMemberError(raw, rt, e.method, e.pos, sym));
           lacksMember = true;
-        }
+        } else refuseDecoderComparison(raw, e.method, e.pos, sym, errors);
       }
       if (!lacksMember) {
         const min = METHOD_MIN_ARGS.get(e.method);
@@ -417,12 +498,16 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
             body = fragmentCall(a.name, arity, a.pos);
           }
           const [p1, p2] = fragmentBindings(recvType, e, sym, ctx);
+          // `fold`'s fragment answers the next `$1`, so `$1` and its result share the
+          // accumulator's type.
+          const acc =
+            fragment.second === "element" ? accumulatorType(p1, p2, body, sym, ctx) : null;
           const inner = innerScope(ctx);
-          bindLocal(inner, "$1", p1);
-          if (shape === "value") {
+          bindLocal(inner, "$1", acc ?? p1);
+          if (shape === "value" || shape === "key") {
             inner.localBinds.delete("$2");
             inner.localTypes.delete("$2");
-            inner.oneValueFragment = { method: e.method, hides: ctx.localBinds.has("$2") };
+            inner.oneValueFragment = { method: e.method, hides: ctx.localBinds.has("$2"), shape };
           } else if (fragmentBinds(fragment) === 2) {
             bindLocal(inner, "$2", p2);
           }
@@ -430,7 +515,7 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
           if (e.method === "sort-by" && i === 0) {
             checkSortKey(inferType(body, sym, inner), a.pos, recvType, sym, errors);
           }
-          const declared = memberArgType(recvType, e.method, i, e.args.length, sym);
+          const declared = acc ?? memberArgType(recvType, e.method, i, e.args.length, sym);
           if (declared !== null) checkAgainst(body, declared, sym, errors, inner);
         }
       }
@@ -465,20 +550,23 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
         checkExpr(ent.key, sym, errors, ctx);
         checkExpr(ent.value, sym, errors, ctx);
       }
+      refuseDecoderKeyedLiteral(e, sym, errors, ctx);
       return;
     case "MatchExpr": {
       checkExpr(e.scrutinee, sym, errors, ctx);
       const scrutType = matchedType(inferType(e.scrutinee, sym, ctx), e.arms, sym);
       let patternsFit = true;
-      for (const arm of e.arms) {
-        const inner = innerScope(ctx);
+      checkArms(e.arms, ctx, (arm, inner) => {
         checkPatternBindsAreDistinct(arm.pattern, errors);
         const before = errors.length;
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
         if (errors.length > before) patternsFit = false;
         checkExpr(arm.body, sym, errors, inner);
+      });
+      if (patternsFit) {
+        checkMatchCovers(e, scrutType, sym, errors);
+        checkArmsAfterNestedMatch(e, "value", scrutType, sym, errors);
       }
-      if (patternsFit) checkMatchCovers(e, scrutType, sym, errors);
       return;
     }
     case "IfExpr":
@@ -489,7 +577,9 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
     case "LetIn": {
       checkExpr(e.value, sym, errors, ctx);
-      checkExpr(e.body, sym, errors, letInScope(e, sym, ctx));
+      const inner = letInScope(e, sym, ctx);
+      checkExpr(e.body, sym, errors, inner);
+      endScope("let-in", inner, ctx);
       return;
     }
     case "TokenRef":
@@ -517,6 +607,32 @@ export function checkExpr(e: Expr, sym: SymbolTable, errors: KumikiError[], ctx:
       return;
   }
 }
+
+function didYouMean(written: string, candidates: Iterable<string>): string {
+  const near = nearestName(written, candidates);
+  return near === null ? "" : ` — did you mean "${near}"?`;
+}
+
+// Codegen decodes by the first argument, which parses as a value, so each part of it that spells a
+// type is resolved as one, and refused where it is or holds what no JSON body decodes into. An
+// argument after the first is E0213: its capitalised names are left unreported rather than read as
+// variant tags.
+function checkDecodedArgs(
+  args: readonly Expr[],
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  const [first, ...rest] = args;
+  const value = (v: Expr): void => checkExpr(v, sym, errors, ctx);
+  visitDecodedParts(first, (t) => resolveType(t, sym, errors), value);
+  for (const a of rest) visitDecodedParts(a, leftToTheCount, value);
+  visitDecodedParts(first, (t) => errors.push(...undecodableErrors(t, sym)), checkedAbove);
+}
+
+const leftToTheCount = (): void => undefined;
+
+const checkedAbove = (): void => undefined;
 
 function isFragmentFnName(a: Expr, sym: SymbolTable, ctx: Ctx): a is Expr & { kind: "Ref" } {
   return (
@@ -549,13 +665,26 @@ function checkFragmentFnArity(
   if (n > fragmentBinds(fragment)) {
     return report(`.${method} supplies at most ${fragmentBinds(fragment)}`);
   }
-  if (n === 2 && (shape === "value" || shape === null)) {
+  if (n === 2 && (shape === "value" || shape === "key" || shape === null)) {
     const on = receiver ? ` on "${typeToString(receiver)}"` : "";
-    return report(
-      `.${method}${on} supplies 1 — a second positional is bound only over a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)`,
-    );
+    const why =
+      shape === "key"
+        ? wholeMember(method)
+        : `a second positional is bound only over ${PAIR_BINDERS}`;
+    return report(`.${method}${on} supplies 1 — ${why}`);
   }
   return true;
+}
+
+/** The fragments that bind a second positional, as E0103 and E0213 name them. */
+const PAIR_BINDERS = "a Map's filter or map, or a pair (Tuple(A, B), e.g. from .entries)";
+
+/**
+ * What a Set's fragment is handed instead of a second positional. A member that is itself a pair
+ * is handed whole too, so pointing at pairs would send the reader the wrong way.
+ */
+function wholeMember(method: string): string {
+  return `a Set's .${method} hands each member whole, as "$1"`;
 }
 
 const COMPARISON_OPS: ReadonlySet<string> = new Set(["<", ">", "<=", ">="]);
@@ -569,6 +698,50 @@ function orderingFamily(t: TypeExpr | null, sym: SymbolTable): string | null {
   if (isPrimNamed(t, sym, "Text")) return "text";
   if (isPrimNamed(t, sym, "Time")) return "time";
   return null;
+}
+
+// The List members that compare elements with `==`. A Set's and a Map's members compare keys,
+// but a key type holding a Decoder is refused where it is written, and a Map literal's at its key.
+const COMPARING_LIST_MEMBERS: ReadonlySet<string> = new Set(["contains", "unique"]);
+
+function refuseDecoderComparison(
+  receiver: TypeExpr | null,
+  member: string,
+  pos: Pos,
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  if (!COMPARING_LIST_MEMBERS.has(member)) return;
+  const r = unaliasType(receiver, sym);
+  const element = r?.kind === "TypeApp" && r.name === "List" ? (r.args[0] ?? null) : null;
+  const held = heldDecoder(element, sym);
+  if (!element || !held) return;
+  errors.push({
+    code: "E0201",
+    kind: "type-mismatch",
+    message: `".${member}" cannot compare elements of type ${typeToString(element)}: ${noEquality(element, held)}`,
+    pos,
+  });
+}
+
+// What a written `Map(Decoder, V)` is refused for, reported once at the first key holding one, and
+// dropped when a declared type judges the literal: that type is refused itself, or it reports the
+// key's mismatch.
+function refuseDecoderKeyedLiteral(
+  e: Expr & { kind: "MapLit" },
+  sym: SymbolTable,
+  errors: KumikiError[],
+  ctx: Ctx,
+): void {
+  for (const { key } of e.entries) {
+    const t = inferType(key, sym, ctx);
+    const held = heldDecoder(t, sym);
+    if (!t || !held) continue;
+    const report = decoderKeyError({ container: "Map", key: t, whole: held.whole }, key.pos);
+    errors.push(report);
+    sym.decoderKeyedLiterals.set(report, e);
+    return;
+  }
 }
 
 function checkSortKey(
@@ -667,11 +840,11 @@ function checkBinOpOperands(
     }
     return;
   }
-  const incomparable = (): void => {
+  const incomparable = (why = ""): void => {
     errors.push({
       code: "E0201",
       kind: "type-mismatch",
-      message: `Operator "${e.op}" cannot compare ${typeToString(lt as TypeExpr)} with ${typeToString(rt as TypeExpr)}`,
+      message: `Operator "${e.op}" cannot compare ${typeToString(lt as TypeExpr)} with ${typeToString(rt as TypeExpr)}${why}`,
       pos: e.pos,
     });
   };
@@ -684,6 +857,14 @@ function checkBinOpOperands(
     return;
   }
   if (EQUALITY_OPS.has(e.op)) {
+    // A `Decoder.Json(T)` is its `T`'s check, or one sentinel for every `T` that carries none, so
+    // `==` would call the decoders of an `Int` and a `Text` the same, and an `Email`'s different.
+    const holder = [lt, rt].find((t) => heldDecoder(t, sym) !== undefined);
+    const held = heldDecoder(holder ?? null, sym);
+    if (holder && held && lt && rt) {
+      incomparable(`: ${noEquality(holder, held)}`);
+      return;
+    }
     if (!nominallyComparable(lt, rt, sym)) incomparable();
   }
 }
@@ -730,6 +911,8 @@ export function letInScope(e: Expr & { kind: "LetIn" }, sym: SymbolTable, ctx: C
 
 // A call given fewer arguments than the signature takes has none read against it: which argument
 // it meant as which is not decided (`m.get-or(d)` is the Option reading, whose argument is no key).
+// A call that can only drop trailing arguments, as `xs.slice(start)` does, still has the ones it
+// was given read.
 function memberArgType(
   recv: TypeExpr | null,
   member: string,
@@ -740,7 +923,8 @@ function memberArgType(
   const t = unaliasType(recv, sym);
   if (t?.kind !== "TypeApp") return null;
   const params = receiverParams(t.name, member);
-  if (params === undefined || argCount < params.length) return null;
+  if (params === undefined) return null;
+  if (argCount < params.length && !readsShortCall(t.name, member)) return null;
   const param = params[index] ?? null;
   switch (param) {
     case null:

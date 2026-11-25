@@ -1,5 +1,6 @@
 import type {
   AppShape,
+  Episode,
   EpisodeLocalStorage,
   EpisodeLogEntry,
   EpisodeLogger,
@@ -25,6 +26,7 @@ export function replayableApp(overrides: Partial<AppShape>): ReplayableApp {
 /** A mount with an episode logger. `dispose` tears it down and takes its root out of the page. */
 export type LoggedMount = {
   logger: EpisodeLogger;
+  root: HTMLElement;
   dispatch: MountedApp["_dispatch"];
   dispose: () => void;
 };
@@ -36,6 +38,7 @@ export function mountLogged(app: AppShape, memoryMax = 10): LoggedMount {
   const mounted = mount(app, root, { episodeLogger: logger });
   return {
     logger,
+    root,
     dispatch: (app as MountedApp)._dispatch,
     dispose: () => {
       mounted.dispose();
@@ -56,6 +59,28 @@ export function recordDispatch(app: AppShape, reducer: string): EpisodeLogEntry[
     dispose();
   }
   return JSON.parse(JSON.stringify(logger.list())) as EpisodeLogEntry[];
+}
+
+/**
+ * An episode logger with a deterministic clock and ids that collects each episode as `onEpisode`
+ * is handed it, in the order its trigger began, then hands it to `onHandOver`.
+ */
+export function recordingLogger(onHandOver?: (ep: Episode) => void): {
+  logger: EpisodeLogger;
+  handedOver: Episode[];
+} {
+  const handedOver: Episode[] = [];
+  let t = 1000;
+  let seq = 0;
+  const logger = createEpisodeLogger({
+    now: () => ++t,
+    idGen: () => `ep_${(seq++).toString().padStart(4, "0")}`,
+    onEpisode: (ep) => {
+      handedOver.push(ep);
+      onHandOver?.(ep);
+    },
+  });
+  return { logger, handedOver };
 }
 
 /** Replay `episodes` against `app`'s live map with no mocks. */

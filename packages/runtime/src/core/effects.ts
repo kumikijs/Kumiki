@@ -86,9 +86,13 @@ export function makeEffectDispatcher(
     | { kind: "throttle"; h: Timer; id: string };
   type QueueEntry = { id: string; token: string };
   type Queue = { tail: Promise<void>; pending: QueueEntry[] };
+  type Run = { name: string; token: string; ctl: AbortController };
   type RunState = {
     // Keyed by `EffectId`: what `http.cancel` names and `latest` replaces.
     inflight: Map<string, AbortController>;
+    // Every launched request whose result has not been delivered, including one a cancel already
+    // took out of `inflight`. Only a run still here delivers its result, so `dispose` empties it.
+    runs: Set<Run>;
     // The id of an emit a policy dropped, to the id of the request that absorbed it, so a cancel
     // through either one reaches that request. An entry goes when that request settles.
     absorbedBy: Map<string, string>;
@@ -100,11 +104,15 @@ export function makeEffectDispatcher(
   };
   const state: RunState = {
     inflight: new Map(),
+    runs: new Set(),
     absorbedBy: new Map(),
     timers: new Map(),
     onceSeen: new Map(),
     queues: new Map(),
   };
+  // Set by `dispose`, so an emit that reaches the dispatcher afterwards (a reducer's later emits,
+  // when an invoke disposed the app during its dispatch) launches nothing.
+  let disposed = false;
 
   // `dropped` now names the request `into` names, and so does every id that named `dropped`.
   const absorb = (dropped: string, into: string): void => {
@@ -126,6 +134,7 @@ export function makeEffectDispatcher(
     id: string,
     presetToken?: string,
   ): Promise<void> => {
+    if (disposed) return;
     // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
     if (eff.cap !== "" && !caps.has(eff.cap)) {
       settle(id);
@@ -138,24 +147,25 @@ export function makeEffectDispatcher(
     }
     const token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
     const ctl = new AbortController();
+    const run: Run = { name: eff.name, token, ctl };
     state.inflight.set(id, ctl);
-    let res: EffectResult;
-    try {
-      res = await runWithRetry(eff, input, caps, ctl.signal);
-    } catch (e) {
-      res = { kind: "err", value: { message: String(e) } };
-    }
+    state.runs.add(run);
+    // An invoke that throws, or resolves to no result, is already this request's err here.
+    const { kind: outcome, value } = await runEffect(eff, input, caps, ctl.signal);
     // Released before its result is delivered, so a cancel the `.ok` / `.err` reducers emit finds
     // a request that is over. Under `latest` a newer request may hold the id by now.
     if (state.inflight.get(id) === ctl) {
       state.inflight.delete(id);
       settle(id);
     }
-    onResult(eff.name, res.kind, res.value, input, token);
+    // Outside the catch: this is the request's one result, and what its delivery throws is the
+    // app's to report, not a second result.
+    if (state.runs.delete(run)) onResult(eff.name, outcome, value, input, token);
   };
 
   return {
     dispatch(emit: EmitSpec): void {
+      if (disposed) return;
       const eff = own(app.effects, emit.effect);
       if (!eff) {
         // No token: with no effect there is no policy to defer this emit, so it is reported now, on
@@ -266,23 +276,39 @@ export function makeEffectDispatcher(
       }
       void launch(eff, input, id);
     },
+    // Ends everything first and records after: recording a cancel can commit an episode, which
+    // runs the logger's `onCommit` and `onEpisode`, and nothing that does may leave an effect
+    // running. A commit that throws does not keep the others from committing: the first throw is
+    // rethrown after.
     dispose(): void {
-      const pendingTimers = [...state.timers];
-      state.timers.clear();
-      for (const [name, t] of pendingTimers) {
+      disposed = true;
+      const cancelled: [token: string, name: string][] = [];
+      for (const [name, t] of state.timers) {
         clearTimeout(t.h);
-        if (t.kind === "debounce" && t.token) onPolicyCancel?.(t.token, name);
+        if (t.kind === "debounce") cancelled.push([t.token, name]);
       }
       for (const [name, q] of state.queues) {
-        const waiting = q.pending.splice(0, q.pending.length);
-        for (const e of waiting) {
-          if (e.token) onPolicyCancel?.(e.token, name);
+        for (const e of q.pending.splice(0)) cancelled.push([e.token, name]);
+      }
+      // A launch is cancelled whether it is running or waiting between retry attempts, and so is
+      // one a cancel already aborted whose result has not come back.
+      for (const run of state.runs) {
+        run.ctl.abort();
+        cancelled.push([run.token, run.name]);
+      }
+      for (const m of [state.timers, state.queues, state.runs, state.inflight, state.absorbedBy]) {
+        m.clear();
+      }
+      let thrown: { error: unknown } | undefined;
+      for (const [token, name] of cancelled) {
+        if (!token) continue;
+        try {
+          onPolicyCancel?.(token, name);
+        } catch (error) {
+          thrown ??= { error };
         }
       }
-      state.queues.clear();
-      for (const c of state.inflight.values()) c.abort();
-      state.inflight.clear();
-      state.absorbedBy.clear();
+      if (thrown) throw thrown.error;
     },
   };
 }
@@ -331,28 +357,51 @@ export function standInValue(
   return outcome === "err" && eff?.errText ? eff.errText(value) : (value ?? null);
 }
 
-async function runWithRetry(
+/**
+ * The result one run of `eff` delivers: its invoke, attempted again as `eff.retry` says, with an
+ * attempt that throws or resolves to no result read as its err. It never rejects. The live
+ * dispatcher and the server pass both run an effect through here, so the two deliver the same
+ * result.
+ */
+export async function runEffect(
   eff: EffectSpec,
   input: unknown,
   caps: CapabilityRegistry,
   signal?: AbortSignal,
 ): Promise<EffectResult> {
-  const policy = eff.retry;
-  if (!policy) return eff.invoke(input, caps, signal);
-  let last: EffectResult = await eff.invoke(input, caps, signal);
-  for (let attempt = 1; attempt < policy.n; attempt++) {
-    if (last.kind !== "err" || last.final) return last;
-    if (signal?.aborted) return last;
-    const status = readStatus(last.value);
-    const retriable = status === null || status === 0 || status >= 500;
-    if (!retriable) return last;
-    const delay = policy.kind === "linear" ? policy.ms : policy.ms * policy.factor ** (attempt - 1);
-    // An abort during the wait has no attempt running to answer it, so the aborted err
-    // comes from here.
-    if (!(await sleep(delay, signal))) return { kind: "err", value: abortedErr(eff) };
-    last = await eff.invoke(input, caps, signal);
+  try {
+    const policy = eff.retry;
+    let last = resultOf(eff, await eff.invoke(input, caps, signal));
+    if (!policy) return last;
+    for (let attempt = 1; attempt < policy.n; attempt++) {
+      if (last.kind !== "err" || last.final) return last;
+      if (signal?.aborted) return last;
+      const status = readStatus(last.value);
+      const retriable = status === null || status === 0 || status >= 500;
+      if (!retriable) return last;
+      const delay =
+        policy.kind === "linear" ? policy.ms : policy.ms * policy.factor ** (attempt - 1);
+      // An abort during the wait has no attempt running to answer it, so the aborted err
+      // comes from here.
+      if (!(await sleep(delay, signal))) return { kind: "err", value: abortedErr(eff) };
+      last = resultOf(eff, await eff.invoke(input, caps, signal));
+    }
+    return last;
+  } catch (e) {
+    // An invoke that throws is this request's err: a `Text` for an effect that fails with `Text`,
+    // `{message}` for any other.
+    return { kind: "err", value: standInValue(eff, "err", { message: String(e) }) };
   }
-  return last;
+}
+
+// A host provider is not type-checked, so what it resolves to may be no result at all, such as
+// the `undefined` of one with no `return`. That is thrown, to be the attempt's err as a throw is.
+function resultOf(eff: EffectSpec, got: unknown): EffectResult {
+  const kind = (got as { kind?: unknown } | null | undefined)?.kind;
+  if (kind === "ok" || kind === "err") return got as EffectResult;
+  const shown =
+    typeof got === "object" && got !== null ? "an object with no ok or err kind" : String(got);
+  throw new Error(`effect "${eff.name}" resolved to ${shown}, not {kind, value}`);
 }
 
 /**

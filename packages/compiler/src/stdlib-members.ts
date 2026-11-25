@@ -115,16 +115,18 @@ export const RECEIVER_MEMBERS = {
   Bytes: [],
   File: [],
   EffectId: [],
+  Decoder: [],
 } as const satisfies Record<string, readonly string[]>;
 
-/** Every value has these, whatever its type. `show` on an `EffectId` is E0204, refused where the value is shown rather than by this set. */
+/** Every value has these, whatever its type. `show` on an opaque handle is E0204, refused where the value is shown rather than by this set. */
 export const UNIVERSAL_MEMBERS: ReadonlySet<string> = new Set(["show"]);
 
 export type Receiver = keyof typeof RECEIVER_MEMBERS;
 export type MemberOf<R extends Receiver> = (typeof RECEIVER_MEMBERS)[R][number];
 
 // `self` is the receiver's own type: the `other` of `Map.merge`, `Set.union` or `List.concat`.
-// `Int` is an `Int` whatever the receiver's type arguments: the index of `List.get`.
+// `Int` is an `Int` whatever the receiver's type arguments: the index of `List.get`, the bounds of
+// `slice` and the size of `chunk`.
 type MapParam = "K" | "V" | "self";
 type SetParam = "T" | "self";
 type ListParam = "T" | "self" | "Int";
@@ -178,7 +180,7 @@ export const RECEIVER_PARAMS = {
     push: ["T"],
     prepend: ["T"],
     concat: ["self"],
-    slice: [null, null],
+    slice: ["Int", "Int"],
     reverse: [],
     sort: [],
     "sort-by": [null],
@@ -189,7 +191,7 @@ export const RECEIVER_PARAMS = {
     find: [null],
     fold: [null, null],
     join: [null],
-    chunk: [null],
+    chunk: ["Int"],
     zip: [null],
   },
 } as const satisfies {
@@ -200,11 +202,14 @@ export const RECEIVER_PARAMS = {
 
 // The type parameters of each receiver a fragment's positional can be, named as stdlib.md names
 // them in its signatures.
-type FragmentParams = { List: "T"; Option: "T"; Result: "T" | "E"; Map: "K" | "V" };
+type FragmentParams = { List: "T"; Option: "T"; Result: "T" | "E"; Map: "K" | "V"; Set: "T" };
 
 export type FragmentReceiver = keyof FragmentParams;
 
-/** `Acc` is `fold`'s accumulator, whose type is its init's. */
+/**
+ * `Acc` is `fold`'s accumulator, typed as its init; `accumulatorType` widens it to the
+ * fragment's result.
+ */
 export type FragmentPositional = FragmentParams[FragmentReceiver] | "Acc";
 
 /** Which type argument of its receiver each type parameter is. */
@@ -253,13 +258,16 @@ type FragmentMethod =
 /**
  * Where each method's fragment argument is (`index`), and what the checker types its
  * positionals as, `$1` first. On a `pair-value` row the length also decides the shape the lowering
- * takes apart: two positionals are a Map's key and value; one is the element, split if a pair.
- * A receiver that has the method but no row binds them with no type: a `Set`'s `filter` is handed
- * each member as an `[element, true]` entry, which a one-positional row would bind to `$1` whole.
- * A receiver without the method is E0108.
+ * takes apart: two positionals are a Map's key and value; one is the element, split if a pair —
+ * except on a `Set`, whose `filter` is handed each member as an `[element, true]` entry, and whose
+ * one positional is that entry's key, whole. A receiver without the method is E0108.
  */
 export const FRAGMENT_ARGUMENTS = {
-  filter: { index: 0, second: "pair-value", on: { List: ["T"], Option: ["T"], Map: ["K", "V"] } },
+  filter: {
+    index: 0,
+    second: "pair-value",
+    on: { List: ["T"], Option: ["T"], Map: ["K", "V"], Set: ["T"] },
+  },
   map: {
     index: 0,
     second: "pair-value",
@@ -307,6 +315,20 @@ export function receiverParams(
   member: string,
 ): readonly (ReceiverParam | null)[] | undefined {
   return PARAM_ROWS.get(receiver)?.get(member);
+}
+
+// `xs.slice(start)` drops only the trailing end, so its one argument is still the start.
+const SHORT_CALLS_READ: { readonly [R in Receiver]?: readonly MemberOf<R>[] } = {
+  List: ["slice"],
+};
+
+const SHORT_CALL_ROWS = new Map<string, ReadonlySet<string>>(
+  Object.entries(SHORT_CALLS_READ).map(([r, ms]) => [r, new Set<string>(ms)]),
+);
+
+/** Whether a call of `receiver.member` that leaves off trailing arguments still has the ones it was given read. */
+export function readsShortCall(receiver: string, member: string): boolean {
+  return SHORT_CALL_ROWS.get(receiver)?.has(member) ?? false;
 }
 
 const MEMBER_SETS = new Map<string, ReadonlySet<string>>(

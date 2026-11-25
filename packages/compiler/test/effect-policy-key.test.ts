@@ -106,17 +106,17 @@ describe("an effect's map-request is checked in the same scope", () => {
   });
 });
 
-/** A program whose one effect takes `in=${input}` and declares `clauses`. */
-function inputApp(input: string, clauses: string): string {
+/** A program whose one effect, on `cap`, takes `in=${input}` and declares `clauses`. */
+function inputApp(input: string, clauses: string, cap = "http.get"): string {
   return `type UserQuery = {id: Text, size: Int}
 type QueryAlias = UserQuery
 type UserId = nominal Text
 type Shape = Circle(Int) | Square(Int)
-effect load cap=http.get in=${input} out=Result(Text, HttpError)
+effect load cap=${cap} in=${input} out=Result(Text, HttpError)
             ${clauses}
 tile B = button(text="b")
 tile Home = column(B)
-app M caps=[http.get] routes={"/" -> Home, "/404" -> Home} init=[]`;
+app M caps=[${cap}] routes={"/" -> Home, "/404" -> Home} init=[]`;
 }
 
 /** `inputApp` with `url` as the `map-request`'s url. */
@@ -136,15 +136,17 @@ describe("`$1` in an effect's own expressions has the effect's in= type", () => 
     expect(textAt(source, at)).toMatch(/^\$1\.idd/);
   });
 
+  // An http.get request has no body, so the body row sends with http.post.
   it.each([
-    ["map-request", `map-request={url: "/api/users/" + $1.id, decode: Decoder.Text}`],
-    ["the latest-per-key key", "policy=latest-per-key($1.id)"],
+    ["map-request", `map-request={url: "/api/users/" + $1.id, decode: Decoder.Text}`, "http.get"],
+    ["the latest-per-key key", "policy=latest-per-key($1.id)", "http.get"],
     [
       "map-request's query, headers and body",
       `map-request={url: "/u", query: {"size": $1.size.show}, headers: {"X-Id": $1.id}, body: Json({"id": $1.id}), decode: Decoder.Text}`,
+      "http.post",
     ],
-  ])("accepts a field the in= record has, in %s", (_where, clauses) => {
-    expect(codesOf(inputApp("UserQuery", clauses))).toEqual([]);
+  ])("accepts a field the in= record has, in %s", (_where, clauses, cap) => {
+    expect(codesOf(inputApp("UserQuery", clauses, cap))).toEqual([]);
   });
 
   it.each([
@@ -185,8 +187,9 @@ describe("`$1` in an effect's own expressions has the effect's in= type", () => 
     expect(textAt(source, at)).toMatch(/^\$1 [*-]/);
   });
 
-  it("leaves a member of a union in= undecided", () => {
-    expect(codesOf(urlApp("Shape", `"/u/" + $1.idd`))).toEqual([]);
+  it("leaves a member of a union in= undecided, and reports a name no variant answers", () => {
+    expect(codesOf(urlApp("Shape", `"/u/" + $1.length.show`))).toEqual([]);
+    expect(codesOf(urlApp("Shape", `"/u/" + $1.idd`))).toEqual(["E0108"]);
     expect(codesOf(urlApp("Shape", `"/u/" + ($1 * 2).show`))).toEqual(["E0201"]);
   });
 
@@ -350,6 +353,7 @@ describe("a latest-per-key key of a type not keyed by its value is E0233", () =>
   const FILE =
     "a File, and two Files with the same name, size and type are one key, while == holds only of a File and itself";
   const SET = "a Set, whose == depends on how it was built";
+  const DECODER = "a Decoder, and a key keeps none of the check a Decoder.Json(T) runs";
   it.each([
     ["a Float", "Float", "$1", "Float", FLOAT],
     ["a Float slot", "Text", "ratio", "Float", FLOAT],
@@ -390,6 +394,8 @@ describe("a latest-per-key key of a type not keyed by its value is E0233", () =>
       "FormValue",
       HOLDS_FLOAT,
     ],
+    ["a Decoder", "Decoder", "$1", "Decoder", `it is ${DECODER}`],
+    ["a record holding a Decoder", "{d: Decoder}", "$1", "{d: Decoder}", `it holds ${DECODER}`],
     ["a Set", "Set(Text)", "$1", "Set(Text)", `it is ${SET}`],
     ["a List of Sets", "List(Set(Text))", "$1", "List(Set(Text))", `it holds ${SET}`],
     [

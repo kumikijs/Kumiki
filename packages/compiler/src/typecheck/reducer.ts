@@ -1,12 +1,13 @@
-import { unaliasType } from "../assignable.ts";
+import { typeToString, unaliasType } from "../assignable.ts";
 import type { AppDef, Lvalue, ReducerDef, Statement, TypeExpr, UiEventKind } from "../ast.ts";
 import { BUILTIN_EFFECTS } from "../capabilities.ts";
 import { RESERVED_BIND_NAMES } from "../reserved-binds.ts";
 import { refType } from "../stdlib-types.ts";
 import {
-  firesUnheardIn,
+  firesUnheardClauses,
   UI_EVENT_TILE_KINDS,
-  type WrappedUnreached,
+  unfocusedScrollClause,
+  wrappedClause,
   wrappedUnreached,
 } from "../ui-lifts.ts";
 import {
@@ -19,7 +20,6 @@ import {
 import {
   bindLocal,
   type Ctx,
-  type EndedScope,
   innerScope,
   type KumikiError,
   type StatementScope,
@@ -28,13 +28,18 @@ import {
 import { effectPayloadType } from "./effect.ts";
 import { checkCondition, checkExpr, checkIterationTarget, elementTypeOf } from "./expr.ts";
 import { inferType, prim } from "./infer.ts";
-import { classifyMember, receiverName, undefMemberError } from "./members.ts";
-import { checkPatternAgainstType, checkPatternBindsAreDistinct, matchedType } from "./patterns.ts";
-import { bindsRoute, namedByHandler, subscribedKinds, subscriptionIds } from "./tile-collect.ts";
+import { classifyMember, isUnionMemberWrite, receiverName, undefMemberError } from "./members.ts";
+import { nestedScopes } from "./nested-scopes.ts";
+import {
+  checkArmsAfterNestedMatch,
+  checkPatternAgainstType,
+  checkPatternBindsAreDistinct,
+  matchedType,
+} from "./patterns.ts";
+import { bindsRoute, namedByHandler, outletFilled, subscriptionIds } from "./tile-collect.ts";
 
 /** The scope a reducer's statements are checked in. */
 type ReducerCtx = Ctx & {
-  endedScopes: Map<string, EndedScope>;
   /** The names a statement nested in the body being checked ended: they end with the body too. */
   endedInBody: Set<string>;
 };
@@ -48,6 +53,7 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     capsAvailable: new Set(sym.app?.caps ?? []),
     routeBind: routeBindOf(r, sym),
     endedScopes: new Map(),
+    nestedScopes: nestedScopes(r.do),
     endedInBody: new Set(),
   };
   if (r.on.kind === "EffectEvent") {
@@ -138,10 +144,21 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
     const { ev, selector } = r.on;
     const allowed = UI_EVENT_TILE_KINDS[ev];
     if (allowed != null) {
-      const descendants = subscribedKinds(selector.tile, sym);
-      const hasMatch = [...descendants].some((k) => allowed.has(k));
+      const descendants = sym.tileKinds.subscribed(selector.tile);
+      // A scroll counts only where one may take focus, which a scroll holding a control never does.
+      const unfocusedScroll =
+        allowed.has("scroll") &&
+        descendants.has("scroll") &&
+        !sym.tileKinds.focusableScroll(selector.tile);
+      const hasMatch = [...descendants].some(
+        (k) => allowed.has(k) && !(k === "scroll" && unfocusedScroll),
+      );
       if (descendants.size > 0 && !hasMatch) {
-        const reason = uiEventMismatchReason(ev, selector.tile, descendants);
+        const outlet = descendants.has(OUTLET) && outletFilled(selector.tile, sym);
+        const reason = uiEventMismatchReason(ev, selector.tile, descendants, {
+          outlet,
+          unfocusedScroll,
+        });
         errors.push({
           code: "W0212",
           kind: "ui-event-tile-mismatch",
@@ -162,33 +179,39 @@ export function checkReducer(r: ReducerDef, sym: SymbolTable, errors: KumikiErro
   for (const stmt of r.do) checkStmt(stmt, sym, errors, ctx, writtenRoots);
 }
 
-// A wrapped kind's focused element, and a kind whose renderer never calls the handler, do fire
-// the event; "no descendant fires it" would be untrue of them. No row records a kind that fires
-// unheard under key, focus or blur, so the two reasons never both apply.
-function uiEventMismatchReason(ev: UiEventKind, tile: string, kinds: ReadonlySet<string>): string {
-  const unheard = firesUnheardIn(ev, kinds);
-  if (unheard.length > 0) {
-    const clauses = unheard.map(
-      (g) =>
-        `a ${g.kinds.join(" / ")} fires "${ev}", and its renderer ${g.instead}, never calling ${g.handler}`,
-    );
-    return `"${ev}" never reaches a reducer in tile "${tile}": ${clauses.join("; ")}`;
-  }
-  const unreached = wrappedUnreached(ev, kinds).map((g) => wrappedClause(ev, g));
-  if (unreached.length > 0) {
-    return `"${ev}" never reaches a listener in tile "${tile}": ${unreached.join("; ")}`;
-  }
-  return `tile "${tile}" has no descendant that fires "${ev}"`;
+// The routed tile is lowered as its own route target, outside the tile that holds the outlet,
+// so no subscription on that tile reaches whatever the route puts there.
+const OUTLET = "route-outlet";
+
+/** What the tree says beyond its kinds: a route fills its outlet; no scroll in it takes focus. */
+type TreeFacts = { readonly outlet: boolean; readonly unfocusedScroll: boolean };
+
+function uiEventMismatchReason(
+  ev: UiEventKind,
+  tile: string,
+  kinds: ReadonlySet<string>,
+  facts: TreeFacts,
+): string {
+  const outlet = facts.outlet ? [outletClause(ev, tile)] : [];
+  const unheard = firesUnheardClauses(ev, kinds);
+  const unreached = [
+    ...wrappedUnreached(ev, kinds).map((g) => wrappedClause(ev, g)),
+    ...(facts.unfocusedScroll ? [unfocusedScrollClause(ev)] : []),
+  ];
+  const clauses = [...outlet, ...unheard, ...unreached];
+  if (clauses.length === 0) return `tile "${tile}" has no descendant that fires "${ev}"`;
+  // The heading names what the event misses. A listener's clause and a renderer's never stand
+  // together: only key, focus and blur leave a listener unreached, and no row records a kind that
+  // fires unheard under them. The outlet's clause stands under either heading.
+  const missed = unreached.length > 0 ? "listener" : "reducer";
+  return `"${ev}" never reaches a ${missed} in tile "${tile}": ${clauses.join("; ")}`;
 }
 
-function wrappedClause(ev: UiEventKind, g: WrappedUnreached): string {
-  const kinds = g.kinds.join(" / ");
-  return g.bubbles
-    ? `a ${kinds} takes no "${ev}" listener on the <${g.wrapper}> around its <${g.focused}>, ` +
-        `since a control in its panel takes the subscription instead — ` +
-        `write ${g.handler}= on the ${kinds} to hear a "${ev}" on its <${g.focused}>`
-    : `the runtime listens for "${ev}" on a ${kinds}'s <${g.wrapper}>, ` +
-        `and the "${ev}" its <${g.focused}> fires does not bubble to the <${g.wrapper}>`;
+function outletClause(ev: UiEventKind, tile: string): string {
+  return (
+    `the tile its route-outlet shows is picked by the route at runtime and compiled as its own ` +
+    `route target, so ui.${ev}(${tile}) is not lifted onto it — subscribe to that tile instead`
+  );
 }
 
 function declaredRoutePatterns(
@@ -264,14 +287,18 @@ function checkStmt(
   if (s.kind === "MatchStmt") {
     checkExpr(s.scrutinee, sym, errors, ctx);
     const scrutType = matchedType(inferType(s.scrutinee, sym, ctx), s.arms, sym);
+    let patternsFit = true;
     const arms = s.arms.map((arm) => ({
       stmts: arm.body,
       bind: (inner: Ctx) => {
         checkPatternBindsAreDistinct(arm.pattern, errors);
+        const before = errors.length;
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
+        if (errors.length > before) patternsFit = false;
       },
     }));
     checkBodies("match", arms, sym, errors, ctx, writtenRoots);
+    if (patternsFit) checkArmsAfterNestedMatch(s, "statement", scrutType, sym, errors);
     return;
   }
   if (s.kind === "NoopStmt") return;
@@ -285,7 +312,8 @@ function checkStmt(
     const confirmArg = s.effect === "confirm" && s.args.length === 1 ? s.args[0] : undefined;
     if (confirmArg && confirmArg.kind === "RecordLit") {
       for (const f of confirmArg.fields) {
-        if ((f.name === "onYes" || f.name === "onNo") && f.value.kind === "Ref") {
+        const names = f.name === "onYes" || f.name === "onNo";
+        if (names && f.value.kind === "Ref") {
           if (!sym.reducers.has(f.value.name)) {
             errors.push({
               code: "E0103",
@@ -296,6 +324,9 @@ function checkStmt(
           }
           continue;
         }
+        // A capitalised reducer name parses as a tag; the `ReducerRef` check
+        // already reports it, and resolving it as a tag would report it twice.
+        if (names && f.value.kind === "Variant" && f.value.payload.length === 0) continue;
         checkExpr(f.value, sym, errors, ctx);
       }
       return;
@@ -343,13 +374,20 @@ function checkStmt(
   checkAgainst(s.rhs, lvalueType(s.lvalue, sym), sym, errors, ctx);
 }
 
+// A read moved into the body would still be after an expression that ended the name last.
+function endedByStatement(ctx: Ctx, name: string): boolean {
+  const kind = ctx.endedScopes.get(name)?.kind;
+  return kind === "if" || kind === "for" || kind === "match";
+}
+
 /**
  * The bodies of one `if`, `for` or `match`, checked in order. They are mutually exclusive, so
  * each starts from the slots written before the statement.
  *
  * A name the body declares and `ctx` does not bind ends with the body, as does a name a statement
- * nested in it ended; `ctx.endedScopes` records it under `kind`. A read of it in a later body of
- * the same statement is in a sibling of the body that declared it.
+ * nested in it ended, unless an expression later in the body ended it again; `ctx.endedScopes`
+ * records it under `kind`. A read of it in a later body of the same statement is in a sibling of
+ * the body that declared it.
  */
 function checkBodies(
   kind: StatementScope,
@@ -368,6 +406,7 @@ function checkBodies(
     for (const st of stmts) checkStmt(st, sym, errors, inner, bodyWrites);
     for (const name of [...inner.localBinds, ...inner.endedInBody]) {
       if (ctx.localBinds.has(name)) continue;
+      if (!inner.localBinds.has(name) && !endedByStatement(ctx, name)) continue;
       ctx.endedScopes.set(name, { kind, sibling: true });
       ended.add(name);
     }
@@ -443,6 +482,15 @@ function checkMemberLvalue(
       return;
 
     case "undecidable":
+      if (isUnionMemberWrite(raw, lv.field, sym)) {
+        errors.push({
+          code: "E0602",
+          kind: "unassignable-member",
+          message: `Cannot assign through ".${lv.field}": "${typeToString(raw ?? base)}" is a union, and a union has no fields — write it whole, as the variant it now holds`,
+          pos: lv.pos,
+        });
+        return;
+      }
       // A receiver we do not fully understand. Silent, exactly as on the read
       // side: a false error on a dynamic receiver is worse than the silence.
       return;

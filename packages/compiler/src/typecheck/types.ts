@@ -16,15 +16,18 @@ import {
   type TypeDef,
   type TypeExpr,
 } from "../ast.ts";
-import { aliasTarget } from "../def-graph.ts";
-import { GENERIC_SELF_NESTING_LIMIT, scanPositions } from "../refinement-positions.ts";
+import { aliasTarget, forwardedParams } from "../def-graph.ts";
+import { decoderKey, decoderKeyError, heldDecoder } from "../held-decoder.ts";
+import { GENERIC_SELF_NESTING_LIMIT, scanPositions, typeKey } from "../refinement-positions.ts";
 import {
+  isCountArgument,
   type RefinementProblem,
   refinementBaseProblem,
   refinementProblem,
 } from "../refinements.ts";
-import { isReservedTypeName } from "../stdlib-types.ts";
+import { type ReservedTypeReason, reservedTypeReason } from "../stdlib-types.ts";
 import type { KumikiError, SymbolTable } from "./context.ts";
+import { intLiteralPrecision } from "./int-literal.ts";
 
 export function resolveType(
   t: TypeExpr,
@@ -69,6 +72,7 @@ export function resolveType(
       } else {
         checkTypeArity(t.name, t.args.length, t.pos, sym, errors);
         checkApplication(t, sym, typeParams, errors);
+        refuseDecoderKey(t, sym, typeParams, errors);
       }
       for (const a of t.args) resolveType(a, sym, errors, scope);
       return;
@@ -85,6 +89,29 @@ export function resolveType(
       resolveType(t.inner, sym, errors, scope);
       return;
   }
+}
+
+// A key is stored as `entryKey` writes it, which keeps no `Decoder.Json(T)` check: a Decoder read
+// back from a Map's keys or a Set is not the one put in, and handed on as a `decode` it decodes by
+// none. A generic is reported where it is applied to a Decoder, unless its own body already keys by
+// one, which is reported there.
+function refuseDecoderKey(
+  t: TypeExpr & { kind: "TypeApp" },
+  sym: SymbolTable,
+  typeParams: ReadonlySet<string>,
+  errors: KumikiError[],
+): void {
+  if (t.name === "Map" || t.name === "Set") {
+    const key = t.args[0];
+    const held = key && heldDecoder(key, sym, typeParams);
+    if (!key || !held) return;
+    errors.push(decoderKeyError({ container: t.name, key, whole: held.whole }, key.pos));
+    return;
+  }
+  const def = sym.types.get(t.name);
+  if (!def || def.params.length === 0 || decoderKey(def.body, sym, new Set(def.params))) return;
+  const found = decoderKey(t, sym, typeParams);
+  if (found) errors.push(decoderKeyError(found, t.pos, t));
 }
 
 export function checkNestedLowering(slot: SlotDef, sym: SymbolTable, errors: KumikiError[]): void {
@@ -106,8 +133,12 @@ function checkRefinement(
   errors: KumikiError[],
 ): void {
   if (!r) return;
-  const problem = refinementProblem(r) ?? baseProblem(r, inner, sym, typeParams);
-  if (!problem) return;
+  const base = refinedBase(inner, sym, typeParams);
+  const problem = refinementProblem(r) ?? baseProblem(r, base);
+  if (!problem) {
+    checkArgPrecision(r, base, errors);
+    return;
+  }
   if (problem.kind === "unimplemented-refinement") {
     errors.push({
       code: "E0803",
@@ -125,14 +156,45 @@ function checkRefinement(
   });
 }
 
-/** {@link refinementBaseProblem} for `r` over `inner`, as a checker problem. */
-function baseProblem(
-  r: Refinement,
+const isInt = (t: TypeExpr | null): boolean => t?.kind === "TypePrim" && t.name === "Int";
+
+// A number argument over an `Int` stands for an `Int`, and so does a count over any base: the check
+// is built from the number each literal was read as. Over a `Float` it is a `Float`, which holds an
+// approximation by nature. Over a type parameter it is judged where the generic is applied.
+function checkArgPrecision(r: Refinement, base: TypeExpr | null, errors: KumikiError[]): void {
+  const overInt = isInt(base);
+  for (const n of r.numbers ?? []) {
+    if (!overInt && !isCountArgument(r.pred, n.index)) continue;
+    const imprecise = intLiteralPrecision(n, n.pos);
+    if (imprecise) errors.push(imprecise);
+  }
+}
+
+/**
+ * {@link checkArgPrecision} for a refinement an application puts over `Int`, once however often
+ * the generic is applied: the literal is the definition's, reported where it is written.
+ */
+function checkAppliedPrecision(run: AppliedRun, r: Refinement): void {
+  if (run.sym.appliedPrecision.has(r)) return;
+  run.sym.appliedPrecision.add(r);
+  // A count's refinement tests text, so over `Int` it is E0804 and never gets here.
+  for (const n of r.numbers ?? []) {
+    const imprecise = intLiteralPrecision(n, n.pos);
+    if (imprecise) run.imprecise.push(imprecise);
+  }
+}
+
+/** The type a refinement over `inner` is written over, with each type parameter left opaque. */
+function refinedBase(
   inner: TypeExpr,
   sym: SymbolTable,
   typeParams: ReadonlySet<string>,
-): RefinementProblem | undefined {
-  const base = unaliasType(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
+): TypeExpr | null {
+  return unaliasType(substituteType(inner, opaqueParams(typeParams, inner.pos)), sym);
+}
+
+/** {@link refinementBaseProblem} for `r` over `base`, as a checker problem. */
+function baseProblem(r: Refinement, base: TypeExpr | null): RefinementProblem | undefined {
   const message = base ? refinementBaseProblem(r, base) : undefined;
   return message ? { kind: "refinement-args-invalid", message } : undefined;
 }
@@ -158,11 +220,13 @@ function checkApplication(
     sym,
     reported: new Map(),
     out: [],
+    imprecise: [],
   };
   appliedBaseProblems(app.name, args, unapplied, run, { entered: null, from: null, walked: null });
   for (const message of run.out) {
     errors.push({ code: "E0804", kind: "refinement-args-invalid", message, pos: app.pos });
   }
+  errors.push(...run.imprecise);
 }
 
 type AppliedRun = {
@@ -170,6 +234,7 @@ type AppliedRun = {
   readonly sym: SymbolTable;
   readonly reported: Map<Refinement, Set<string>>;
   readonly out: string[];
+  readonly imprecise: KumikiError[];
 };
 
 type AppliedScope = {
@@ -193,6 +258,16 @@ type WalkedApplication = {
 function sameNodes(a: readonly TypeExpr[], b: readonly TypeExpr[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i += 1) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function readAlike(a: readonly TypeExpr[], b: readonly TypeExpr[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    const x = a[i];
+    const y = b[i];
+    if (x === undefined || y === undefined || typeKey(x) !== typeKey(y)) return false;
+  }
   return true;
 }
 
@@ -222,67 +297,116 @@ function reportApplied(run: AppliedRun, r: Refinement, message: string): void {
   run.out.push(message);
 }
 
+// A stack rather than a recursion: a chain of generics, each applying the one below, is as long
+// as the program makes it. Work is pushed in reverse so the messages come out in depth-first order.
 function appliedBaseProblems(
   name: string,
-  writtenArgs: readonly TypeExpr[],
-  writtenJudged: readonly TypeExpr[],
+  args: readonly TypeExpr[],
+  judged: readonly TypeExpr[],
   run: AppliedRun,
   scope: AppliedScope,
 ): void {
+  const todo: AppliedWork[] = [{ kind: "enter", name, args, judged, scope }];
+  for (let work = todo.pop(); work !== undefined; work = todo.pop()) {
+    if (work.kind === "enter") enterApplied(work, run, todo);
+    else walkApplied(work.t, work.at, run, todo);
+  }
+}
+
+type AppliedWork =
+  | {
+      readonly kind: "enter";
+      readonly name: string;
+      readonly args: readonly TypeExpr[];
+      readonly judged: readonly TypeExpr[];
+      readonly scope: AppliedScope;
+    }
+  | { readonly kind: "walk"; readonly t: TypeExpr; readonly at: AppliedBody };
+
+type AppliedBody = {
+  readonly applied: ReadonlyMap<string, TypeExpr>;
+  readonly before: ReadonlyMap<string, TypeExpr>;
+  readonly inside: AppliedScope;
+};
+
+function enterApplied(
+  work: AppliedWork & { kind: "enter" },
+  run: AppliedRun,
+  todo: AppliedWork[],
+): void {
+  const { name, scope } = work;
   const { sym } = run;
   const def = sym.types.get(name);
-  if (!def || hasEntered(scope, name) || def.params.length !== writtenArgs.length) return;
-  const args = writtenArgs.map((a) => forwardedHead(a, sym));
-  const judged = writtenJudged.map((a) => forwardedHead(a, sym));
+  if (!def || hasEntered(scope, name) || def.params.length !== work.args.length) return;
+  const args = work.args.map((a) => forwardedHead(a, sym));
+  const judged = work.judged.map((a) => forwardedHead(a, sym));
+  // Arguments that read as the judged ones make every was/now pair below one type read twice,
+  // which can never report, so the walk is not taken.
+  if (readAlike(args, judged)) return;
   if (walkedFrom(scope, name, args, judged)) return;
   scope.walked ??= [];
   scope.walked.push({ name, args, judged });
-  const applied = paramSubstitution(def.params, args);
-  const before = paramSubstitution(def.params, judged);
-  const inside: AppliedScope = { entered: name, from: scope, walked: null };
-  const walk = (t: TypeExpr): void => {
-    switch (t.kind) {
-      case "TypePrim":
-      case "TypeRef":
-        return;
-      case "TypeApp": {
-        // Substituted whole, so that a parameter at the head leaves no application to
-        // enter rather than naming a top-level generic.
-        const nested = substituteType(t, applied);
-        if (nested.kind === "TypeApp") {
-          const nestedBefore = t.args.map((a) => substituteType(a, before));
-          appliedBaseProblems(t.name, nested.args, nestedBefore, run, inside);
-        }
-        for (const a of t.args) walk(a);
-        return;
-      }
-      case "TypeRecord":
-        for (const f of t.fields) walk(f.type);
-        return;
-      case "TypeUnion":
-        for (const v of t.variants) for (const p of v.payloads) walk(p);
-        return;
-      case "TypeNominal":
-      case "TypeRefinement": {
-        const r = t.refinement;
-        // A problem with the arguments is the definition's, reported there.
-        if (r && !refinementProblem(r)) {
-          const was = unaliasType(substituteType(t.inner, before), sym);
-          const now = unaliasType(substituteType(t.inner, applied), sym);
-          if (now && !(was && refinementBaseProblem(r, was))) {
-            const over = `${run.shown} applies it over ${typeToString(now)}`;
-            const message = refinementBaseProblem(r, now, over);
-            if (message) reportApplied(run, r, message);
-          }
-        }
-        walk(t.inner);
-        return;
-      }
-      default:
-        assertNever(t);
+  const at: AppliedBody = {
+    applied: paramSubstitution(def.params, args),
+    before: paramSubstitution(def.params, judged),
+    inside: { entered: name, from: scope, walked: null },
+  };
+  todo.push({ kind: "walk", t: def.body, at });
+}
+
+function walkApplied(t: TypeExpr, at: AppliedBody, run: AppliedRun, todo: AppliedWork[]): void {
+  const parts = (xs: readonly TypeExpr[]): void => {
+    for (let i = xs.length - 1; i >= 0; i -= 1) {
+      const x = xs[i];
+      if (x) todo.push({ kind: "walk", t: x, at });
     }
   };
-  walk(def.body);
+  switch (t.kind) {
+    case "TypePrim":
+    case "TypeRef":
+      return;
+    case "TypeApp": {
+      parts(t.args);
+      // Substituted whole, so that a parameter at the head leaves no application to enter
+      // rather than naming a top-level generic.
+      const nested = substituteType(t, at.applied);
+      if (nested.kind === "TypeApp") {
+        todo.push({
+          kind: "enter",
+          name: t.name,
+          args: nested.args,
+          judged: t.args.map((a) => substituteType(a, at.before)),
+          scope: at.inside,
+        });
+      }
+      return;
+    }
+    case "TypeRecord":
+      parts(t.fields.map((f) => f.type));
+      return;
+    case "TypeUnion":
+      parts(t.variants.flatMap((v) => v.payloads));
+      return;
+    case "TypeNominal":
+    case "TypeRefinement": {
+      const r = t.refinement;
+      // A problem with the arguments is the definition's, reported there.
+      if (r && !refinementProblem(r)) {
+        const was = unaliasType(substituteType(t.inner, at.before), run.sym);
+        const now = unaliasType(substituteType(t.inner, at.applied), run.sym);
+        if (now && !(was && refinementBaseProblem(r, was))) {
+          const over = `${run.shown} applies it over ${typeToString(now)}`;
+          const message = refinementBaseProblem(r, now, over);
+          if (message) reportApplied(run, r, message);
+          else if (isInt(now) && !isInt(was)) checkAppliedPrecision(run, r);
+        }
+      }
+      todo.push({ kind: "walk", t: t.inner, at });
+      return;
+    }
+    default:
+      assertNever(t);
+  }
 }
 
 function checkTypeArity(
@@ -310,21 +434,29 @@ type TypeScope = { readonly owner: string; readonly params: ReadonlySet<string> 
 
 const EMPTY_SCOPE: TypeScope = { owner: "", params: new Set() };
 
+const RESERVED_TYPE_MEANING: Readonly<Record<ReservedTypeReason, string>> = {
+  primitive: "the primitive type",
+  constructor: "the built-in type constructor",
+  "runtime-supplied": "the standard library's",
+};
+
 export function checkTypeDef(def: TypeDef, sym: SymbolTable, errors: KumikiError[]): void {
   resolveType(def.body, sym, errors, { owner: def.name, params: new Set(def.params) });
 }
 
 /**
- * A program's own definition under a name the standard library keeps (E0231). It is reported from
- * the program's definitions, not from {@link checkTypeDef}, which also judges the standard library's
- * own entries when a type reaches them.
+ * A program's own definition under a name that already means a primitive, a built-in constructor or
+ * a runtime-supplied standard library type (E0231). It is reported from the program's definitions, not from
+ * {@link checkTypeDef}, which also judges the standard library's own entries when a type reaches
+ * them.
  */
 export function reservedTypeName(def: TypeDef): KumikiError | null {
-  if (!isReservedTypeName(def.name)) return null;
+  const reason = reservedTypeReason(def.name);
+  if (reason === undefined) return null;
   return {
     code: "E0231",
     kind: "reserved-type-name",
-    message: `Type "${def.name}" collides with the standard library's ${def.name}; uses of it never see this type`,
+    message: `Type "${def.name}" collides with ${RESERVED_TYPE_MEANING[reason]} ${def.name}; uses of it never see this type`,
     pos: def.pos,
   };
 }
@@ -375,13 +507,14 @@ export function reachesBrokenDefinition(t: TypeExpr, sym: SymbolTable): boolean 
 /** Whether following alias targets from a definition comes back round, each one walked once. */
 function aliasCycleFinder(sym: SymbolTable): (def: TypeDef) => boolean {
   const typeOf = (name: string): TypeDef | undefined => sym.types.get(name);
+  const forwarded = forwardedParams(typeOf, "through");
   const settled = new Set<string>();
   return (start) => {
     const path = new Set<string>();
     for (let d = typeOf(start.name); d !== undefined && !settled.has(d.name); ) {
       if (path.has(d.name)) return true;
       path.add(d.name);
-      const edge = aliasTarget(d, typeOf);
+      const edge = aliasTarget(d, typeOf, forwarded);
       d = edge ? typeOf(edge.to) : undefined;
     }
     for (const name of path) settled.add(name);

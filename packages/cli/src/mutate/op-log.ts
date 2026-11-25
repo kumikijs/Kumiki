@@ -31,7 +31,7 @@ export type OpLogEntry = {
   cascade?: boolean;
   /** Every definition a cascade deleted, the requested one first. */
   removed?: string[];
-  bodies?: DefSpec[];
+  bodies?: RemovedDef[];
   with?: DefSpec[];
   prev?: string;
   patch?: unknown;
@@ -50,7 +50,7 @@ export type RawOp = {
   newName?: string;
   cascade?: boolean;
   removed?: string[];
-  bodies?: DefSpec[];
+  bodies?: RemovedDef[];
   with?: DefSpec[];
   prev?: string;
   patch?: unknown;
@@ -58,6 +58,27 @@ export type RawOp = {
 
 /** One definition as an `add` writes it: its layer, its name and its body. */
 export type DefSpec = { layer: string; name: string; body: string };
+
+/** One definition as a `remove` deleted it; one logged before `text` existed has only its body. */
+export type RemovedDef = DefSpec & {
+  /**
+   * What the remove cut: the lines it stood on, comments included, or its text from its first
+   * token to its last when another definition still shared one of them.
+   */
+  text?: string;
+  /** The definition it followed in the file; none for the first one. */
+  after?: string;
+  /**
+   * How many lines lay between the end of `after`, or the file's start, and its first line; 0 also
+   * when it started on the line `after` ended on.
+   */
+  gap?: number;
+  /**
+   * `true` when its last line ended the file, with no line break after it, even when another
+   * definition followed it on that line.
+   */
+  last?: boolean;
+};
 
 export function opLogPath(path: string): string {
   return `${path}.kumiki-ops.jsonl`;
@@ -67,48 +88,72 @@ export function authorOf(): string {
   return process.env.KUMIKI_AUTHOR || "agent:local";
 }
 
-export function readOpLog(path: string): OpLogEntry[] {
-  return readOpLogFile(path).entries;
+/** A torn last line of the op log that a read skipped: the log, and the line's number from 1. */
+export type SkippedOpLogLine = { log: string; line: number };
+
+/**
+ * `onSkipped` is handed the torn last line a read skipped, once per call and before the call
+ * returns or throws, so the caller hears of it even when the verb then fails. The library prints
+ * nothing of it.
+ */
+export type OpLogOptions = { onSkipped?: (skipped: SkippedOpLogLine) => void };
+
+export function describeSkipped(skipped: SkippedOpLogLine): string {
+  return `${skipped.log}:${skipped.line}: skipped the last line, which is not valid JSON and has no newline after it; the next op logged replaces it`;
 }
 
-type OpLogRead = {
-  entries: OpLogEntry[];
-  /** `null` when there is no log. */
-  end: OpLogEnd | null;
-};
+/** The op log's complete entries; a torn last line it skips goes to `options.onSkipped`. */
+export function readOpLog(path: string, options: OpLogOptions = {}): OpLogEntry[] {
+  return reported(readOpLogFile(path), options).entries;
+}
+
+/** The log as a write reads it: with no log there is no line to skip. */
+type OpLogFile =
+  | { entries: OpLogEntry[]; skipped: null; end: null }
+  | {
+      entries: OpLogEntry[];
+      /** The torn last line, which follows the complete lines. */
+      skipped: SkippedOpLogLine | null;
+      end: OpLogEnd;
+    };
 
 /** Where the op log's complete lines end. */
 type OpLogEnd = {
   /** Their length in bytes. */
   size: number;
-  /** A skipped last line follows them. */
-  torn: boolean;
   /** The last of them has no newline after it. */
   unterminated: boolean;
 };
 
-function readOpLogFile(path: string): OpLogRead {
+function reported(log: OpLogFile, options: OpLogOptions): OpLogFile {
+  if (log.skipped !== null) options.onSkipped?.(log.skipped);
+  return log;
+}
+
+function readOpLogFile(path: string): OpLogFile {
   const p = opLogPath(path);
-  if (!fs.existsSync(p)) return { entries: [], end: null };
   // Sizes are counted in the bytes, not the decoded text: a byte that is not
   // valid UTF-8 decodes to U+FFFD, which takes three.
-  const bytes = fs.readFileSync(p);
+  let bytes: Buffer;
+  try {
+    bytes = fs.readFileSync(p);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+      return { entries: [], skipped: null, end: null };
+    }
+    throw new Error(`${p}: cannot be read (${messageOf(e)})`, { cause: e });
+  }
   const lines = bytes.toString("utf8").split(/\r?\n/);
   const entries: OpLogEntry[] = [];
-  let torn = false;
+  let skipped: SkippedOpLogLine | null = null;
   for (const [i, line] of lines.entries()) {
     if (!line.trim()) continue;
     let entry: unknown;
     try {
       entry = JSON.parse(line);
     } catch (e) {
-      // Warned at once, not by `process.emitWarning`, which waits a tick: a
-      // verb that then fails exits before the warning is printed.
       if (i === lines.length - 1) {
-        console.warn(
-          `warning: ${p}:${i + 1}: skipped the last line, which is not valid JSON and has no newline after it; the next op logged replaces it`,
-        );
-        torn = true;
+        skipped = { log: p, line: i + 1 };
         continue;
       }
       throw new Error(`${p}:${i + 1}: not valid JSON (${messageOf(e)})`);
@@ -121,10 +166,11 @@ function readOpLogFile(path: string): OpLogRead {
     if (problem !== undefined) throw new Error(`${p}:${i + 1}: ${problem}`);
     entries.push(op);
   }
-  const size = torn ? bytes.lastIndexOf("\n") + 1 : bytes.length;
+  const size = skipped !== null ? bytes.lastIndexOf("\n") + 1 : bytes.length;
   return {
     entries,
-    end: { size, torn, unterminated: size > 0 && bytes[size - 1] !== 0x0a },
+    skipped,
+    end: { size, unterminated: size > 0 && bytes[size - 1] !== 0x0a },
   };
 }
 
@@ -137,7 +183,7 @@ export function opShapeProblem(op: RawOp): string | undefined {
   }
   if (op.bodies !== undefined) {
     if (op.op !== "remove") return "`bodies` is only valid on `remove`";
-    const problem = defSpecsProblem(op.bodies, "bodies");
+    const problem = defSpecsProblem(op.bodies, "bodies") ?? removedTextsProblem(op.bodies);
     if (problem !== undefined) return problem;
     const [first] = op.bodies;
     if (first === undefined || `${first.layer}.${first.name}` !== own) {
@@ -176,6 +222,21 @@ function defSpecsProblem(value: unknown, field: string): string | undefined {
   return undefined;
 }
 
+function removedTextsProblem(bodies: readonly RemovedDef[]): string | undefined {
+  for (const [i, d] of bodies.entries()) {
+    const { text, after, gap, last }: Record<string, unknown> = d;
+    if ([text, after, gap, last].every((v) => v === undefined)) continue;
+    const at = `\`bodies\`[${i}]`;
+    if (typeof text !== "string") return `${at}.text must be a string`;
+    if (after !== undefined && typeof after !== "string") return `${at}.after must be a string`;
+    if (typeof gap !== "number" || !Number.isInteger(gap) || gap < 0) {
+      return `${at}.gap must be a whole number, 0 or more`;
+    }
+    if (last !== undefined && typeof last !== "boolean") return `${at}.last must be a boolean`;
+  }
+  return undefined;
+}
+
 function computeDependsOn(path: string, layer: string, name: string, body: string): string[] {
   try {
     const store = load(path);
@@ -209,9 +270,9 @@ function depsFromBody(store: Store, body: string, selfName: string): string[] {
   return [...refs].sort();
 }
 
-export function logOp(path: string, op: RawOp): string {
+export function logOp(path: string, op: RawOp, options: OpLogOptions): string {
   const id = newId("op");
-  const log = readOpLogFile(path);
+  const log = reported(readOpLogFile(path), options);
   const parent = log.entries.at(-1)?.["op-id"];
   const dependsOn = op.body !== undefined ? computeDependsOn(path, op.layer, op.name, op.body) : [];
   const entry: OpLogEntry = {
@@ -232,7 +293,7 @@ export function logOp(path: string, op: RawOp): string {
     "parent-ops": parent ? [parent] : [],
     "depends-on": dependsOn,
   };
-  appendLine(opLogPath(path), JSON.stringify(entry), log.end);
+  appendLine(opLogPath(path), JSON.stringify(entry), log);
   return id;
 }
 
@@ -248,8 +309,9 @@ export class OpLogChanged extends Error {
 }
 
 /** Appends after the log's complete lines, so the new line never runs on from a torn or unterminated one. */
-function appendLine(file: string, line: string, end: OpLogEnd | null): void {
-  if (end?.torn) fs.truncateSync(file, end.size);
+function appendLine(file: string, line: string, log: OpLogFile): void {
+  const { end } = log;
+  if (log.skipped !== null) fs.truncateSync(file, log.end.size);
   try {
     fs.appendFileSync(file, `${end?.unterminated ? "\n" : ""}${line}\n`);
   } catch (e) {
@@ -265,7 +327,7 @@ function appendLine(file: string, line: string, end: OpLogEnd | null): void {
         { cause: e },
       );
     }
-    if (end?.torn) {
+    if (log.skipped !== null) {
       throw new OpLogChanged(
         `${messageOf(e)}; ${file} holds its complete entries, and its skipped last line was cut off`,
         false,

@@ -13,6 +13,7 @@ export {
   emitId,
   overridableInvoke,
   readStatus,
+  runEffect,
   standInValue,
 } from "./core/effects.ts";
 export {
@@ -104,6 +105,7 @@ export {
   type BuiltinInstaller,
   type CapabilityProvider,
   type CapabilityRegistry,
+  type CloseOnDispose,
   type DiagnosticSite,
   type EffectResult,
   type EffectSpec,

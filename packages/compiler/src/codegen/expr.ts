@@ -71,6 +71,11 @@ function fnCallJs(callee: string, args: Expr[], ctx: EvalCtx): string {
   return `${jsBinding(callee)}(${args.map((a) => jsOfExpr(a, ctx)).join(", ")})`;
 }
 
+/** A fragment as an arrow, its body parenthesized: a record or map literal would read as a block. */
+function fragmentArrowJs(params: readonly string[], body: string): string {
+  return `((${params.join(", ")}) => (${body}))`;
+}
+
 export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
   switch (e.kind) {
     case "Num":
@@ -81,6 +86,11 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       return e.value ? "true" : "false";
     case "Unit":
       return "null";
+    case "Null":
+      // Only reached without `check()`; lowered to JavaScript `null` it would pass for `()`.
+      throw new Error(
+        `\`null\` at ${e.pos.line}:${e.pos.col} has no lowering — run \`check\` for the diagnostic`,
+      );
     case "Ref": {
       if (ctx.localBinds.has(e.name)) return bindRef(ctx, e.name);
       if (e.name === "now") return `_s.now()`;
@@ -480,15 +490,19 @@ export function methodCallJs(
 
   const recvJs = jsOfExpr(recv, ctx);
   const takenApart = `const ${p1} = __x[0]; const ${p2} = __x[1];`;
+  const isPair = "(Array.isArray(__x) && __x.length === 2)";
   const binds: Record<FragmentShape, string> = {
     pair: takenApart,
     "key-value": takenApart,
+    // `_s.filter` hands a Set held as object keys each `[member, true]` entry, but a Set a host
+    // handed over as an array, such as a provider's value, each element itself.
+    key: `const ${p1} = ${isPair} ? __x[0] : __x;`,
     value: `const ${p1} = __x;`,
-    undecided: `const _isPair = (Array.isArray(__x) && __x.length === 2); const ${p1} = _isPair ? __x[0] : __x; const ${p2} = _isPair ? __x[1] : (__y !== undefined ? __y : __x);`,
+    undecided: `const _isPair = ${isPair}; const ${p1} = _isPair ? __x[0] : __x; const ${p2} = _isPair ? __x[1] : (__y !== undefined ? __y : __x);`,
   };
   const decided = shape ?? "undecided";
   const argFnList = (a: Expr): string =>
-    `((__x, __y) => { ${binds[decided]} return ${jsOfExpr(a, decided === "value" ? one : two)}; })`;
+    `((__x, __y) => { ${binds[decided]} return ${jsOfExpr(a, decided === "value" || decided === "key" ? one : two)}; })`;
   const argRaw = (a: Expr): string => jsOfExpr(a, ctx);
 
   switch (method) {
@@ -498,7 +512,7 @@ export function methodCallJs(
       return `_s.mapOver(${recvJs}, ${argFnList(args[0]!)}${keyKindArg(keyKind)})`;
     case "flat-map":
       // Option(T).flat-map(f): Some(v) -> f(v) (which itself returns Option), None -> None.
-      return `_s.flatMapOption(${recvJs}, ((${p1}) => ${jsOfExpr(args[0]!, one)}))`;
+      return `_s.flatMapOption(${recvJs}, ${fragmentArrowJs([p1], jsOfExpr(args[0]!, one))})`;
     case "size":
       return `_s.mapSize(${recvJs})`;
     case "keys":
@@ -522,7 +536,7 @@ export function methodCallJs(
     case "sort-by":
       return `_s.listSortBy(${recvJs}, ${argFnList(args[0]!)})`;
     case "fold":
-      return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, (${p1}, ${p2}) => ${jsOfExpr(args[1]!, two)})`;
+      return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, ${fragmentArrowJs([p1, p2], jsOfExpr(args[1]!, two))})`;
     case "show":
       return showJs(recvJs, recv, ctx.gen);
     case "is-some":
@@ -584,7 +598,7 @@ export function methodCallJs(
       return `({ ...((${recvJs}) ?? {}), ...((${argRaw(args[0]!)}) ?? {}) })`;
     case "update":
       // Within expr, $1 is the current value.
-      return `_s.mapUpdate(${recvJs}, ${argRaw(args[0]!)}, ((${p1}) => (${jsOfExpr(args[1]!, one)})))`;
+      return `_s.mapUpdate(${recvJs}, ${argRaw(args[0]!)}, ${fragmentArrowJs([p1], jsOfExpr(args[1]!, one))})`;
     case "add":
       return `_s.setAdd(${recvJs}, ${argRaw(args[0]!)})`;
     case "union":
@@ -595,7 +609,7 @@ export function methodCallJs(
       return `_s.or(${recvJs}, ${argRaw(args[0]!)})`;
     case "map-err":
       // Within expr, $1 is the current Err payload.
-      return `_s.mapErr(${recvJs}, ((${p1}) => (${jsOfExpr(args[0]!, one)})))`;
+      return `_s.mapErr(${recvJs}, ${fragmentArrowJs([p1], jsOfExpr(args[0]!, one))})`;
     case "replace":
       // `replaceAll` reads a string replacement as a pattern (`$$`, `$&`) but inserts a replacer's
       // return as written. `to` is read once, before the scan: a thunk would re-read it per match.
@@ -719,52 +733,84 @@ export function policyKeyOfJs(key: Expr, gen: GenCtx, reducerScope: boolean): st
 
 /** A value `match` has to evaluate to one of its arms, so a miss panics rather than let `undefined` reach a slot or a render. */
 export function matchExprJs(e: Expr & { kind: "MatchExpr" }, ctx: EvalCtx): string {
-  const sc = jsOfExpr(e.scrutinee, ctx);
-  const armsJs = e.arms.map((arm) => matchArmJs(arm.pattern, arm.body, ctx, "_v")).join(" else ");
   const miss = JSON.stringify(
     `No arm of the match at ${e.pos.line}:${e.pos.col} matches its value`,
   );
-  return `((_v) => { ${armsJs} else { return _s.panic(${miss}); } })(${sc})`;
+  return matchValueJs(
+    jsOfExpr(e.scrutinee, ctx),
+    e.arms,
+    ctx,
+    (arm, inner) => jsOfExpr(arm.body, inner),
+    `_s.panic(${miss})`,
+  );
 }
 
-function matchArmJs(p: Pattern, body: Expr, ctx: EvalCtx, scVar: string): string {
-  if (p.kind === "PWildcard") {
-    return `if (true) { return ${jsOfExpr(body, ctx)}; }`;
-  }
-  if (p.kind === "PBind") {
-    const inner = addBind(ctx, p.name);
-    return `if (true) { const ${bindRef(inner, p.name)} = ${scVar}; return ${jsOfExpr(body, inner)}; }`;
-  }
-  if (p.kind === "PTuple") {
-    const { guard, binds, inner } = tupleArm(p, ctx, scVar);
-    return `if (${guard}) { ${binds} return ${jsOfExpr(body, inner)}; }`;
-  }
-  const tag = p.name;
-  const inner = childCtx(ctx);
-  const bindAssigns: string[] = [];
-  for (let i = 0; i < p.binds.length; i++) {
-    const name = p.binds[i]!;
-    if (name === "_") continue;
-    bindAssigns.push(`const ${declareBind(inner, name)} = (${scVar})[${JSON.stringify(`_${i}`)}];`);
-  }
-  return `if (_s.variantIs(${scVar}, ${JSON.stringify(tag)})) { ${bindAssigns.join(" ")} return ${jsOfExpr(body, inner)}; }`;
-}
+/** The name a match binds its scrutinee to, so every arm tests the one value it evaluated to. */
+const MATCHED = "_v";
 
-export function tupleArm(
-  p: Pattern & { kind: "PTuple" },
+export function matchValueJs<A extends { pattern: Pattern }>(
+  scrutinee: string,
+  arms: readonly A[],
   ctx: EvalCtx,
-  scVar: string,
-): { guard: string; binds: string; inner: EvalCtx } {
-  const inner = childCtx(ctx);
-  const guards: string[] = [`Array.isArray(${scVar})`, `(${scVar}).length === ${p.items.length}`];
-  const binds: string[] = [];
-  for (let i = 0; i < p.items.length; i++) {
-    walkPatternForTupleArm(p.items[i]!, `(${scVar})[${i}]`, inner, guards, binds);
-  }
-  return { guard: guards.join(" && "), binds: binds.join(" "), inner };
+  value: (arm: A, inner: EvalCtx) => string,
+  fallback: string,
+): string {
+  const armsJs = matchArmsJs(arms, ctx, { kind: "return", value });
+  return `((${MATCHED}) => { ${armsJs} return ${fallback}; })(${scrutinee})`;
 }
 
-export function walkPatternForTupleArm(
+/** A match statement: a block named `label` around its arms, each of which runs and leaves it. */
+export function matchStmtJs<A extends { pattern: Pattern }>(
+  scrutinee: string,
+  arms: readonly A[],
+  ctx: EvalCtx,
+  run: (arm: A, inner: EvalCtx) => string,
+  label: string,
+): string {
+  const armsJs = matchArmsJs(arms, ctx, { kind: "break", run, label });
+  return `${label}: { const ${MATCHED} = ${scrutinee};\n  ${armsJs}\n}`;
+}
+
+/** How an arm leaves the match once it is done, so the arms after it are never tried. */
+type ArmExit<A> =
+  | { kind: "return"; value: (arm: A, inner: EvalCtx) => string }
+  | { kind: "break"; run: (arm: A, inner: EvalCtx) => string; label: string };
+
+/**
+ * One `if` per arm, side by side rather than each in the `else` of the one before it, so the
+ * output nests no deeper for 1,000 arms than for 2. Each arm's exit is written here, so no
+ * caller can leave one out and let the next arm run too.
+ */
+function matchArmsJs<A extends { pattern: Pattern }>(
+  arms: readonly A[],
+  ctx: EvalCtx,
+  exit: ArmExit<A>,
+): string {
+  return arms
+    .map((arm) => {
+      const { guard, binds, inner } = patternArm(arm.pattern, ctx);
+      const then =
+        exit.kind === "return"
+          ? ` return ${exit.value(arm, inner)}; }`
+          : `\n  ${exit.run(arm, inner)}\n  break ${exit.label};\n}`;
+      return `if (${guard}) {${binds === "" ? "" : ` ${binds}`}${then}`;
+    })
+    .join(" ");
+}
+
+function patternArm(p: Pattern, ctx: EvalCtx): { guard: string; binds: string; inner: EvalCtx } {
+  const inner = childCtx(ctx);
+  const guards: string[] = [];
+  const binds: string[] = [];
+  walkPattern(p, MATCHED, inner, guards, binds);
+  return {
+    guard: guards.length === 0 ? "true" : guards.join(" && "),
+    binds: binds.join(" "),
+    inner,
+  };
+}
+
+function walkPattern(
   p: Pattern,
   accessor: string,
   inner: EvalCtx,
@@ -790,7 +836,7 @@ export function walkPatternForTupleArm(
     case "PTuple":
       guards.push(`Array.isArray(${accessor})`, `(${accessor}).length === ${p.items.length}`);
       for (let i = 0; i < p.items.length; i++) {
-        walkPatternForTupleArm(p.items[i]!, `(${accessor})[${i}]`, inner, guards, binds);
+        walkPattern(p.items[i]!, `(${accessor})[${i}]`, inner, guards, binds);
       }
       return;
     default: {

@@ -2,7 +2,32 @@ import type { Pos, TypeDef, TypeExpr } from "./ast.ts";
 
 const NO_POS: Pos = { line: 0, col: 0 };
 
-export type PrimName = Extract<TypeExpr, { kind: "TypePrim" }>["name"];
+// The primitives a type spells by name. `Decoder` is one too, but no spelling makes it: the parser
+// leaves that name to its standard-library entry below, so a type parameter named `Decoder` is
+// still the parameter, and a program's own `type Decoder` is reserved rather than a primitive's.
+export const PRIM_TYPE_NAMES = [
+  "Text",
+  "Int",
+  "Float",
+  "Bool",
+  "Unit",
+  "Bytes",
+  "Time",
+  "File",
+  "EffectId",
+] as const;
+
+export type SpelledPrimName = (typeof PRIM_TYPE_NAMES)[number];
+
+/** A primitive only the standard library's own entries produce. */
+export type UnspelledPrimName = "Decoder";
+
+export type PrimName = SpelledPrimName | UnspelledPrimName;
+
+// Their values are whatever the runtime represents them as, so a page that rendered one, or a key
+// that stored one, would change when that does. `Decoder` is unspelled and opaque, `EffectId`
+// spelled and opaque, so neither set is the other.
+export const OPAQUE_HANDLES: ReadonlySet<PrimName> = new Set<PrimName>(["EffectId", "Decoder"]);
 
 const prim = (name: PrimName): TypeExpr => ({ kind: "TypePrim", name, pos: NO_POS });
 const ref = (name: string): TypeExpr => ({ kind: "TypeRef", name, pos: NO_POS });
@@ -82,6 +107,10 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   def("Email", nominal(prim("Text"), "email")),
   def("Uuid", nominal(prim("Text"), "uuid")),
   def("Duration", nominal(prim("Int"))),
+  // A decoder runs as a sentinel or a check, which no literal spells, so its body is a primitive
+  // only `Decoder.*` produces. The parser leaves the name to this entry, so a type parameter of
+  // that name is still the parameter.
+  def("Decoder", prim("Decoder")),
   def("Route", ROUTE_TYPE),
   def("FormData", app("Map", prim("Text"), ref("FormValue"))),
   def("PanicInfo", PANIC_INFO_TYPE),
@@ -102,7 +131,7 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
 // program's own definition would be what the checker reasoned about while the
 // runtime kept to the entry above. The other entries name types only a program
 // builds values of, and a program may declare its own.
-export const RESERVED_TYPE_NAMES: ReadonlySet<string> = new Set([
+export const RUNTIME_SUPPLIED_TYPE_NAMES: ReadonlySet<string> = new Set([
   "PanicInfo",
   "RouteErrorInfo",
   "Route",
@@ -110,11 +139,8 @@ export const RESERVED_TYPE_NAMES: ReadonlySet<string> = new Set([
   "HttpStatus",
   "Duration",
   "FormValue",
+  "Decoder",
 ]);
-
-export function isReservedTypeName(name: string): boolean {
-  return RESERVED_TYPE_NAMES.has(name);
-}
 
 // A browser reads a file's bytes only asynchronously, so the record a `change` event
 // delivers cannot hold them; they are not a field. `File` stays a `TypePrim` with this
@@ -136,22 +162,35 @@ export const BUILTIN_TYPE_CONSTRUCTORS: ReadonlyMap<string, number | null> = new
   ["Tuple", null],
 ]);
 
-const PRIM_TYPE_NAMES: readonly PrimName[] = [
-  "Text",
-  "Int",
-  "Float",
-  "Bool",
-  "Unit",
-  "Bytes",
-  "Time",
-  "File",
-  "EffectId",
-];
+// `Option` and `Result` have no body to read tags from, and `HttpBody` is read
+// by the HTTP runtime by tag alone. `FormValue`'s tags come from its definition.
+export const BUILTIN_UNION_TAGS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["Option", ["Some", "None"]],
+  ["Result", ["Ok", "Err"]],
+  ["HttpBody", ["Json", "Form", "Multipart", "Text", "Bytes", "Empty"]],
+]);
 
 const PRIM_TYPE_NAME_SET: ReadonlySet<string> = new Set(PRIM_TYPE_NAMES);
 
-export function isPrimTypeName(name: string): name is PrimName {
+export function isPrimTypeName(name: string): name is SpelledPrimName {
   return PRIM_TYPE_NAME_SET.has(name);
+}
+
+export type ReservedTypeReason = "primitive" | "constructor" | "runtime-supplied";
+
+// The primitives and the constructors are read from the tables the parser and
+// the checker resolve those names by, so a name added to either is reserved with
+// no second list to update; the runtime-supplied names are a list of their own.
+// A program's definition under any of them could only be half-applied.
+export function reservedTypeReason(name: string): ReservedTypeReason | undefined {
+  if (isPrimTypeName(name)) return "primitive";
+  if (BUILTIN_TYPE_CONSTRUCTORS.has(name)) return "constructor";
+  if (RUNTIME_SUPPLIED_TYPE_NAMES.has(name)) return "runtime-supplied";
+  return undefined;
+}
+
+export function isReservedTypeName(name: string): boolean {
+  return reservedTypeReason(name) !== undefined;
 }
 
 export function typeCandidates(userTypeNames: Iterable<string>): string[] {

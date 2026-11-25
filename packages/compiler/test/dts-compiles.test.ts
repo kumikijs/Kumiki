@@ -2,14 +2,17 @@ import { generateDts, lex, parse } from "@kumikijs/compiler";
 import ts from "typescript";
 import { describe, expect, it, vi } from "vitest";
 import { writeTmpFile } from "./helpers/module.ts";
+import { scratchRoot } from "./helpers/scratch.ts";
 
 vi.setConfig({ testTimeout: 30_000 });
+
+const TMP_ROOT = scratchRoot(import.meta.url);
 
 const dtsOf = (src: string): string => generateDts(parse(lex(src)));
 
 /** Type-check one generated module in isolation; returns formatted diagnostics. */
 function tscDiagnostics(source: string): string[] {
-  const file = writeTmpFile("dts", "gen.ts", source);
+  const file = writeTmpFile(TMP_ROOT, "dts", "gen.ts", source);
   const program = ts.createProgram([file], {
     noEmit: true,
     strict: true,
@@ -213,5 +216,28 @@ describe("the standard library's Route", () => {
     expect(gen).toContain("pattern: string");
     expect(gen).toContain('hash: { _tag: "Some"; _0: string } | { _tag: "None" }');
     expect(tscDiagnostics(gen)).toEqual([]);
+  });
+});
+
+describe("the standard library's Decoder", () => {
+  // What `.gen.ts` hands a host: a provider is given these as a request's `decode`.
+  const gen = dtsOf(`slot d : Decoder = Decoder.Text${APP_TAIL}`);
+  const holding = (value: string): string =>
+    `${gen}\nexport const held: KumikiSlots["d"] = ${value};\n`;
+
+  it.each([
+    ["a sentinel a decoder lowers to", '"text"'],
+    [
+      "the check a Decoder.Json(T) lowers to",
+      '(v) => (v === null ? { kind: "between", args: [0, 599], path: [] } : undefined)',
+    ],
+  ])("takes %s", (_what, value) => {
+    expect(tscDiagnostics(holding(value))).toEqual([]);
+  });
+
+  it("refuses a text no decoder lowers to", () => {
+    const diagnostics = tscDiagnostics(holding('"TEXT"'));
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]).toContain(`Type '"TEXT"' is not assignable`);
   });
 });

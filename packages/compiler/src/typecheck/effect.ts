@@ -5,6 +5,7 @@ import { type UnkeyedPart, unkeyedPart } from "../unkeyed-part.ts";
 import { type Ctx, type KumikiError, pureScope, type SymbolTable } from "./context.ts";
 import { checkExpr } from "./expr.ts";
 import { inferType } from "./infer.ts";
+import { checkDeclaredRequest, checkRequestFields } from "./request-fields.ts";
 import { resolveType } from "./types.ts";
 
 export function effectPayloadType(
@@ -87,11 +88,16 @@ export function checkEffect(eff: EffectDef, sym: SymbolTable, errors: KumikiErro
     }
   }
   checkTextFailure(eff, sym, errors);
-  if (eff.mapRequest) checkExpr(eff.mapRequest, sym, errors, effectScope(eff, sym));
+  checkDeclaredRequest(eff, sym, errors);
+  if (eff.mapRequest) {
+    const scope = effectScope(eff, sym, eff.mapRequest);
+    checkExpr(eff.mapRequest, sym, errors, scope);
+    checkRequestFields(eff.mapRequest, eff.cap, sym, errors, scope);
+  }
   // The key runs at dispatch time, so a name unchecked here fails on the first
   // dispatch rather than at check time.
   if (eff.policy?.kind === "PolLatestKey") {
-    const scope = effectScope(eff, sym);
+    const scope = effectScope(eff, sym, eff.policy.key);
     checkExpr(eff.policy.key, sym, errors, scope);
     checkPolicyKeyType(eff.policy.key, sym, scope, errors);
   }
@@ -109,6 +115,8 @@ function unkeyedReason({ part, whole }: UnkeyedPart): string {
       return `${subject}, and two Files with the same name, size and type are one key, while == holds only of a File and itself`;
     case "Set":
       return `${subject}, whose == depends on how it was built`;
+    case "Decoder":
+      return `${subject}, and a key keeps none of the check a Decoder.Json(T) runs`;
   }
 }
 
@@ -127,9 +135,9 @@ function checkPolicyKeyType(key: Expr, sym: SymbolTable, scope: Ctx, errors: Kum
 }
 
 /** `$1` is the effect's input, and an effect declared `in=Unit` is emitted with none. */
-function effectScope(eff: EffectDef, sym: SymbolTable): Ctx {
-  if (declaresNoInput(eff.inType, sym)) return { ...pureScope([]), noInputEffect: eff.name };
-  return pureScope([{ name: "$1", type: eff.inType }]);
+function effectScope(eff: EffectDef, sym: SymbolTable, expr: Expr): Ctx {
+  if (declaresNoInput(eff.inType, sym)) return { ...pureScope([], expr), noInputEffect: eff.name };
+  return pureScope([{ name: "$1", type: eff.inType }], expr);
 }
 
 function checkTextFailure(eff: EffectDef, sym: SymbolTable, errors: KumikiError[]): void {

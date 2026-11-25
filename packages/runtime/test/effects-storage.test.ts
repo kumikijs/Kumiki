@@ -99,6 +99,41 @@ const HANDLERS = [
   ["session", sessionWrite, sessionRead, () => sessionStorage],
 ] as const;
 
+/** A `File` as a file input reports it: its three fields beside the picked file itself. */
+function picked(name: string): Record<string, unknown> {
+  const file = new File([new Uint8Array([104, 105])], name, { type: "text/plain" });
+  return { name, size: file.size, type: file.type, _file: file };
+}
+
+describe.each([
+  ["storage.write", storageWrite, "localStorage", () => localStorage],
+  ["session.write", sessionWrite, "sessionStorage", () => sessionStorage],
+] as const)("%s: a value holding a File", (cap, write, backend, storage) => {
+  it.each<[string, unknown]>([
+    ["a File", picked("a.txt")],
+    ["a record holding a File", { note: "hi", avatar: picked("a.txt") }],
+    ["a List holding a File", [picked("a.txt"), picked("b.txt")]],
+    ["a variant holding a File", { _tag: "Some", _0: picked("a.txt") }],
+    ["a File two levels in", { doc: { _tag: "FileV", _0: picked("a.txt") } }],
+    ["a List of variants holding a File", { items: [{ _tag: "Some", _0: picked("a.txt") }] }],
+    [
+      "a Map whose `$` key holds a File, beside a Bytes (the tagged form)",
+      { $k: picked("a.txt"), data: new Uint8Array([7]) },
+    ],
+  ])("answers err for %s, naming the key and the first File in it, and stores nothing", async (_, value) => {
+    expect(message(await write({ key: "other", value }))).toBe(
+      `${cap}: the value for "other" holds the File "a.txt", and ${backend} would keep only its name, size and type, not the file; nothing was stored`,
+    );
+    expect(snapshot(storage())).toEqual(SEEDED);
+  });
+
+  it("writes a File that holds no file, as one decoded from JSON, as its JSON, `_file: {}` included", async () => {
+    const value = { name: "a.txt", size: 2, type: "text/plain", _file: {} };
+    expect(await write({ key: "f", value })).toEqual({ kind: "ok", value: null });
+    expect(storage().getItem("f")).toBe(JSON.stringify(value));
+  });
+});
+
 describe.each(HANDLERS)("%s: a written value reads back as the value it was", (_, write, read) => {
   it.each<[string, unknown]>([
     ["a Bytes", new Uint8Array([104, 105])],
@@ -214,6 +249,129 @@ describe("storageClear / sessionClear", () => {
     expect(snapshot(sessionStorage)).toEqual(SEEDED);
     expect(await sessionClear()).toEqual({ kind: "ok", value: null });
     expect(snapshot(sessionStorage)).toEqual({});
+  });
+});
+
+/** `日本語` is three characters and nine UTF-8 bytes, so a text and its bytes cannot be confused. */
+const NIHONGO_UTF8 = [0xe6, 0x97, 0xa5, 0xe6, 0x9c, 0xac, 0xe8, 0xaa, 0x9e];
+const utf8 = (text: string) => new TextEncoder().encode(text);
+const some = (value: unknown) => ({ kind: "ok", value: { _tag: "Some", _0: value } });
+
+describe.each(HANDLERS)("%s: what each decoder delivers", (_, write, read, storage) => {
+  it.each<[string, unknown, string, unknown]>([
+    ["`Decoder.Text`: a plain text, as it is", "text", "dark", "dark"],
+    [
+      "`Decoder.Text`: a tagged text, its `~` included",
+      "text",
+      '~{"$float":"NaN"}',
+      '~{"$float":"NaN"}',
+    ],
+    [
+      "`Decoder.Bytes`: a plain text, as its UTF-8",
+      "bytes",
+      "日本語",
+      new Uint8Array(NIHONGO_UTF8),
+    ],
+    [
+      "`Decoder.Bytes`: a tagged Bytes, as those bytes",
+      "bytes",
+      '~{"$bytes":"aGk="}',
+      new Uint8Array([104, 105]),
+    ],
+    [
+      "`Decoder.Bytes`: a tagged record, as its UTF-8",
+      "bytes",
+      '~{"b":{"$bytes":"aGk="}}',
+      utf8('~{"b":{"$bytes":"aGk="}}'),
+    ],
+    [
+      "`Decoder.Bytes`: a tagged text that does not decode, as its UTF-8",
+      "bytes",
+      '~{"$bytes":"!"}',
+      utf8('~{"$bytes":"!"}'),
+    ],
+    ["`Decoder.None`: Unit, whatever the text", "none", "{", null],
+    ["`Decoder.Json`: the parsed text", "json", '[{"t":"日本語"}]', [{ t: "日本語" }]],
+    ["`Decoder.Json`: the decoded tagged text", "json", '~{"$float":"NaN"}', Number.NaN],
+    ["no decoder: the parsed text", undefined, '[{"t":"日本語"}]', [{ t: "日本語" }]],
+    ["a `null` decoder: the parsed text", null, '[{"t":"日本語"}]', [{ t: "日本語" }]],
+  ])("from a stored text, %s", async (_, decode, stored, delivered) => {
+    storage().setItem("k", stored);
+    expect(await read({ key: "k", decode })).toStrictEqual(some(delivered));
+  });
+
+  // A write stores its value as JSON, so `Decoder.Json` is what reads it back; a `Bytes` alone
+  // is the one value another decoder reads back too.
+  it.each<[string, unknown, string, unknown]>([
+    ["a Text, under `Decoder.Json`, as itself", "dark", "json", "dark"],
+    ["a Text, under `Decoder.Text`, as its JSON, quotes included", "dark", "text", '"dark"'],
+    [
+      "a Bytes, under `Decoder.Bytes`, as itself",
+      new Uint8Array([0, 255]),
+      "bytes",
+      new Uint8Array([0, 255]),
+    ],
+    [
+      "an empty Bytes, under `Decoder.Bytes`, as itself",
+      new Uint8Array(),
+      "bytes",
+      new Uint8Array(),
+    ],
+    [
+      "a record holding a Bytes, under `Decoder.Bytes`, as its stored text's UTF-8",
+      { b: new Uint8Array([104, 105]) },
+      "bytes",
+      utf8('~{"b":{"$bytes":"aGk="}}'),
+    ],
+    [
+      "Infinity, under `Decoder.Text`, as its tagged text",
+      Number.POSITIVE_INFINITY,
+      "text",
+      '~{"$float":"Infinity"}',
+    ],
+  ])("a write stored %s", async (_, value, decode, delivered) => {
+    expect(await write({ key: "k", value })).toEqual({ kind: "ok", value: null });
+    expect(await read({ key: "k", decode })).toStrictEqual(some(delivered));
+  });
+
+  it.each([
+    undefined,
+    "json",
+    "text",
+    "bytes",
+    "none",
+  ])("a missing key is None under %s", async (decode) => {
+    expect(await read({ key: "absent", decode })).toStrictEqual({
+      kind: "ok",
+      value: { _tag: "None" },
+    });
+  });
+
+  it.each<[unknown, string]>([
+    ["TEXT", '"TEXT"'],
+    [1, "1"],
+    [{ kind: "text" }, '{"kind":"text"}'],
+    [Object.create(null), "{}"],
+    [Symbol("text"), "symbol"],
+    [10n, "bigint"],
+  ])("a decode of %s is no decoder, so the read is an err naming it as %s", async (decode, shown) => {
+    storage().setItem("k", "dark");
+    const err = { kind: "err", value: `decode is ${shown}, which is not a Decoder` };
+    expect(await read({ key: "k", decode })).toStrictEqual(err);
+    expect(await read({ key: "absent", decode })).toStrictEqual(err);
+  });
+});
+
+describe("a stored text that does not parse under `Decoder.Json`", () => {
+  it("is a decode failure naming the key and the storage", async () => {
+    localStorage.setItem("theme", "dark");
+    sessionStorage.setItem("theme", "dark");
+    expect(message(await storageRead({ key: "theme", decode: "json" }))).toMatch(
+      /^decode failed: the text under "theme" in localStorage is not a stored value \(SyntaxError: /,
+    );
+    expect(message(await sessionRead({ key: "theme", decode: "json" }))).toMatch(
+      /^decode failed: the text under "theme" in sessionStorage is not a stored value \(SyntaxError: /,
+    );
   });
 });
 
