@@ -451,7 +451,7 @@ episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
                  | 'no-errors' ':' bool
 ```
 
-`slots-equal: from-log` compares the final slots with the values the log recorded: for each slot, the `after` of the last `slot-diffs` entry that names it, in the order the log lists the episodes. A record names the slots to compare and their expected values instead.
+`slots-equal: from-log` compares the final slots with the values the log recorded: for each slot, the `after` of the last `slot-diffs` entry that names it, in the order the log lists the episodes. A record names the slots to compare and their expected values instead. A `volatile` slot is not written to the log ([Store Layer Syntax](./language.md#_1-4-1-syntax)), so `from-log` leaves it out, even where an older log recorded a write to it; every other slot is expected at the last value the log recorded for it, or at its initial value when the log never wrote it. A record compares every slot it names, `volatile` or not.
 
 The log's episodes replay in the order the log lists them, which is the order their triggers began, and each runs whole, as `kumiki replay` runs them ([runtime.md §10.5.3](./runtime.md#_10-5-3-replay)). So an effect result the run received after a later trigger reaches its `.ok` / `.err` reducers ahead of that trigger in the replay, and a slot those reducers compute from what the trigger wrote can end differently from the log's record, which fails the test. A slot those reducers and the later trigger both write does not: in the log the trigger's diff comes after the reducers', so `from-log` expects the trigger's value, the replay ends on it too, and the test passes, though the run ended on the reducers' value.
 

@@ -1050,9 +1050,9 @@ items.fold(0, $1 + $2.price)               # ($1: acc, $2: elem)
 
 `Decoder` もこの表の外にある：`Decoder` に適用できる演算子は無く、`Decoder` を
 持つ値にも `==` と `!=` は適用できない。`Decoder.Json(T)` はその `T` のチェックで
-あるか、チェックを持たないすべての `T` で同じ 1 つの値であるため、
-`Decoder.Json(Int) == Decoder.Json(Text)` は `true`、
-`Decoder.Json(Email) == Decoder.Json(Text)` は `false` になってしまう。いずれも
+あり、同じ `T` には同じ関数、型を名指さない引数にはどれも文字列 `"json"` であるため、
+`Decoder.Json("a") == Decoder.Json("b")` は `true`、
+`Decoder.Json(Int) == Decoder.Json(Text)` は `false` になってしまう。いずれも
 [E0201](./errors.md#e0201-type-mismatch) である：`d == Decoder.Text` は
 `Operator "==" cannot compare Decoder with Decoder: a Decoder has no equality` で
 あり、`{d: Decoder}` ではメッセージがそれを持つ型を名指す。`Option(Decoder)` には

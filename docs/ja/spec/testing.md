@@ -377,7 +377,7 @@ episode-expect ::= 'slots-equal' ':' (record-lit | 'from-log')
                  | 'no-errors' ':' bool
 ```
 
-`slots-equal: from-log` は最終 slot をログが記録した値と比較する：各 slot について、ログが episode を並べた順で、その slot を名指す最後の `slot-diffs` エントリの `after` である。レコードを書けば、比較する slot とその期待値をそれで名指す。
+`slots-equal: from-log` は最終 slot をログが記録した値と比較する：各 slot について、ログが episode を並べた順で、その slot を名指す最後の `slot-diffs` エントリの `after` である。レコードを書けば、比較する slot とその期待値をそれで名指す。`volatile` な slot はログに書かれないので（[store 層の構文](./language.md#_1-4-1-構文)）、`from-log` はそれを比較から外す。古いログがその slot への書き込みを記録していても同じである。それ以外の slot は、ログがその slot について最後に記録した値を、ログが一度も書かなかったときは初期値を期待される。レコードは、名指したすべての slot を `volatile` かどうかにかかわらず比較する。
 
 ログの episode は、`kumiki replay` と同じく、ログに並んだ順 — trigger が始まった順 — に 1 つずつ丸ごと replay される（[runtime.md §10.5.3](./runtime.md#_10-5-3-replay)）。したがって、実行が後の trigger より後に受け取った effect の結果は、replay ではその trigger より先に `.ok` / `.err` reducer に届き、その reducer がその trigger の書いた値から計算する slot は、ログの記録とは異なる値で終わることがあり、テストは失敗する。その reducer と後の trigger の両方が書く slot では失敗しない：ログでは trigger の diff が reducer の diff より後に来るので、`from-log` は trigger の値を期待し、replay もその値で終わるため、実行が reducer の値で終わっていてもテストは通る。
 

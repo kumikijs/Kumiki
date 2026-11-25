@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { codegen, compile, type ExtendedCodegenOptions, lex, parse } from "@kumikijs/compiler";
+import type { AppShape } from "@kumikijs/runtime";
 import { expect } from "vitest";
 import { removeScratch } from "./scratch.ts";
 
@@ -54,6 +55,23 @@ export function compileOrFail(
 export async function loadApp<T>(src: string, prefix?: string): Promise<T> {
   const mod = await importModule<{ createApp: () => T }>(compileOrFail(src, LOADABLE), prefix);
   return mod.createApp();
+}
+
+/** The `decode` the compiled effect `effect` of `src` hands its capability's provider. */
+export async function decodeHandedBy(src: string, effect = "load"): Promise<unknown> {
+  const mod = await importModule<{ default: AppShape }>(compileOrFail(src, LOADABLE), "decoder");
+  const eff = mod.default.effects[effect];
+  if (!eff) expect.fail(`the program no longer declares \`${effect}\``);
+  let seen: { decode?: unknown } | undefined;
+  const caps = {
+    provider: () => async (req: { decode?: unknown }) => {
+      seen = req;
+      return { kind: "ok", value: null };
+    },
+  } as unknown as Parameters<typeof eff.invoke>[1];
+  await eff.invoke(undefined, caps, new AbortController().signal);
+  if (!seen) expect.fail(`\`${effect}\` did not reach its provider`);
+  return seen.decode;
 }
 
 /** The reducer `name` of a fresh app instance from `src`. */

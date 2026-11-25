@@ -1,0 +1,53 @@
+# Feature (language.md, testing.md): a `volatile` slot is not written to
+# the episode log, so an episode-test's `slots-equal: from-log` leaves it out.
+#
+# The fixture next to this file was recorded from this program with
+# `kumiki run --episode-log`. `inc` writes `count` and `lastClick`, and the
+# log's one episode records only the write to `count`: `lastClick` is
+# `volatile`. Replay runs `inc` and writes both, but the log says nothing
+# about `lastClick`, so `from-log` compares only the slots the log speaks
+# for, and `replay-from-log` passes against the program that recorded it.
+#
+# A slot that is not `volatile` is still expected at the value the log left
+# it at, which is its default when the log never wrote it. Drop `volatile`
+# from `lastClick` and `kumiki test` prints:
+#
+#   FAIL  replay-from-log (Nms)
+#     expected: {"count":1,"lastClick":""}
+#     actual:   {"count":1,"lastClick":"clicked","route":{…}}
+#     diff at:  slots.lastClick  "" -> "clicked"
+#
+# A record names the slots it compares, and a `volatile` slot it names is
+# compared like any other: `replay-names-the-volatile-slot` checks the value
+# replay wrote, and with `lastClick: ""` in place of `lastClick: "clicked"`
+# it fails at `slots.lastClick` the same way.
+#
+# `packages/tests/src/episode-test-volatile-slot.test.ts` runs both tests as
+# written, and with each of the two changes above.
+
+slot count     : Int  = 0
+slot lastClick : Text volatile = ""
+
+reducer inc on=ui.click(IncBtn) do=
+    count := count + 1
+    lastClick := "clicked"
+
+tile IncBtn = button(text="+")
+tile App    = column(text("n=" + count.show), IncBtn) {pad: "md"}
+
+app EpisodeTestVolatileSlot
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+test replay-from-log =
+    episode-test
+        load   = "286-episode-test-volatile-slot.fixture.jsonl"
+        mocks  = {}
+        expect = {slots-equal: from-log, no-panics: true}
+
+test replay-names-the-volatile-slot =
+    episode-test
+        load   = "286-episode-test-volatile-slot.fixture.jsonl"
+        mocks  = {}
+        expect = {slots-equal: {count: 1, lastClick: "clicked"}, no-panics: true}
