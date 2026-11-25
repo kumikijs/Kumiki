@@ -1,21 +1,28 @@
 import {
+  _setPathHelper,
   batchRejections,
+  bindLabel,
   type EffectSpec,
   type EnvRead,
   emptyRoute,
+  entryKey,
+  KumikiPanic,
   type PanicCategory,
   type PanicCauseLink,
+  type PathGap,
   panicInfo,
   type ReducerSpec,
   type RefinementNaming,
   type RefinementRejection,
   reportRejectedBatch,
+  slotAccepts,
   standInValue,
   withEnvReplay,
 } from "../core.ts";
-import { noReducerNamed } from "../dispatch-check.ts";
+import { noReducerNamed, noSlotNamed } from "../dispatch-check.ts";
 import { valueEqual } from "../stdlib.ts";
 import type {
+  EpisodeBindStep,
   EpisodeLogEntry,
   EpisodeMockPolicy,
   EpisodeReducerStep,
@@ -51,7 +58,9 @@ export type ReplayEvent =
        */
       entryResultMissing?: string;
       /**
-       * The entry reducer, when the program has none by its name or the log gives it none: the episode is not replayed.
+       * Why the episode is not replayed: the program has no reducer by its entry reducer's name, or
+       * the log gives it none; or a bind write names a slot the program does not declare, or none,
+       * or shares its episode with a reducer step.
        */
       entryReducerMissing?: MissingEntryReducer;
     }
@@ -65,6 +74,18 @@ export type ReplayEvent =
        * Where this body's environment reads came from.
        */
       env?: EnvDrift;
+    }
+  | {
+      kind: "bind";
+      episodeId: string;
+      stepIndex: number;
+      /** The bind path the control wrote to, as `data-kumiki-bind` names it (`rows[0].title`). */
+      name: string;
+      /** What the control wrote there. */
+      value: unknown;
+      slotDiffs: { name: string; before: unknown; after: unknown }[];
+      /** The program's refinement refused the write, so the slot kept its value. */
+      refused?: true;
     }
   | {
       kind: "effect-start";
@@ -129,7 +150,7 @@ export type ReplayReport = {
   /** Episodes whose entry reducer's recorded result was not in the log. */
   entryResultsMissing: { episodeId: string; reducer: string }[];
   /**
-   * Episodes not replayed, because the program has no reducer by their entry reducer's name, or the log gives it none.
+   * Episodes not replayed, for the reasons `episode-start`'s `entryReducerMissing` gives.
    */
   entryReducersMissing: ({ episodeId: string } & MissingEntryReducer)[];
   /**
@@ -255,15 +276,20 @@ export function executeEpisode(
   // The entry step: the first `reducer` step, or the first `panic` step naming the reducer whose
   // body threw (one with no `name` is a capability refusal or a render panic, a boundary's
   // included). A `reducer` step always names one, so a log line that lost its `name` is reported
-  // below, not passed over as no entry at all; and only an `ssr.hydrate` bootstrap opens without
-  // one, so any other episode lacking it is too.
+  // below, not passed over as no entry at all; and only an `ssr.hydrate` bootstrap or a bound
+  // control's write opens without one, so any other episode lacking it is too.
   const entryAt = ep.steps.findIndex((s) => s.kind === "reducer" || namesItsReducer(s));
   const entryStep: EpisodeStepLite | undefined = ep.steps[entryAt];
+  const binds = ep.steps.filter((s): s is EpisodeBindStep => s.kind === "bind");
   const firstRed = namesItsReducer(entryStep) ? entryStep : undefined;
   const entry = firstRed && app.reducers.find((r) => r.name === firstRed.name);
   // Reported, not skipped: an episode nothing ran raises no panic, so a rename would pass every check.
   let entryReducerMissing: MissingEntryReducer | undefined;
-  if (firstRed && !entry) {
+  if (entryStep !== undefined && binds.length > 0) {
+    // The live runtime opens a bind write's episode with nothing else in it.
+    const at = ep.steps.findIndex((s) => s.kind === "bind");
+    entryReducerMissing = { message: `bind step ${at + 1} shares its episode with a reducer step` };
+  } else if (firstRed && !entry) {
     const declared = app.reducers.map((r) => r.name);
     entryReducerMissing = {
       reducer: firstRed.name,
@@ -271,6 +297,8 @@ export function executeEpisode(
     };
   } else if (entryStep !== undefined && !firstRed) {
     entryReducerMissing = { message: `reducer step ${entryAt + 1} has no name` };
+  } else if (binds.length > 0) {
+    entryReducerMissing = unwritableBind(ep, app);
   } else if (entryStep === undefined && ep.trigger.kind !== "ssr.hydrate") {
     entryReducerMissing = { message: "no reducer step" };
   }
@@ -287,10 +315,13 @@ export function executeEpisode(
     ...(entryReducerMissing !== undefined ? { entryReducerMissing } : {}),
   };
   if (emit(started)) return { panics, unhandledErrors, stopped: true };
-  // Nothing to run: an entry reducer the program lacks, or one the log does not name, was
-  // reported on `started`, and an episode recorded with no entry reducer (a bootstrap no
-  // `app.init` result reached) ran none.
-  if (!firstRed || !entry) {
+  if (entryReducerMissing === undefined && binds.length > 0) {
+    return { panics, unhandledErrors, stopped: replayBinds(app, ep, binds, emit, panics) };
+  }
+  // Nothing to run: an entry reducer the program lacks, one the log does not name, or a bind
+  // write replay cannot make, was reported on `started`, and an episode recorded with no entry
+  // reducer (a bootstrap no `app.init` result reached) ran none.
+  if (entryReducerMissing !== undefined || !firstRed || !entry) {
     emit({ kind: "episode-end", episodeId: ep.id });
     return { panics, unhandledErrors, stopped: false };
   }
@@ -496,6 +527,86 @@ export function executeEpisode(
   }
   emit({ kind: "episode-end", episodeId: ep.id });
   return { panics, unhandledErrors, stopped: false };
+}
+
+type ReplayPanic = ReturnType<typeof executeEpisode>["panics"][number];
+
+/** Why a bind step of `ep` cannot be made again: it names no slot, or one the program lacks. */
+function unwritableBind(ep: EpisodeLogEntry, app: ReplayApp): MissingEntryReducer | undefined {
+  for (const [i, s] of ep.steps.entries()) {
+    if (s.kind !== "bind") continue;
+    if (typeof s.slot !== "string" || s.slot === "") {
+      return { message: `bind step ${i + 1} has no slot` };
+    }
+    if (!Object.hasOwn(app.slots, s.slot)) {
+      return { message: noSlotNamed(s.slot, Object.keys(app.slots)) };
+    }
+  }
+  return undefined;
+}
+
+/** A path the replayed slot no longer has is a panic, where the live write leaves the slot. */
+function panicAtGap(gap: PathGap): never {
+  if ("tag" in gap) throw new KumikiPanic(`${gap.tag} holds no value to write through`);
+  const shown = typeof gap.key === "string" ? JSON.stringify(gap.key) : entryKey(gap.key);
+  throw new KumikiPanic(`Key ${shown} is not in the Map, so it holds no value to write through`);
+}
+
+/**
+ * Make each recorded bind write again: the value at its path, over the slot as replay has left
+ * it, so a reducer that now writes the rest of the slot differently shows. A write the program's
+ * refinement now refuses leaves the slot, as it would live, and a path the slot no longer has is
+ * a panic. Says whether replay stopped there, at the observer's word or at `untilStep`.
+ */
+function replayBinds(
+  app: ReplayApp,
+  ep: EpisodeLogEntry,
+  binds: readonly EpisodeBindStep[],
+  emit: (ev: ReplayEvent) => boolean,
+  panics: ReplayPanic[],
+): boolean {
+  const dirty = new Set<string>();
+  for (const b of binds) {
+    const label = bindLabel(b.slot, b.path);
+    const before = app.live[b.slot];
+    let after: unknown;
+    try {
+      after = b.path?.length ? _setPathHelper(before ?? {}, b.path, b.value, panicAtGap) : b.value;
+    } catch (e) {
+      // The path names what the replayed slot no longer holds: an index past its end, a key its
+      // Map lacks, or the inside of a `None`. Anything else is not the log's doing.
+      if (!(e instanceof KumikiPanic)) throw e;
+      const rec = panicInfo(e, "bind");
+      const location = `bind "${label}"`;
+      const panic: ReplayPanic = { message: rec.message, location, category: rec.category };
+      if (rec.stack !== undefined) panic.stack = rec.stack;
+      if (rec.cause !== undefined) panic.cause = rec.cause;
+      panics.push(panic);
+      if (emit({ kind: "panic", episodeId: ep.id, stepIndex: 0, ...panic })) return true;
+      continue;
+    }
+    const refused = !slotAccepts(app.slots[b.slot], after, b.path);
+    if (!refused) app.live[b.slot] = after;
+    const slotDiffs = refused || valueEqual(before, after) ? [] : [{ name: b.slot, before, after }];
+    for (const d of slotDiffs) dirty.add(d.name);
+    const ev: ReplayEvent = {
+      kind: "bind",
+      episodeId: ep.id,
+      stepIndex: 0,
+      name: label,
+      value: b.value,
+      slotDiffs,
+      ...(refused ? { refused: true as const } : {}),
+    };
+    if (emit(ev)) return true;
+  }
+  if (dirty.size > 0) {
+    if (emit({ kind: "signal-update", episodeId: ep.id, stepIndex: 0, dirty: [...dirty] })) {
+      return true;
+    }
+  }
+  emit({ kind: "episode-end", episodeId: ep.id });
+  return false;
 }
 
 export function replayEpisodes(input: {

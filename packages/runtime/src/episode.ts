@@ -1,3 +1,5 @@
+import { type BindSegment, bindLabel } from "./core/path.ts";
+
 export type EpisodeTrigger = {
   kind: string;
   /** Tile name, lifecycle name, route pattern — interpretation depends on `kind`. */
@@ -19,6 +21,8 @@ export type PanicCategory =
   | "capability"
   | "tile-render"
   | "hydrate"
+  /** Replay's own: a bound control's write it cannot make again. No recorded step carries it. */
+  | "bind"
   | "unknown";
 
 export type PanicCauseLink = { message: string; stack?: string };
@@ -30,6 +34,17 @@ export type EpisodeStep =
       "slot-diffs": SlotDiff[];
       emits: string[];
       "env-reads"?: EnvRead[];
+      ts: number;
+    }
+  | {
+      kind: "bind";
+      /** The slot a bound control wrote. */
+      slot: string;
+      /** Where in that slot, for a control bound through a path; absent for the slot itself. */
+      path?: BindSegment[];
+      /** What the control wrote, at `path`. */
+      value: unknown;
+      "slot-diffs": SlotDiff[];
       ts: number;
     }
   | { kind: "effect-start"; name: string; args: unknown; ts: number }
@@ -116,6 +131,23 @@ export type EpisodeLoggerOptions = {
   onEpisode?: (ep: Episode) => void;
 };
 
+/** A write a bound control made, as {@link EpisodeLogger.recordBind} journals it. */
+export type BindWrite = {
+  /** The control that wrote: the event a choice writes on is `change`, the rest `input`. */
+  control: Element;
+  slot: string;
+  /** Where in the slot, for a control bound through a path; absent or empty for the slot itself. */
+  path?: readonly BindSegment[] | undefined;
+  /** What the control wrote, at `path`. */
+  written: unknown;
+  /** The whole slot before the write. */
+  before: unknown;
+  /** The whole slot after it. */
+  after: unknown;
+  /** The slot is `volatile`: the write is not journalled. */
+  volatile?: boolean | undefined;
+};
+
 /** An episode the ring holds, and its place among the episodes its logger opened. */
 type Kept = { seq: number; ep: Episode };
 
@@ -128,6 +160,12 @@ export type EpisodeLogger = {
     emits: string[],
     envReads?: readonly EnvRead[],
   ): void;
+  /**
+   * Journal a write a bound control made, once the slot has taken it, as an episode of its own
+   * that commits as it opens: `onCommit` and `onEpisode` are handed it before this returns, after
+   * any episode begun earlier. A write to a `volatile` slot is not journalled.
+   */
+  recordBind(write: BindWrite): void;
   recordEffectStart(name: string, args: unknown): string;
   recordEffectEnd(token: string, name: string, result: "ok" | "err", value: unknown): () => void;
   recordEffectCancel(targetId: string): void;
@@ -156,6 +194,14 @@ export type EpisodeLogger = {
   hasOpenEpisode(): boolean;
   currentId(): string | undefined;
 };
+
+/** The event a bound control writes on: `change` for a choice (a select, a box, a radio), `input` for the rest. */
+function bindTrigger(control: Element): "ui.input" | "ui.change" {
+  const type = (control as HTMLInputElement).type;
+  return control.tagName === "SELECT" || type === "checkbox" || type === "radio"
+    ? "ui.change"
+    : "ui.input";
+}
 
 function defaultIdGen(): () => string {
   const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -318,6 +364,28 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
         ...(envReads !== undefined && envReads.length > 0 ? { "env-reads": envReads.slice() } : {}),
         ts: now(),
       });
+    },
+    recordBind({ control, slot, path = [], written, before, after, volatile }) {
+      if (volatile) return;
+      const ts = now();
+      // Committed as it opens: a bind runs no reducer and emits nothing, so nothing follows it.
+      const ep: Episode = {
+        id: idGen(),
+        trigger: { kind: bindTrigger(control), target: bindLabel(slot, path), ts },
+        steps: [
+          {
+            kind: "bind",
+            slot,
+            ...(path.length > 0 ? { path: [...path] } : {}),
+            value: written,
+            "slot-diffs": [{ name: slot, before, after }],
+            ts,
+          },
+        ],
+        status: "completed",
+      };
+      open(ep);
+      store(ep);
     },
     recordEffectStart(name, args) {
       const ep = topEpisode();

@@ -1,5 +1,6 @@
 import {
   type AppShape,
+  bindLabel,
   type Episode,
   type EpisodeLogger,
   type EpisodeStep,
@@ -262,6 +263,12 @@ function formatStep(step: EpisodeStep): string {
         .map((d) => `${d.name}: ${safeStringify(d.before, 0)} → ${safeStringify(d.after, 0)}`)
         .join(", ");
       return `[reducer] ${step.name}${diffs ? `  ${diffs}` : ""}`;
+    }
+    case "bind": {
+      const diffs = step["slot-diffs"]
+        .map((d) => `${d.name}: ${safeStringify(d.before, 0)} → ${safeStringify(d.after, 0)}`)
+        .join(", ");
+      return `[bind] ${bindLabel(step.slot, step.path)}${diffs ? `  ${diffs}` : ""}`;
     }
     case "effect-start":
       return `[effect-start] ${step.name}(${safeStringify(step.args, 0)})`;
