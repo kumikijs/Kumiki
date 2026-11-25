@@ -219,10 +219,35 @@ tile Card = box(heading("Count"))
     expect(clean).toMatchObject({ stderr: "", code: 0 });
   });
 
-  it("prints them ahead of what a failed replay prints on stderr", SPAWN, () => {
-    const renamed = seed(WARNED.replace(/\binc\b/g, "bump"));
-    const { stderr, code } = runCli(["replay", renamed, "--from-log", COUNTER_LOG, "ep_0001"]);
-    expect(code).toBe(1);
-    expect(stderr.split("not replayed: ")[0]).toBe(warning);
-  });
+  it.each([
+    {
+      failure: "an entry it cannot replay",
+      program: WARNED.replace(/\binc\b/g, "bump"),
+      log: () => COUNTER_LOG,
+      id: "ep_0001",
+      says: "not replayed: ",
+    },
+    {
+      failure: "a log that does not parse",
+      program: WARNED,
+      log: () => seed("{", "bad.log.jsonl"),
+      id: "ep_0001",
+      says: "invalid episode log '",
+    },
+    {
+      failure: "an episode the log does not hold",
+      program: WARNED,
+      log: () => COUNTER_LOG,
+      id: "ep_9999",
+      says: `episode ep_9999 not found in ${COUNTER_LOG}`,
+    },
+  ])(
+    "prints them ahead of what a replay that fails on $failure prints on stderr",
+    SPAWN,
+    ({ program, log, id, says }) => {
+      const { stderr, code } = runCli(["replay", seed(program), "--from-log", log(), id]);
+      expect(code).toBe(1);
+      expect(stderr.slice(0, warning.length + says.length)).toBe(warning + says);
+    },
+  );
 });
