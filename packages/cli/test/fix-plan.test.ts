@@ -28,6 +28,18 @@ function planOf(file: string) {
 
 const descriptionsOf = (file: string): string[] => planOf(file).map((p) => p.description);
 
+/** Plan the source's diagnostics, each message passed through `reword` first. */
+function planSource(source: string, reword: (message: string) => string = (m) => m) {
+  const store = storeOf(source);
+  const errors = check(store.program).map((e) => ({ ...e, message: reword(e.message) }));
+  const { patches, skipped } = planFixesExplained(store, errors);
+  return {
+    messages: errors.map((e) => e.message),
+    patches: patches.map((p) => p.description),
+    skipped: skipped.map((s) => [s.code, s.reason]),
+  };
+}
+
 /** Apply the first planned patch to the file's text; the result and its diagnostics. */
 function applyFirst(file: string): { patched: string; errors: string[] } {
   const patch = defined(planOf(file)[0], "a planned patch");
@@ -864,16 +876,6 @@ tile Btn = button(text="go")
 tile App = column(Btn, text(total.show))
 ${APP_A}`;
   const FOR_BODY = "for idx in [1] { () }\n        total := idx";
-  const plan = (source: string, reword: (message: string) => string = (m) => m) => {
-    const store = storeOf(source);
-    const errors = check(store.program).map((e) => ({ ...e, message: reword(e.message) }));
-    const { patches, skipped } = planFixesExplained(store, errors);
-    return {
-      messages: errors.map((e) => e.message),
-      patches: patches.map((p) => p.description),
-      skipped: skipped.map((s) => [s.code, s.reason]),
-    };
-  };
 
   // `v` is one edit from the app's name `A`.
   const inApp = (tile: string) => scoped("()").replace("column(Btn, text(total.show))", tile);
@@ -896,7 +898,7 @@ ${APP_A}`;
       ),
     ],
   ])("proposes no rename for a name %s declared, read after it", (_form, source) => {
-    const { patches, skipped } = plan(source);
+    const { patches, skipped } = planSource(source);
     expect(patches).toEqual([]);
     expect(skipped).toEqual([["E0103", "e0103-read-after-scope-ended"]]);
   });
@@ -908,11 +910,11 @@ ${APP_A}`;
   };
 
   it("still renames a misspelling beside it", () => {
-    expect(plan(withMisspelling)).toMatchObject(ONE_OF_EACH);
+    expect(planSource(withMisspelling)).toMatchObject(ONE_OF_EACH);
   });
 
   it("tells the two apart by the diagnostic's field, not its message", () => {
-    const reworded = plan(withMisspelling, (m) => m.replace(/ — .*/, ""));
+    const reworded = planSource(withMisspelling, (m) => m.replace(/ — .*/, ""));
     expect(reworded.messages).toEqual([
       'Reference to undefined name "idx"',
       'Reference to undefined name "cont"',
@@ -924,7 +926,7 @@ ${APP_A}`;
     const source = inApp(
       "column(Btn, for idx in [1] text(idx.show), text(idx.show), text(cont.show))",
     );
-    expect(plan(source)).toMatchObject({
+    expect(planSource(source)).toMatchObject({
       patches: ['replace "cont" with "count" at 8:76'],
       skipped: [["E0103", "e0103-read-after-scope-ended"]],
     });
@@ -956,7 +958,7 @@ ${APP_A}`;
       ),
     ],
   ])("proposes no rename for a name %s declares, read before it", (_form, source) => {
-    const { patches, skipped } = plan(source);
+    const { patches, skipped } = planSource(source);
     expect(patches).toEqual([]);
     expect(skipped).toEqual([["E0103", "e0103-read-before-scope-begins"]]);
   });
@@ -970,16 +972,93 @@ ${APP_A}`;
   };
 
   it("still renames a misspelling beside a read before the scope", () => {
-    expect(plan(misspeltBefore)).toMatchObject(ONE_OF_EACH_BEFORE);
+    expect(planSource(misspeltBefore)).toMatchObject(ONE_OF_EACH_BEFORE);
   });
 
   it("tells a read before the scope apart by the diagnostic's field, not its message", () => {
-    const reworded = plan(misspeltBefore, (m) => m.replace(/ — .*/, ""));
+    const reworded = planSource(misspeltBefore, (m) => m.replace(/ — .*/, ""));
     expect(reworded.messages).toEqual([
       'Reference to undefined name "idx"',
       'Reference to undefined name "cont"',
     ]);
     expect(reworded).toMatchObject(ONE_OF_EACH_BEFORE);
+  });
+});
+
+describe("planFixesExplained: a `$` name, which no top-level definition has (E0103)", () => {
+  // Each `$` name is one edit from a slot of a type the read accepts, so a rename would
+  // type-check and read the slot.
+  const unbound = (
+    body: string,
+    app = "column(Btn, text(s1 + after))",
+  ): string => `slot s1    : Text = "draft"
+slot s2    : Int = 0
+slot count : Int = 0
+slot after : Text = ""
+reducer go on=ui.click(Btn)
+    do= ${body}
+tile Btn = button(text="go")
+tile App = ${app}
+${APP_A}`;
+  const FRAGMENT = 's1 := ["a"].map($1).head.get-or("")\n        after := $1';
+
+  it.each([
+    ["`$1` after the fragment that bound it", unbound(FRAGMENT)],
+    [
+      "`$2` after the fold that bound it",
+      unbound("s2 := [1].fold(0, $1 + $2)\n        after := $2.show"),
+    ],
+    ["`$1` in a tile that declares no `in=`", unbound("after := s1", "column(Btn, text(s1 + $1))")],
+    ["the `$2` of a fragment handed one value", unbound("s2 := [1].map($1 + $2).head.get-or(0)")],
+    [
+      "`$1` in a `fn` with no parameters",
+      unbound("after := pick()").replace("reducer go", "fn pick() -> Text = $1\nreducer go"),
+    ],
+    ["a `$` name written for a slot", unbound("count := $count + 1")],
+  ])("proposes no rename for %s", (_form, source) => {
+    const { patches, skipped } = planSource(source);
+    expect(patches).toEqual([]);
+    expect(skipped).toEqual([["E0103", "e0103-positional-unbound"]]);
+  });
+
+  // `$el` is one edit from the slot `el`, and `el.x := "x"` type-checks.
+  const withEl = (body: string): string =>
+    unbound(body).replace("slot after", 'slot el    : { x: Text } = { x: "" }\nslot after');
+
+  it.each([
+    ["`$el.x := …`", withEl('$el.x := "x"')],
+    ["`$1 := …`", unbound('$1 := "x"')],
+  ])("proposes no rename for the `$` name an assignment's target starts with: %s", (_form, source) => {
+    const { patches, skipped } = planSource(source);
+    expect(patches).toEqual([]);
+    expect(skipped).toEqual([["E0103", "e0103-positional-not-a-slot"]]);
+  });
+
+  const withMisspelling = unbound(`${FRAGMENT}\n        count := cont`);
+  const ONE_OF_EACH = {
+    patches: ['replace "cont" with "count" at 8:18'],
+    skipped: [["E0103", "e0103-positional-unbound"]],
+  };
+
+  it("still renames a misspelling beside it", () => {
+    expect(planSource(withMisspelling)).toMatchObject(ONE_OF_EACH);
+  });
+
+  it("still renames a misspelling on the same line as a bound `$1`", () => {
+    const { patches, skipped } = planSource(
+      unbound('after := ["a"].map($1 + aftr).head.get-or("")'),
+    );
+    expect(patches).toEqual(['replace "aftr" with "after" at 6:33']);
+    expect(skipped).toEqual([]);
+  });
+
+  it("tells the two apart by what the diagnostic points at, not its message", () => {
+    const reworded = planSource(withMisspelling, (m) => m.replace('"$1"', '"one"'));
+    expect(reworded.messages).toEqual([
+      'Reference to undefined name "one"',
+      'Reference to undefined name "cont"',
+    ]);
+    expect(reworded).toMatchObject(ONE_OF_EACH);
   });
 });
 
@@ -1008,6 +1087,22 @@ ${APP_A}`);
     expect(result.regressionBlocked).toBe(true);
     expect(result.applied).toBe(0);
     expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
+  it("leaves a positional nothing binds as written, rather than renaming it to a slot (E0103)", () => {
+    const file = seed(`slot s1    : Text = "draft"
+slot after : Text = ""
+reducer go on=ui.click(Btn)
+    do= s1 := ["a"].map($1).head.get-or("")
+        after := $1
+tile Btn = button(text="go")
+tile App = column(Btn, text(s1 + after))
+${APP_A}`);
+    const before = readFileSync(file, "utf8");
+    const result = applyFixPlan(file, "E0103");
+    expect(result.applied).toBe(0);
+    expect(readFileSync(file, "utf8")).toBe(before);
+    expect(result.remaining.map((e) => e.code)).toEqual(["E0103"]);
   });
 
   it("a rename inside a for target keeps the E0218 that remains, not blocked (E0103)", () => {
