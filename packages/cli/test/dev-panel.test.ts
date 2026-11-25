@@ -1,4 +1,4 @@
-import type { AppShape } from "@kumikijs/runtime";
+import type { AppShape, Episode, EpisodeLogger } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installDevPanel } from "../src/dev/panel.ts";
@@ -8,6 +8,13 @@ import { APP_A, seed } from "./helpers/files.ts";
 /** The smallest app the panel can be handed: no slots, no reducers, nothing running. */
 function emptyApp(over: Partial<AppShape> = {}): AppShape {
   return { slots: {}, caps: [], reducers: [], effects: {}, init: [], ...over };
+}
+
+/** The episode `logger` committed last, which is what the panel is handed as it commits. */
+function lastOf(logger: EpisodeLogger): Episode {
+  const ep = logger.list().at(-1);
+  if (!ep) throw new Error("the logger has committed no episode");
+  return ep;
 }
 
 function setupHost(): void {
@@ -39,7 +46,7 @@ describe("installDevPanel", () => {
       logger,
       getApp: emptyApp,
     });
-    panel.push();
+    panel.push(lastOf(logger));
     const overlay = document.querySelector(".kdp-overlay");
     expect(overlay).toBeTruthy();
     expect(overlay?.textContent).toContain("Kumiki panic");
@@ -56,13 +63,13 @@ describe("installDevPanel", () => {
       logger,
       getApp: emptyApp,
     });
-    panel.push();
+    panel.push(lastOf(logger));
     expect(document.querySelector(".kdp-overlay")).toBeTruthy();
 
     logger.beginTrigger({ kind: "ui.click", target: "B" });
     logger.recordReducer("inc", [], []);
     logger.endTrigger();
-    panel.push();
+    panel.push(lastOf(logger));
     expect(document.querySelector(".kdp-overlay")).toBeNull();
   });
 
@@ -107,7 +114,7 @@ describe("installDevPanel", () => {
       logger,
       getApp: emptyApp,
     });
-    panel.push();
+    panel.push(lastOf(logger));
     const head = document.querySelector(".kdp-episode-head") as HTMLElement;
     expect(head).toBeTruthy();
     expect(document.querySelector(".kdp-steps")).toBeNull();
@@ -145,11 +152,11 @@ describe("installDevPanel", () => {
     logger.beginTrigger({ kind: "ui.click", target: "A" });
     logger.recordReducer("a", [], []);
     logger.endTrigger();
-    panel.push();
+    panel.push(lastOf(logger));
     logger.beginTrigger({ kind: "ui.click", target: "B" });
     logger.recordReducer("b", [], []);
     logger.endTrigger();
-    panel.push();
+    panel.push(lastOf(logger));
 
     const heads = document.querySelectorAll(".kdp-episode-head");
     expect(heads).toHaveLength(2);
@@ -157,6 +164,49 @@ describe("installDevPanel", () => {
     const bIdx = text.findIndex((t) => t.includes("B"));
     const aIdx = text.findIndex((t) => t.includes("A"));
     expect(bIdx).toBeLessThan(aIdx);
+  });
+
+  describe("while an episode begun earlier still waits on its effect", () => {
+    /** A panel handed each episode as it commits, as `kumiki dev`'s client wires it. */
+    function wired(): EpisodeLogger {
+      let panel: ReturnType<typeof installDevPanel> | undefined;
+      const logger = createEpisodeLogger({ onCommit: (ep) => panel?.push(ep) });
+      panel = installDevPanel({ logger, getApp: emptyApp });
+      return logger;
+    }
+    /** Open an episode for `target` that waits on an effect, and return the effect's token. */
+    function waitingOn(logger: EpisodeLogger, target: string): string {
+      logger.beginTrigger({ kind: "ui.click", target });
+      const token = logger.recordEffectStart("save", null);
+      logger.endTrigger();
+      return token;
+    }
+
+    it("lists an episode as soon as it commits", () => {
+      const logger = wired();
+      waitingOn(logger, "A");
+      logger.beginTrigger({ kind: "ui.click", target: "B" });
+      logger.endTrigger();
+
+      const heads = document.querySelectorAll(".kdp-episode-head");
+      expect(Array.from(heads, (h) => h.textContent)).toEqual([
+        expect.stringContaining("ui.click B"),
+      ]);
+    });
+
+    it("opens the overlay for a panic nothing handled in that episode once it commits", () => {
+      const logger = wired();
+      const save = waitingOn(logger, "A");
+      logger.beginTrigger({ kind: "ui.click", target: "B" });
+      logger.endTrigger();
+      expect(document.querySelector(".kdp-overlay")).toBeNull();
+
+      const exit = logger.recordEffectEnd(save, "save", "ok", null);
+      logger.recordPanic({ message: "saved badly", location: "reducer savedOk" });
+      exit();
+
+      expect(document.querySelector(".kdp-overlay")?.textContent).toContain("saved badly");
+    });
   });
 
   it("renders the current app.live snapshot in the inspector tab", () => {
@@ -201,7 +251,7 @@ describe("the panic overlay opens for a panic nothing handled", () => {
 
   function mountAppWithPanel(app: AppShape): Mounted {
     let panel: ReturnType<typeof installDevPanel> | undefined;
-    const logger = createEpisodeLogger({ onEpisode: () => panel?.push() });
+    const logger = createEpisodeLogger({ onCommit: (ep) => panel?.push(ep) });
     panel = installDevPanel({ logger, getApp: () => app });
     mount(app, document.getElementById("app") as HTMLElement, { episodeLogger: logger });
     return {
