@@ -279,6 +279,18 @@ describe("the variant tags kumiki fix reads under a reserved name", () => {
     expect(variantTagsOf("Option", program("type Option = A | B"))).toEqual(["Some", "None"]);
   });
 
+  it.each([
+    ["HttpBody(Int)", "", ["Json", "Form", "Multipart", "Text", "Bytes", "Empty"]],
+    ["FormValue", "", ["TextV", "NumberV", "BoolV", "FileV"]],
+    [
+      "HttpBody(Int)",
+      "type HttpBody(T) = A | B",
+      ["Json", "Form", "Multipart", "Text", "Bytes", "Empty"],
+    ],
+  ])("are the standard library's for %s, with %j declared", (name, decl, tags) => {
+    expect(variantTagsOf(name, program(decl))).toEqual(tags);
+  });
+
   it("are the program's own under a name of its own", () => {
     expect(variantTagsOf("Mine", program("type Mine = A | B"))).toEqual(["A", "B"]);
   });

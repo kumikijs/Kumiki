@@ -192,8 +192,8 @@ export const BUILTIN_TYPE_CONSTRUCTORS: ReadonlyMap<string, number | null> = new
   ["Tuple", null],
 ]);
 
-// `Option` and `Result` have no body to read tags from. The tags of `FormValue` and `HttpBody`
-// come from their definitions above.
+// `Option` and `Result` have no body to read tags from. Every other standard-library union's tags
+// come from its definition above.
 export const BUILTIN_UNION_TAGS: ReadonlyMap<string, readonly string[]> = new Map([
   ["Option", ["Some", "None"]],
   ["Result", ["Ok", "Err"]],

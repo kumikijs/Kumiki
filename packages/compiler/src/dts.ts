@@ -1,4 +1,3 @@
-import { paramSubstitution, substituteType } from "./assignable.ts";
 import type { EffectDef, Program, SlotDef, TypeDef, TypeExpr } from "./ast.ts";
 import { STANDARD_CAPABILITIES } from "./capabilities.ts";
 import { FILE_FIELDS, type PrimName, STDLIB_TYPES } from "./stdlib-types.ts";
@@ -59,8 +58,11 @@ function tsOfType(t: TypeExpr, ctx: Ctx): string {
           if (declared) return `${declared}<${t.args.map((a) => tsOfType(a, ctx)).join(", ")}>`;
           const std = STDLIB_BY_NAME.get(t.name);
           if (!std || ctx.expanding.has(t.name)) return "unknown";
-          const body = substituteType(std.body, paramSubstitution(std.params, t.args));
-          return tsOfType(body, { ...ctx, expanding: new Set([...ctx.expanding, t.name]) });
+          // The arguments are read before the guard holds this name, so one nested in another is
+          // still expanded; the definition then sees its own parameters and no others.
+          const typeParams = new Map(std.params.map((p, i) => [p, arg(i)]));
+          const expanding = new Set([...ctx.expanding, t.name]);
+          return tsOfType(std.body, { ...ctx, typeParams, expanding });
         }
       }
     }

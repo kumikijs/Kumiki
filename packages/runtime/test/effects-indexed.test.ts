@@ -268,6 +268,25 @@ describe("indexed-* happy path with in-memory mock", () => {
       );
       expect(r.kind === "ok" && (r.value as { id: string }[]).map((n) => n.id)).toEqual(ids);
     });
+
+    it.each([
+      [
+        "a lower bound above the upper one",
+        { lower: some(20), upper: some(10), lowerOpen: false, upperOpen: false },
+      ],
+      [
+        "equal bounds, one of them open",
+        { lower: some(10), upper: some(10), lowerOpen: true, upperOpen: false },
+      ],
+    ])("given %s, which IndexedDB refuses to build, answers Err with its reason", async (what, range) => {
+      const localCfg: IndexedDbCfg = { ...cfg, name: `happy-db-empty-range-${what}` };
+      await indexedWrite({ store: "notes", key: "a", value: { at: 10 } }, localCfg);
+      const r = await indexedRead(
+        { store: "notes", index: { _tag: "Some", _0: "at" }, range: { _tag: "Some", _0: range } },
+        localCfg,
+      );
+      expect(r).toEqual({ kind: "err", value: `DataError: ${EMPTY_BOUND}` });
+    });
   });
 
   it("indexedRead falls back to query when no key is given", async () => {
@@ -284,14 +303,18 @@ describe("indexed-* happy path with in-memory mock", () => {
 
 type KeyRange = { lower?: number; upper?: number; lowerOpen?: boolean; upperOpen?: boolean };
 
-/** `IDBKeyRange`'s constructors, building the range a real one holds, over number keys. */
+const EMPTY_BOUND = "The lower key is greater than the upper key.";
+
+/**
+ * `IDBKeyRange`'s constructors, building the range a real one holds, over number keys, and
+ * refusing as a real one does a bound that holds no key.
+ */
 const KEY_RANGE = {
-  bound: (lower: number, upper: number, lowerOpen: boolean, upperOpen: boolean): KeyRange => ({
-    lower,
-    upper,
-    lowerOpen,
-    upperOpen,
-  }),
+  bound: (lower: number, upper: number, lowerOpen: boolean, upperOpen: boolean): KeyRange => {
+    if (lower > upper || (lower === upper && (lowerOpen || upperOpen)))
+      throw new DOMException(EMPTY_BOUND, "DataError");
+    return { lower, upper, lowerOpen, upperOpen };
+  },
   lowerBound: (lower: number, lowerOpen: boolean): KeyRange => ({ lower, lowerOpen }),
   upperBound: (upper: number, upperOpen: boolean): KeyRange => ({ upper, upperOpen }),
 };

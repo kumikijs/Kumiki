@@ -45,6 +45,9 @@ effect indexed-query cap=indexed.read in=${QUERY} out=Result(List(Note), Text)`,
     { caps: "indexed.read" },
   );
 
+/** A match's arms for every `HttpBody` variant but `Empty`, each answering a `Text`. */
+const ARMS = `| Json(n) -> n.id | Form(_) -> "form" | Multipart(_) -> "multipart" | Text(t) -> t | Bytes(_) -> "bytes"`;
+
 const VARIANTS = [
   `Json({id: "a", at: 1})`,
   `Form({"a": "b"})`,
@@ -101,7 +104,31 @@ describe("a body declared HttpBody(T)", () => {
     ]);
   });
 
-  const ARMS = `| Json(n) -> n.id | Form(_) -> "form" | Multipart(_) -> "multipart" | Text(t) -> t | Bytes(_) -> "bytes"`;
+  it.each([
+    [
+      "a slot's initial value",
+      `slot b : HttpBody(Note) = {id: "a", at: 1}`,
+      `{id: "a", at: 1}`,
+      "{id: Text, at: Int}",
+    ],
+    ["a fn's result", "fn mk(note: Note) -> HttpBody(Note) = note", "note", "Note"],
+  ])("refuses a bare value as %s with E0201", (_what, def, value, actual) => {
+    const src = withApp(`${NOTE}\n${def}\ntile App = text("x")`);
+    const { line, col } = posOf(src, def);
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0201 ${line}:${col + def.lastIndexOf(value)} Expected HttpBody(Note) but got ${actual}`,
+    ]);
+  });
+
+  it("gives Json's payload the type T is applied to", () => {
+    const src = withApp(`${NOTE}
+fn title(b: HttpBody(Note)) -> Text = match b with | Json(n) -> n.nope | _ -> ""
+tile App = text(title(Empty))`);
+    const { line, col } = posOf(src, "n.nope");
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0108 ${line}:${col} Record type has no field or method ".nope"`,
+    ]);
+  });
 
   it("is matched over its six variants", () => {
     const src = withApp(`${NOTE}
@@ -156,6 +183,21 @@ reducer clear on=app.start do= b := Empty`);
     ]);
   });
 
+  it("leaves Empty to HttpBody where a body declared HttpBody(T) is written", () => {
+    const src = withReducer(
+      `${NOTE}
+type Box = Full(Int) | Empty
+type Sent = {body: HttpBody(Note)}
+slot b : Box = Empty
+effect http-post cap=http.post in=${HTTP_SEND} out=Result(Text, HttpError)
+fn kind(s: Sent) -> Text = match s.body with ${ARMS} | Empty -> "empty"
+fn label(x: Box) -> Text = match x with | Full(n) -> n.show | Empty -> kind({body: Empty})`,
+      `emit http-post({url: "/notes", headers: {}, query: {}, body: Empty, decode: Decoder.Text})`,
+      { caps: "http.post" },
+    );
+    expect(locatedSummariesOf(src)).toEqual([]);
+  });
+
   it("names Text and Json as variants of its own", () => {
     const src = withReducer(
       `type Payload = Text(Text) | Json(Int)
@@ -199,11 +241,77 @@ describe("a range declared IndexRange(K)", () => {
     expect(codesOf(queried(`Some({lower: Some(1), upper: None})`))).toEqual(["E0214", "E0214"]);
   });
 
+  it("gives the bounds the type K is applied to", () => {
+    const def = "fn from(x: IndexRange(Text)) -> Int = x.lower.get-or(0)";
+    const src = withApp(
+      `${def}\ntile App = text(from({lower: None, upper: None, lowerOpen: false, upperOpen: false}).show)`,
+    );
+    const { line, col } = posOf(src, def);
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0201 ${line}:${col + def.indexOf("0)")} Expected Text but got Int`,
+      `E0201 ${line}:${col + def.indexOf("x.lower")} Expected Int but got Text`,
+    ]);
+  });
+
   it("is a record a slot holds and a fn reads", () => {
     const range = `{lower: Some("a"), upper: None, lowerOpen: false, upperOpen: false}`;
     const src = withApp(`slot r : IndexRange(Text) = ${range}
 fn from(x: IndexRange(Text)) -> Text = x.lower.get-or("")
 tile App = text(from(r))`);
     expect(locatedSummariesOf(src)).toEqual([]);
+  });
+});
+
+describe("an indexed-query's range, which is an Option(IndexRange(K)) for any K", () => {
+  const declared = (range: string): string =>
+    withApp(
+      `${NOTE}
+effect indexed-query cap=indexed.read in={store: Text, index: Option(Text), range: ${range}} out=Result(List(Note), Text)
+tile App = text("x")`,
+      { caps: "indexed.read" },
+    );
+
+  it.each([
+    "Option(IndexRange(Int))",
+    "Option(IndexRange(Text))",
+  ])("takes a declared %s", (range) => {
+    expect(locatedSummariesOf(declared(range))).toEqual([]);
+  });
+
+  it.each([
+    "Option(Text)",
+    "Option({from: Int, to: Int})",
+    "IndexRange(Int)",
+  ])("refuses a declared %s", (range) => {
+    const src = declared(range);
+    const { line, col } = posOf(src, `range: ${range}`);
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0201 ${line}:${col + "range: ".length} Expected Option(IndexRange(?)) but got ${range}: with no map-request, effect "indexed-query"'s input is the indexed.read request`,
+    ]);
+  });
+
+  const mapped = (inType: string, range: string): string =>
+    withApp(
+      `${NOTE}
+effect find cap=indexed.read in=${inType} out=Result(List(Note), Text)
+           map-request={store: "notes", index: Some("at"), range: ${range}}
+tile App = text("x")`,
+      { caps: "indexed.read" },
+    );
+
+  it.each([
+    ["Int", "Some({lower: Some($1), upper: None, lowerOpen: false, upperOpen: false})"],
+    ["Option(IndexRange(Text))", "$1"],
+    ["Text", "None"],
+  ])("takes a map-request's range built from %s as %s", (inType, range) => {
+    expect(locatedSummariesOf(mapped(inType, range))).toEqual([]);
+  });
+
+  it("refuses a map-request's range that is not one", () => {
+    const src = mapped("Text", "Some($1)");
+    const { line, col } = posOf(src, "Some($1)");
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0201 ${line}:${col + "Some(".length} Expected IndexRange(?) but got Text`,
+    ]);
   });
 });

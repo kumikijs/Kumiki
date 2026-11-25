@@ -36,6 +36,30 @@ ${TAIL}`);
     });
   }
 
+  const NESTED_JSON = '{ _tag: "Json"; _0: { _tag: "Json"; _0: Note } | { _tag: "Form"';
+
+  it.each([
+    ["HttpBody(Note)", '{ _tag: "Json"; _0: Note } | { _tag: "Form"'],
+    ["IndexRange(Text)", 'lower: { _tag: "Some"; _0: string } | { _tag: "None" };'],
+    ["HttpBody(HttpBody(Note))", NESTED_JSON],
+  ])("maps %s with its argument in place of the parameter", (applied, shape) => {
+    const line = providerLine(`type Note = {id: Text}
+effect e cap=custom.thing in=${applied} out=Result(Unit, Text)
+${TAIL}`);
+    expect(line).toContain(shape);
+  });
+
+  it("keeps a program generic's parameter where it applies a standard-library one", () => {
+    const dts = generateDts(
+      parse(
+        lex(`type Req(T) = {body: HttpBody(T)}
+effect e cap=custom.thing in=Req(Int) out=Result(Unit, Text)
+${TAIL}`),
+      ),
+    );
+    expect(dts).toContain('export type Req<T> = { body: { _tag: "Json"; _0: T } | { _tag: "Form"');
+  });
+
   it("quotes a field name TypeScript cannot take bare", () => {
     const line = providerLine(`effect e cap=custom.thing in=PanicInfo out=Result(Unit, Text)
 ${TAIL}`);

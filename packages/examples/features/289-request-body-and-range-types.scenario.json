@@ -17,17 +17,17 @@
       "expect": { "noErrors": true, "state": { "status": "idle", "found": [] } }
     },
     {
-      "label": "a Json body declared HttpBody(Note) is sent",
+      "label": "the post Send emits with a Json body answers",
       "do": { "click": "#send" },
       "expect": { "noErrors": true, "state": { "status": "sent ok" } }
     },
     {
-      "label": "an Empty body is sent through the same declaration",
+      "label": "the post Ping emits with an Empty body answers",
       "do": { "click": "#ping" },
       "expect": { "noErrors": true, "state": { "status": "sent pong" } }
     },
     {
-      "label": "the query answers the List(Note) its out= declares",
+      "label": "the query Find emits answers the List(Note) its out= declares",
       "do": { "click": "#find" },
       "expect": {
         "noErrors": true,
