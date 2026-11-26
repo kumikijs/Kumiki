@@ -219,7 +219,8 @@ export const _stdlibTest = {
     const { name, app, target, el, mocks, expect } = input;
     const { live, slots } = app;
     const residual: { effect: string; args: unknown[] }[] = [];
-    const queue: { effect: string; outcome: "ok" | "err"; value: unknown }[] = [];
+    // `input` is what a mount binds as an `.ok` / `.err` reducer's `$2`: the emit's argument.
+    const queue: { effect: string; outcome: "ok" | "err"; value: unknown; input: unknown }[] = [];
     let panic: string | null = null;
     let unhandledErr: string | null = null;
 
@@ -240,7 +241,7 @@ export const _stdlibTest = {
         const m = mocks[emit.effect];
         if (m) {
           const value = standInValue(app.effects[emit.effect], m.outcome, m.value);
-          queue.push({ effect: emit.effect, outcome: m.outcome, value });
+          queue.push({ effect: emit.effect, outcome: m.outcome, value, input: emit.args[0] });
         } else residual.push(emit);
       }
     };
@@ -261,7 +262,7 @@ export const _stdlibTest = {
             r.event.effect === job.effect &&
             r.event.outcome === job.outcome
           ) {
-            const res = r.apply(live, { $1: job.value, $2: undefined });
+            const res = r.apply(live, { $1: job.value, $2: job.input });
             if (writeSlots(r.name, res)) enqueue(res.emits);
             matched++;
           }

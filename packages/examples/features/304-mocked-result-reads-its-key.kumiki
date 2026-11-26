@@ -1,0 +1,60 @@
+# Feature: an effect's `.ok` / `.err` reducer reads the request key, the input
+# the effect was emitted with, as its second bind. A reducer-test's `mocks`
+# answer each emit with a stand-in result, and the reducer that takes it reads
+# the key of the emit it answers, as it does in the app: `noteOk` reads
+# "kumiki:note", and the `themeOk` that its `loadTheme` reaches reads
+# "kumiki:theme".
+
+slot noteKey  : Text = "kumiki:note"
+slot themeKey : Text = "kumiki:theme"
+slot note     : Text = "(not loaded)"
+slot noteAt   : Text = ""
+slot themeAt  : Text = ""
+
+effect loadNote  cap=storage.read
+                 in=Text
+                 out=Result(Option(Text), Text)
+                 map-request={key: $1, decode: Decoder.Json(Text)}
+
+effect loadTheme cap=storage.read
+                 in=Text
+                 out=Result(Option(Text), Text)
+                 map-request={key: $1, decode: Decoder.Json(Text)}
+
+reducer load      on=ui.click(LoadBtn)    do= emit loadNote(noteKey)
+reducer noteOk    on=loadNote.ok($o, $k)  do= note   := $o.get-or("(empty)")
+                                              noteAt := $k
+                                              emit loadTheme(themeKey)
+reducer noteFail  on=loadNote.err($e, $k) do= note   := "(failed: " + $e + ")"
+                                              noteAt := $k
+reducer themeOk   on=loadTheme.ok(_, $k)  do= themeAt := $k
+reducer themeFail on=loadTheme.err(_, $k) do= themeAt := $k
+
+tile LoadBtn = button(text="Load") {id: "load"}
+tile App = column(
+             LoadBtn,
+             text("note=" + note),
+             text("noteAt=" + noteAt),
+             text("themeAt=" + themeAt))
+           {pad: "lg", gap: "sm"}
+
+app MockedResultReadsItsKey
+    caps   = [storage.read]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+
+test each-result-reads-its-own-key =
+    reducer-test load
+        given  = {slots: {note: "(not loaded)", noteAt: "", themeAt: ""},
+                  event: {type: ui.click, target: LoadBtn},
+                  mocks: {loadNote: ok(Some("hello")), loadTheme: ok(Some("dark"))}}
+        expect = {slots: {note: "hello", noteAt: "kumiki:note", themeAt: "kumiki:theme"},
+                  effects: []}
+
+test a-failed-result-reads-its-key =
+    reducer-test load
+        given  = {slots: {note: "(not loaded)", noteAt: "", themeAt: ""},
+                  event: {type: ui.click, target: LoadBtn},
+                  mocks: {loadNote: err("quota exceeded")}}
+        expect = {slots: {note: "(failed: quota exceeded)", noteAt: "kumiki:note", themeAt: ""},
+                  effects: []}

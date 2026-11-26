@@ -1,0 +1,24 @@
+{
+  "effects": {
+    "loadNote": [{ "outcome": "ok", "value": { "_tag": "Some", "_0": "hello" } }],
+    "loadTheme": [{ "outcome": "ok", "value": { "_tag": "Some", "_0": "dark" } }]
+  },
+  "steps": [
+    {
+      "label": "nothing loaded yet",
+      "expect": {
+        "noErrors": true,
+        "state": { "note": "(not loaded)", "noteAt": "", "themeAt": "" }
+      }
+    },
+    {
+      "label": "each result's reducer reads the key its effect was emitted with",
+      "do": { "click": "#load" },
+      "expect": {
+        "noErrors": true,
+        "state": { "note": "hello", "noteAt": "kumiki:note", "themeAt": "kumiki:theme" },
+        "domIncludes": ["note=hello", "noteAt=kumiki:note", "themeAt=kumiki:theme"]
+      }
+    }
+  ]
+}
