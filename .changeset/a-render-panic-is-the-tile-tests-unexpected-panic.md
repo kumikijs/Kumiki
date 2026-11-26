@@ -26,6 +26,6 @@ A tile-test still has no way to expect the panic: its `expect` is a tile, with n
 
 A tile-test renders its target's body, so the target's own `error-boundary=` does not catch that panic; a tile the body renders keeps its boundary, and its fallback is what is compared.
 
-Only a panic is the test's result. Anything else the reducer or the render throws points at the compiler or the runtime, so a reducer-test now reports it as a throw in its body, with its kind (`error:    TypeError: x.map is not a function`), where it printed a `panic:` line. A reducer-test that expects a panic is no longer passed by such a throw whose message contains the expected text. Reducer-tests with effect mocks are not covered yet: they still report any throw as a panic.
+Only a panic is the test's result. Anything else the reducer or the render throws points at the compiler or the runtime, so a reducer-test now reports it as a throw in its body, with its kind (`error:    TypeError: x.map is not a function`), where it printed a `panic:` line. A reducer-test that expects a panic is no longer passed by such a throw whose message contains the expected text.
 
 The generated tile-test binds `given.in` ahead of the render, runs the render under the same guard as a reducer-test's reducer, and passes what it caught to `runTileTest`, whose input gains `panic: string | null` beside `actual`. Both runners build the unexpected-panic report through one function.
