@@ -234,6 +234,73 @@ describe("indexed-* happy path with in-memory mock", () => {
     });
   });
 
+  describe("a query's range, written as IndexRange spells it", () => {
+    beforeEach(() => {
+      vi.stubGlobal("IDBKeyRange", KEY_RANGE);
+    });
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    const some = (k: number) => ({ _tag: "Some", _0: k });
+    const none = { _tag: "None" };
+    it.each([
+      [
+        "both bounds, the upper one open",
+        { lower: some(10), upper: some(20), lowerOpen: false, upperOpen: true },
+        ["a", "b"],
+      ],
+      [
+        "a lower bound that is open",
+        { lower: some(10), upper: none, lowerOpen: true, upperOpen: false },
+        ["b", "c"],
+      ],
+      [
+        "an upper bound that is closed",
+        { lower: none, upper: some(15), lowerOpen: false, upperOpen: false },
+        ["a", "b"],
+      ],
+      [
+        "no bound",
+        { lower: none, upper: none, lowerOpen: false, upperOpen: false },
+        ["a", "b", "c"],
+      ],
+    ])("given %s, reads the records whose key it holds", async (what, range, ids) => {
+      const localCfg: IndexedDbCfg = { ...cfg, name: `happy-db-range-${what}` };
+      for (const [id, at] of [
+        ["a", 10],
+        ["b", 15],
+        ["c", 20],
+      ] as const) {
+        await indexedWrite({ store: "notes", key: id, value: { at } }, localCfg);
+      }
+      const r = await indexedRead(
+        { store: "notes", index: { _tag: "Some", _0: "at" }, range: { _tag: "Some", _0: range } },
+        localCfg,
+      );
+      expect(r.kind === "ok" && (r.value as { id: string }[]).map((n) => n.id)).toEqual(ids);
+    });
+
+    it.each([
+      [
+        "a lower bound above the upper one",
+        { lower: some(20), upper: some(10), lowerOpen: false, upperOpen: false },
+      ],
+      [
+        "equal bounds, one of them open",
+        { lower: some(10), upper: some(10), lowerOpen: true, upperOpen: false },
+      ],
+    ])("given %s, which IndexedDB refuses to build, answers Err with its reason", async (what, range) => {
+      const localCfg: IndexedDbCfg = { ...cfg, name: `happy-db-empty-range-${what}` };
+      await indexedWrite({ store: "notes", key: "a", value: { at: 10 } }, localCfg);
+      const r = await indexedRead(
+        { store: "notes", index: { _tag: "Some", _0: "at" }, range: { _tag: "Some", _0: range } },
+        localCfg,
+      );
+      expect(r).toEqual({ kind: "err", value: `DataError: ${EMPTY_BOUND}` });
+    });
+  });
+
   it("indexedRead falls back to query when no key is given", async () => {
     const localCfg: IndexedDbCfg = { ...cfg, name: "happy-db-3" };
     await indexedWrite({ store: "notes", key: "a", value: { body: "1" } }, localCfg);
@@ -245,6 +312,32 @@ describe("indexed-* happy path with in-memory mock", () => {
     expect((r.value as unknown[]).length).toBe(2);
   });
 });
+
+type KeyRange = { lower?: number; upper?: number; lowerOpen?: boolean; upperOpen?: boolean };
+
+const EMPTY_BOUND = "The lower key is greater than the upper key.";
+
+/**
+ * `IDBKeyRange`'s constructors, building the range a real one holds, over number keys, and
+ * refusing as a real one does a bound that holds no key.
+ */
+const KEY_RANGE = {
+  bound: (lower: number, upper: number, lowerOpen: boolean, upperOpen: boolean): KeyRange => {
+    if (lower > upper || (lower === upper && (lowerOpen || upperOpen)))
+      throw new DOMException(EMPTY_BOUND, "DataError");
+    return { lower, upper, lowerOpen, upperOpen };
+  },
+  lowerBound: (lower: number, lowerOpen: boolean): KeyRange => ({ lower, lowerOpen }),
+  upperBound: (upper: number, upperOpen: boolean): KeyRange => ({ upper, upperOpen }),
+};
+
+function inRange(key: number | undefined, r: KeyRange | undefined): boolean {
+  if (r === undefined) return true;
+  if (key === undefined) return false;
+  const aboveLower = r.lower === undefined || (r.lowerOpen ? key > r.lower : key >= r.lower);
+  const belowUpper = r.upper === undefined || (r.upperOpen ? key < r.upper : key <= r.upper);
+  return aboveLower && belowUpper;
+}
 
 type Opening = "success" | "blocked" | "error";
 
@@ -381,7 +474,14 @@ function makeMockIndexedDb(): IDBFactory {
           return makeRequest(undefined);
         },
         getAll: () => makeRequest([...store.values()]),
-        index: () => ({ getAll: () => makeRequest([...store.values()]) }),
+        index: (name: string) => ({
+          getAll: (range?: KeyRange) =>
+            makeRequest(
+              [...store.values()].filter((r) =>
+                inRange((r as Record<string, number>)[name], range),
+              ),
+            ),
+        }),
       }),
     } as unknown as IDBTransaction;
   }

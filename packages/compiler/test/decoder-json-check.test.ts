@@ -95,6 +95,38 @@ describe("Decoder.Json(T) carries T's check to the handler", () => {
   });
 
   it.each([
+    [
+      "HttpBody(Note)",
+      { _tag: "Json", _0: { id: UUID, text: "a" } },
+      { _tag: "Json", _0: { id: UUID, text: "" } },
+      [{ variant: "Json" }, "text"],
+      "nonempty",
+    ],
+    [
+      "IndexRange(NoteId)",
+      {
+        lower: { _tag: "Some", _0: UUID },
+        upper: { _tag: "None" },
+        lowerOpen: false,
+        upperOpen: true,
+      },
+      {
+        lower: { _tag: "Some", _0: "k3j9x" },
+        upper: { _tag: "None" },
+        lowerOpen: false,
+        upperOpen: true,
+      },
+      ["lower", { variant: "Some" }],
+      "uuid",
+    ],
+  ])("reads a standard-library generic, %s, with its argument in place", async (t, ok, refused, path, kind) => {
+    const check = (await decodeOf(`Decoder.Json(${t})`)) as Check;
+    expect(typeof check).toBe("function");
+    expect(check(ok)).toBeUndefined();
+    expect(check(refused)).toEqual({ kind, args: [], path });
+  });
+
+  it.each([
     { what: "a key", value: { k3j9x: { id: UUID, text: "a" } } },
     { what: "an entry's field", value: { [UUID]: { id: UUID, text: "" } } },
     { what: "a nominal field", value: { [UUID]: { id: "x", text: "a" } } },

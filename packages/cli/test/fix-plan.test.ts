@@ -97,6 +97,16 @@ ${APP_A}`,
       fixed: "decode: Decoder.None",
     },
     {
+      repair: "repairs a tag of a standard-library union from its definition (E0216)",
+      source: `type Note = {id: Text, at: Int}
+slot b : HttpBody(Note) = Jsn({id: "a", at: 1})
+fn title(x: HttpBody(Note)) -> Text = match x with | Json(n) -> n.id | _ -> ""
+tile App = column(text(title(b)))
+${APP_A}`,
+      description: 'replace "Jsn" with "Json" at 2:27',
+      fixed: 'slot b : HttpBody(Note) = Json({id: "a", at: 1})',
+    },
+    {
       repair: "answers a misspelt `Time.now` with the qualified builtin (E0116)",
       source: `slot at : Time = Time.nwo\ntile App = column(text(at.format("yyyy")))\n${APP_A}`,
       description: 'replace "Time.nwo" with "Time.now" at 1:18',
@@ -536,12 +546,14 @@ ${APP_A}`);
     expect(e0209[0]?.description).not.toContain("Grn0");
   });
 
-  it("proposes no tag from a program's own union under a reserved name, which the checker never reads", () => {
+  it("proposes the standard library's tag under a reserved name, not the program's own union's, which the checker never reads", () => {
     const file = seed(`type FormValue = Txt(Text) | Num(Float)
 slot v : FormValue = Txtt("a")
 tile App = column(text("x"))
 ${APP_A}`);
-    expect(descriptionsOf(file).filter((d) => d.includes('"Txtt"'))).toEqual([]);
+    expect(descriptionsOf(file).filter((d) => d.includes('"Txtt"'))).toEqual([
+      'replace "Txtt" with "TextV" at 2:22',
+    ]);
   });
 
   it("E0106 does not fall back to unrelated top-level names (scoped candidate set)", () => {

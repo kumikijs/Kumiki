@@ -33,13 +33,15 @@ effect http-post cap=http.post
                    url: Url,
                    headers: Map(Text, Text),
                    query: Map(Text, Text),
-                   body: HttpBody,
+                   body: HttpBody(T),
                    decode: Decoder
                  }
                  out=Result(Decoded, HttpError)
 
 # put / patch / delete have the same shape
 ```
+
+`Decoded` and `T` stand for types the program chooses, here and in the storage declarations of [6.7](#_6-7-storage-effects): `Decoded` is the type the answer is decoded into (`User`, for `decode: Decoder.Json(User)`), and `T` the type of what the request carries — what a body's `Json` holds ([6.1.3](#_6-1-3-the-httpbody-type)), or the value a write stores and a query answers. A program's own declaration writes its types in their place: `body: HttpBody(Note)`, `out=Result(User, HttpError)`.
 
 `query` is sent as the URL's query string, by every `http.*` method alike (get, post, put, patch and delete): each entry is URL-encoded (`URLSearchParams`, so a space becomes `+` and an `&` inside a value is escaped) and appended to `url`, after any query string `url` already carries and before a fragment. An empty `query` leaves `url` as written. The order of the entries in the query string is not guaranteed; do not rely on it.
 
@@ -48,13 +50,15 @@ effect http-post cap=http.post
 ### 6.1.3 The HttpBody Type
 
 ```kumiki fragment
-type HttpBody = Json(JsonValue)
-              | Form(Map(Text, Text))
-              | Multipart(Map(Text, FormValue))
-              | Text(Text)
-              | Bytes(Bytes)
-              | Empty
+type HttpBody(T) = Json(T)
+                 | Form(Map(Text, Text))
+                 | Multipart(Map(Text, FormValue))
+                 | Text(Text)
+                 | Bytes(Bytes)
+                 | Empty
 ```
+
+`HttpBody(T)` is a standard-library type ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)), generic in what `Json` carries. The runtime reads a body by its tag, so the name is reserved ([E0231](./errors.md#e0231-reserved-type-name)). A field declared `HttpBody(T)` takes these six variants and nothing else, and a `Json(…)` written there has its payload held to `T`: under `body: HttpBody(Note)`, `Json(note)` is a body, and the bare `note` is [E0202](./errors.md#e0202-emit-arg-type-mismatch) in an `emit`'s argument ([E0201](./errors.md#e0201-type-mismatch) elsewhere), `Expected HttpBody(Note) but got Note`. A variant a `let` binds is not judged where its name is written, nor is one of the program's own union bound the same way: the checker does not infer the type of its payload, so `let b = Json({id: "a", at: "noon"})` then `body: b` passes. `HttpBody` written without its argument is [E0210](./errors.md#e0210-type-arity-mismatch), and an effect that never sends `Json` still gives it one: `HttpBody(Unit)`.
 
 Each variant is sent as what it names:
 
@@ -67,7 +71,7 @@ Each variant is sent as what it names:
 | `Bytes(b)` | the bytes of `b` |
 | `Empty` | no body |
 
-A `body` that is not an `HttpBody` variant (a record, a list, a bare `Text`) is sent as JSON, as `Json` would send it: `body: $1` with a `Text` input sends `"x"`, not `x`. To send raw text, write `Text($1)`.
+The handler sends a body by its tag alone, whatever type declares it: a value whose tag is `Json`, `Form`, `Multipart`, `Text`, `Bytes` or `Empty` is sent as that variant, and any other value (a record, a list, a bare `Text`) is sent as JSON, as `Json` would send it: `body: $1` with a `Text` input sends `"x"`, not `x`. To send raw text, write `Text($1)`. Only a body no `HttpBody(T)` declares can be other than its variants: a `map-request`'s `body`, whose type is not checked ([6.6.1](#_6-6-1-request-fields)), or a `body` field the effect declares with another type, such as `body: Note`. A variant of such a type that shares one of those tags is sent as that variant too: under `body: Box`, where `type Box = Full(Int) | Empty`, `Empty` sends no body, and under a `type Payload = Text(Text) | Json(Int)`, `Text("a")` is sent as `a` and `Json(3)` as `3`.
 
 `GET` and `HEAD` send no body, whatever `body` holds. `http.get`'s request has no `body` field, so a `map-request` that writes one is refused ([6.6.1](#_6-6-1-request-fields)).
 
@@ -103,7 +107,7 @@ A host provider registered for a read capability (`http.*`, `storage.read`, `ses
 All HTTP effects automatically apply the following:
 
 - `Accept: application/json` (when the Decoder is Json, as it is when the request names none)
-- `Content-Type: application/json` (when the HttpBody is Json, or the body is not an HttpBody variant)
+- `Content-Type: application/json` (when the body's tag is `Json`, or none of HttpBody's)
 - `Content-Type: application/x-www-form-urlencoded` (when Form)
 - `Content-Type: multipart/form-data` (when Multipart; written by fetch itself, so that it carries the boundary)
 
@@ -386,7 +390,7 @@ A field a `map-request` writes that its capability's row does not list is [E0215
 
 A field is checked where a literal names it: the `map-request` record itself, or the record a branch of an `if`, an arm of a `match` or the body of a `let` yields there, at any depth. A map literal's `Text` keys count too, since it lowers to the same object. A request computed any other way — returned by a `fn`, read from a slot, or `$1` itself — has its fields decided at run time and is not checked.
 
-Where a literal writes `decode`, its value is held to the field's type, [`Decoder`](#_6-1-4-the-decoder-type): the handler decodes the answer by it, and a value no decoder built names no decoding. One of another type is [E0201](./errors.md#e0201-type-mismatch), reported at the value — `decode: "TEXT"`, a `Text` slot and `$1` on `in=Text` are each `Expected Decoder but got Text`. The value is read in the scope it is written in, so a name a `let` or a `match` arm binds there has the type it has there. A field is held to its own capability's rule: an `indexed.read` by key reads a stored record, which neither `Decoder.Text` nor `Decoder.Bytes` can read ([6.7.4](#_6-7-4-sessionstorage-indexeddb)), so either written as its `decode`, or as a branch of it, is E0201 too, `Expected Decoder.Json(T) or Decoder.None but got Decoder.Text`, and E0202 in an `emit`'s argument to an effect with no `map-request`; one a name holds is left to run time. The other fields are not checked for their type.
+Where a literal writes `decode`, its value is held to the field's type, [`Decoder`](#_6-1-4-the-decoder-type): the handler decodes the answer by it, and a value no decoder built names no decoding. One of another type is [E0201](./errors.md#e0201-type-mismatch), reported at the value — `decode: "TEXT"`, a `Text` slot and `$1` on `in=Text` are each `Expected Decoder but got Text`. The value is read in the scope it is written in, so a name a `let` or a `match` arm binds there has the type it has there. A field is held to its own capability's rule: an `indexed.read` by key reads a stored record, which neither `Decoder.Text` nor `Decoder.Bytes` can read ([6.7.4](#_6-7-4-sessionstorage-indexeddb)), so either written as its `decode`, or as a branch of it, is E0201 too, `Expected Decoder.Json(T) or Decoder.None but got Decoder.Text`, and E0202 in an `emit`'s argument to an effect with no `map-request`; one a name holds is left to run time. An `indexed.read` query's `range` is held to `Option(IndexRange(K))` for a `K` of any type, which a message writes `?` ([6.7.4](#_6-7-4-sessionstorage-indexeddb)): `range: Some($1)` on `in=Text` is E0201, `Expected IndexRange(?) but got Text`, at the `$1`. The other fields are not checked for their type.
 
 A capability with no row has no request schema, and its `map-request` builds whatever its host provider reads: a custom capability, and every other standard capability (`nav.*`, `log.write`, …), whose declared effects reach a provider and no built-in handler. `http.cancel` takes no `map-request` at all ([E0303](./errors.md#e0303-invalid-cancel-target)).
 
@@ -483,9 +487,17 @@ effect indexed-write cap=indexed.write
                      out=Result(Unit, Text)
 
 effect indexed-query cap=indexed.read
-                     in={store: Text, index: Option(Text), range: Option(IndexRange)}
-                     out=Result(List(JsonValue), Text)
+                     in={store: Text, index: Option(Text), range: Option(IndexRange(K))}
+                     out=Result(List(T), Text)
 ```
+
+`indexed-query` answers the records it reads as a `List(T)`, `T` being the record type the program stores, as for `indexed-write`'s `value: T`. A query has no `decode`, so the records arrive as they were stored and nothing checks them against `T`. `K` is the type of the key the query ranges over: the field `index` names when it is `Some`, and the store's `key` when it is `None`. The `range` is an `IndexRange(K)`, a standard-library record ([Standard Library §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)) that the runtime reads as IndexedDB's `IDBKeyRange`, whose field names it keeps; the name is reserved ([E0231](./errors.md#e0231-reserved-type-name)). A `range` of any other type, written in a `map-request` ([6.6.1](#_6-6-1-request-fields)) or declared in the `in=` of an effect with none, is [E0201](./errors.md#e0201-type-mismatch): `range: Option(Text)` there would read every record, as a `range` with no bound does.
+
+```kumiki fragment
+type IndexRange(K) = {lower: Option(K), upper: Option(K), lowerOpen: Bool, upperOpen: Bool}
+```
+
+The query reads the records whose key lies between `lower` and `upper`. A bound that is `None` leaves that side unbounded, and an open flag leaves its own bound out: `{lower: Some(10), upper: Some(20), lowerOpen: false, upperOpen: true}` reads the keys from 10 up to, but not including, 20. A `range` that is `None`, or that has no bound, reads every record. A range that holds no key, a `lower` above `upper` or the two equal with either flag open, is one IndexedDB refuses to build, and the query answers `.err` with its reason, a `Text` starting `DataError:`.
 
 The IndexedDB `store` is declared via `app.indexed-db`:
 

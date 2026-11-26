@@ -1,6 +1,6 @@
 import type { BuiltinEffectName } from "@kumikijs/runtime";
-import { type TypeEnv, unaliasType } from "./assignable.ts";
-import type { TypeExpr } from "./ast.ts";
+import { type TypeEnv, unaliasType, unknownType } from "./assignable.ts";
+import type { Pos, TypeExpr } from "./ast.ts";
 import { appType, primType, recordType, refType } from "./stdlib-types.ts";
 
 /** Capabilities that may appear in `app.caps` without any manifest. */
@@ -82,6 +82,15 @@ const RECORD_DECODE: RequestField = {
   },
 };
 
+const NO_POS: Pos = { line: 0, col: 0 };
+
+// Nothing declares the type of an index's keys, so a range over keys of any type is one: `?` is
+// a key type that no type a program names can be mistaken for.
+const RANGE: RequestField = {
+  name: "range",
+  type: appType("Option", appType("IndexRange", unknownType(NO_POS))),
+};
+
 const HTTP_READ = [field("url"), field("headers"), field("query"), DECODE];
 const HTTP_SEND = [field("url"), field("headers"), field("query"), field("body"), DECODE];
 
@@ -121,7 +130,7 @@ const REQUEST_FIELDS: ReadonlyMap<string, readonly RequestField[] | ByKey> = new
     "indexed.read",
     {
       withKey: [field("store"), field("key"), RECORD_DECODE],
-      withoutKey: [field("store"), field("index"), field("range")],
+      withoutKey: [field("store"), field("index"), RANGE],
     },
   ],
   ["indexed.write", [field("store"), field("key"), field("value")]],
