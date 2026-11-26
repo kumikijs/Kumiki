@@ -54,6 +54,7 @@ reducer editTodo
 |---|---|
 | `input` | `Text` (`type=text/email/password/url/search/tel`、または値が入力されたテキストそのものである他のフィールド：`number/date/datetime-local/time/month/week/color`), `Int`/`Float` (`type=number`), `Time` (`type=date/datetime-local`) |
 | `textarea` | `Text` |
+| `editable` | `Text`（フィールドのプレーンテキストの `textContent` として書き戻す） |
 | `select` | 任意（`options` の `value` と同型） |
 | `slider` | `Int` / `Float` |
 | `check` / `switch` | `Bool` |

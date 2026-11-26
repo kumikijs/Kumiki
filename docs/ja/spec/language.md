@@ -317,7 +317,7 @@ type Nest(T) = Flat(T) | Deeper(Nest(List(T)))
 それ以外で汎化型の適用を展開する比較 —— 異なる汎化型どうし、または汎化型とそうでない型 —— は、両側を展開する。汎化型が**型引数を深く入れ子にする**とは、型引数が渡される先を body が適用する汎化型越しにたどると、より大きな型引数の内側でその型引数のいずれかへ戻ることをいう（`Nest` は `T` を `List(T)` として戻す）。どちらの側もそのような汎化型を適用していなければ、比較が出会う書かれたとおりの組は有限であり、汎化型が型引数をどう入れ替えたり巡回させたりしても、繰り返された組で終わる。どちらかの側が適用しているときは、下りの途中で、展開中の同じ先頭の組（両側で適用されている名前の組）へ、前回入ったときより大きな合計サイズで再入するたびに、その組について 1 回と数える。1 回の比較では、どのフィールドとペイロードも含めて先頭の組ごとに 64 回まで数え、65 回目以降の再入はすべて、繰り返された組と同じく「はい」と答える。大きくならなかった再入は数えない。この上限は不一致を「はい」に変えることしかないが、その答えはフィールドの順序で決まることがある：比較が終わらないフィールドがその組の回数を使い切ると、後のフィールドがその組への再入を経てしか届かない不一致は見逃される。こうした「はい」で分岐を結合した `if`・`match`・リストリテラルは、後の比較が拒否する型を持つことがある。
 
 5. **型引数はその定義にスコープされ**、同名のトップレベル定義を覆い隠す：`type Alias(Cents) = Cents` の body は型引数であり、ほかの場所で `Cents` が何と宣言されていようと関係しない。プリミティブの名前は例外であり、型を書く位置ではどこでもプリミティブとして読まれるので、`type Box(Int) = {v: Int}` のフィールドは `Int` である。
-6. **どのプログラムでもすでに型を意味している名前は、プログラムが宣言するものではない。** そうした名前は 3 つのグループからなる：プリミティブ（[§1.3.1](#_1-3-1-構文) の `primitive` の名前）、ビルトインの汎化型（[stdlib §2.1.2](./stdlib.md#_2-1-2-汎化型)）、そして値をランタイムまたは標準ライブラリが供給する 8 つのドメイン型 — `PanicInfo`・`RouteErrorInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue`・`Decoder`（[stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）。`type Int = …`・`type Option = …`・`type PanicInfo = …` は [E0231](./errors.md#e0231-reserved-type-name) であり、その名前の使用はすべて組み込みの意味のままで、プログラム自身の型には独自の名前を付ける（`type AppPanic = …`・`type Box(T) = …`）。グループは型検査器自身の表なので、言語にプリミティブや型構築子が加われば、それも同時に予約される。標準ライブラリが宣言するほかのドメイン型 — `Url`・`Email`・`Uuid`・`FormData` — が名指すのは、プログラムだけが値を組み立てる型である（同じ表にある `File` はプリミティブであり、プリミティブとともに予約されている）。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はプログラムの型を意味する。
+6. **どのプログラムでもすでに型を意味している名前は、プログラムが宣言するものではない。** そうした名前は 3 つのグループからなる：プリミティブ（[§1.3.1](#_1-3-1-構文) の `primitive` の名前）、ビルトインの汎化型（[stdlib §2.1.2](./stdlib.md#_2-1-2-汎化型)）、そして値をランタイムまたは標準ライブラリが供給する 10 のドメイン型 — `PanicInfo`・`RouteErrorInfo`・`Route`・`HttpError`・`HttpStatus`・`Duration`・`FormValue`・`Decoder`・`HttpBody`・`IndexRange`（[stdlib §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）。`type Int = …`・`type Option = …`・`type PanicInfo = …` は [E0231](./errors.md#e0231-reserved-type-name) であり、その名前の使用はすべて組み込みの意味のままで、プログラム自身の型には独自の名前を付ける（`type AppPanic = …`・`type Box(T) = …`）。グループは型検査器自身の表なので、言語にプリミティブや型構築子が加われば、それも同時に予約される。標準ライブラリが宣言するほかのドメイン型 — `Url`・`Email`・`Uuid`・`FormData` — が名指すのは、プログラムだけが値を組み立てる型である（同じ表にある `File` はプリミティブであり、プリミティブとともに予約されている）。プログラムはこれらの名前で独自の型を宣言でき、その場合、名前の使用はプログラムの型を意味する。
 7. **`_tag` という名前のレコードフィールドは無い。** 実行時、バリアントは `_tag` フィールドにその名前を持つレコードであり（`Some(1)` は `{_tag: "Some", _0: 1}`）、ランタイムはこのフィールドでバリアントとレコードを見分けるので、これを持つレコードはバリアントとして読まれてしまう。レコード型でもレコードリテラルでも、そう名付けたフィールドは [E0240](./errors.md#e0240-reserved-field-name) である。それ以外の名前は — `tag`・`_tags`・`_0` も — プログラムのものである。
 
 ---
@@ -544,9 +544,9 @@ reducer save on=ui.submit(EditForm#edit) do= ...   # "edit" form のみ
 
 `{id}` プロップは要素のネイティブ HTML `id` 属性としても出力される。[§1.6.4](#_1-6-4-不変条件) Invariant 3 のマルチ reducer ルールは引き続き適用され、同じイベントにマッチする `TileName` 単体 reducer と `#id` 付き reducer は定義順で実行される。
 
-**コンテナへのセレクタは、そのイベントを発火できる子孫に届く。** コンテナ種別の多くは自分自身では何も発火しない（`box` に `keydown` も `focus` も `submit` もない）。そのため `ui.<ev>(<Container>)` は、`<ev>` の許可種別（[§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) の表）に該当する子孫すべてに配線される。`ui.hover` だけは制限がなく、`mouseenter` がバブルしないためコンテナ自身*と*各子孫の両方に配線される。
+**コンテナへのセレクタは、そのイベントを reducer に渡す子孫に届く。** コンテナ種別の多くは自分自身では reducer にイベントを渡さない（`box` に `keydown` も `focus` も `submit` もなく、発火する `click` についても renderer は `onClick` を呼ばない）。そのため `ui.<ev>(<Container>)` は、`<ev>` の許可種別（[§W0212](./errors.md#w0212-ui-event-tile-mismatch-warning) の表）に該当する子孫すべてに配線される。`ui.hover` だけは制限がなく、`mouseenter` がバブルしないためコンテナ自身*と*各子孫の両方に配線される。
 
-**コンテナに付けた `#id` は、発火する子孫を指す。** id は dispatch した要素と比較されるので、それは子孫の id（`id="save"` と `{id: "save"}` のどちらで書いてもよい）であり、コンテナ自身の id が一致するのはコンテナ自身が発火するイベントの場合だけである。`tile Toolbar = row(button(text="Save", id="save")) {id: "toolbar"}` では、`ui.click(Toolbar#save)` は Save ボタンで発火し、`ui.click(Toolbar#toolbar)` は決して発火しない — `row` は click を dispatch しないためである。`--strict-selector-id` の下では、このセレクタは [E0212](./errors.md#e0212-selector-id-mismatch-strict-selector-id-で-opt-in) になる。
+**コンテナに付けた `#id` は、dispatch する子孫を指す。** id は dispatch した要素と比較されるので、それは子孫の id（`id="save"` と `{id: "save"}` のどちらで書いてもよい）であり、コンテナ自身の id が一致するのはコンテナ自身にも配線されるイベントの場合だけである。`tile Toolbar = row(button(text="Save", id="save")) {id: "toolbar"}` では、`ui.click(Toolbar#save)` は Save ボタンで発火し、`ui.click(Toolbar#toolbar)` は決して発火しない — row をクリックすればそこで `click` は発火するが、row の renderer は `onClick` を呼ばないので、何も dispatch されないためである。`--strict-selector-id` の下では、このセレクタは [E0212](./errors.md#e0212-selector-id-mismatch-strict-selector-id-で-opt-in) になる。
 
 **子孫の書き方は結果を変えない。** 子 tile を名前で参照する本体も、インラインの本体とまったく同じように（何段でも）辿られる。したがって次の 2 つは同じプログラムである:
 
@@ -560,7 +560,7 @@ reducer typed on=ui.key(RefBox) do= ...          # どちらでも input に配�
 
 subscription が届く tile を決めるのは、その子孫が「どの経路で描画されたか」であって子孫そのものではない。`RefBox` の*隣*に描画された `Leaf` はその内側ではないので、ハンドラを受け取らない。1 つの子孫に対して複数の外側 tile が同じイベントを subscribe している場合は、通常どおり [§1.6.4](#_1-6-4-不変条件) Invariant 3 が適用され、マッチしたすべてが定義順で発火する。
 
-同じイベントのハンドラを、その子孫 tile の*呼び出し側*（`Btn {onClick: r}`）に書いた場合、持ち上げられた subscription は置き換えられずに**結合される**：`r` と外側の各 tile の reducer がすべて定義順で発火する（[§1.7.3](#_1-7-3-event-handler-props)）。したがってコンテナへの subscription は、そのイベントを発火する子孫の*すべて*に届き、自分のハンドラを持つボタンも例外ではない：チェックボックスと削除ボタンを持つ行に対する `ui.click(TodoRow)` は、その両方で実行される。行全体ではなく、そのイベントが意味する最も狭い tile を subscribe すること — `tile TodoCheck = check(...)` に対する `ui.click(TodoCheck)` のように。
+同じイベントのハンドラを、その子孫 tile の*呼び出し側*（`Btn {onClick: r}`）に書いた場合、持ち上げられた subscription は置き換えられずに**結合される**：`r` と外側の各 tile の reducer がすべて定義順で発火する（[§1.7.3](#_1-7-3-event-handler-props)）。したがってコンテナへの subscription は、そのイベントを reducer に渡す子孫の*すべて*に届き、自分のハンドラを持つボタンも例外ではない：チェックボックスと削除ボタンを持つ行に対する `ui.click(TodoRow)` は、その両方で実行される。行全体ではなく、そのイベントが意味する最も狭い tile を subscribe すること — `tile TodoCheck = check(...)` に対する `ui.click(TodoCheck)` のように。
 
 ### 1.6.3 lvalue の意味論
 
@@ -1051,9 +1051,9 @@ items.fold(0, $1 + $2.price)               # ($1: acc, $2: elem)
 
 `Decoder` もこの表の外にある：`Decoder` に適用できる演算子は無く、`Decoder` を
 持つ値にも `==` と `!=` は適用できない。`Decoder.Json(T)` はその `T` のチェックで
-あるか、チェックを持たないすべての `T` で同じ 1 つの値であるため、
-`Decoder.Json(Int) == Decoder.Json(Text)` は `true`、
-`Decoder.Json(Email) == Decoder.Json(Text)` は `false` になってしまう。いずれも
+あり、同じ `T` には同じ関数、型を名指さない引数にはどれも文字列 `"json"` であるため、
+`Decoder.Json("a") == Decoder.Json("b")` は `true`、
+`Decoder.Json(Int) == Decoder.Json(Text)` は `false` になってしまう。いずれも
 [E0201](./errors.md#e0201-type-mismatch) である：`d == Decoder.Text` は
 `Operator "==" cannot compare Decoder with Decoder: a Decoder has no equality` で
 あり、`{d: Decoder}` ではメッセージがそれを持つ型を名指す。`Option(Decoder)` には

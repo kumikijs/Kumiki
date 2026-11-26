@@ -1,0 +1,27 @@
+{
+  "steps": [
+    {
+      "label": "nothing is picked or saved yet",
+      "expect": { "noErrors": true, "domIncludes": ["x=", "saved="] }
+    },
+    {
+      "label": "A writes x and emits a save its debounce holds back",
+      "do": { "clickText": "pick A" },
+      "expect": { "noErrors": true, "state": { "x": "a", "saved": "" } }
+    },
+    {
+      "label": "B writes x before the save has answered",
+      "do": { "clickText": "pick B" },
+      "expect": { "noErrors": true, "state": { "x": "b", "saved": "" } }
+    },
+    {
+      "label": "the save answers after B, so savedOk reads the x B wrote",
+      "do": { "wait": 500 },
+      "expect": {
+        "noErrors": true,
+        "state": { "x": "b", "saved": "b" },
+        "domIncludes": ["x=b", "saved=b"]
+      }
+    }
+  ]
+}

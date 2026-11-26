@@ -48,7 +48,7 @@ type KumikiError = {
 |---|---|---|
 | `E0001` | あり | app 自身の `routes` に `"/404" -> NotFound` を追加する（tile の `sub-routes` には追加しない）。`NotFound` tile は、プログラムがまだ定義していなければ挿入する。パッチを出すのは `missing-404` だけである。app に `routes` 節がないとき、`404-is-redirect`（リダイレクトを置き換えて直すもので、その隣にエントリを追加すれば `/404` が 2 つになる：`E0008`）、および `404-in-sub-routes`（エントリを削除して直すもの）にはパッチを出さない。 |
 | `E0102` | あり | 既知の reducer 名に対する近傍名の提案（Levenshtein ≤ 2 または ≤ 25%）。 |
-| `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。名前を宣言するスコープ — reducer の `if` の枝・`for` の本体・match arm、`let … in` の本体、tile の `for` の本体、`match` 式の arm — の外で、つまりそのスコープが終わった後か始まる前に、同じ定義の中でその名前を読んでいる場合（診断の `endedScope` か `laterScope` が設定されている）はパッチを出さない：読み出しは綴りの誤りではなくスコープ外であり、名前を置き換えた読み出しは型検査を通って別の値を読むことがある。宣言と読み出しのどちらを動かすかはユーザの意図である。 |
+| `E0103` | あり | 既知の slot / 束縛名に対する近傍名の提案。名前を宣言するスコープ — reducer の `if` の枝・`for` の本体・match arm、`let … in` の本体、tile の `for` の本体、`match` 式の arm — の外で、つまりそのスコープが終わった後か始まる前に、同じ定義の中でその名前を読んでいる場合（診断の `endedScope` か `laterScope` が設定されている）はパッチを出さない：読み出しは綴りの誤りではなくスコープ外であり、名前を置き換えた読み出しは型検査を通って別の値を読むことがある。宣言と読み出しのどちらを動かすかはユーザの意図である。`$` で始まる名前（`$1`、`$2`、`$e` など）にもパッチを出さない：読む位置でスコープ内の何も束縛していないもの（束縛した fragment の後の `$1`、`in=` を宣言しない tile や引数のない `fn` の `$1` など）と、代入先の根に書いたもの（`$el.x := …`）である。`$` で始まる名前を与えるのはスコープ内の束縛だけで、`$` で始まるトップレベル定義はないので、最も近い宣言済みの名前は別の値である。 |
 | `E0104` | あり | 宣言済みの `effect` 名と、プログラムが宣言しない[標準 effect](./stdlib.md#_2-6-標準-effect) に対する近傍名の提案（スコープ限定 — 名前の近い tile や slot は候補にならない）。 |
 | `E0105` | あり | 既知の tile 名に対する近傍名の提案。 |
 | `E0106` | あり | `on=timer(d, name=N)` から収集したタイマー名に対する近傍名の提案（スコープ限定 — トップレベル定義は候補にならない）。 |
@@ -436,7 +436,7 @@ builtin tile の名前も候補に含まれない。tile は関数ではなく�
 
 > `Reference to undefined variant "<name>"`
 
-タグとは、プログラムが書くすべての union のタグ——`type` の本体か、slot の型・レコードのフィールド・`fn` の引数や戻り値・`effect` の `in=` / `out=`・property test の `for-all` にインラインで書かれた union のもので、ファイル内のどこに書かれていてもよい——と、標準ライブラリのタグである：`Some` / `None`、`Ok` / `Err`、`FormValue` の `TextV` / `NumberV` / `BoolV` / `FileV`、リクエストボディの `Json` / `Form` / `Multipart` / `Text` / `Bytes` / `Empty`（[HTTP / Storage §6.1.3](./http.md#_6-1-3-httpbody-型)）。コード生成はどんな綴りからも variant を作るため、どの union も宣言していないタグは `{_tag: "<name>"}` へ落ちる：どの `match` arm にも一致せず、他のどの値とも等しくならず、どのフィールドも `undefined` である値である。
+タグとは、プログラムが書くすべての union のタグ——`type` の本体か、slot の型・レコードのフィールド・`fn` の引数や戻り値・`effect` の `in=` / `out=`・property test の `for-all` にインラインで書かれた union のもので、ファイル内のどこに書かれていてもよい——と、標準ライブラリのタグである：`Some` / `None`、`Ok` / `Err`、`FormValue` の `TextV` / `NumberV` / `BoolV` / `FileV`、`HttpBody` の `Json` / `Form` / `Multipart` / `Text` / `Bytes` / `Empty`（[HTTP / Storage §6.1.3](./http.md#_6-1-3-httpbody-型)）。コード生成はどんな綴りからも variant を作るため、どの union も宣言していないタグは `{_tag: "<name>"}` へ落ちる：どの `match` arm にも一致せず、他のどの値とも等しくならず、どのフィールドも `undefined` である値である。
 
 宣言された型が variant を判定する位置では、その型を名指してその位置で報告される：`slot s : Status = Zork` は [E0216](#e0216-unknown-variant)、union でない型に与えたタグは [E0201](#e0201-type-mismatch)——`emit` の引数なら [E0202](#e0202-emit-arg-type-mismatch)——である。`undef-variant` は宣言された型が判定しない位置——`let`、`effect` の `map-request`（`Decoder` に照らす `decode` を除く）、`==` のオペランド——のためのものであり、1 つの誤りは 1 つの診断になる。
 
@@ -708,7 +708,7 @@ builtin に、決して描画されない引数が書かれている。値 built
 
 `Decoder` にも、`Decoder` を持つ値にも、もう一方の辺が何であれ `==` と `!=` は定義されていない（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）：`d == Decoder.Text` は `Operator "==" cannot compare Decoder with Decoder: a Decoder has no equality` を報告し、`{d: Decoder}` に対する `r == {d: Decoder.Text}` はそれを持つ型を `{d: Decoder} holds a Decoder, which has no equality` と名指す。`List.contains` と `List.unique` も同じように要素を比較するため、要素の型が `Decoder` である、または `Decoder` を持つ `List` ではどちらも呼び出しの位置で報告され、`<member>` はその名前である：`List(Decoder)` に対する `ds.contains(d)` は `".contains" cannot compare elements of type Decoder: a Decoder has no equality` を報告する。
 
-リクエストのフィールドはその capability の規則に照らされる（[HTTP §6.6.1](./http.md#_6-6-1-request-fields)）。キーで読む `indexed.read` は保存されたレコードを読み、そこに読むテキストは無いので、その `decode` として、またはその分岐として書かれた `Decoder.Text` / `Decoder.Bytes` は、`Decoder` ではあってもこのエラーになる（`emit` の引数では E0202）。名前が保持するものは実行時に委ねられる。`map-request` の無い effect は入力をそのままリクエストとしてハンドラに渡すので、その `in=` のレコードが宣言する `decode` は `Decoder` に照らされる：`effect r cap=storage.read in={key: Text, decode: Text} …` はその `Text` の位置で、`in=` がエイリアスを名指すときはその名前の位置で、`Expected Decoder but got Text: with no map-request, effect "r"'s input is the storage.read request` を報告する。
+リクエストのフィールドはその capability の規則に照らされる（[HTTP §6.6.1](./http.md#_6-6-1-request-fields)）。キーで読む `indexed.read` は保存されたレコードを読み、そこに読むテキストは無いので、その `decode` として、またはその分岐として書かれた `Decoder.Text` / `Decoder.Bytes` は、`Decoder` ではあってもこのエラーになる（`emit` の引数では E0202）。名前が保持するものは実行時に委ねられる。`map-request` の無い effect は入力をそのままリクエストとしてハンドラに渡すので、その `in=` のレコードが宣言する `decode` は `Decoder` に照らされる：`effect r cap=storage.read in={key: Text, decode: Text} …` はその `Text` の位置で、`in=` がエイリアスを名指すときはその名前の位置で、`Expected Decoder but got Text: with no map-request, effect "r"'s input is the storage.read request` を報告する。クエリが宣言する `range` も同じように `Option(IndexRange(?))` に照らされ、`?` はどの型のキーでもよいことを表す：`indexed.read` での `in={store: Text, index: Option(Text), range: Option(Text)}` は `Option(Text)` の位置で `Expected Option(IndexRange(?)) but got Option(Text): …` を報告する。
 
 **この検査は片側だけを主張する。** 確実に誤っているものだけを報告し、解決できないものについては黙る — 未知の型名、結果型を何も解決できないメソッド（[§2.2](./stdlib.md#_2-2-コレクションメソッド) のメンバーはレシーバから答えを決める — `List(T)` の `xs.head` は `Option(T)`、`Map(K, V)` の `m.keys` は `List(K)`、`.get` と `.get-or` は `Option(T)` / `Result(T, E)` を `T` に、`Map` の索きを `Option(V)` またはフォールバック付きで `V` にアンラップする。`.copy` はレシーバをそのまま返し、`show` / `to-int` / `floor` などの固定表はプリミティブを返す。`.map` や `.fold` のようにラムダの本体が決めるメンバーと、レシーバ自身の型が決まらない場合は動的なまま）、解決できない式の `let` 束縛など。誤った診断は動くプログラムを拒否するが、報告漏れは元から存在しなかった診断が増えないだけである。したがって check が緑であることは型の正しさの証明ではなく、名前の存在そのものは引き続き [E0801](#e0801-unimplemented-method) / [E0116](#e0116-undef-call-undef-variant-undef-qualifier) が担保する。
 
@@ -863,11 +863,11 @@ reducer が宣言されていない tile を指している。tile を名指す�
 
 reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、その subscription が配線される要素のどれも持っていない。E0211 は tile 名のタイポを捕まえるが、この検査は `#id` 側のタイポを捕まえる — 例えば `tile NewForm = form(...) {id: "new"}` に対する `on=ui.submit(NewForm#nw)`。runtime `_dispatch` のフィルタ（spec [§1.6.2](./language.md#_1-6-2-セレクタ)）は不一致を静かにスキップするため、この検査がなければ reducer は発火せず、開発者はエラーを目にすることができない。`kumiki check --strict-selector-id` または `compile({ strictSelectorId: true })` で opt-in する。
 
-> `Reducer "<name>" subscribes to ui.<ev>(<Tile>#<id>) but every element of tile "<Tile>" that fires "<ev>" has id "<a>" | "<b>" — this selector can never match`
+> `Reducer "<name>" subscribes to ui.<ev>(<Tile>#<id>) but every element of tile "<Tile>" that hands "<ev>" to a reducer has id "<a>" | "<b>" — this selector can never match`
 
 `#id` は dispatch した要素と比較される（[§1.6.2](./language.md#_1-6-2-セレクタ)）ので、id 集合は subscription が配線される要素の id である:
 
-- **tile 配下で `<ev>` を発火する種別の要素すべて**（深さを問わない） — 種別は [W0212](#w0212-ui-event-tile-mismatch-warning) の表のもので、W0212 と同じ walk で辿る: 名前で参照された子 tile、`for` / `when` / `if` / `match` の全分岐、そして本体内で呼ばれた tile の `error-boundary` フォールバック（その tile の位置に描画される）。コンテナ自身の id が集合に入るのは、コンテナ自身が発火するイベントの場合だけである: `tile Toolbar = row(button(text="Save", id="save")) {id: "toolbar"}` に対して、`ui.click(Toolbar#toolbar)` は E0212（集合は `"save"`）、`ui.hover(Toolbar#toolbar)` は E0212 にならない — `hover` は row 自身にも配線されるためである。tile 自身のフォールバックは集合に入らない: それは tile が描画した木を tile の外側から置き換える。
+- **tile 配下で `<ev>` を reducer に渡す種別の要素すべて**（深さを問わない） — 種別は [W0212](#w0212-ui-event-tile-mismatch-warning) の表のもので、W0212 と同じ walk で辿る: 名前で参照された子 tile、`for` / `when` / `if` / `match` の全分岐、そして本体内で呼ばれた tile の `error-boundary` フォールバック（その tile の位置に描画される）。`<ev>` を発火しても reducer に渡さない要素は集合に入らず、`click` ではそれが大半である: どの要素も `click` を発火するが、`onClick` を呼ぶのは W0212 が click に挙げる種別の renderer だけである。したがってコンテナ自身の id が集合に入るのは、コンテナ自身にも配線されるイベントの場合だけである: `tile Toolbar = row(button(text="Save", id="save"), text("label", id="label")) {id: "toolbar"}` に対して、`ui.click(Toolbar#toolbar)` と `ui.click(Toolbar#label)` は E0212（集合は `"save"`）、`ui.hover(Toolbar#toolbar)` は E0212 にならない — `hover` は row 自身にも配線されるためである。tile 自身のフォールバックは集合に入らない: それは tile が描画した木を tile の外側から置き換える。
 - **id はどちらの書き方でもよい**: `{id: "x"}` と `id="x"` は同じ prop である（[§1.7.1](./language.md#_1-7-1-構文)）。1 つの要素が両方書いた場合は props ブロックの方が dispatch される。
 - **tile の各使用箇所が残したとおりに読む**: user tile の呼び出し側に書いた props は、その tile がルートに描画する要素へマージされる。その tile をルートに描画する tile の連鎖をさらに上った各呼び出し側の props も同じ要素へマージされ、最も外側のものが最後に効く。したがって `Btn(id="b")` や `Btn {id: "b"}` は `Btn` がルートに描画する要素に id `"b"` を与え、`tile Outer = Btn` のもとでは `Outer(id="x")` がその要素に `"x"` を与える。tile のルートに描画されるフォールバックは、その tile より上の呼び出し側の props を受け取るが、自分が置き換える呼び出しの props は受け取らない。要素に書かれた id が数えられるのは、どこかの使用箇所がそれをそのまま残す場合だけである: route がその tile を描画する場合と、連鎖を上ったどの呼び出し側も id を書かない場合。
 
@@ -883,7 +883,7 @@ reducer の `ui.<ev>(Tile#id)` セレクタが指す `#id` を、その subscrip
 - セレクタがワイルドカード `_`。
 - 対象 tile 自体が未宣言（E0211 が既に発火するので、E0212 は抑制して単一の根本原因を提示する）。
 
-**修正**: セレクタの `#id` を reducer を発火させたい要素の id に合わせるか、その要素の id を直す。コンテナの場合、それはコンテナ自身の id ではなく、イベントを発火する子孫の id である。
+**修正**: セレクタの `#id` を reducer を発火させたい要素の id に合わせるか、その要素の id を直す。コンテナの場合、それはコンテナ自身の id ではなく、イベントを reducer に渡す子孫の id である。
 
 ### W0212 `ui-event-tile-mismatch`（warning）
 
@@ -992,7 +992,7 @@ tile と effect とルートの形は、これまで報告されていなかっ�
 
 この個数は、`given` のすべてのセクションが読まれるまで数えない。そもそもレコードでない `given` は [E0713](#e0713-test-shape-invalid)、語彙に無いキーは [E0714](#e0714-test-section-unknown) であり、そういう名前の下に書かれた入力——`given = {slots: {}, input: "Ada"}`——は引数の欠落ではなくそちらの間違いである（セクション名を直した瞬間に消える位置で報告することになる）。lowering が実際に読む `in` は、`given` が他に何を綴り間違えていても書かれた引数なので、もう一方の向きはいずれにしても報告する：削除すべきテキストであるセクション自身の位置で。欠落の側は、位置を持たないのでテストの位置で要求する。
 
-組み込み呼び出しも同じように数える。この個数が表すのは*呼び出し側が渡すべき*数であって、lowering が読む数とは限らない：`Decoder.Json(User)` が引数を読むのは `User` が持つ述語のためだけで、その型の slot を守る検査へ落ち、述語を持たなければ `"json"` センチネルへ落ちる（[HTTP §6.1.4](./http.md#_6-1-4-decoder-型)）。全体が型を綴る引数は型として解決されるので、その中の何も指さない名前は [E0117](#e0117-undef-type) になる。それ以外の引数——テキストリテラルや slot のような値、あるいは内側のどこかに値を持つ型——は型を名指さずにそのセンチネルへ落ち、その中で解決されるのは型を綴っている部分だけである（[E0117](#e0117-undef-type)）。それでも `Decoder.Json` が引数 1 つを要求し `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` が 0 なのは、その型こそが decode を型安全にするものだからである（[HTTP §6.1.4](./http.md#_6-1-4-decoder-型)）——型を書き忘れた decoder は、書いてある decoder とソース上も出力上も区別が付かなかった。個数を強制する前は、組み込みの引数列は lowering がたまたま読むものでしかなかった：`Duration.s()` は `((0) * 1000)` へ落ち、空の duration で書かれた timer は即座に、そして永久に発火し、`Duration.s(1, 2, "x")` は末尾を黙って捨てていた。呼び出しにしているのは括弧ではなく、したがって数えられる理由も括弧ではない：括弧なしの `Duration.s` も同じ 0 引数の呼び出しであり同じ E0213 で、個数を強制した後もその timer に届いていた唯一の書き方がこれだった。
+組み込み呼び出しも同じように数える。この個数が表すのは*呼び出し側が渡すべき*数であって、lowering が読む数とは限らない：`Decoder.Json(User)` は引数を、本文を照らし合わせる型として、その形とそれが持つすべての述語のために読み（[HTTP §6.1.4](./http.md#_6-1-4-decoder-型)）、JSON の構文より先を何も検査しない `"json"` センチネルへ落ちるのは、引数が型を名指さないときだけである。全体が型を綴る引数は型として解決されるので、その中の何も指さない名前は [E0117](#e0117-undef-type) になる。それ以外の引数——テキストリテラルや slot のような値、あるいは内側のどこかに値を持つ型——は型を名指さずにそのセンチネルへ落ち、その中で解決されるのは型を綴っている部分だけである（[E0117](#e0117-undef-type)）。それでも `Decoder.Json` が引数 1 つを要求し `Decoder.Text` / `Decoder.Bytes` / `Decoder.None` が 0 なのは、その型こそが decode を型安全にするものだからである（[HTTP §6.1.4](./http.md#_6-1-4-decoder-型)）——型を書き忘れた decoder は、書いてある decoder とソース上も出力上も区別が付かなかった。個数を強制する前は、組み込みの引数列は lowering がたまたま読むものでしかなかった：`Duration.s()` は `((0) * 1000)` へ落ち、空の duration で書かれた timer は即座に、そして永久に発火し、`Duration.s(1, 2, "x")` は末尾を黙って捨てていた。呼び出しにしているのは括弧ではなく、したがって数えられる理由も括弧ではない：括弧なしの `Duration.s` も同じ 0 引数の呼び出しであり同じ E0213 で、個数を強制した後もその timer に届いていた唯一の書き方がこれだった。
 
 範囲を持つ組み込みは `fmt` だけである。シグネチャが `fmt(template, ...args)`（[標準ライブラリ §2.4.5](./stdlib.md#_2-4-5-文字列フォーマット)）なので要求できるのはテンプレートだけで、メッセージは最小個数を名指す — `expects at least 1 argument(s) but got 0`。`now` は 0 個ちょうどに縛られているが、それを破る呼び出しは書けない：名前ではなくキーワードであり、0 引数の呼び出しを parser 自身が組み立てるため、`now(1)` はここに届く前に parse error になる。
 
@@ -1451,7 +1451,7 @@ fn f(x: Color, y: Size) -> Int = match x with | Red -> match y with | Small -> 1
 |---|---|---|
 | プリミティブ | [言語 §1.3.1](./language.md#_1-3-1-構文) の `primitive` の名前（`Int`・`Text`・`File` など） | パーサ。型を書く位置ではどこでもプリミティブとして読む |
 | ビルトインの型構築子 | [標準ライブラリ §2.1.2](./stdlib.md#_2-1-2-汎化型) の汎化型（`Option`・`List`・`Map` など） | 型検査器。定義なしにその値・メンバー・引数の数を知っている |
-| ランタイム供給 | 下の 8 つのドメイン型（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)） | ランタイムまたは標準ライブラリ。その値を組み立てる、あるいは読む |
+| ランタイム供給 | 下の 10 のドメイン型（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)） | ランタイムまたは標準ライブラリ。その値を組み立てる、あるいは読む |
 
 > `Type "<name>" collides with the primitive type <name>; uses of it never see this type`
 >
@@ -1471,6 +1471,8 @@ fn f(x: Color, y: Size) -> Int = match x with | Red -> match y with | Small -> 1
 | `Duration` | 標準ライブラリ：`Duration.ms(…)` などが組み立てる値、および toast effect の `duration` |
 | `FormValue` | ランタイム：`Multipart` の body は `FileV` のエントリをファイルとして送る |
 | `Decoder` | 標準ライブラリ：`Decoder.Json(T)`・`Decoder.Text`・`Decoder.Bytes`・`Decoder.None` が組み立てるもの。ランタイムはリクエストの応答をこれによって decode する |
+| `HttpBody` | ランタイム：`http.*` effect は `body` をそのタグで送る |
+| `IndexRange` | ランタイム：`indexed-query` はその `range` を IndexedDB のキー範囲として読む |
 
 これらの名前でのプログラム独自の定義は、半分しか適用されえない。プリミティブは型を書く位置ではどこでもそれ自身として読まれるので、`type Int = Text` はどの使用にも届かず、`slot t : Int = "x"` はプログラムが何を宣言していてもプリミティブに対する `Text` である。型構築子の値・メンバー・引数の数は組み込みなので、その名前での定義はある問いには答え、別の問いには答えない：`type List(T) = {v: T}` のもとでは `List(Int)` が `{v: 1}` と `[1, 2]` の両方を受け入れつつ `.length` はレコードで引かれることになり、`type Option = Int` のもとでは `Option(Int)` が引数の数の誤りになってしまう。ランタイム供給の名前では、型検査が推論する対象が変わるだけで、ランタイムが供給するものは何も変わらない：仮に `type PanicInfo = Text` がその名前を取ったとすれば、`in=PanicInfo` を宣言したフォールバックの `$1` は、ランタイムが panic レコードを束縛するのに `Text` として検査されることになる — [E0220](#e0220-boundary-fallback-input) の修正が勧めるとおり `$1.message` を読むと `Text` にないメンバーとして拒否され、E0220 が捕らえるための `in=Text` のフォールバックが `PanicInfo` という名前で通ってしまうことになる。
 
