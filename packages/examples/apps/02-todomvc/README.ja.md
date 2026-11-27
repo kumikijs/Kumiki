@@ -6,9 +6,10 @@
 
 ## 学べること
 
-- `List` の追加・削除・更新と `.filter` / `.map`
-- 入力欄の `bind` による双方向結合
-- フィルタ状態（All / Active / Done）の切り替え
+- `Map` のエントリの追加・削除・更新と `.filter`
+- 入力欄の `bind` による双方向結合と、Add ボタンまたは Enter でのフォーム送信
+- draft の refinement（`len-lt(280)`）に違反すると `error(field=draft)` が理由を表示し、フォームは送信を止める
+- フィルタ状態（All / Active / Done）の切り替えと、`bg` / `color` による選択中タブの表示
 - `effect` + localStorage による永続化（`saveTodos` の debounce）
 - ライフサイクル `app.start` での復元
 

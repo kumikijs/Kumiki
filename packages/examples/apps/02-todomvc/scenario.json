@@ -12,6 +12,15 @@
       }
     },
     {
+      "label": "a blank draft",
+      "do": { "fill": "input[type='text']", "value": "   " }
+    },
+    {
+      "label": "adds nothing, and reports nothing either",
+      "do": { "clickText": "Add" },
+      "expect": { "noErrors": true, "state": { "todos": {} }, "domIncludes": ["0 items left"] }
+    },
+    {
       "label": "typing goes into the draft slot, not into the list",
       "do": { "fill": "input[type='text']", "value": "buy milk" },
       "expect": {
@@ -21,8 +30,8 @@
       }
     },
     {
-      "label": "submitting the form is what adds the todo — the form has no button to click",
-      "do": { "submit": "form" },
+      "label": "the Add button submits the form, which adds the todo",
+      "do": { "clickText": "Add" },
       "expect": {
         "noErrors": true,
         "state": { "draft": "" },
@@ -45,7 +54,7 @@
       "expect": { "noErrors": true, "state": { "draft": "walk dog" } }
     },
     {
-      "label": "added",
+      "label": "submitting the form without the button (Enter) adds it too",
       "do": { "submit": "form" },
       "expect": { "noErrors": true, "domIncludes": ["walk dog", "1 items left"] }
     },
@@ -53,6 +62,27 @@
       "label": "the row's own x button removes the todo (the delete path the steps above never take)",
       "do": { "clickText": "x" },
       "expect": { "noErrors": true, "domExcludes": ["walk dog"], "domIncludes": ["0 items left"] }
+    },
+    {
+      "label": "a draft at the length limit is refused, and the form says why",
+      "do": {
+        "fill": "input[type='text']",
+        "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expect": {
+        "noErrors": true,
+        "state": { "draft": "" },
+        "domIncludes": ["Must be less than 280 characters"]
+      }
+    },
+    {
+      "label": "and the form holds the submit back",
+      "do": { "submit": "form" },
+      "expect": {
+        "noErrors": true,
+        "actionErrorIncludes": ["the field bound to draft fails its validation"],
+        "domIncludes": ["0 items left"]
+      }
     }
   ]
 }
