@@ -22,15 +22,15 @@ hero:
 
 features:
   - title: 7 レイヤ
-    details: type / slot / effect / reducer / tile / fn / app。状態・副作用・UI が役割ごとに分かれ、暗黙のルールがない。
+    details: type / slot / effect / reducer / tile / fn / app。状態・副作用・UI が役割ごとに分かれ、暗黙のルールがありません。
   - title: AI が部分編集しやすい
-    details: 各定義が独立し参照が明示的。CLI と MCP サーバーが定義単位の list / view / add / replace / fix を提供する。
+    details: 各定義が独立し、参照は明示的です。CLI と MCP サーバーが定義単位の list / view / add / replace / fix を提供します。
   - title: 実測された学習しやすさ
-    details: クロスベンダー（Claude / Codex / Gemini）実測 — 仕様書だけ・単一パスで中規模アプリ（〜600 行）はビルドが通る。大規模は編集ループが必要。
+    details: Claude / Codex / Gemini で実測しています。仕様書だけを渡した単一パスで、中規模アプリ（〜600 行）はビルドが通ります。大規模なものには編集ループが必要です。
     link: /ja/guide/benchmarks
     linkText: ベンチマークを見る
   - title: 動く例ですべてに答える
-    details: 機能別ミニマル例とサイズ順アプリを網羅。質問・バグは example と test を足して答える運用。
+    details: 機能別の最小例とサイズ順のアプリを揃えています。質問やバグには、example と test を足して答えます。
 ---
 
 ## 同じアプリを 2 通りで
@@ -148,4 +148,4 @@ export function App() {
 - **reducer には正しいデータしか届きません。** `submit` はバインドされた全フィールドが通ったときだけ動くので、`form` は `age` が 13〜120 の `Int` である `Signup` です。React の `age` は文字列のままで、不正な値が `setWelcome` に届かないことはガード 1 行だけが支えています。
 - **すべての定義がフラットで独立しています。** AI は `type Signup` を厳しくすることも、`tile SignupForm` だけを差し替えることもできます。他は一切動かさなくて済みます。
 
-差はアプリの規模とともに開く。[ベンチマーク](/ja/guide/benchmarks)では、Kumiki は React 等価実装より**トークン約 1.4× 減・行数約 2× 減**。
+差はアプリの規模とともに開きます。[ベンチマーク](/ja/guide/benchmarks)では、Kumiki は React 等価実装より**トークンが約 1.4 倍少なく、行数は約 2 倍少なく**なっています。

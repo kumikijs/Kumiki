@@ -38,7 +38,7 @@ pnpm --filter @kumikijs/benchmarks measure:scenarios  # per-scenario patch sizes
 pnpm --filter @kumikijs/benchmarks measure:ops        # Kumiki edit cost: full-file vs unified-patch vs op-stream
 ```
 
-Tokenized with `gpt-tokenizer` (cl100k_base / o200k_base). Latest headline: a Kumiki app is ~1.4× fewer tokens and ~2.0× fewer lines than the equivalent React.
+Tokenized with `gpt-tokenizer` (cl100k_base / o200k_base). Latest headline: a Kumiki app is ~1.4× fewer tokens and ~2.1× fewer lines than the equivalent React.
 
 ## Bundle size (what each example ships)
 

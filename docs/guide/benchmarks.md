@@ -7,15 +7,15 @@ Kumiki's claims — "fewer tokens than React" and "an LLM can learn it from the 
 
 ## Size comparison (Kumiki vs React)
 
-Baselines: the same TodoMVC written twice — [`02-todomvc/app.kumiki`](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/apps/02-todomvc/app.kumiki) and a plain React [`App.tsx`](https://github.com/kumikijs/Kumiki/blob/main/packages/benchmarks/size-comparison/todomvc-react/src/App.tsx). Tokenized with `gpt-tokenizer`.
+Baselines: the same TodoMVC written twice — [`02-todomvc/app.kumiki`](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/apps/02-todomvc/app.kumiki) and a plain React [`App.tsx`](https://github.com/kumikijs/Kumiki/blob/main/packages/benchmarks/size-comparison/todomvc-react/src/App.tsx), both with an Add button, a 280-character limit and its message, and blank drafts ignored. Tokenized with `gpt-tokenizer`.
 
 ### Whole file
 
 | | chars | LOC (code) | cl100k tokens | o200k tokens |
 |---|---:|---:|---:|---:|
-| Kumiki | 4,710 | 116 | 1,360 | 1,364 |
-| React | 7,357 | 236 | 1,887 | 1,926 |
-| **React ÷ Kumiki** | **1.56×** | **2.03×** | **1.39×** | **1.41×** |
+| Kumiki | 4,975 | 123 | 1,427 | 1,430 |
+| React | 8,023 | 255 | 2,021 | 2,062 |
+| **React ÷ Kumiki** | **1.61×** | **2.07×** | **1.42×** | **1.44×** |
 
 The same app costs an LLM ~1.4× fewer tokens and ~2× fewer lines in Kumiki.
 
@@ -25,22 +25,22 @@ Whole-file size matters once; edit size matters every iteration. Four realistic 
 
 | Scenario | Impl | +lines | −lines | chars | cl100k |
 |---|---|---:|---:|---:|---:|
-| 01 add priority field | Kumiki | 4 | 4 | 568 | 175 |
-| | React | 8 | 3 | 483 | 150 |
-| 02 strict validation | Kumiki | 7 | 4 | 432 | 112 |
-| | React | 4 | 2 | 322 | 88 |
-| 03 add archived state | Kumiki | 19 | 11 | 1,540 | 442 |
-| | React | 27 | 9 | 1,475 | 417 |
+| 01 add priority field | Kumiki | 4 | 4 | 582 | 177 |
+| | React | 8 | 3 | 469 | 146 |
+| 02 tighten the length limit to 100 | Kumiki | 1 | 1 | 100 | 30 |
+| | React | 4 | 3 | 412 | 111 |
+| 03 add archived state | Kumiki | 19 | 11 | 1,554 | 444 |
+| | React | 27 | 9 | 1,461 | 413 |
 | 04 dark theme | Kumiki | 25 | 6 | 1,315 | 401 |
 | | React | 48 | 12 | 2,153 | 638 |
-| **Total** | **Kumiki** | **55** | **25** | **3,855** | **1,130** |
-| | **React** | **87** | **26** | **4,433** | **1,293** |
+| **Total** | **Kumiki** | **49** | **22** | **3,551** | **1,052** |
+| | **React** | **87** | **27** | **4,495** | **1,308** |
 
-Totals favor Kumiki — 1.58× fewer added lines, 1.14× fewer tokens — but not uniformly: small, localized React edits (scenarios 01–02) are cheaper because JSX changes one attribute in place, while Kumiki replaces whole definitions. Kumiki wins where a change crosses state + UI + logic (03, 04), which is where edits get risky in React.
+Totals favor Kumiki — 1.78× fewer added lines, 1.24× fewer tokens — but not uniformly. A small, localized React edit (01) is cheaper because JSX changes one attribute in place, while Kumiki replaces whole definitions. A change to a rule that lives in the type (02) is one line in Kumiki — the message and the refused input follow it — where React edits the guard, the message and `maxLength` in step. Kumiki also wins where a change crosses state + UI + logic (03, 04), which is where edits get risky in React.
 
 ### Edit representation (full file vs patch vs op stream)
 
-Kumiki's AI-editing verbs (`add` / `replace` / `remove`) send whole definitions. Measured across the same four scenarios, the op stream costs **26% of the tokens of rewriting the full file** (1,544 vs 5,896 cl100k) — but a plain unified text patch is smaller still (1,130). The op stream's value is not minimal bytes; it's that each op is independently checkable and never produces a syntactically broken file.
+Kumiki's AI-editing verbs (`add` / `replace` / `remove`) send whole definitions. Measured across the same four scenarios, the op stream costs **24% of the tokens of rewriting the full file** (1,456 vs 6,142 cl100k) — but a plain unified text patch is smaller still (1,052). The op stream's value is not minimal bytes; it's that each op is independently checkable and never produces a syntactically broken file.
 
 ## Learning cost (writing Kumiki from the spec alone)
 

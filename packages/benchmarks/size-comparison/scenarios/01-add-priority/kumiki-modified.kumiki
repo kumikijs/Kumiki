@@ -42,9 +42,6 @@ fn itemsLeft(ts: Map(TodoId, Todo)) -> Int
 fn sortedIds(ts: Map(TodoId, Todo)) -> List(TodoId)
    = ts.keys.sort-by(ts.get($1).get.priority * 1000000 - ts.get($1).get.createdAt.to-ms)
 
-fn isFilterActive(current: Filter, f: Filter) -> Text
-   = if current == f then "primary" else "ghost"
-
 # ====== Reducers ======
 
 reducer boot         on=app.start            do= emit loadTodos()
@@ -56,10 +53,11 @@ reducer todosFailed  on=loadTodos.err(_, _)  do= ready := true
 
 reducer addTodo
     on=ui.submit(NewTodoForm)
-    do= let id = TodoId.fresh()
-        todos[id] := {id, text=draft, done=false, priority=1, createdAt=now}
-        draft := ""
-        emit saveTodos(todos)
+    do= if not draft.trim.is-empty then {
+          let id = TodoId.fresh()
+          todos[id] := {id, text=draft.trim, done=false, priority=1, createdAt=now}
+          draft := ""
+          emit saveTodos(todos) }
 
 reducer toggle
     on=ui.click(TodoCheck)
@@ -102,7 +100,8 @@ tile FilterTab
     in=Filter
     = button(text=$1.show, onClick=setFilter) {
         filter: $1,
-        variant: isFilterActive(filter, $1)
+        bg:     if filter == $1 then "primary" else "surface",
+        color:  if filter == $1 then "surface" else "fg"
       }
 
 tile TodoList
@@ -114,7 +113,13 @@ tile TodoList
 
 tile NewTodoForm
     = form(
-        input(bind=draft, placeholder="What needs to be done?", auto-focus=true))
+        column(
+          row(
+            input(bind=draft, placeholder="What needs to be done?", auto-focus=true) {w: "full"},
+            button(text="Add", type="submit") {bg: "primary", color: "surface"})
+            {gap: "sm"},
+          error(field=draft) {color: "danger"})
+        {gap: "xs"})
 
 tile FilterBar
     = row(FilterTab(All), FilterTab(Active), FilterTab(Done)) {gap: "xs"}
