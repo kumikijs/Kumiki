@@ -2,7 +2,7 @@
 
 [English](./README.md) · 日本語
 
-Kumiki の最小アプリ。これだけで「状態・更新・描画」の 1 サイクルが揃う。
+Kumiki の最小アプリです。これだけで「状態・更新・描画」の 1 サイクルが揃います。
 
 ## 学べること
 
@@ -13,7 +13,7 @@ Kumiki の最小アプリ。これだけで「状態・更新・描画」の 1 �
 
 ## 実行
 
-以下のコマンドはすべて**リポジトリルート**で実行する。
+以下のコマンドはすべて**リポジトリルート**で実行します。
 
 ```sh
 pnpm kumiki check packages/examples/apps/01-counter/app.kumiki
@@ -22,6 +22,6 @@ pnpm kumiki smoke packages/examples/apps/01-counter/app.kumiki
 pnpm kumiki run packages/examples/apps/01-counter/app.kumiki packages/examples/apps/01-counter/scenario.json
 ```
 
-`scenario.json` はこのアプリの要件を実行可能な受け入れ基準（AC）に落としたもので、CI では [`packages/tests/`](../../../tests/) が再生する。
+`scenario.json` はこのアプリの要件を実行可能な受け入れ基準（AC）に落としたもので、CI では [`packages/tests/`](../../../tests/) が再生します。
 
 関連仕様: [language](../../../../docs/ja/spec/language.md)

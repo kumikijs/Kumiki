@@ -2,7 +2,7 @@
 
 English · [日本語](./README.ja.md)
 
-The server-render boundary. The app renders on the server with `app.init` already resolved, then hydrates in the browser and carries on from there.
+The server-render boundary. The app renders on the server with `app.init` already resolved, then hydrates in the browser and carries on from there. The showcase preview mounts it as a client app inside the browser, so the server render itself is not visible there; the SSR path is covered by the `packages/tests` tests that call `renderToString` and `hydrate`.
 
 ## What you'll learn
 

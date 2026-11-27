@@ -2,7 +2,7 @@
 
 [English](./README.md) · 日本語
 
-最大規模のリファレンスアプリ（~1255 行）。入れ子データ・カンバン・テーマ切替まで、実アプリで必要になる要素を一通り含む。
+最大規模のリファレンスアプリ（約 1250 行）です。入れ子データ・カンバン・テーマ切替まで、実アプリで必要になる要素を一通り含みます。
 
 ## 学べること
 
@@ -15,7 +15,7 @@
 
 ## 実行
 
-以下のコマンドはすべて**リポジトリルート**で実行する。
+以下のコマンドはすべて**リポジトリルート**で実行します。
 
 ```sh
 pnpm kumiki check packages/examples/apps/05-project-management/app.kumiki
@@ -24,6 +24,6 @@ pnpm kumiki smoke packages/examples/apps/05-project-management/app.kumiki
 pnpm kumiki run packages/examples/apps/05-project-management/app.kumiki packages/examples/apps/05-project-management/scenario.json
 ```
 
-`scenario.json` はこのアプリの要件を実行可能な受け入れ基準（AC）に落としたもので、CI では [`packages/tests/`](../../../tests/) が再生する。
+`scenario.json` はこのアプリの要件を実行可能な受け入れ基準（AC）に落としたもので、CI では [`packages/tests/`](../../../tests/) が再生します。
 
 関連仕様: [language](../../../../docs/ja/spec/language.md) / [stdlib](../../../../docs/ja/spec/stdlib.md) / [style](../../../../docs/ja/spec/style.md) / [errors](../../../../docs/ja/spec/errors.md)

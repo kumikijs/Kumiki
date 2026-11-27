@@ -1,8 +1,8 @@
 # Kumiki ガイド
 
-Kumiki は独立した定義の集合を素のブラウザアプリへコンパイルする。ここは使い方を扱い、何が正しいかは [仕様](../spec/) が定める。
+Kumiki は独立した定義の集合を、素のブラウザアプリへコンパイルします。このガイドは使い方を扱い、何が正しいかは [仕様](../spec/) が定めます。
 
-まず [はじめに](./getting-started.md) — インストールして 1 ファイル書き、動かす。その先は知りたいことから引く。
+まずは [はじめに](./getting-started.md) で、インストールして 1 ファイル書き、動かしてみてください。その先は知りたいことから引けます。
 
 | 知りたいこと | ページ |
 |---|---|
@@ -13,4 +13,4 @@ Kumiki は独立した定義の集合を素のブラウザアプリへコンパ�
 | 主張は実測されているのか | [ベンチマーク](./benchmarks.md) |
 | とりあえず触りたい | [Playground](./playground.md) |
 
-どの機能にも動く 1 ファイルが [examples](https://github.com/kumikijs/Kumiki/tree/main/packages/examples) にある。
+どの機能にも、動く 1 ファイルが [examples](https://github.com/kumikijs/Kumiki/tree/main/packages/examples) にあります。
