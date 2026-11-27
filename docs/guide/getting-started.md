@@ -10,7 +10,7 @@ npm i -g kumiki
 npx kumiki --help
 ```
 
-Node.js 24 or newer, which is what the packages declare.
+Requires Node.js 24 or newer.
 
 ::: tip No install at all
 The [Playground](./playground.md) runs the compiler and the runtime inside your browser. Pick an example, edit on the left, watch it render on the right.
