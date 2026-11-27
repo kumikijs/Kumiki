@@ -1,0 +1,49 @@
+# HTTP — one app-level configuration, and a retry policy on the effect
+# Demonstrates: `app.http` holds the base URL, a header built from a slot, the
+# 401 handler, the timeout and the credentials mode, so the effect writes only
+# its path. `retry=exponential(3, 200ms, 2.0)` retries 5xx and connection
+# errors with backoff and leaves a 4xx as the final failure.
+
+type Quote = {text: Text, author: Text}
+type Load  = Idle | Loading | Loaded(Quote) | Failed(Text)
+
+slot state   : Load = Idle
+slot session : Text = "anon"
+
+effect loadQuote cap=http.get
+                 in=Unit
+                 out=Result(Quote, HttpError)
+                 policy=latest
+                 retry=exponential(3, 200ms, 2.0)
+                 map-request={url: "/quote", decode: Decoder.Json(Quote)}
+
+reducer load     on=ui.click(LoadBtn)      do= state := Loading
+                                              emit loadQuote()
+reducer loaded   on=loadQuote.ok($q, _)    do= state := Loaded($q)
+reducer failed   on=loadQuote.err($e, _)   do= state := Failed("request failed")
+reducer signIn   on=ui.click(SignInBtn)    do= session := "user-1"
+reducer onUnauth on=app.http-401           do= session := "anon"
+
+tile LoadBtn   = button(text="Load quote", onClick=load)
+tile SignInBtn = button(text="Sign in", onClick=signIn)
+tile App = column(
+             row(text("X-Session: " + session), SignInBtn) {gap: "md", align: "center"},
+             LoadBtn,
+             match state with
+               | Idle        -> text("Click to load.")
+               | Loading     -> spinner()
+               | Loaded(q)   -> card(text(q.text), text("— " + q.author)) {pad: "md"}
+               | Failed(msg) -> text(msg) {color: "danger"})
+           {pad: "lg", gap: "md"}
+
+app HttpExample
+    caps   = [http.get]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    http   = {
+        base-url: "https://api.example.com",
+        headers: { "X-Session": session },
+        on-401: onUnauth,
+        timeout: 5000,
+        credentials: "include"
+    }

@@ -10,7 +10,7 @@ import {
 } from "./helpers/http-double.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
-const RETRY_APP = app("08-http-retry");
+const RETRY_APP = app("07-http");
 const EXAMPLE = feature("192-retry-backoff-cancel");
 
 const busy = (): Response =>

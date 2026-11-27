@@ -1,4 +1,4 @@
-# 10 — SSR とハイドレーション
+# 08 — SSR とハイドレーション
 
 [English](./README.md) · 日本語
 
@@ -15,10 +15,10 @@
 以下のコマンドはすべて**リポジトリルート**で実行する。
 
 ```sh
-pnpm kumiki check packages/examples/apps/10-ssr-hydration/app.kumiki
-pnpm kumiki build packages/examples/apps/10-ssr-hydration/app.kumiki ./out
-pnpm kumiki smoke packages/examples/apps/10-ssr-hydration/app.kumiki
-pnpm kumiki run packages/examples/apps/10-ssr-hydration/app.kumiki packages/examples/apps/10-ssr-hydration/scenario.json
+pnpm kumiki check packages/examples/apps/08-ssr-hydration/app.kumiki
+pnpm kumiki build packages/examples/apps/08-ssr-hydration/app.kumiki ./out
+pnpm kumiki smoke packages/examples/apps/08-ssr-hydration/app.kumiki
+pnpm kumiki run packages/examples/apps/08-ssr-hydration/app.kumiki packages/examples/apps/08-ssr-hydration/scenario.json
 ```
 
 `scenario.json` はこのアプリの要件を実行可能な受け入れ基準（AC）に落としたもので、CI では [`packages/tests/`](../../../tests/) が再生する。 `app.http.json` はその実行が応答に使う fixture である — ヘッドレスの階層はネットワークに出ない。

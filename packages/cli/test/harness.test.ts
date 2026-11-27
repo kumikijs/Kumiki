@@ -99,7 +99,7 @@ describe("the fetch double answers from the fixture, never from a host", () => {
 
 describe("a fixture that is there, and one that is not", () => {
   const counter = app("01-counter");
-  const quotes = app("07-app-http");
+  const quotes = app("07-http");
 
   it("reads the fixture beside a source that has one", () => {
     expect(readHttpFixture(quotes)).toHaveProperty("GET /quote");

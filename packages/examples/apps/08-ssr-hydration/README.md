@@ -1,4 +1,4 @@
-# 10 — SSR and Hydration
+# 08 — SSR and Hydration
 
 English · [日本語](./README.ja.md)
 
@@ -15,10 +15,10 @@ The server-render boundary. The app renders on the server with `app.init` alread
 Every command below is run **from the repository root**.
 
 ```sh
-pnpm kumiki check packages/examples/apps/10-ssr-hydration/app.kumiki
-pnpm kumiki build packages/examples/apps/10-ssr-hydration/app.kumiki ./out
-pnpm kumiki smoke packages/examples/apps/10-ssr-hydration/app.kumiki
-pnpm kumiki run packages/examples/apps/10-ssr-hydration/app.kumiki packages/examples/apps/10-ssr-hydration/scenario.json
+pnpm kumiki check packages/examples/apps/08-ssr-hydration/app.kumiki
+pnpm kumiki build packages/examples/apps/08-ssr-hydration/app.kumiki ./out
+pnpm kumiki smoke packages/examples/apps/08-ssr-hydration/app.kumiki
+pnpm kumiki run packages/examples/apps/08-ssr-hydration/app.kumiki packages/examples/apps/08-ssr-hydration/scenario.json
 ```
 
 `scenario.json` distills this app's requirements into executable acceptance criteria; [`packages/tests/`](../../../tests/) replays it in CI. `app.http.json` is the fixture those runs answer from — the headless tiers never reach the network.

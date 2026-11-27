@@ -73,7 +73,7 @@ async function expectSurvivesSmoke(file: string): Promise<void> {
 // Floors at the current corpus size: an empty describe.each registers nothing and passes.
 it("finds the feature and app examples", () => {
   expect(featureFiles().length).toBeGreaterThanOrEqual(100);
-  expect(appFiles().length).toBeGreaterThanOrEqual(10);
+  expect(appFiles().length).toBeGreaterThanOrEqual(8);
 });
 
 describe.each(allFiles().map((file) => ({ file, name: exampleLabel(file) })))("$name", ({

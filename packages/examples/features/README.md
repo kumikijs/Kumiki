@@ -11,6 +11,7 @@ The tables below are a curated tour grouped by topic, not a directory listing. T
 | Example | Contents |
 |---|---|
 | [01-slot-and-reducer](./01-slot-and-reducer.kumiki) | The basic cycle of slot (state) + reducer (update) + tile (render) |
+| [292-multi-subscribe](./292-multi-subscribe.kumiki) | two reducers on one event both fire, in source order |
 | [02-nominal-type](./02-nominal-type.kumiki) | nominal types and `between` refinement |
 | [91-conjoined-refinements](./91-conjoined-refinements.kumiki) | several `where` predicates on one type, and which one a rejection names |
 | [103-generic-alias-refinement](./103-generic-alias-refinement.kumiki) | a `where` on a generic alias (`type NonEmpty(T) = T where nonempty`) gates the slot, with its argument's predicates first |
@@ -55,6 +56,7 @@ The tables below are a curated tour grouped by topic, not a directory listing. T
 | [23-lifecycle-route-enter](./23-lifecycle-route-enter.kumiki) | `app.start` / `route.enter` |
 | [92-outlet-error-boundary](./92-outlet-error-boundary.kumiki) | an `error-boundary` on a `sub-routes` shell covering the child in its `route-outlet`, and a child's own boundary winning |
 | [93-panic-info](./93-panic-info.kumiki) | every field of `PanicInfo` read from an `error-boundary` fallback and from an `app.error` reducer, side by side |
+| [291-app-meta-analytics](./291-app-meta-analytics.kumiki) | `app.meta` head metadata applied at mount, and `app.analytics` as the default sink for `analytics.send` |
 | [46-stdlib-paren-methods](./46-stdlib-paren-methods.kumiki) | paren-form stdlib methods (`is-ok()` / `values()` / `lower()` / `sort()` etc.) + `Bytes.from-text/base64/bytes` constructors |
 | [61-reserved-identifier-names](./61-reserved-identifier-names.kumiki) | names that are JS reserved words (`new` / `class` / `var`) or look like runtime internals (`_live` / `_s`) |
 | [62-conditional-inline-tile-handlers](./62-conditional-inline-tile-handlers.kumiki) | a conditional swapping two inline tiles that differ only in their handler |

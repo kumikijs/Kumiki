@@ -11,7 +11,7 @@ describe("the showcase catalog", () => {
   it("lists every app once, in order, with the title, summary and lessons of its README", () => {
     const apps = showcaseApps("en");
     expect(apps.map((a) => a.name)).toEqual([...apps.map((a) => a.name)].sort());
-    expect(apps.length).toBeGreaterThanOrEqual(11);
+    expect(apps.length).toBeGreaterThanOrEqual(8);
     const counter = apps.find((a) => a.name === "01-counter");
     expect(counter?.title).toBe("Counter");
     expect(counter?.summary).not.toBe("");

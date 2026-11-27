@@ -11,6 +11,7 @@
 | 例 | 内容 |
 |---|---|
 | [01-slot-and-reducer](./01-slot-and-reducer.kumiki) | slot（状態）+ reducer（更新）+ tile（描画）の基本サイクル |
+| [292-multi-subscribe](./292-multi-subscribe.kumiki) | 1 つのイベントを購読する 2 つの reducer が、ソース順に両方発火する |
 | [02-nominal-type](./02-nominal-type.kumiki) | nominal 型と `between` リファインメント |
 | [91-conjoined-refinements](./91-conjoined-refinements.kumiki) | 1 つの型に複数の `where` 述語、拒否が名指すのはどれか |
 | [103-generic-alias-refinement](./103-generic-alias-refinement.kumiki) | ジェネリックな別名（`type NonEmpty(T) = T where nonempty`）の `where` がスロットを守り、引数の述語が先に来ること |
@@ -55,6 +56,7 @@
 | [23-lifecycle-route-enter](./23-lifecycle-route-enter.kumiki) | `app.start` / `route.enter` |
 | [92-outlet-error-boundary](./92-outlet-error-boundary.kumiki) | `sub-routes` のシェルに置いた `error-boundary` が `route-outlet` 内の子を覆うこと、子自身の境界が優先されること |
 | [93-panic-info](./93-panic-info.kumiki) | `PanicInfo` の全フィールドを `error-boundary` の fallback と `app.error` reducer の双方から読むこと |
+| [291-app-meta-analytics](./291-app-meta-analytics.kumiki) | mount 時に反映される `app.meta` の head メタデータと、`analytics.send` の既定シンクとしての `app.analytics` |
 | [46-stdlib-paren-methods](./46-stdlib-paren-methods.kumiki) | stdlib メソッドの括弧付き形（`is-ok()` / `values()` / `lower()` / `sort()` 等）と `Bytes.from-text/base64/bytes` 構築子 |
 | [61-reserved-identifier-names](./61-reserved-identifier-names.kumiki) | JS の予約語（`new` / `class` / `var`）やランタイム内部名（`_live` / `_s`）と衝突する識別子 |
 | [62-conditional-inline-tile-handlers](./62-conditional-inline-tile-handlers.kumiki) | ハンドラだけが異なる 2 つのインラインタイルを条件分岐で入れ替える |

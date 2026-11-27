@@ -1,7 +1,7 @@
-# Multi-subscribe
-# Two reducers subscribe to ui.click(SaveBtn). They both fire,
-# in source order: first `save` bumps `version`, then `audit` records the click
-# count in `log`. Click the button — both slots advance together.
+# Feature: two reducers on one event both fire, in source order (spec/runtime.md).
+#
+# `save` and `audit` both subscribe to ui.click(SaveBtn): first `save` bumps
+# `version`, then `audit` advances `log`, so both slots move together.
 
 slot version : Int = 0
 slot log     : Int = 0

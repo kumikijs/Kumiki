@@ -7,7 +7,7 @@ import { withApp } from "./helpers/source.ts";
 
 describe("SSR hydration", () => {
   it("renders HTML, ships a snapshot, and hydrates onto a fresh DOM root", async () => {
-    const app = await loadApp(appExample("10-ssr-hydration"));
+    const app = await loadApp(appExample("08-ssr-hydration"));
 
     const httpProvider = vi.fn(async () => ({
       kind: "ok" as const,

@@ -5,7 +5,7 @@ import { clickContaining, mountApp, tick } from "./helpers/dom.ts";
 import { type FetchDouble, stubFetch } from "./helpers/http-double.ts";
 import { loadApp } from "./helpers/load.ts";
 
-const RETRY_EXAMPLE = app("08-http-retry");
+const RETRY_EXAMPLE = app("07-http");
 
 describe("HTTP retry", () => {
   let double: FetchDouble | undefined;
