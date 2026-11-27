@@ -1,9 +1,26 @@
+import { guideListing, readGuide, unknownTopic } from "@kumikijs/cli";
 import { z } from "zod";
 import { getSpecDoc, listSpecDocs, searchSpec } from "../spec.ts";
 import { text } from "../wire.ts";
 import type { RegisterTool } from "./registrar.ts";
 
 export function registerSpecTools(tool: RegisterTool): void {
+  tool(
+    "kumiki_guide",
+    {
+      title: "Read a Kumiki guide",
+      description:
+        "What `kumiki guide` prints: with no topic, the list of topics; 'author', 'debug' or 'iterate' for a workflow guide (read 'author' before writing Kumiki); a diagnostic code such as 'E0201' for its entry in the error catalog; or a spec document's name. Answers from the spec this server's CLI ships with.",
+      inputSchema: { topic: z.string().optional() },
+    },
+    async ({ topic }) => {
+      if (topic === undefined) return text(guideListing());
+      const found = readGuide(topic);
+      if (found === null) throw new Error(unknownTopic(topic));
+      return text(found.text);
+    },
+  );
+
   tool(
     "kumiki_spec_search",
     {

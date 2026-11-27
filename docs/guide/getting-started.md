@@ -103,5 +103,7 @@ pnpm kumiki check packages/examples/apps/01-counter/app.kumiki
 :::
 
 ::: details Driving Kumiki from an AI agent
-`@kumikijs/mcp` exposes check, build, per-definition editing, and spec search as MCP tools. See its [README](https://github.com/kumikijs/Kumiki/blob/main/packages/mcp/README.md) for a client configuration.
+Point the agent at `kumiki guide`: `kumiki guide author` is how to write a program, `debug` and `iterate` follow, and `kumiki guide E0201` explains one diagnostic — all from the spec of the CLI you installed. To have an agent find them on its own, install the skill: `npx skills add kumikijs/Kumiki`.
+
+`@kumikijs/mcp` exposes check, build, per-definition editing, the guides and spec search as MCP tools. See its [README](https://github.com/kumikijs/Kumiki/blob/main/packages/mcp/README.md) for a client configuration.
 :::

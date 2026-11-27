@@ -25,6 +25,17 @@ export {
   type TestPatchBlock,
 } from "./fix.ts";
 export {
+  GUIDES,
+  type Guide,
+  type GuideRoots,
+  guideListing,
+  guideRoots,
+  guideTopics,
+  readGuide,
+  specDocs,
+  unknownTopic,
+} from "./guide.ts";
+export {
   clearStorage,
   type HttpFixture,
   type HttpResponseFixture,

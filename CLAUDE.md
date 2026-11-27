@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Kumiki is an **AI-first web framework language** — a declarative DSL plus compiler/runtime/tooling, optimized for LLMs to write/edit/reason about rather than for humans to read. A `.kumiki` source is a set of independent definitions across **7 layers** (type / slot / effect / reducer / tile / fn / app). The repo is a pnpm + Turborepo monorepo; `docs/spec/` is the **normative spec** and `packages/*` implements it.
 
-For authoring, debugging, or iterating on `.kumiki` programs themselves, prefer the dedicated skills: `kumiki-author`, `kumiki-debug`, `kumiki-iterate`. This file is about working on the repo's TypeScript implementation.
+For authoring, debugging, or iterating on `.kumiki` programs themselves, read `pnpm kumiki guide author` (also `debug`, `iterate`, a diagnostic code, or a spec document). The guides ship with the CLI from `packages/cli/src/guides/`; `skills/kumiki/` is the thin skill users install, and `.claude/skills/kumiki-contribute/` is the workflow for changing the framework. This file is about working on the repo's TypeScript implementation.
 
 ## Commands
 
@@ -41,7 +41,7 @@ pnpm kumiki smoke <file>            # mount + interact in happy-dom (catches "co
 pnpm kumiki run <file> <scenario.json>
 ```
 
-CLI verbs (registered in `packages/cli/src/kumiki.ts`, one file each under `src/commands/`): `build / dev / check / smoke / test / run / replay` and the AI-editing verbs `list / view / refs / add / replace / remove / rename / edit / patch / lock / unlock / fix`.
+CLI verbs (registered in `packages/cli/src/kumiki.ts`, one file each under `src/commands/`): `build / dev / check / smoke / test / run / replay`, the AI-editing verbs `list / view / refs / add / replace / remove / rename / edit / patch / lock / unlock / fix`, and `guide`.
 
 > **Environment note**: the shell is PowerShell on Windows. The user has a deny rule on running PowerShell cmdlets through the Bash tool — use the dedicated file/search tools, or invoke `pnpm`/`git` directly.
 

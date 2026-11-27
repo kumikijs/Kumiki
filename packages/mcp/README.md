@@ -17,6 +17,7 @@ Exposes the Kumiki compiler and the AI editing toolchain as an **MCP (Model Cont
 | `kumiki_refs` | Search for references to a definition |
 | `kumiki_add` / `kumiki_replace` / `kumiki_remove` / `kumiki_rename` | Edit definitions |
 | `kumiki_fix` | Propose auto-patches for fixable diagnostics |
+| `kumiki_guide` | What `kumiki guide` prints: the `author` / `debug` / `iterate` workflow guides, a diagnostic's entry (`E0201`), or a spec document |
 | `kumiki_spec_search` / `kumiki_spec_list` / `kumiki_spec_get` | Search, list, and retrieve the normative spec (spec/) |
 
 ## Startup
@@ -38,4 +39,4 @@ Example configuration for an MCP client (e.g. Claude Code):
 }
 ```
 
-The location of `spec/` is auto-resolved from the usual repository layout. For a different location, override it with the `KUMIKI_SPEC_DIR` environment variable.
+The guides and the spec are the ones `@kumikijs/cli` is built with, so the answers match the version installed. To read another copy of the spec, set the `KUMIKI_SPEC_DIR` environment variable.

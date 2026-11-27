@@ -17,6 +17,7 @@ Kumiki コンパイラと AI 編集ツールチェインを **MCP（Model Contex
 | `kumiki_refs` | 定義への参照箇所を検索 |
 | `kumiki_add` / `kumiki_replace` / `kumiki_remove` / `kumiki_rename` | 定義の編集 |
 | `kumiki_fix` | 修復可能な診断の自動パッチ案を提示 |
+| `kumiki_guide` | `kumiki guide` が出力するもの：`author` / `debug` / `iterate` のワークフローガイド、診断の項目（`E0201`）、仕様文書 |
 | `kumiki_spec_search` / `kumiki_spec_list` / `kumiki_spec_get` | 正規仕様（spec/）の検索・一覧・取得 |
 
 ## 起動
@@ -38,4 +39,4 @@ MCP クライアント（例: Claude Code）の設定例:
 }
 ```
 
-`spec/` の場所は通常リポジトリ構成から自動解決される。別配置の場合は環境変数 `KUMIKI_SPEC_DIR` で上書きする。
+ガイドと仕様は `@kumikijs/cli` のビルドに同梱されたものなので、答えはインストールされたバージョンと一致します。別の仕様の写しを読ませるには、環境変数 `KUMIKI_SPEC_DIR` を設定します。

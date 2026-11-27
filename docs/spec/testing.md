@@ -667,7 +667,7 @@ The tiers differ in how the event arrives, and so in whether the form tile sees 
 
 Only `{submit}` is judged this way. A `{click}` on a submit button runs the same gate, but the step it reports on is the click, which the platform delivered. Implicit submission — Enter in a field — is not a submit step either: the scenario tier's `{key: "Enter"}` dispatches a `keydown`, which the DOM there does not turn into a submit at all, and the browser tier has no `{key}` verb. A step that means to submit says `{submit}`.
 
-Why this works cleanly in Kumiki: because state is explicit (slots), the oracle is trustworthy; because events are declarative (reducer names), it can be driven precisely; and because effects can be mocked at the capability boundary, it is reproducible. The agent generates "app + scenario (AC)" from requirements and self-corrects by reading the trace, so the human only needs to state the requirements once. The loop procedure is described in `.claude/skills/kumiki-iterate`.
+Why this works cleanly in Kumiki: because state is explicit (slots), the oracle is trustworthy; because events are declarative (reducer names), it can be driven precisely; and because effects can be mocked at the capability boundary, it is reproducible. The agent generates "app + scenario (AC)" from requirements and self-corrects by reading the trace, so the human only needs to state the requirements once. `kumiki guide iterate` ([AI editing §9.2.6](./ai-edit.md#_9-2-6-guides)) describes the loop.
 
 ## 8.11 Next
 
