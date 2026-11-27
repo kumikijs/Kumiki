@@ -7,7 +7,12 @@ export default defineConfig({
   format: "esm",
   dts: true,
   fixedExtension: false,
-  // A directory copy lands inside `to`, giving dist/dev/*.ts, where src/dev.ts reads them.
-  copy: [{ from: "src/dev/", to: "dist/" }],
+  // A directory copy lands inside `to`: dist/dev/*.ts, where src/dev.ts reads them, and
+  // dist/guides/*.md and dist/spec/*.md, where src/guide.ts reads them in an installed copy.
+  copy: [
+    { from: "src/dev/", to: "dist/" },
+    { from: "src/guides/", to: "dist/" },
+    { from: "../../docs/spec/", to: "dist/" },
+  ],
   outputOptions: publishedOutputOptions,
 });

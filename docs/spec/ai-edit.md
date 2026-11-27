@@ -121,6 +121,7 @@ Per verb, `1` means:
 | `fix` | the file is not in the state that was asked for when the process ends: errors remain, or — with `--auto-patch <test>` — the named test does not pass. A dry run repairs nothing, so it is `1` for any file that is not already in that state |
 | `view` / `refs` | the qualified name is not defined in the file. `view --history` requires only the file: a definition that was removed still has a history, and that is when it is asked for. It also exits `1` when the op log holds a line that is not an op, other than a torn last line (§9.2.2) |
 | `list` | only for the file: there is none at that path, or it does not parse. A filter that names no kind of definition is a positional outside its allowed set, so it is `2`; a real one with nothing under it prints nothing and exits `0` |
+| `guide` | never: a topic it has no guide for is a positional outside its allowed set, so it is `2` |
 | `add` / `replace` / `remove` / `rename` / `edit` / `patch` | the write was rejected and rolled back |
 | `lock` / `unlock` | another agent holds a pattern overlapping one `lock` asks for, the agent `unlock` names holds no lock to release, or the lock file cannot be read in the shape `lock` writes ([§9.8.3](#_9-8-3-task-boundaries)) |
 | `replay` | the log is unreadable, the named episode is not in it, a replayed episode panicked or surfaced an unhandled effect error, or an episode was not replayed because its entry reducer is not in the program, or the log does not name or record it ([§10.5.3](./runtime.md#_10-5-3-replay)) |
@@ -129,6 +130,21 @@ Per verb, `1` means:
 A warning never changes an exit code. That is what separates the two tiers: an `error` is a claim the program is wrong, a `warning` is a claim it is suspicious, and only the first one is allowed to stop a pipeline.
 
 The MCP server ([§9.7](#_9-7-mcp-server)) answers the same question with `isError`: a failure that would exit `1` here sets `isError: true` there. The content is unchanged by the flag — a failed check still answers with its diagnostics and a failed scenario with its trace. Only a failure that produced no answer at all (a missing file, a name that resolves to nothing) replaces the content with the envelope `{"error": {"kind", "message"}}`. For a missing file, `message` is the one the verbs print.
+
+### 9.2.6 Guides
+
+```bash
+kumiki guide                 # list the topics
+kumiki guide author          # how to write a program, and the idioms that trip people up
+kumiki guide debug           # how to read a diagnostic, use fix, and chase an app that misbehaves
+kumiki guide iterate         # how to turn requirements into a scenario and loop until it passes
+kumiki guide E0201           # one diagnostic's entry in the error catalog
+kumiki guide language        # one spec document, by its file name
+```
+
+`guide` is how an agent learns Kumiki from the toolchain it is about to use. Its answers come from the copy of this spec and of the workflow guides that the CLI is built with, so they describe the compiler of the same version rather than whatever an agent remembers, and an installed `kumiki` answers without the repository. `KUMIKI_SPEC_DIR` points it at another copy of the spec.
+
+A code is read in either case and names the entry of [errors.md](./errors.md) under its heading: from that heading to the next entry or band, so the entry's own subsections come with it. A spec document is named by its file name, with or without `.md`. A topic that is none of these exits `2`, and the message lists the topics there are. The MCP tool `kumiki_guide` (§9.7) answers the same topics with the same text.
 
 ## 9.3 The Form of a CRDT op
 
@@ -350,6 +366,7 @@ The tools provided:
 | `kumiki_refs` | `qname` | list of referrers |
 | `kumiki_history` | `qname` | op history |
 | `kumiki_episode` | `episode_id` | episode log |
+| `kumiki_guide` | `topic?: string` | what `kumiki guide` prints for the topic (§9.2.6) |
 
 `kumiki_list`, `kumiki_view`, `kumiki_replace`, `kumiki_edit`, `kumiki_rename` and `kumiki_remove` take a definition from its first token to its last, as the CLI verbs of the same names do (§9.2.1, §9.2.2).
 

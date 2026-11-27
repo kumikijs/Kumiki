@@ -103,5 +103,7 @@ pnpm kumiki check packages/examples/apps/01-counter/app.kumiki
 :::
 
 ::: details AI エージェントから操作する場合
-`@kumikijs/mcp` は check・build・定義単位の編集・仕様検索を MCP ツールとして公開する。クライアント設定例は [README](https://github.com/kumikijs/Kumiki/blob/main/packages/mcp/README.md) を参照。
+エージェントには `kumiki guide` を使わせてください。`kumiki guide author` がプログラムの書き方、続いて `debug` と `iterate`、`kumiki guide E0201` が 1 つの診断の説明で、どれもインストールした CLI の仕様から答えます。エージェントが自分で見つけられるようにするには、skill を入れます：`npx skills add kumikijs/Kumiki`。
+
+`@kumikijs/mcp` は check・build・定義単位の編集・ガイド・仕様検索を MCP ツールとして公開しています。クライアントの設定例は [README](https://github.com/kumikijs/Kumiki/blob/main/packages/mcp/README.md) を参照してください。
 :::

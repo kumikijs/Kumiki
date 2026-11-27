@@ -7,6 +7,7 @@ import { registerCheck } from "./commands/check.ts";
 import { registerDev } from "./commands/dev.ts";
 import { registerEdit } from "./commands/edit.ts";
 import { registerFix } from "./commands/fix.ts";
+import { registerGuide } from "./commands/guide.ts";
 import { registerList } from "./commands/list.ts";
 import { registerLock } from "./commands/lock.ts";
 import { registerPatch } from "./commands/patch.ts";
@@ -41,6 +42,7 @@ const REGISTRARS: ReadonlyArray<readonly [verb: string, register: (program: Comm
   ["lock", registerLock],
   ["unlock", registerUnlock],
   ["fix", registerFix],
+  ["guide", registerGuide],
 ];
 
 function buildProgram(): { program: Command; usages: ReadonlyMap<string, string> } {
