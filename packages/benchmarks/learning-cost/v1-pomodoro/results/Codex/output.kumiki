@@ -1,0 +1,40 @@
+type Mode = Work | Break
+
+slot remaining : Int where between(0, 1500) = 1500
+slot mode : Mode = Work
+slot running : Bool = false
+
+fn maximum(m: Mode) -> Int = if m == Work then 1500 else 300
+fn next-mode(m: Mode) -> Mode = if m == Work then Break else Work
+
+reducer start on=ui.click(StartBtn) do= running := true
+reducer pause on=ui.click(PauseBtn) do= running := false
+reducer reset on=ui.click(ResetBtn) do=
+    remaining := maximum(mode)
+    running := false
+
+reducer tick on=timer(1s) do=
+    if running then {
+        if remaining <= 1 then {
+            mode := next-mode(mode)
+            remaining := maximum(mode)
+        } else {
+            remaining := remaining - 1
+        }
+    }
+
+tile StartBtn = button(text="Start")
+tile PauseBtn = button(text="Pause")
+tile ResetBtn = button(text="Reset")
+
+tile App = column(
+    heading("Pomodoro Timer"),
+    text(mode.show),
+    text(remaining.show + " seconds"),
+    row(StartBtn, PauseBtn, ResetBtn)
+)
+
+app Pomodoro
+    caps = [timer]
+    routes = {"/" -> App, "/404" -> App}
+    init = []
