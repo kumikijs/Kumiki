@@ -1,0 +1,73 @@
+{
+  "steps": [
+    {
+      "label": "a pristine form already says what each failing field needs",
+      "expect": {
+        "noErrors": true,
+        "state": { "welcome": { "_tag": "None" } },
+        "domIncludes": ["Required", "Invalid email format", "Fill in the form."],
+        "domExcludes": ["Must be between 13 and 120"]
+      }
+    },
+    {
+      "label": "and will not submit while they fail",
+      "do": { "submit": "form" },
+      "expect": {
+        "noErrors": true,
+        "actionErrorIncludes": ["the field bound to form fails its validation"],
+        "state": { "welcome": { "_tag": "None" } }
+      }
+    },
+    {
+      "do": { "fill": "#name", "value": "Ada" },
+      "expect": {
+        "noErrors": true,
+        "state": { "form": { "name": "Ada" } },
+        "domExcludes": ["Required"]
+      }
+    },
+    {
+      "do": { "fill": "#email", "value": "ada@example.com" },
+      "expect": {
+        "noErrors": true,
+        "state": { "form": { "email": "ada@example.com" } },
+        "domExcludes": ["Invalid email format"]
+      }
+    },
+    {
+      "label": "an age outside the range is refused: the slot keeps 18, the field keeps 9, the message says why",
+      "do": { "fill": "#age", "value": "9" },
+      "expect": {
+        "noErrors": true,
+        "state": { "form": { "age": 18 } },
+        "domIncludes": ["Must be between 13 and 120"]
+      }
+    },
+    {
+      "label": "so the form still holds the submit back",
+      "do": { "submit": "form" },
+      "expect": {
+        "noErrors": true,
+        "actionErrorIncludes": ["the field bound to form fails its validation"],
+        "state": { "welcome": { "_tag": "None" } }
+      }
+    },
+    {
+      "do": { "fill": "#age", "value": "36" },
+      "expect": {
+        "noErrors": true,
+        "state": { "form": { "age": 36 } },
+        "domExcludes": ["Must be between"]
+      }
+    },
+    {
+      "label": "every field passes, so the reducer runs with a valid Signup",
+      "do": { "clickText": "Sign up" },
+      "expect": {
+        "noErrors": true,
+        "state": { "welcome": { "_tag": "Some", "_0": "Ada" } },
+        "domIncludes": ["Welcome, Ada!"]
+      }
+    }
+  ]
+}

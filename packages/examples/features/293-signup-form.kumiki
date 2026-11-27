@@ -1,0 +1,42 @@
+# Feature: a form validated by its type (spec/forms.md).
+#
+# The rules live on the record's fields. Each `input` binds a field, keeps a
+# value its refinement refuses out of the slot, and `error(field=…)` shows why;
+# the form runs `submit` only when every bound field passes, so the reducer
+# reads a `Signup` that is valid. This is the first example on the docs' home
+# page, beside its React equivalent.
+
+type Signup = {
+  name:  Text where nonempty,
+  email: Email,
+  age:   Int where between(13, 120)
+}
+
+slot form    : Signup       = {name: "", email: "", age: 18}
+slot welcome : Option(Text) = None
+
+reducer submit on=ui.submit(SignupForm) do= welcome := Some(form.name)
+
+tile SignupForm = form(column(
+    label(text="Name") {for: "name"},
+    input(bind=form.name, id="name"),
+    error(field=form.name) {color: "danger"},
+    label(text="Email") {for: "email"},
+    input(bind=form.email, id="email"),
+    error(field=form.email) {color: "danger"},
+    label(text="Age") {for: "age"},
+    input(bind=form.age, type="number", id="age"),
+    error(field=form.age) {color: "danger"},
+    button(text="Sign up", type="submit")) {gap: "sm"})
+
+tile App = column(
+    SignupForm,
+    match welcome with
+      | None    -> text("Fill in the form.")
+      | Some(n) -> text("Welcome, " + n + "!"))
+  {pad: "lg", gap: "md"}
+
+app SignupDemo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

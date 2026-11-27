@@ -35,42 +35,46 @@ features:
 
 ## The same app, twice
 
-One fetch-and-render screen, written both ways: [fetch example](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/19-effect-http.kumiki) on the left, an idiomatic React equivalent on the right.
+One signup form with validation, written both ways: the [signup example](https://github.com/kumikijs/Kumiki/blob/main/packages/examples/features/293-signup-form.kumiki) on the left, an idiomatic React equivalent on the right.
 
 <div class="home-compare">
 <div class="home-compare-col">
 
-**Kumiki** — 30 lines · 278 tokens
+**Kumiki** — 34 lines · 294 tokens
 
 ```kumiki
-type Quote = {text: Text, author: Text}
-type Load  = Idle | Loading | Loaded(Quote) | Failed(Text)
+type Signup = {
+  name:  Text where nonempty,
+  email: Email,
+  age:   Int where between(13, 120)
+}
 
-slot state : Load = Idle
+slot form    : Signup       = {name: "", email: "", age: 18}
+slot welcome : Option(Text) = None
 
-effect fetchQuote cap=http.get
-                  in=Unit
-                  out=Result(Quote, HttpError)
-                  policy=latest
-                  map-request={url: "/api/quote", decode: Decoder.Json(Quote)}
+reducer submit on=ui.submit(SignupForm) do= welcome := Some(form.name)
 
-reducer load   on=ui.click(LoadBtn)        do= state := Loading
-                                              emit fetchQuote()
-reducer loaded on=fetchQuote.ok($q, _)     do= state := Loaded($q)
-reducer failed on=fetchQuote.err($e, _)    do= state := Failed("request failed")
+tile SignupForm = form(column(
+    label(text="Name") {for: "name"},
+    input(bind=form.name, id="name"),
+    error(field=form.name) {color: "danger"},
+    label(text="Email") {for: "email"},
+    input(bind=form.email, id="email"),
+    error(field=form.email) {color: "danger"},
+    label(text="Age") {for: "age"},
+    input(bind=form.age, type="number", id="age"),
+    error(field=form.age) {color: "danger"},
+    button(text="Sign up", type="submit")) {gap: "sm"})
 
-tile LoadBtn = button(text="Load quote", onClick=load)
 tile App = column(
-             LoadBtn,
-             match state with
-               | Idle        -> text("Click to load.")
-               | Loading     -> spinner()
-               | Loaded(q)   -> card(text(q.text), text("— " + q.author)) {pad: "md"}
-               | Failed(msg) -> text(msg) {color: "danger"})
-           {pad: "lg", gap: "md"}
+    SignupForm,
+    match welcome with
+      | None    -> text("Fill in the form.")
+      | Some(n) -> text("Welcome, " + n + "!"))
+  {pad: "lg", gap: "md"}
 
-app EffectHttp
-    caps   = [http.get]
+app SignupDemo
+    caps   = []
     routes = {"/" -> App, "/404" -> App}
     init   = []
 ```
@@ -78,46 +82,54 @@ app EffectHttp
 </div>
 <div class="home-compare-col">
 
-**React** — 40 lines · 328 tokens
+**React** — 48 lines · 455 tokens
 
 ```tsx
-import { useRef, useState } from "react";
+import { type FormEvent, useState } from "react";
 
-type Quote = { text: string; author: string };
-type Load =
-  | { tag: "idle" } | { tag: "loading" }
-  | { tag: "loaded"; quote: Quote }
-  | { tag: "failed"; message: string };
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function validate(name: string, email: string, age: string) {
+  const n = Number(age);
+  return {
+    name: name === "" ? "Required" : null,
+    email: EMAIL.test(email) ? null : "Invalid email format",
+    age: age === "" || !Number.isInteger(n) ? "Must be a whole number"
+       : n < 13 || n > 120 ? "Must be between 13 and 120" : null,
+  };
+}
 
 export function App() {
-  const [state, setState] = useState<Load>({ tag: "idle" });
-  const ctrl = useRef<AbortController | null>(null);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [age, setAge] = useState("18");
+  const [welcome, setWelcome] = useState<string | null>(null);
+  const errors = validate(name, email, age);
 
-  async function load() {
-    ctrl.current?.abort(); // "latest" policy, by hand
-    const c = (ctrl.current = new AbortController());
-    setState({ tag: "loading" });
-    try {
-      const res = await fetch("/api/quote", { signal: c.signal });
-      setState({ tag: "loaded", quote: await res.json() });
-    } catch {
-      if (!c.signal.aborted)
-        setState({ tag: "failed", message: "request failed" });
-    }
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    if (Object.values(errors).some((m) => m !== null)) return;
+    setWelcome(name);
   }
 
   return (
     <div>
-      <button onClick={load}>Load quote</button>
-      {state.tag === "idle" && <p>Click to load.</p>}
-      {state.tag === "loading" && <Spinner />}
-      {state.tag === "loaded" && (
-        <blockquote>
-          <p>{state.quote.text}</p>
-          <footer>— {state.quote.author}</footer>
-        </blockquote>
-      )}
-      {state.tag === "failed" && <p className="error">{state.message}</p>}
+      <form onSubmit={submit}>
+        <label htmlFor="name">Name</label>
+        <input id="name" value={name}
+               onChange={(e) => setName(e.target.value)} />
+        {errors.name && <p className="error">{errors.name}</p>}
+        <label htmlFor="email">Email</label>
+        <input id="email" value={email}
+               onChange={(e) => setEmail(e.target.value)} />
+        {errors.email && <p className="error">{errors.email}</p>}
+        <label htmlFor="age">Age</label>
+        <input id="age" type="number" value={age}
+               onChange={(e) => setAge(e.target.value)} />
+        {errors.age && <p className="error">{errors.age}</p>}
+        <button type="submit">Sign up</button>
+      </form>
+      <p>{welcome === null ? "Fill in the form." : `Welcome, ${welcome}!`}</p>
     </div>
   );
 }
@@ -126,14 +138,14 @@ export function App() {
 </div>
 </div>
 
-<KumikiDemo example="19-effect-http.kumiki" height="240px" />
+<KumikiDemo example="293-signup-form.kumiki" height="460px" />
 
 Want to change it? It's loaded in the [Playground](/guide/playground).
 
 Three differences survive into every app you write:
 
-- **`policy=latest` is one annotation.** Dropping stale responses in React is a hand-written `AbortController` ritual — exactly the kind of outside-the-text machinery that breaks when an AI edits it.
-- **The side effect is declared, not hidden.** `caps = [http.get]` is checked by the compiler; an effect with an undeclared capability is a compile error, not a surprise.
-- **Every definition is flat and independent.** An AI can replace `reducer failed` or `tile App` alone — nothing else needs to move.
+- **The rules live in the type.** `Text where nonempty`, `Email` and `Int where between(13, 120)` are the whole validation: the messages, the refused input and the held-back submit all follow from them. React restates each rule as a check, a message and a guard in `submit` — three places an AI edit has to keep in step.
+- **The reducer only sees valid data.** `submit` runs only when every bound field passes, so `form` is a `Signup` whose `age` is an `Int` between 13 and 120. In React `age` is still a string, and only the guard keeps an invalid one from reaching `setWelcome`.
+- **Every definition is flat and independent.** An AI can tighten `type Signup` or replace `tile SignupForm` alone — nothing else needs to move.
 
 The gap grows with app size: on the [Benchmarks](/guide/benchmarks), Kumiki is **~1.4× fewer tokens and ~2× fewer lines** than the React equivalent.

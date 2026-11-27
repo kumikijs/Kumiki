@@ -69,6 +69,7 @@ The tables below are a curated tour grouped by topic, not a directory listing. T
 | [133-typed-input-bind](./133-typed-input-bind.kumiki) | an `input` bound to an `Int` / `Float` / `Time` slot reads its text as that type, and refuses text that is none |
 | [134-record-field-bind](./134-record-field-bind.kumiki) | a `bind` into one field of a record slot is judged at that field, so a failing sibling does not refuse it |
 | [135-form-submit-gate](./135-form-submit-gate.kumiki) | a form submits only while every field bound inside it shows a valid value — a failing default or a refused edit holds it back |
+| [293-signup-form](./293-signup-form.kumiki) | a signup form validated by its record type: refinements on the fields, `error(field=…)` per field, and a reducer that only ever reads a valid record |
 | [136-submit-button-click](./136-submit-button-click.kumiki) | a submit button with a click reducer runs it and still submits its form; `type="button"` is what keeps a button from submitting |
 | [64-init-slot-argument](./64-init-slot-argument.kumiki) | `app.init` firing an effect with a slot reference as its argument |
 | [65-prefers-dark](./65-prefers-dark.kumiki) | following the OS colour scheme with `prefers-dark()` |
