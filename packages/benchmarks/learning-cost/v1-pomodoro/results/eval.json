@@ -1,9 +1,43 @@
 [
   {
     "path": "packages/benchmarks/learning-cost/v1-pomodoro/results/Claude/output.kumiki",
-    "chars": 1347,
-    "loc": 59,
-    "cl100k": 384,
+    "chars": 1543,
+    "loc": 63,
+    "cl100k": 439,
+    "parse": true,
+    "typecheck": true,
+    "build": true,
+    "errorCount": 0,
+    "errorCategories": {},
+    "firstError": null
+  },
+  {
+    "path": "packages/benchmarks/learning-cost/v1-pomodoro/results/Codex/output.kumiki",
+    "chars": 1047,
+    "loc": 41,
+    "cl100k": 289,
+    "parse": true,
+    "typecheck": false,
+    "build": false,
+    "errorCount": 1,
+    "errorCategories": {
+      "effect-policy": 1
+    },
+    "firstError": {
+      "stage": "typecheck",
+      "code": "E0302",
+      "message": "Unknown capability \"timer\" in app.caps — use a standard capability or register it in kumiki.caps.json",
+      "pos": {
+        "line": 37,
+        "col": 1
+      }
+    }
+  },
+  {
+    "path": "packages/benchmarks/learning-cost/v1-pomodoro/results/Gemini/output.kumiki",
+    "chars": 2077,
+    "loc": 69,
+    "cl100k": 609,
     "parse": true,
     "typecheck": true,
     "build": true,

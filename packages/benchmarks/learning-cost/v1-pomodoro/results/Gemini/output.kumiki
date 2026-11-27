@@ -1,0 +1,68 @@
+type Mode    = Work | Break
+type Seconds = Int where between(0, 1500)
+
+slot remaining : Seconds = 1500
+slot mode      : Mode    = Work
+slot running   : Bool    = false
+
+fn nextMode(m: Mode) -> Mode
+   = match m with
+       | Work  -> Break
+       | Break -> Work
+
+fn maxSeconds(m: Mode) -> Int
+   = match m with
+       | Work  -> 1500
+       | Break -> 300
+
+fn modeLabel(m: Mode) -> Text
+   = match m with
+       | Work  -> "Work"
+       | Break -> "Break"
+
+fn padTwo(n: Int) -> Text
+   = if n < 10 then "0" + n.show else n.show
+
+fn formatTime(secs: Int) -> Text
+   = padTwo((secs / 60).to-int) + ":" + padTwo(secs % 60)
+
+reducer start
+    on=ui.click(StartBtn)
+    do= if !running then running := true
+
+reducer pause
+    on=ui.click(PauseBtn)
+    do= if running then running := false
+
+reducer reset
+    on=ui.click(ResetBtn)
+    do= remaining := maxSeconds(mode)
+        running := false
+
+reducer tick
+    on=timer(1s)
+    do= if running
+        then { if remaining > 1
+               then remaining := remaining - 1
+               else { let next = nextMode(mode); mode := next; remaining := maxSeconds(next) } }
+
+tile StartBtn    = button(text="Start", disabled=running) {bg: "primary", color: "bg"}
+tile PauseBtn    = button(text="Pause", disabled=!running) {bg: "warning", color: "bg"}
+tile ResetBtn    = button(text="Reset") {bg: "surface", color: "fg"}
+tile ModeBadge   = text(modeLabel(mode)) {size: "lg", weight: "bold", color: if mode == Work then "primary" else "success"}
+tile TimeDisplay = heading(formatTime(remaining)) {level: 2, size: "xxl", weight: "bold"}
+
+tile App = page(
+             column(
+               heading("Pomodoro Timer") {level: 1, size: "xl", weight: "bold"},
+               ModeBadge,
+               TimeDisplay,
+               text(remaining.show + "s remaining") {color: "muted"},
+               row(StartBtn, PauseBtn, ResetBtn) {gap: "sm", align: "center"}
+             ) {gap: "md", align: "center", pad: "lg"}
+           ) {title: "Pomodoro Timer"}
+
+app Pomodoro
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

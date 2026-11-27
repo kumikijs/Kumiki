@@ -1,9 +1,9 @@
 [
   {
     "path": "packages/benchmarks/learning-cost/v2-kanban/results/Claude/output.kumiki",
-    "chars": 5291,
-    "loc": 178,
-    "cl100k": 1421,
+    "chars": 5492,
+    "loc": 188,
+    "cl100k": 1624,
     "parse": true,
     "typecheck": true,
     "build": true,
@@ -13,9 +13,9 @@
   },
   {
     "path": "packages/benchmarks/learning-cost/v2-kanban/results/Codex/output.kumiki",
-    "chars": 6517,
-    "loc": 243,
-    "cl100k": 1881,
+    "chars": 4637,
+    "loc": 157,
+    "cl100k": 1311,
     "parse": true,
     "typecheck": true,
     "build": true,
@@ -25,9 +25,9 @@
   },
   {
     "path": "packages/benchmarks/learning-cost/v2-kanban/results/Gemini/output.kumiki",
-    "chars": 4591,
-    "loc": 152,
-    "cl100k": 1314,
+    "chars": 8192,
+    "loc": 331,
+    "cl100k": 2323,
     "parse": true,
     "typecheck": true,
     "build": true,

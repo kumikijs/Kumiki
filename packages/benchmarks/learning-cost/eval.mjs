@@ -5,7 +5,8 @@
 // Emits a JSON line summary to stdout.
 
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { encode as encodeCl100k } from "gpt-tokenizer/encoding/cl100k_base";
 import { compile } from "../../compiler/src/compile.ts";
 import { lex } from "../../compiler/src/lexer.ts";
@@ -26,11 +27,17 @@ function classify(err) {
   return `other(${c})`;
 }
 
-function evalFile(path) {
-  if (!existsSync(path)) {
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+
+// Recorded in eval.json, so it reads the same whichever directory or OS the harness ran from.
+const recordedPath = (abs) => relative(repoRoot, abs).split(sep).join("/");
+
+function evalFile(abs) {
+  const path = recordedPath(abs);
+  if (!existsSync(abs)) {
     return { path, stage: "missing", error: "file not found" };
   }
-  const source = readFileSync(path, "utf8");
+  const source = readFileSync(abs, "utf8");
   const result = {
     path,
     chars: source.length,

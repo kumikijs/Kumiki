@@ -10,15 +10,8 @@ import { describe, expect, it } from "vitest";
 const benchmarksDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "benchmarks");
 
 const KNOWN_BAD: Record<string, "parse" | readonly string[]> = {
-  "learning-cost/v3-issue-tracker/results/Gemini/output.kumiki": [
-    "E0103",
-    "E0213",
-    "E0234",
-    "W0212",
-  ],
   "learning-cost/v1-pomodoro/results/Codex/output.kumiki": ["E0302"],
   "learning-cost/v4-project-management/results/Codex/output.kumiki": ["E0201", "E0601"],
-  "learning-cost/v4-project-management/results/Gemini/output.kumiki": "parse",
 };
 
 // The workspace links under benchmarks/node_modules lead into other packages' fixtures.
