@@ -289,7 +289,7 @@ reducer onRouteErr
         emit navigate-replace({path: "/todos", params: {}, query: {}})
 ```
 
-boundary に捕まらない render の panic は、`route.error` reducer を 1 回だけ発火する — 表示中のルートがマッチしたすべてのパターンのもので、親のものがそのサブルートのものより先に走る（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。reducer の書き込みはそれ自体では render を始めない（描こうとするページはたった今 panic したページそのものだから）。reducer が返った後に runtime がもう 1 回だけ render し、書き込み（navigation を含む）はその render で反映される。その render も panic した場合は組み込みの panic 表示を出し、それに対して `route.error` を再び発火することはない。
+boundary に捕まらない render の panic は、`route.error` reducer を 1 回だけ発火する — 表示中のルートがマッチしたすべてのパターンのもので、親のものがそのサブルートのものより先に走る（[ルーティング §3.4](./routing.md#_3-4-ルートライフサイクル)）。reducer の書き込みはそれ自体では render を始めない（描こうとするページはたった今 panic したページそのものだから）。reducer が返った後に runtime がもう 1 回だけ render し、書き込み（navigation を含む）はその render で反映される。その render も panic した場合は組み込みの panic 表示を出し、それに対して `route.error` を再び発火することはない。`route.error` reducer 自身の失敗、すなわち本体の panic や、emit したものの dispatch のような本体の外の throw は、どの reducer の本体の panic とも同じく報告される：`console.error`、`category: "reducer"` で自身の `location`（`reducer "onRouteErr"`）を持つ `panic` step、そして `app.error` である（[§7.2.3](#_7-2-3-the-app-error-reducer)）。その後の `route.error` reducer は引き続き実行される。
 
 ---
 

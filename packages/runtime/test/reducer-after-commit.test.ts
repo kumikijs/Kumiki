@@ -1,23 +1,30 @@
 import type { AppShape, EmitSpec, EpisodeLogger, MountedApp, ReducerSpec } from "@kumikijs/runtime";
-import { createEpisodeLogger, mount } from "@kumikijs/runtime";
+import { createEpisodeLogger } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { bareApp } from "./helpers/app.ts";
+import { bareApp, keylessEffect } from "./helpers/app.ts";
 import { captureConsole } from "./helpers/console.ts";
-import { freshRoot } from "./helpers/dom.ts";
+import { mountLogged, SINK_DOWN, throwingLogger } from "./helpers/episode-apps.ts";
 
-// `save`'s key is read by the dispatcher when it takes the emit, after the reducer body that
-// emitted it has returned, so its dispatch throws past that body.
-const saveOf = (what: string): EmitSpec => ({ effect: "save", args: [what] });
-const noKeyFor = (what: string): string => `no key for ${what}`;
+// What `save`'s key throws for each argument: one instance apiece, so a test can tell the throw
+// itself from a copy of it.
+const NO_KEY = {
+  note: new Error("no key for note"),
+  draft: new Error("no key for draft"),
+  a: new Error("no key for a"),
+  b: new Error("no key for b"),
+  batch: new AggregateError([new Error("x"), new Error("y")], "the host's batch failed"),
+};
+const saveOf = (what: keyof typeof NO_KEY): EmitSpec => ({ effect: "save", args: [what] });
 const AUDIT: EmitSpec = { effect: "audit", args: ["fresh"] };
-const SINK_DOWN = "episode sink offline";
+const plainLogger = (): EpisodeLogger => createEpisodeLogger();
 
 type Trigger = "click" | "result";
 
 type Probe = { audits: unknown[]; appErrors: unknown[] };
 
 type RunOptions = {
-  logger?: EpisodeLogger;
+  /** The episode logger to mount under, built once the app exists. */
+  logger?: (app: AppShape) => EpisodeLogger;
   /** What the `app.error` reducer emits. */
   onErrorEmits?: EmitSpec[];
 };
@@ -44,17 +51,7 @@ function commitApp(
     slots: { note: { value: "stale" }, beats: { value: 0 } },
     effects: {
       load: { name: "load", cap: "", invoke: async () => ({ kind: "ok", value: null }) },
-      save: {
-        name: "save",
-        cap: "",
-        policy: {
-          kind: "latest-per-key",
-          keyOf: (what) => {
-            throw new Error(noKeyFor(String(what)));
-          },
-        },
-        invoke: async () => ({ kind: "ok", value: null }),
-      },
+      save: keylessEffect("save", (what) => NO_KEY[what as keyof typeof NO_KEY]),
       audit: {
         name: "audit",
         cap: "",
@@ -99,19 +96,15 @@ type Run = { app: AppShape; probe: Probe; root: HTMLElement; thrown: unknown };
 async function runCommit(
   trigger: Trigger,
   emits: EmitSpec[],
-  { logger = createEpisodeLogger(), onErrorEmits = [] }: RunOptions = {},
+  { logger = plainLogger, onErrorEmits = [] }: RunOptions = {},
 ): Promise<Run> {
   const { app, probe } = commitApp(trigger, emits, onErrorEmits);
-  const root = freshRoot();
-  const handle = mount(app, root, { episodeLogger: logger });
-  onTestFinished(() => {
-    handle.dispose();
-    root.remove();
-  });
+  const { root, dispatch, dispose } = mountLogged(app, logger(app));
+  onTestFinished(dispose);
   await vi.advanceTimersByTimeAsync(25);
   let thrown: unknown;
   try {
-    (app as MountedApp)._dispatch(trigger === "click" ? "commit" : "start", {});
+    dispatch(trigger === "click" ? "commit" : "start", {});
   } catch (e) {
     thrown = e;
   }
@@ -126,36 +119,42 @@ async function beatsAcross(app: AppShape): Promise<[unknown, unknown]> {
   return [before, app.live?.beats];
 }
 
-/** An episode logger that throws while it records a render in which `note` changed. */
-function throwingOnNoteRender(): EpisodeLogger {
-  const logger = createEpisodeLogger();
-  return {
-    ...logger,
-    recordSignalUpdate(dirty, binds) {
-      logger.recordSignalUpdate(dirty, binds);
-      if (dirty.includes("note")) throw new Error(SINK_DOWN);
-    },
-  };
-}
-
-/** An episode logger that throws while it records `commit`'s reducer step. */
-function throwingOnCommit(): EpisodeLogger {
-  const logger = createEpisodeLogger();
-  return {
-    ...logger,
-    recordReducer(name, diffs, emits, envReads) {
-      logger.recordReducer(name, diffs, emits, envReads);
-      if (name === "commit") throw new Error(SINK_DOWN);
-    },
-  };
-}
-
 const messageOf = (e: unknown): unknown => (e as { message?: unknown }).message;
+
+/** Each throw a click was handed: those an `AggregateError` holds, or the one throw. */
+const eachThrow = (thrown: unknown): unknown[] =>
+  thrown instanceof AggregateError ? thrown.errors : [thrown];
+
+type Source = [what: string, emits: EmitSpec[], logger: () => EpisodeLogger, messages: string[]];
+
+// What throws after `commit`'s batch commits, and the message of each throw, in order.
+const SOURCES: Source[] = [
+  ["one emit", [saveOf("note"), AUDIT], plainLogger, [NO_KEY.note.message]],
+  [
+    "two emits",
+    [saveOf("note"), saveOf("draft"), AUDIT],
+    plainLogger,
+    [NO_KEY.note.message, NO_KEY.draft.message],
+  ],
+  [
+    "an emit and the logger recording its render",
+    [saveOf("note"), AUDIT],
+    () => throwingLogger("recordSignalUpdate", (dirty) => dirty.includes("note")),
+    [NO_KEY.note.message, SINK_DOWN],
+  ],
+  [
+    "the logger recording the reducer",
+    [AUDIT],
+    () => throwingLogger("recordReducer", (name) => name === "commit"),
+    [SINK_DOWN],
+  ],
+];
 
 let errors: string[];
 beforeEach(() => {
   vi.useFakeTimers();
   errors = captureConsole("error");
+  captureConsole("warn");
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -165,101 +164,80 @@ afterEach(() => {
 describe.each<[string, Trigger]>([
   ["on a click", "click"],
   ["on an effect's result", "result"],
-])("a reducer %s whose emit's dispatch throws after its batch commits", (_, trigger) => {
-  const emits = [saveOf("note"), AUDIT];
-
-  it("still dispatches the emits after it", async () => {
-    const { probe } = await runCommit(trigger, emits);
+])("a reducer %s that throws after its batch commits", (_, trigger) => {
+  it.each(
+    SOURCES,
+  )("still dispatches its emits, stops its timers and renders, when %s throws", async (_, emits, logger) => {
+    const { app, probe, root } = await runCommit(trigger, emits, { logger });
     expect(probe.audits).toEqual(["fresh"]);
-  });
-
-  it("still stops its timers", async () => {
-    const { app } = await runCommit(trigger, emits);
-    const [before, after] = await beatsAcross(app);
-    expect(after).toBe(before);
-  });
-
-  it("still renders what it wrote", async () => {
-    const { app, root } = await runCommit(trigger, emits);
     expect(app.live?.note).toBe("fresh");
     expect(root.textContent).toBe("note=fresh");
+    const [before, after] = await beatsAcross(app);
+    expect(before).toBeGreaterThan(0);
+    expect(after).toBe(before);
   });
 });
 
-describe("what a reducer's emit threw after its batch committed", () => {
-  it("goes on to the click that ran it, as itself", async () => {
-    const { thrown, probe } = await runCommit("click", [saveOf("note"), AUDIT]);
-    expect(thrown).toBeInstanceOf(Error);
-    expect(thrown).not.toBeInstanceOf(AggregateError);
-    expect(messageOf(thrown)).toBe(noKeyFor("note"));
+describe("what a reducer on a click threw after its batch committed", () => {
+  it.each(SOURCES)("goes on to the click, when %s throws", async (_, emits, logger, messages) => {
+    const { thrown, probe } = await runCommit("click", emits, { logger });
+    expect(eachThrow(thrown).map(messageOf)).toEqual(messages);
     expect(probe.appErrors).toEqual([]);
   });
 
-  it("is reported once under category effect, on an effect's result", async () => {
-    const { thrown, probe } = await runCommit("result", [saveOf("note"), AUDIT]);
-    expect(thrown).toBeUndefined();
-    expect(probe.appErrors).toEqual([
-      expect.objectContaining({
-        message: noKeyFor("note"),
-        location: 'effect "load"',
-        category: "effect",
-      }),
-    ]);
-    expect(errors.filter((line) => line.includes('effect "load"'))).toHaveLength(1);
+  it("is the one throw itself, when one step threw", async () => {
+    const { thrown } = await runCommit("click", [saveOf("note"), AUDIT]);
+    expect(thrown).toBe(NO_KEY.note);
   });
 
-  it("goes on to the click as one AggregateError holding each, when several emits throw", async () => {
-    const { thrown, probe } = await runCommit("click", [saveOf("note"), saveOf("draft"), AUDIT]);
+  it("is one AggregateError whose message names each throw, when several steps threw", async () => {
+    const { thrown } = await runCommit("click", [saveOf("note"), saveOf("draft"), AUDIT]);
     expect(thrown).toBeInstanceOf(AggregateError);
-    expect((thrown as AggregateError).errors.map(messageOf)).toEqual([
-      noKeyFor("note"),
-      noKeyFor("draft"),
-    ]);
-    expect(probe.audits).toEqual(["fresh"]);
+    expect(messageOf(thrown)).toBe(
+      '2 steps after reducer "commit" threw: no key for note; no key for draft',
+    );
   });
 
-  it("is reported once per throw on an effect's result, when several emits throw", async () => {
-    const { probe } = await runCommit("result", [saveOf("note"), saveOf("draft"), AUDIT]);
-    expect(probe.appErrors).toEqual([
-      expect.objectContaining({ message: noKeyFor("note"), category: "effect" }),
-      expect.objectContaining({ message: noKeyFor("draft"), category: "effect" }),
-    ]);
-    expect(probe.audits).toEqual(["fresh"]);
+  it("is an AggregateError the app's own code threw, as itself", async () => {
+    const { thrown } = await runCommit("click", [saveOf("batch"), AUDIT]);
+    expect(thrown).toBe(NO_KEY.batch);
   });
 
-  it("is reported once per throw on an effect's result, when an emit and the logger both throw", async () => {
-    captureConsole("warn");
-    const { probe } = await runCommit("result", [saveOf("note")], {
-      logger: throwingOnNoteRender(),
+  it("holds what the logger closing its episode threw, after the steps' throws", async () => {
+    const { thrown } = await runCommit("click", [saveOf("note"), AUDIT], {
+      logger: (app) => throwingLogger("endTrigger", () => app.live?.note === "fresh"),
     });
-    expect(probe.appErrors.map(messageOf)).toEqual([noKeyFor("note"), SINK_DOWN]);
+    expect(eachThrow(thrown).map(messageOf)).toEqual([NO_KEY.note.message, SINK_DOWN]);
+  });
+});
+
+describe("what a reducer on an effect's result threw after its batch committed", () => {
+  it.each(
+    SOURCES,
+  )("is reported once per throw under category effect, when %s throws", async (_, emits, logger, messages) => {
+    const { thrown, probe } = await runCommit("result", emits, { logger });
+    expect(thrown).toBeUndefined();
+    expect(probe.appErrors).toEqual(
+      messages.map((message) =>
+        expect.objectContaining({ message, location: 'effect "load"', category: "effect" }),
+      ),
+    );
+    expect(errors.filter((line) => line.includes('effect "load"'))).toHaveLength(messages.length);
   });
 
-  it("is reported once per throw on an app.error reducer, when several of its emits throw", async () => {
+  it("reports an AggregateError the app's own code threw as one throw", async () => {
+    const { probe } = await runCommit("result", [saveOf("batch"), AUDIT]);
+    expect(probe.appErrors.map(messageOf)).toEqual([NO_KEY.batch.message]);
+  });
+
+  it("reports each throw past an app.error reducer as its own, when several of its emits throw", async () => {
     const { probe } = await runCommit("result", [saveOf("note")], {
       onErrorEmits: [saveOf("a"), saveOf("b")],
     });
     expect(probe.appErrors).toHaveLength(1);
     expect(errors.filter((line) => line.includes('reducer "onError"'))).toEqual([
-      expect.stringContaining(noKeyFor("a")),
-      expect.stringContaining(noKeyFor("b")),
+      expect.stringContaining(NO_KEY.a.message),
+      expect.stringContaining(NO_KEY.b.message),
     ]);
-  });
-});
-
-describe("a reducer whose step the episode logger throws on after its batch commits", () => {
-  it.each<[string, Trigger]>([
-    ["a click", "click"],
-    ["an effect's result", "result"],
-  ])("still dispatches its emits, stops its timers and renders, on %s", async (_, trigger) => {
-    captureConsole("warn");
-    const { app, probe, root, thrown } = await runCommit(trigger, [AUDIT], {
-      logger: throwingOnCommit(),
-    });
-    expect(probe.audits).toEqual(["fresh"]);
-    expect(root.textContent).toBe("note=fresh");
-    const [before, after] = await beatsAcross(app);
-    expect(after).toBe(before);
-    expect(trigger === "click" ? messageOf(thrown) : messageOf(probe.appErrors[0])).toBe(SINK_DOWN);
   });
 });

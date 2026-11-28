@@ -1,24 +1,7 @@
-import { feature } from "@kumikijs/examples";
-import { createEpisodeLogger, type EpisodeLogger, type MountedApp } from "@kumikijs/runtime";
-import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { mountApp, tick, waitUntil } from "./helpers/dom.ts";
-import { loadApp } from "./helpers/load.ts";
-
-const EXAMPLE = feature("295-reducer-steps-after-commit");
-
-const SINK_DOWN = "episode sink offline";
-
-/** An episode logger that throws while it records the reducer step of `save`. */
-function throwingOnSave(): EpisodeLogger {
-  const logger = createEpisodeLogger();
-  return {
-    ...logger,
-    recordReducer(name, diffs, emits, envReads) {
-      logger.recordReducer(name, diffs, emits, envReads);
-      if (name === "save") throw new Error(SINK_DOWN);
-    },
-  };
-}
+import type { MountedApp } from "@kumikijs/runtime";
+import { afterEach, describe, expect, it } from "vitest";
+import { mountFeature, tick, waitUntil } from "./helpers/dom.ts";
+import { SINK_DOWN, throwingLogger } from "./helpers/episodes.ts";
 
 type Saved = {
   text: string;
@@ -32,12 +15,8 @@ type Saved = {
  * click Save and wait for both effects' results.
  */
 async function saveOnce(): Promise<Saved> {
-  vi.spyOn(console, "error").mockImplementation(() => {});
-  const app = await loadApp(EXAMPLE);
-  const { root, handle } = mountApp(app, { episodeLogger: throwingOnSave() });
-  onTestFinished(() => {
-    handle.dispose();
-    root.remove();
+  const { app, root } = await mountFeature("295-reducer-steps-after-commit", {
+    episodeLogger: throwingLogger("recordReducer", (name) => name === "save"),
   });
   await waitUntil(() => (app.live?.beats as number) > 0);
   let thrown: unknown;
@@ -55,7 +34,6 @@ async function saveOnce(): Promise<Saved> {
 
 describe("a throw while the episode logger records a committed save (example 295)", () => {
   afterEach(() => {
-    vi.restoreAllMocks();
     localStorage.clear();
   });
 

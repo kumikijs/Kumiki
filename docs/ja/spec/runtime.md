@@ -182,9 +182,9 @@ reducer clear on=ui.click(Btn) do= name := ""    # 拒否される — 許され
 
 #### コミットしたバッチの後に続くもの {#what-follows-a-committed-batch}
 
-バッチがコミットされると、reducer の emit は emit した順に dispatch され、その `stop-timer` が実行され、ページは書き込まれた内容を描画する。これらはそれぞれ、それより前のものが throw したかどうかにかかわらず実行される。emit の dispatch や、reducer を記録するホストの episode logger のように、そのどれかが throw しても、後の emit は dispatch され、タイマーは止まり、ページは描画される。コミットしたバッチが中途半端に適用されたまま残ることはない。
+バッチがコミットされると、reducer がその episode に記録され、reducer の emit は emit した順に dispatch され、その `stop-timer` が実行され、ページは書き込まれた内容を描画し、バッチが slot を変えたときはその描画が記録される（[§10.5.1](#_10-5-1-structure-of-an-episode) の `reducer` step と `signal-update` step）。これらはそれぞれ、それより前のものが throw したかどうかにかかわらず実行される。emit の dispatch や、reducer またはその描画を記録するホストの episode logger のように、そのどれかが throw しても、後の emit は dispatch され、タイマーは止まり、ページは描画される。コミットしたバッチが中途半端に適用されたまま残ることはない。
 
-throw されたものは、残りがすべて実行された後で、reducer の本体の外の throw として引き渡される。effect の結果では各 throw が [§10.4.5](#_10-4-5-delivery-of-results) のとおりに報告され、`app.error` reducer ではその reducer 自身の失敗として報告される（[lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）。それ以外のトリガーでは、クリックのようにその reducer を実行したものへ渡される。throw した step が 1 つならその throw そのもの、複数ならそれぞれの throw を順に保持する 1 つの `AggregateError` である。
+throw されたものは、残りがすべて実行された後で、reducer の本体の外の throw として引き渡される。reducer が開いた episode を episode logger が閉じるときの throw も同じである。effect の結果では各 throw が [§10.4.5](#_10-4-5-delivery-of-results) のとおりに報告され、`app.error` reducer と `route.error` reducer ではその reducer 自身の失敗として報告される（[lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)、[§7.5](./lifecycle.md#_7-5-404-と-error-ページ)）。それ以外のトリガーでは、クリックのようにその reducer を実行したものへ渡される。throw した step が 1 つならその throw そのもの、複数ならそれぞれの throw を順に保持する 1 つの `AggregateError` であり、そのメッセージは各 throw のメッセージを挙げる。これらの step の中で走る reducer、たとえば描画が発火する `tile.mount` reducer は、自分の throw をその step へ 1 つずつ引き渡すので、各 throw はやはり個別に報告される。
 
 ### 10.3.4 DOM レンダリングの不変条件
 

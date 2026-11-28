@@ -289,7 +289,7 @@ reducer onRouteErr
         emit navigate-replace({path: "/todos", params: {}, query: {}})
 ```
 
-A render that panics with no boundary to catch it fires the `route.error` reducers once — those on every pattern the route being shown is matched under, the parent's before its sub-route's ([Routing §3.4](./routing.md#_3-4-route-lifecycle)). Their writes do not start a render of their own — the page they would render is the one that just panicked — so after they return the runtime renders once more, and that render is where their writes, a navigation included, take effect. If it panics too, the built-in panic display is shown and `route.error` is not fired again for it.
+A render that panics with no boundary to catch it fires the `route.error` reducers once — those on every pattern the route being shown is matched under, the parent's before its sub-route's ([Routing §3.4](./routing.md#_3-4-route-lifecycle)). Their writes do not start a render of their own — the page they would render is the one that just panicked — so after they return the runtime renders once more, and that render is where their writes, a navigation included, take effect. If it panics too, the built-in panic display is shown and `route.error` is not fired again for it. A failure of a `route.error` reducer's own, a panic in its body or a throw past it such as in the dispatch of what it emitted, is reported as a panic in any reducer's body is: to `console.error`, as a `panic` step under `category: "reducer"` with its own `location` (`reducer "onRouteErr"`), and to `app.error` ([§7.2.3](#_7-2-3-the-app-error-reducer)). The `route.error` reducers after it still run.
 
 ---
 

@@ -7,7 +7,7 @@ import type {
   EpisodeStep,
   ReducerSpec,
 } from "@kumikijs/runtime";
-import { mount } from "@kumikijs/runtime";
+import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { emitId, withEnvRecord, withEnvReplay } from "../src/core.ts";
 import { httpError } from "../src/effects-http.ts";
@@ -344,7 +344,7 @@ describe("the effect-cancel step an http.cancel records", () => {
     }) => Promise<void>,
   ): Promise<void> {
     const { app, held } = makeApp();
-    const { logger, dispatch, dispose } = mountLogged(app, 50);
+    const { logger, dispatch, dispose } = mountLogged(app, createEpisodeLogger({ memoryMax: 50 }));
     try {
       await body({
         start: (effect, id) => dispatch("start", { effect, id }),

@@ -31,9 +31,11 @@ export type LoggedMount = {
   dispose: () => void;
 };
 
-/** Mount `app` on a fresh root with an episode logger that keeps `memoryMax` episodes. */
-export function mountLogged(app: AppShape, memoryMax = 10): LoggedMount {
-  const logger = createEpisodeLogger({ memoryMax });
+/** Mount `app` on a fresh root with `logger`, by default one that keeps 10 episodes. */
+export function mountLogged(
+  app: AppShape,
+  logger: EpisodeLogger = createEpisodeLogger({ memoryMax: 10 }),
+): LoggedMount {
   const root = freshRoot();
   const mounted = mount(app, root, { episodeLogger: logger });
   return {
@@ -45,6 +47,27 @@ export function mountLogged(app: AppShape, memoryMax = 10): LoggedMount {
       root.remove();
     },
   };
+}
+
+/** What {@link throwingLogger} throws, as a host's episode sink that went offline would. */
+export const SINK_DOWN = "episode sink offline";
+
+/**
+ * An episode logger whose `method` does its work and then throws {@link SINK_DOWN}, each time
+ * `when` holds for what it was handed.
+ */
+export function throwingLogger<M extends keyof EpisodeLogger>(
+  method: M,
+  when: (...args: Parameters<EpisodeLogger[M]>) => boolean,
+): EpisodeLogger {
+  const logger = createEpisodeLogger();
+  const work = logger[method] as (...args: Parameters<EpisodeLogger[M]>) => unknown;
+  const throwing = (...args: Parameters<EpisodeLogger[M]>): unknown => {
+    const out = work(...args);
+    if (when(...args)) throw new Error(SINK_DOWN);
+    return out;
+  };
+  return { ...logger, [method]: throwing };
 }
 
 /**

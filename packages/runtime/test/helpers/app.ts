@@ -1,4 +1,4 @@
-import type { AppShape, MountedApp, ReducerSpec, TileNode } from "@kumikijs/runtime";
+import type { AppShape, EffectSpec, MountedApp, ReducerSpec, TileNode } from "@kumikijs/runtime";
 import { _stdlibCore, mount } from "@kumikijs/runtime";
 
 /** An app with no slots, capabilities, effects, init emits or reducers, plus `overrides`. */
@@ -17,6 +17,25 @@ export function mountApp(app: AppShape): MountedApp {
   document.body.appendChild(root);
   mount(app, root);
   return app as MountedApp;
+}
+
+/**
+ * A `latest-per-key` effect `name` whose key throws `thrown(arg)` for the argument it is emitted
+ * with. The dispatcher reads the key when it takes the emit, after the reducer body that emitted
+ * it has returned, so a reducer that emits it throws past its body.
+ */
+export function keylessEffect(name: string, thrown: (arg: unknown) => unknown): EffectSpec {
+  return {
+    name,
+    cap: "",
+    policy: {
+      kind: "latest-per-key",
+      keyOf: (arg) => {
+        throw thrown(arg);
+      },
+    },
+    invoke: async () => ({ kind: "ok", value: null }),
+  };
 }
 
 export function lifecycleReducer(name: string, apply: ReducerSpec["apply"]): ReducerSpec {

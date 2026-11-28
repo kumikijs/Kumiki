@@ -18,6 +18,10 @@ now:    stored=1 stamps=1  autosave stopped
 ```
 
 Each of those steps now runs whatever the ones before it threw. What threw is
-handed on once they all have. On an effect's result and on an `app.error`
-reducer, each throw is reported. On any other trigger, it goes on to whatever
-ran the reducer, as one `AggregateError` when several steps threw.
+handed on once they all have, together with a throw from the episode logger
+closing the reducer's episode. On an effect's result and on an `app.error` or
+`route.error` reducer, each throw is reported on its own, including each throw
+of a `tile.mount` reducer the render fires. A throw past a `route.error`
+reducer used to be dropped without a report. On any other trigger, what threw
+goes on to whatever ran the reducer, as one `AggregateError` whose message
+names each throw when several steps threw.

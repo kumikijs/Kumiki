@@ -7,8 +7,9 @@
 # stops, and the page still shows what `save` wrote. What threw then goes on
 # to the click that ran `save`.
 #
-# The scenario walks the plain case. An integration test in `packages/tests`
-# mounts this app with an episode logger that throws while it records `save`.
+# The scenario walks the plain case: a save before `autosave` first fires, and
+# no beat after it. An integration test in `packages/tests` mounts this app
+# with an episode logger that throws while it records `save`.
 
 slot draft  : Text = "hello"
 slot status : Text = "editing"
