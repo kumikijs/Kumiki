@@ -196,6 +196,59 @@ describe("Decoder.Json(T) refuses a value that is not a T", () => {
   });
 });
 
+// The runtime tells a variant from a record by its `_tag` field, so a record that kept one would
+// read as a variant.
+describe("Decoder.Json(T) removes a _tag key from each record position", () => {
+  const ann = { id: 7, name: "Ann" };
+
+  it.each([
+    { t: "User", value: { _tag: "a", ...ann }, read: ann },
+    { t: "User", value: { _tag: "Some", _0: 1, ...ann }, read: { _0: 1, ...ann } },
+    { t: "{id: Int, name: Text}", value: { _tag: "a", ...ann }, read: ann },
+    { t: "List(User)", value: [{ _tag: "a", ...ann }, ann], read: [ann, ann] },
+    {
+      t: "Option(User)",
+      value: { _tag: "Some", _0: { _tag: "a", ...ann } },
+      read: { _tag: "Some", _0: ann },
+    },
+    { t: "Map(Text, User)", value: { _tag: { _tag: "a", ...ann } }, read: { _tag: ann } },
+    {
+      t: "Page(User)",
+      value: { _tag: "p", items: [{ _tag: "a", ...ann }], next: { _tag: "None" } },
+      read: { items: [ann], next: { _tag: "None" } },
+    },
+    {
+      t: "Tree",
+      value: { v: 1, kids: [{ _tag: "a", v: 2, kids: [] }] },
+      read: { v: 1, kids: [{ v: 2, kids: [] }] },
+    },
+    { t: "Memo", value: { _tag: "a", text: "x" }, read: { text: "x" } },
+    { t: "Stamp", value: { _tag: "a", at: "2026-03-07T10:00:00Z" }, read: { at: AT } },
+    {
+      t: "File",
+      value: { _tag: "a", name: "a.txt", size: 3, type: "text/plain", _file: {} },
+      read: { name: "a.txt", size: 3, type: "text/plain", _file: {} },
+    },
+  ])("reads $value as $t into $read", async ({ t, value, read }) => {
+    expect((await checkOf(t))(value)).toBeUndefined();
+    expect(value).toEqual(read);
+  });
+
+  it("refuses a structured key whose record holds a _tag key, which is no text a User is stored as", async () => {
+    const key = '{"_tag":"a","id":7,"name":"Ann"}';
+    expect((await checkOf("Map(User, Int)"))({ [key]: 1 })).toEqual(
+      failure("expected User", [{ key }]),
+    );
+    expect((await checkOf("Map(User, Int)"))({ '{"id":7,"name":"Ann"}': 1 })).toBeUndefined();
+  });
+
+  it("throws on a frozen record that holds a _tag key", async () => {
+    const check = await checkOf("User");
+    expect(() => check(Object.freeze({ _tag: "a", ...ann }))).toThrow(TypeError);
+    expect(check(Object.freeze({ ...ann }))).toBeUndefined();
+  });
+});
+
 // A storage tag or an IndexedDB clone can hand back an object JSON never makes.
 describe("Decoder.Json(T) takes only a plain object as a record, a Map or a Set", () => {
   it.each([

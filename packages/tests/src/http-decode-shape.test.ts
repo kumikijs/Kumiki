@@ -7,6 +7,7 @@ import { type FetchDouble, stubFetch } from "./helpers/http-double.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("284-decode-checks-shape");
+const DROPS_TAG = feature("306-decode-drops-variant-tag");
 
 // 2026-03-07T10:00:00Z
 const AT = 1772877600000;
@@ -90,6 +91,13 @@ describe("Decoder.Json(T) through the built-in http handler", () => {
     expect(settled.err).toEqual({ _tag: "None" });
   });
 
+  // The runtime tells a variant from a record by its `_tag` field.
+  it("drops a _tag key from a body that is a User, so .ok gets a User", async () => {
+    const settled = await answer(USER, { _tag: "a", id: 7, name: "Ann" });
+    expect(settled.got).toEqual({ _tag: "Some", _0: { id: 7, name: "Ann" } });
+    expect(settled.err).toEqual({ _tag: "None" });
+  });
+
   it("reads each Time field from ISO text or a number of milliseconds", async () => {
     const body = { iso: "2026-03-07T10:00:00Z", ms: AT, off: "2026-03-07T19:00:00+09:00" };
     const settled = await answer(BOOKING, body);
@@ -134,6 +142,16 @@ describe("Decoder.Json(T) through the built-in http handler", () => {
     expect(text).toContain("user: 200 decode failed: expected Int at .id");
     expect(text).toContain(`booking: an hour later is ${AT + 3_600_000}`);
     expect(httpRequests().filter((r) => r === "GET /api/user")).toHaveLength(1);
+  });
+
+  it("shows example 306's record without the _tag key its fixture sends", async () => {
+    useHttpFixture(readHttpFixture(DROPS_TAG));
+    const app = await loadApp(DROPS_TAG);
+    const text = await withMounted(app, async (root) => {
+      await waitUntil(() => !(root.textContent ?? "").includes("loading"), { timeoutMs: 3000 });
+      return root.textContent ?? "";
+    });
+    expect(text).toContain('item: {n: 1, note: "kept"}, n is 1');
   });
 });
 
@@ -183,5 +201,32 @@ app S
       return live.why;
     });
     expect(seen).toBe(why);
+  });
+
+  it("drops a _tag key from a stored record, so .ok gets the record", async () => {
+    const app = await loadSource(`slot shown : Text = ""
+
+effect load cap=storage.read
+            in=Unit
+            out=Result(Option({n: Int}), Text)
+            map-request={key: "item", decode: Decoder.Json({n: Int})}
+
+reducer boot on=app.start      do= emit load()
+reducer got  on=load.ok($v, _) do= shown := $v.show
+
+tile App = column(text(shown))
+
+app S
+    caps   = [storage.read]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`);
+    localStorage.setItem("item", JSON.stringify({ _tag: "a", n: 1 }));
+    const seen = await withMounted(app, async () => {
+      const live = defined(app.live, "the app's live map") as Record<string, unknown>;
+      await waitUntil(() => live.shown !== "", { timeoutMs: 3000 });
+      return live.shown;
+    });
+    expect(seen).toBe("Some({n: 1})");
   });
 });

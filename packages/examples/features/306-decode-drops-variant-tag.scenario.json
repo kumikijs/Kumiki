@@ -1,0 +1,15 @@
+{
+  "effects": {
+    "loadItem": [{ "outcome": "ok", "value": { "n": 1, "note": "kept" } }]
+  },
+  "steps": [
+    {
+      "label": "`.ok` gets the record without its `_tag` key, so it shows as a record",
+      "expect": {
+        "noErrors": true,
+        "state": { "item": "{n: 1, note: \"kept\"}, n is 1" },
+        "domIncludes": ["item: {n: 1, note: \"kept\"}, n is 1"]
+      }
+    }
+  ]
+}

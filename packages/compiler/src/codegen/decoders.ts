@@ -14,7 +14,8 @@ export type Decoders = {
    * it can check: a function that answers `undefined` for a value that is a `t`, and otherwise the
    * first position that is not (the shape a refused predicate has, so the handlers report both
    * alike). It reads a `Time` position given as text by `Time.parse`'s grammar and writes the
-   * instant back in place, so the value it accepted is a `t`.
+   * instant back in place, and removes a record position's `_tag` key, which would make the
+   * record read as a variant, so the value it accepted is a `t`.
    */
   decoderOf(t: TypeExpr): string | undefined;
 };
@@ -172,6 +173,8 @@ export function decoders(env: TypeEnv, refinements: NestedRefinements): Decoders
       generics: readonly string[],
     ): string[] => [
       unless(`${plain()}(v)`, label),
+      // E0240 keeps every record type from declaring the field the runtime marks a variant with.
+      `if (Object.hasOwn(v, ${JSON.stringify(VARIANT_TAG_FIELD)})) delete v.${VARIANT_TAG_FIELD};`,
       ...fields.flatMap((field) => {
         const name = JSON.stringify(field.name);
         return [
