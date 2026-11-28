@@ -1,3 +1,4 @@
+import { VARIANT_TAG_FIELD } from "@kumikijs/runtime/variant-tag";
 import type { TypeEnv } from "../assignable.ts";
 import { assertNever, type Refinement, type TypeExpr } from "../ast.ts";
 import { keyRepresentation } from "../key-representation.ts";
@@ -96,7 +97,9 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
       case "TypeUnion":
         return walk(
           t,
-          t.variants.map((variant) => `v?._tag === ${JSON.stringify(variant.name)}`).join(" || "),
+          t.variants
+            .map((variant) => `v?.${VARIANT_TAG_FIELD} === ${JSON.stringify(variant.name)}`)
+            .join(" || "),
           t.variants.flatMap((variant) =>
             variant.payloads.flatMap((p, i) => {
               const check = explain(p, generics);
@@ -107,7 +110,7 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
                   ? `{ variant: ${tag} }`
                   : `{ variant: ${tag}, payload: ${i} }`;
               return [
-                `if (v._tag === ${tag}) { ${at(step, check, `v[${JSON.stringify(`_${i}`)}]`)} }`,
+                `if (v.${VARIANT_TAG_FIELD} === ${tag}) { ${at(step, check, `v[${JSON.stringify(`_${i}`)}]`)} }`,
               ];
             }),
           ),
@@ -271,7 +274,9 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
       const name = JSON.stringify(tag);
       const onPath = tag === "Err" ? "false" : "o[0]?.get === true";
       return check
-        ? [`if (v._tag === ${name}) { ${at(`{ variant: ${name} }`, check, "v._0", onPath)} }`]
+        ? [
+            `if (v.${VARIANT_TAG_FIELD} === ${name}) { ${at(`{ variant: ${name} }`, check, "v._0", onPath)} }`,
+          ]
         : [];
     };
     const object = 'v !== null && typeof v === "object"';
@@ -317,9 +322,13 @@ export function nestedRefinements(env: TypeEnv): NestedRefinements {
         return walk(t, `${object} && !Array.isArray(v)`, steps);
       }
       case "Option":
-        return walk(t, 'v?._tag === "Some" || v?._tag === "None"', tagged("Some", a0));
+        return walk(
+          t,
+          `v?.${VARIANT_TAG_FIELD} === "Some" || v?.${VARIANT_TAG_FIELD} === "None"`,
+          tagged("Some", a0),
+        );
       case "Result":
-        return walk(t, 'v?._tag === "Ok" || v?._tag === "Err"', [
+        return walk(t, `v?.${VARIANT_TAG_FIELD} === "Ok" || v?.${VARIANT_TAG_FIELD} === "Err"`, [
           ...tagged("Ok", a0),
           ...tagged("Err", a1),
         ]);

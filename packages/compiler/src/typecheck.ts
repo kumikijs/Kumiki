@@ -1,3 +1,4 @@
+import { VARIANT_TAG_FIELD } from "@kumikijs/runtime/variant-tag";
 import {
   type AppDef,
   type FnDef,
@@ -37,7 +38,7 @@ import { checkTheme } from "./typecheck/theme.ts";
 import { checkTile } from "./typecheck/tile.ts";
 import { collectElementIds, collectPrefetchTargets, tileKinds } from "./typecheck/tile-collect.ts";
 import { checkTypeDef, reservedTypeName } from "./typecheck/types.ts";
-import { describeDuplicate, findDuplicateDefinitions, findDuplicateNames } from "./uniqueness.ts";
+import { describeDuplicate, findDuplicateDefinitions, findWrittenNames } from "./uniqueness.ts";
 
 export { type KumikiError, type Severity, severityOf } from "./typecheck/context.ts";
 export { servesNotFound } from "./typecheck/route-chain.ts";
@@ -198,7 +199,7 @@ function checkAll(
   }
   checkUndeclaredIntLiterals(sym, errors);
   checkCycles(program, sym, index, errors);
-  checkDuplicateNames(program, errors);
+  checkWrittenNames(program, errors);
 
   return errors.filter((d) => {
     const variant = sym.undefinedVariants.get(d);
@@ -208,8 +209,11 @@ function checkAll(
   });
 }
 
-/** A definition declared twice (`E0007`), and a name written twice (`E0008`). */
-function checkDuplicateNames(program: Program, errors: KumikiError[]): void {
+/**
+ * A definition declared twice (`E0007`), a name written twice (`E0008`), and a record field
+ * written under the name the runtime marks a variant with (`E0240`).
+ */
+function checkWrittenNames(program: Program, errors: KumikiError[]): void {
   for (const d of findDuplicateDefinitions(program)) {
     errors.push({
       code: "E0007",
@@ -218,8 +222,16 @@ function checkDuplicateNames(program: Program, errors: KumikiError[]): void {
       pos: d.pos,
     });
   }
-  for (const d of findDuplicateNames(program))
-    errors.push({ code: "E0008", ...describeDuplicate(d) });
+  const written = findWrittenNames(program);
+  for (const d of written.duplicates) errors.push({ code: "E0008", ...describeDuplicate(d) });
+  for (const pos of written.tagFields) {
+    errors.push({
+      code: "E0240",
+      kind: "reserved-field-name",
+      message: `Record field "${VARIANT_TAG_FIELD}" is reserved: the runtime marks a variant with a field of that name, so a record that has one is read as a variant. Name the field something else — "tag"`,
+      pos,
+    });
+  }
 }
 
 /** The calls a `fn`'s body makes to other `fn`s: the edges E0006 walks. */

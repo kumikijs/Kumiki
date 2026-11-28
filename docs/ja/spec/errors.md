@@ -1518,6 +1518,20 @@ fn f(x: Color, y: Size) -> Int = match x with | Red -> match y with | Small -> 1
 
 **修正**：長さ・サイズ・幅を 0 以上で書く（`nudge: 4`、`soft: 4`、`tiny: 11`、`md: 500`）か、キーを省いて既定値を残す。外側へ引き寄せたいタイルは、負の長さを自身の `style` ブロックに書く（`style: {margin-top: -4}`）。そこではそれはトークンではなく CSS プロパティそのものの値なので、theme とともには変わらなくなる。
 
+### E0240 `reserved-field-name`
+
+レコードのフィールドが `_tag` という名前である。レコード型でもレコードリテラルでも同じである：`type R = {_tag: Text, n: Int}`、ペイロード・slot・`fn`・effect・tile・property-test の `for-all` のレコード型、そして式がレコードを作るどの位置の `{_tag="a", n=1}` も（`.copy(_tag="b")` を含む）。そのフィールドの位置で、そう名付けたフィールドごとに 1 件報告し、同じ名前を 2 回書いたときは [E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) と並んで報告する。
+
+> `Record field "_tag" is reserved: the runtime marks a variant with a field of that name, so a record that has one is read as a variant. Name the field something else — "tag"`
+
+実行時、バリアントは `_tag` フィールドにその名前を持つレコードであり — `Some(1)` は `{_tag: "Some", _0: 1}` — ランタイムはこのフィールドでバリアントとレコードを見分ける。そのため、このフィールドを持つように書かれたレコードはバリアントとして読まれる。`show` はバリアントをそのタグとして描画し（[stdlib.md §2.2.7](./stdlib.md#_2-2-7-int-float)）、`show` を通して値を描画するものはすべてこの形で描画する：片側が `Text` の `+`、tile のテキスト。そのため `{_tag="a", n=1}.show` は `a` になってしまう。`{tag="a", n=1}.show` は `{tag: "a", n: 1}` である。
+
+拒否されるのは `_tag` という名前だけである。`tag`・`_tags`・`_Tag`・`_0` はそれぞれ別の名前であり、キーがテキスト `"_tag"` の Map はフィールドを名付けていない。
+
+テストのキーのうち、テストのセクション・アプリの slot・effect を名付けるものもフィールドではない。`given` と `expect`、そして `given.slots`・`expect.slots`・`expect.slots-equal`・`mocks`・`given.mocks` のキーはそうした名前なので、`_tag` という名前の slot や effect もその名前でテストできる。それらのキーの下の値は他の場所と同じく検査される。`given.in` と `given.event` のペイロードはテストが作るレコードなので、そこで `_tag` と名付けたフィールドは E0240 である。
+
+**修正**：フィールドを改名する — `tag`・`kind`、あるいは何を持つかを言う名前に — 型の中でも、それを意図していたすべてのリテラルとフィールドの読み出しでも。
+
 ## E03xx — ケイパビリティと純粋性
 
 ### E0301 `missing-capability`

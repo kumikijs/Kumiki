@@ -1,3 +1,4 @@
+import { VARIANT_TAG_FIELD } from "@kumikijs/runtime/variant-tag";
 import type {
   AppDef,
   Def,
@@ -14,6 +15,7 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { isTileExpr, numberLiteral } from "./ast.ts";
+import { isRecordPosition, keysNames, type RecordPosition } from "./test-sections.ts";
 
 const DUPLICATE_KINDS = {
   clause: { kind: "duplicate-clause", noun: "clause" },
@@ -57,6 +59,20 @@ function duplicatesIn(declared: readonly DuplicateName[]): readonly DuplicateNam
 /** Accumulates findings so each site can state only what it declares. */
 class Finder {
   readonly found: Duplicate[] = [];
+  /** Each record field written under {@link VARIANT_TAG_FIELD}. */
+  readonly tagFields: Pos[] = [];
+
+  /** A record's fields, in its type or its literal. */
+  fields(fields: readonly { name: string; pos: Pos }[], kind: DuplicateKind, what: string): void {
+    this.declared(
+      fields,
+      kind,
+      what,
+      (fld) => fld.name,
+      (fld) => fld.pos,
+    );
+    for (const fld of fields) if (fld.name === VARIANT_TAG_FIELD) this.tagFields.push(fld.pos);
+  }
 
   /** From a construct's full declaration list — the duplicates are derived. */
   declared<T>(
@@ -124,11 +140,18 @@ export function duplicateSubRoutes(
   return duplicatesIn(subRoutes.map((r) => ({ name: r.path, pos: r.pathPos })));
 }
 
-/** Every name a program declares twice inside one construct. */
-export function findDuplicateNames(program: Program): readonly Duplicate[] {
+/** The names a program writes inside its constructs that it may not write there. */
+export type WrittenNames = {
+  /** Every name declared twice inside one construct. */
+  readonly duplicates: readonly Duplicate[];
+  /** Every record field, in a type or a literal, named {@link VARIANT_TAG_FIELD}. */
+  readonly tagFields: readonly Pos[];
+};
+
+export function findWrittenNames(program: Program): WrittenNames {
   const f = new Finder();
   for (const def of program.defs) walkDef(def, f);
-  return f.found;
+  return { duplicates: f.found, tagFields: f.tagFields };
 }
 
 function walkDef(def: Def, f: Finder): void {
@@ -233,12 +256,35 @@ function walkTest(def: TestDef, f: Finder): void {
     `test "${def.name}"`,
   );
   for (const g of def.forAll ?? []) walkType(g.type, f);
-  walkExpr(def.given, f);
+  walkTestRecord(def.given, "given", f);
   walkExpr(def.invariant, f);
-  walkExpr(def.mocks, f);
+  walkTestRecord(def.mocks, "mocks", f);
   if (def.expect === undefined) return;
   if (isTileExpr(def.expect)) walkTile(def.expect, f);
-  else walkExpr(def.expect, f);
+  else walkTestRecord(def.expect, "expect", f);
+}
+
+/**
+ * A test's record at `position`. Keys that name sections, slots or effects are checked for
+ * duplicates only, since no record is built with them as its fields.
+ */
+function walkTestRecord(e: Expr | undefined, position: RecordPosition, f: Finder): void {
+  if (e?.kind !== "RecordLit" || !keysNames(position)) {
+    walkExpr(e, f);
+    return;
+  }
+  f.declared(
+    e.fields,
+    "key",
+    "Record field",
+    (fld) => fld.name,
+    (fld) => fld.pos,
+  );
+  for (const fld of e.fields) {
+    const inner = `${position}.${fld.name}`;
+    if (isRecordPosition(inner)) walkTestRecord(fld.value, inner, f);
+    else walkExpr(fld.value, f);
+  }
 }
 
 function walkTile(t: TileExpr | undefined, f: Finder): void {
@@ -340,13 +386,7 @@ function walkExpr(e: Expr | undefined, f: Finder): void {
   if (!e) return;
   switch (e.kind) {
     case "RecordLit":
-      f.declared(
-        e.fields,
-        "key",
-        "Record field",
-        (fld) => fld.name,
-        (fld) => fld.pos,
-      );
+      f.fields(e.fields, "key", "Record field");
       for (const fld of e.fields) walkExpr(fld.value, f);
       return;
     case "MapLit": {
@@ -417,13 +457,7 @@ function walkType(t: TypeExpr | undefined, f: Finder): void {
   if (!t) return;
   switch (t.kind) {
     case "TypeRecord":
-      f.declared(
-        t.fields,
-        "field",
-        "Record type field",
-        (fld) => fld.name,
-        (fld) => fld.pos,
-      );
+      f.fields(t.fields, "field", "Record type field");
       for (const fld of t.fields) walkType(fld.type, f);
       return;
     case "TypeUnion":

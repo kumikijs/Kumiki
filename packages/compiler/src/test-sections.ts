@@ -35,17 +35,19 @@ export type GivenSection<K extends TestKind> = SectionName<K, "given">;
 /** The sections a kind's `expect` accepts. */
 export type ExpectSection<K extends TestKind> = SectionName<K, "expect">;
 
+// `keys` is "names" where a key names a section, a slot or an effect, and "fields" where the
+// record is a value the test builds.
 const RECORD_POSITIONS = {
-  given: { shape: "{<section>: …}" },
-  expect: { shape: "{<section>: …}" },
-  mocks: { shape: "{<effect>: <policy>}" },
-  "given.mocks": { shape: "{<effect>: <outcome>}" },
-  "given.event": { shape: "{type: …, target: …}" },
-  "given.slots": { shape: "{<slot>: …}" },
-  "expect.slots": { shape: "{<slot>: …}" },
+  given: { shape: "{<section>: …}", keys: "names" },
+  expect: { shape: "{<section>: …}", keys: "names" },
+  mocks: { shape: "{<effect>: <policy>}", keys: "names" },
+  "given.mocks": { shape: "{<effect>: <outcome>}", keys: "names" },
+  "given.event": { shape: "{type: …, target: …}", keys: "fields" },
+  "given.slots": { shape: "{<slot>: …}", keys: "names" },
+  "expect.slots": { shape: "{<slot>: …}", keys: "names" },
   // `from-log` takes the log's own final values as the expectation.
-  "expect.slots-equal": { shape: "{<slot>: …}", or: "from-log" },
-} as const satisfies Record<string, { shape: string; or?: string }>;
+  "expect.slots-equal": { shape: "{<slot>: …}", or: "from-log", keys: "names" },
+} as const satisfies Record<string, { shape: string; or?: string; keys: "names" | "fields" }>;
 
 export type RecordPosition = keyof typeof RECORD_POSITIONS;
 
@@ -54,6 +56,15 @@ export type BareName = Extract<(typeof RECORD_POSITIONS)[RecordPosition], { or: 
 
 export function positionSpec<P extends RecordPosition>(position: P): (typeof RECORD_POSITIONS)[P] {
   return RECORD_POSITIONS[position];
+}
+
+export function isRecordPosition(path: string): path is RecordPosition {
+  return Object.hasOwn(RECORD_POSITIONS, path);
+}
+
+/** Whether `position`'s keys name sections, slots or effects rather than a record's fields. */
+export function keysNames(position: RecordPosition): boolean {
+  return positionSpec(position).keys === "names";
 }
 
 /** What E0713 says about a record position holding something else. */

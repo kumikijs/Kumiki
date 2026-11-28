@@ -1,3 +1,4 @@
+import { VARIANT_TAG_FIELD } from "@kumikijs/runtime/variant-tag";
 import { type TypeEnv, typeToString, unaliasType } from "../assignable.ts";
 import { assertNever, type TypeExpr } from "../ast.ts";
 import { keyRepresentation } from "../key-representation.ts";
@@ -84,7 +85,7 @@ export function decoders(env: TypeEnv, refinements: NestedRefinements): Decoders
     const at = (t: TypeExpr, holder: string, key: string, generics: readonly string[]) => {
       if (!inKey && isTime(t)) {
         timeReader ??= declare(
-          `(o, k, kind) => { const x = o[k]; if (${whole("x")}) return undefined; if (typeof x === "string") { const t = _s.parseTime(x); if (t._tag === "Some") { o[k] = t._0; return undefined; } } return { kind, args: [], path: [] }; }`,
+          `(o, k, kind) => { const x = o[k]; if (${whole("x")}) return undefined; if (typeof x === "string") { const t = _s.parseTime(x); if (t.${VARIANT_TAG_FIELD} === "Some") { o[k] = t._0; return undefined; } } return { kind, args: [], path: [] }; }`,
         );
         return `${timeReader}(${holder}, ${key}, ${JSON.stringify(expected(t))})`;
       }
@@ -138,7 +139,9 @@ export function decoders(env: TypeEnv, refinements: NestedRefinements): Decoders
         case "TypeRecord":
           return recordOf(t.fields, label, generics);
         case "TypeUnion": {
-          const tags = t.variants.map((variant) => `v?._tag === ${JSON.stringify(variant.name)}`);
+          const tags = t.variants.map(
+            (variant) => `v?.${VARIANT_TAG_FIELD} === ${JSON.stringify(variant.name)}`,
+          );
           return [
             unless(tags.join(" || "), label),
             ...t.variants.flatMap((variant) => {
@@ -151,7 +154,9 @@ export function decoders(env: TypeEnv, refinements: NestedRefinements): Decoders
                     : `{ variant: ${tag}, payload: ${i} }`,
                 ),
               );
-              return steps.length > 0 ? [`if (v._tag === ${tag}) { ${steps.join(" ")} }`] : [];
+              return steps.length > 0
+                ? [`if (v.${VARIANT_TAG_FIELD} === ${tag}) { ${steps.join(" ")} }`]
+                : [];
             }),
           ];
         }
@@ -230,11 +235,16 @@ export function decoders(env: TypeEnv, refinements: NestedRefinements): Decoders
       const sub = (x: TypeExpr | undefined, holder: string, key: string) =>
         x ? at(x, holder, key, generics) : undefined;
       const tagged = (tags: readonly (TypeExpr | undefined)[], names: readonly string[]) => [
-        unless(names.map((n) => `v?._tag === ${JSON.stringify(n)}`).join(" || "), label),
+        unless(
+          names.map((n) => `v?.${VARIANT_TAG_FIELD} === ${JSON.stringify(n)}`).join(" || "),
+          label,
+        ),
         ...names.flatMap((n, i) => {
           const tag = JSON.stringify(n);
           const steps = stepInto(sub(tags[i], "v", '"_0"'), `{ variant: ${tag} }`);
-          return steps.length > 0 ? [`if (v._tag === ${tag}) { ${steps.join(" ")} }`] : [];
+          return steps.length > 0
+            ? [`if (v.${VARIANT_TAG_FIELD} === ${tag}) { ${steps.join(" ")} }`]
+            : [];
         }),
       ];
       switch (t.name) {
