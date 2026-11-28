@@ -1,0 +1,36 @@
+{
+  "effects": {
+    "loadNotes": [
+      {
+        "outcome": "ok",
+        "value": []
+      }
+    ],
+    "createNote": [
+      {
+        "outcome": "ok",
+        "value": {
+          "id": "n9",
+          "title": "",
+          "body": ""
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": null
+  },
+  "steps": [
+    {
+      "label": "Add note with no title adds nothing",
+      "do": {
+        "clickText": "Add note"
+      },
+      "expect": {
+        "domIncludes": ["Notes (0)"],
+        "domExcludes": ["Saved"]
+      }
+    }
+  ]
+}

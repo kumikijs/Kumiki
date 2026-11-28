@@ -1,0 +1,44 @@
+{
+  "effects": {
+    "loadNotes": [
+      {
+        "outcome": "ok",
+        "value": [
+          {
+            "id": "n1",
+            "title": "Groceries",
+            "body": "milk"
+          }
+        ]
+      }
+    ],
+    "deleteNote": [
+      {
+        "outcome": "err",
+        "value": {
+          "status": 500,
+          "message": "Internal Server Error",
+          "body": {
+            "_tag": "Some",
+            "_0": ""
+          }
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": null
+  },
+  "steps": [
+    {
+      "label": "the note comes back and the banner says why",
+      "do": {
+        "clickText": "Delete note"
+      },
+      "expect": {
+        "domIncludes": ["Notes (1)", "Groceries", "Could not delete note"]
+      }
+    }
+  ]
+}

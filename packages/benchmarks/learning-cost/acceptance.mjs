@@ -6,7 +6,7 @@
 //
 // Prints a table and writes vN-*/results/acceptance.json.
 
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { clearStorage, runScenarioSource } from "@kumikijs/cli";
@@ -68,6 +68,7 @@ for (const task of taskDirs) {
     }
     result[vendor] = { passed: criteria.length - failed.length, total: criteria.length, failed };
   }
+  mkdirSync(join(task, "results"), { recursive: true });
   writeFileSync(join(task, "results", "acceptance.json"), `${JSON.stringify(result, null, 2)}\n`);
   for (const [vendor, r] of Object.entries(result)) {
     const failedNames = r.failed.length > 0 ? `  failed: ${r.failed.join(", ")}` : "";

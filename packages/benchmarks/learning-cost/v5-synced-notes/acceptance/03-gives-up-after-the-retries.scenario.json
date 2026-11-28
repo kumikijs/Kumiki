@@ -1,0 +1,74 @@
+{
+  "effects": {
+    "loadNotes": [
+      {
+        "outcome": "err",
+        "value": {
+          "status": 503,
+          "message": "Service Unavailable",
+          "body": {
+            "_tag": "Some",
+            "_0": ""
+          }
+        }
+      },
+      {
+        "outcome": "err",
+        "value": {
+          "status": 503,
+          "message": "Service Unavailable",
+          "body": {
+            "_tag": "Some",
+            "_0": ""
+          }
+        }
+      },
+      {
+        "outcome": "err",
+        "value": {
+          "status": 503,
+          "message": "Service Unavailable",
+          "body": {
+            "_tag": "Some",
+            "_0": ""
+          }
+        }
+      },
+      {
+        "outcome": "ok",
+        "value": [
+          {
+            "id": "n1",
+            "title": "Groceries",
+            "body": "milk"
+          }
+        ]
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": null
+  },
+  "steps": [
+    {
+      "label": "after the third 503 the page says so",
+      "do": {
+        "wait": 1500
+      },
+      "expect": {
+        "domIncludes": ["Could not load notes", "Retry"]
+      }
+    },
+    {
+      "label": "and Retry loads again",
+      "do": {
+        "clickText": "Retry"
+      },
+      "expect": {
+        "domIncludes": ["Groceries"],
+        "domExcludes": ["Could not load notes"]
+      }
+    }
+  ]
+}

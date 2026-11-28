@@ -1,0 +1,36 @@
+You are participating in an experiment to measure how accurately an LLM can write code in a brand-new DSL called "Kumiki" given only the specification documents. You have NO prior knowledge of Kumiki — its syntax does not exist in your training data.
+
+## Task
+
+Implement a notes app kept in sync with a server, in Kumiki (estimated 250-450 LOC). The full requirements are in:
+  /Kumiki/packages/benchmarks/learning-cost/v5-synced-notes/task-spec.md
+
+Read that file first.
+
+## Reference materials (read ONLY these)
+
+Specification docs (the normative spec):
+  /Kumiki/docs/spec/language.md   (core, required)
+  /Kumiki/docs/spec/stdlib.md     (stdlib, required)
+  /Kumiki/docs/spec/routing.md
+  /Kumiki/docs/spec/style.md
+  /Kumiki/docs/spec/forms.md
+  /Kumiki/docs/spec/http.md
+  /Kumiki/docs/spec/lifecycle.md
+  /Kumiki/docs/spec/errors.md
+
+## Rules (IMPORTANT — keeps the measurement honest)
+
+- Write from the SPEC ONLY. Do NOT read anything under `packages/examples/` — those worked apps would leak answers and invalidate the experiment.
+- Write the Kumiki code in a SINGLE pass. Do NOT loop with `kumiki check`/`build`.
+- Do not use JSX or TypeScript syntax.
+- Cover all types, slots, effects, reducers, fns, tiles, and the app declaration in the spec.
+- Output must be pure Kumiki code with NO markdown fences, NO XML tags, NO commentary inside the file.
+
+## Output
+
+Write the final Kumiki code to:
+  /Kumiki/packages/benchmarks/learning-cost/v5-synced-notes/results/Codex/output.kumiki
+
+When done, print a brief JSON summary to stdout:
+{"condition": "v5-synced-notes Codex", "self_confidence": "high|med|low", "loc_estimate": <N>, "notable_uncertainties": ["..."]}

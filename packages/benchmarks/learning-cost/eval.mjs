@@ -6,7 +6,7 @@
 // Emits a JSON line summary to stdout. acceptance.mjs scores what the program does.
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { smokeSource } from "@kumikijs/cli";
 import { encode as encodeCl100k } from "gpt-tokenizer/encoding/cl100k_base";
@@ -33,6 +33,16 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", ".
 
 // Recorded in eval.json, so it reads the same whichever directory or OS the harness ran from.
 const recordedPath = (abs) => relative(repoRoot, abs).split(sep).join("/");
+
+// A task whose app makes requests ships the answers smoke gives it, in vN-*/smoke.http.json.
+function smokeFixture(abs) {
+  for (let dir = dirname(abs); dir !== dirname(dir); dir = dirname(dir)) {
+    if (!/^v\d+-/.test(basename(dir))) continue;
+    const fixture = join(dir, "smoke.http.json");
+    return existsSync(fixture) ? JSON.parse(readFileSync(fixture, "utf8")) : null;
+  }
+  return null;
+}
 
 async function evalFile(abs) {
   const path = recordedPath(abs);
@@ -98,7 +108,7 @@ async function evalFile(abs) {
 
   if (result.build) {
     try {
-      result.smoke = (await smokeSource(source)).ok;
+      result.smoke = (await smokeSource(source, [], { httpFixture: smokeFixture(abs) })).ok;
     } catch {
       result.smoke = false;
     }
