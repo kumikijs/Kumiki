@@ -7,10 +7,8 @@ import { loadApp, loadSource } from "./helpers/load.ts";
 import { failureDetail } from "./helpers/scenario.ts";
 
 const PATTERN = "yyyy-MM-dd HH:mm";
-// What `format(PATTERN)` renders for a value that names no instant (stdlib.md §2.2.8).
-const NO_INSTANT = "0NaN-NaN-NaN NaN:NaN";
 
-describe("format reads a Time held as text by Time.parse's grammar", () => {
+describe("Decoder.Json reads a Time field's text by Time.parse's grammar", () => {
   let double: FetchDouble | undefined;
 
   afterEach(() => {
@@ -18,50 +16,54 @@ describe("format reads a Time held as text by Time.parse's grammar", () => {
     double = undefined;
   });
 
-  it("renders each decoded text as Time.parse reads it, so digits are no instant", async () => {
-    const inputs = [
-      "1",
-      "2026",
-      "20260307",
-      "1772877600000",
-      "hello 12",
-      "March 7",
-      "Tue 5",
-      "2026-03-07",
-      "2026-03-07T10:00",
-      "2026-03-07 10:00:00.5",
-      "2026-03-07T10:00:00Z",
-      "2026-03-07T19:00:00+09:00",
-    ];
-    const rows = inputs.map((at, i) => ({ label: `row${i}`, at }));
-    double = stubFetch(() => new Response(JSON.stringify(rows)));
+  /** What example 198 shows once its stamps request answers one stamp at `at`. */
+  async function shownFor(at: string): Promise<string[]> {
+    double = stubFetch(() => new Response(JSON.stringify([{ label: "row", at }])));
     const app = await loadApp(feature("198-time-from-text"));
-    await withMounted(app, async (root) => {
-      await waitUntil(() => texts(root).some((l) => l.startsWith(`row${inputs.length - 1}: `)), {
+    return withMounted(app, async (root) => {
+      await waitUntil(() => texts(root).some((l) => /^row: |^problem: \S/.test(l)), {
         timeoutMs: 3000,
       });
-      inputs.forEach((text, i) => {
-        const parsed = _stdlib.parseTime(text);
-        const expected =
-          parsed._tag === "Some" ? _stdlib.formatTime(parsed._0, PATTERN) : NO_INSTANT;
-        expect(texts(root), text).toContain(`row${i}: ${expected}`);
-      });
-      expect(texts(root)).toContain(`row0: ${NO_INSTANT}`);
-      expect(root.textContent).not.toContain("1969-12-31");
-      expect(root.textContent).not.toContain("1970-01-01");
+      return texts(root);
     });
+  }
+
+  it.each([
+    "1",
+    "2026",
+    "20260307",
+    "1772877600000",
+    "hello 12",
+    "March 7",
+    "Tue 5",
+    "2026-03-07",
+    "2026-03-07T10:00",
+    "2026-03-07 10:00:00.5",
+    "2026-03-07T10:00:00Z",
+    "2026-03-07T19:00:00+09:00",
+  ])("reads %j as Time.parse does, refusing what it refuses", async (at) => {
+    const shown = await shownFor(at);
+    const parsed = _stdlib.parseTime(at);
+    if (parsed._tag === "Some") {
+      expect(shown).toContain(`row: ${_stdlib.formatTime(parsed._0, PATTERN)}`);
+    } else {
+      expect(shown).toContain("problem: decode failed: expected Time at [0].at");
+      expect(shown.some((l) => l.startsWith("row: "))).toBe(false);
+    }
   });
 });
 
 describe("format on a Time the program keeps in a Set", () => {
   // A Set stores its elements as object keys, which are text; `filter` hands each one back as
   // the number it was added as, so `format` reads the instant rather than the digits.
+  // No fallback instant: the only other way to make a Time here is `now`, which passes the year
+  // check whenever the clock reads 2026.
   it("keeps an element whose year filter reads through format", async () => {
     const shape = await loadSource(`
 slot days : Set(Time) = {}
 slot kept : Int = -1
 reducer go on=ui.click(Go)
-    do= kept := days.add(Time.parse("2026-03-07T10:00:00Z").get-or(now)).filter($1.format("yyyy") == "2026").size
+    do= kept := match Time.parse("2026-03-07T10:00:00Z") with | Some(t) -> days.add(t).filter($1.format("yyyy") == "2026").size | None -> -2
 tile Go = button(text="go")
 tile App = column(Go)
 app A
@@ -73,6 +75,9 @@ app A
       steps: [{ do: { dispatch: "go" }, expect: { noErrors: true } }],
     });
     expect(report.ok, failureDetail(report)).toBe(true);
-    expect(shape.live?.kept).toBe(1);
+    expect(
+      shape.live?.kept,
+      "-1: reducer never ran, -2: Time.parse failed, 0: Set readback broke",
+    ).toBe(1);
   });
 });

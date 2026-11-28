@@ -1,17 +1,20 @@
+import { LexError, lex, type Token } from "@kumikijs/compiler";
 import { loadSource, requireSourceFile } from "../store.ts";
-import { escapeRegExp } from "../text.ts";
 import { withWriteLock } from "../write-lock.ts";
 import { assemble, bodyOf, nameSites, respell, splitQname } from "./definition-text.ts";
-import { type DefSpec, type OpLogEntry, readOpLog } from "./op-log.ts";
-import { addDefs, removeDef, removeSet, renameDef, replaceDef } from "./verbs.ts";
+import { type DefSpec, type OpLogEntry, type OpLogOptions, readOpLog } from "./op-log.ts";
+import { type Place, type RestoredDef, replaceText, restoreDefs } from "./restore.ts";
+import { addDefs, patchedLines, removeDef, removeSet, renameDef, replaceDef } from "./verbs.ts";
 
-export function patchRevert(path: string, opId: string): string {
+export function patchRevert(path: string, opId: string, options: OpLogOptions = {}): string {
   requireSourceFile(path);
-  return withWriteLock(path, () => patchRevertLocked(path, opId));
+  return withWriteLock(path, () => patchRevertLocked(path, opId, options));
 }
 
-function patchRevertLocked(path: string, opId: string): string {
-  const log = readOpLog(path);
+// The verbs that log the revert, `replaceText` and `restoreDefs` among them, read the log again
+// under the same write lock, without `options`: a line they skip is the one already handed over here.
+function patchRevertLocked(path: string, opId: string, options: OpLogOptions): string {
+  const log = readOpLog(path, options);
   const idx = log.findIndex((e) => e["op-id"] === opId);
   if (idx === -1) throw new Error(`patch revert: op-id "${opId}" not found in log`);
   const target = log[idx]!;
@@ -40,13 +43,15 @@ function patchRevertLocked(path: string, opId: string): string {
       return removeSet(path, [main!, ...rest], true).opId;
     }
     case "remove": {
+      const placed = placedDefs(log, idx);
+      if (placed !== undefined) return restoreDefs(path, placed);
       return addDefs(path, removedDefs(log, idx, opId));
     }
     case "replace": {
       const prev = recordedPrev(target) ?? priorBody(log, idx, target.layer, target.name);
       if (prev === undefined) throw new Error(`patch revert: no prior body found for ${own}`);
       const now = nameOf("replaced", own);
-      return replaceDef(path, now, bodyFor(prev, now)).opId;
+      return writeBack(path, prev, now, target);
     }
     case "edit": {
       const prev = recordedPrev(target) ?? priorBody(log, idx, target.layer, target.name);
@@ -54,7 +59,7 @@ function patchRevertLocked(path: string, opId: string): string {
         throw new Error(`patch revert: cannot reconstruct prior body for edit of ${own}`);
       }
       const now = nameOf("edited", own);
-      return replaceDef(path, now, bodyFor(prev, now)).opId;
+      return writeBack(path, prev, now, target);
     }
     case "rename": {
       if (!target.newName) throw new Error("patch revert: rename op missing newName");
@@ -64,6 +69,81 @@ function patchRevertLocked(path: string, opId: string): string {
     default:
       throw new Error(`patch revert: unsupported op kind "${target.op}"`);
   }
+}
+
+/**
+ * The definitions a `remove` deleted, each with where it goes back; `undefined` when the remove did
+ * not record their text.
+ */
+function placedDefs(log: OpLogEntry[], idx: number): [RestoredDef, ...RestoredDef[]] | undefined {
+  const recorded = log[idx]!.bodies ?? [];
+  const members = new Set(recorded.map((d) => `${d.layer}.${d.name}`));
+  const placed: RestoredDef[] = [];
+  for (const { layer, name, body, text, after, gap, last } of recorded) {
+    if (text === undefined || gap === undefined) return undefined;
+    // A member goes back with it, so the one it followed is in the file by then.
+    const places =
+      after !== undefined && members.has(after)
+        ? [{ after, gap }]
+        : placesFrom(log, idx, after, gap);
+    placed.push({ layer, name, body, text, last: last === true, places });
+  }
+  const [first, ...rest] = placed;
+  return first === undefined ? undefined : [first, ...rest];
+}
+
+/**
+ * Where a definition goes back, best first: `gap` lines after the one it followed, under the name
+ * renames have given that one since. Then, for when that one is gone too, where it stood, as the
+ * remove that took it recorded, with the lines before it added to `gap`; and so on.
+ */
+function placesFrom(
+  log: readonly OpLogEntry[],
+  idx: number,
+  after: string | undefined,
+  gap: number,
+): Place[] {
+  const places: Place[] = [];
+  // A log written by hand can name the ones followed in a circle.
+  const seen = new Set<string>();
+  let at = idx;
+  let followed = after;
+  let lines = gap;
+  while (followed !== undefined) {
+    const { now, removedAt } = trail(log, at, followed);
+    places.push({ after: now, gap: lines });
+    if (removedAt === undefined) return places;
+    const stood = log[removedAt]!.bodies?.find((d) => `${d.layer}.${d.name}` === now);
+    const key = `${removedAt} ${now}`;
+    if (stood?.text === undefined || stood.gap === undefined || seen.has(key)) return places;
+    seen.add(key);
+    at = removedAt;
+    followed = stood.after;
+    lines += stood.gap;
+  }
+  places.push({ gap: lines });
+  return places;
+}
+
+/**
+ * The name `qname` has after the ops from `from` on, following renames, and the last of them that
+ * removed it, unless a later one put a definition of that name back.
+ */
+function trail(
+  log: readonly OpLogEntry[],
+  from: number,
+  qname: string,
+): { now: string; removedAt: number | undefined } {
+  let now = qname;
+  let removedAt: number | undefined;
+  for (let i = from; i < log.length; i++) {
+    const e = log[i]!;
+    const renamed = renamedBy(e);
+    if (renamed?.from === now) now = renamed.to;
+    else if (e.op === "remove" && vacates(e, now)) removedAt = i;
+    else if (fills(e, now)) removedAt = undefined;
+  }
+  return { now, removedAt };
 }
 
 function removedDefs(
@@ -98,9 +178,30 @@ function removedDefs(
   return [first, ...rest];
 }
 
+/**
+ * Whether `text` opens with the tokens `<layer> <name>`, as a whole definition does and a body does
+ * not. Read as tokens, so a comment between the two does not hide them. `theme` and `motion` lex as
+ * names, the other layers as keywords.
+ */
+function isWholeDefinition(layer: string, name: string, text: string): boolean {
+  let tokens: Token[];
+  try {
+    tokens = lex(text);
+  } catch (e) {
+    if (e instanceof LexError) return false;
+    throw e;
+  }
+  const [opening, named] = tokens;
+  return (
+    (opening?.kind === "kw" || opening?.kind === "ident") &&
+    opening.value === layer &&
+    named?.kind === "ident" &&
+    named.value === name
+  );
+}
+
 function writableBody(spec: DefSpec): DefSpec {
-  const opener = new RegExp(`^\\s*${spec.layer}\\s+${escapeRegExp(spec.name)}(?![A-Za-z0-9_-])`);
-  if (opener.test(spec.body)) {
+  if (isWholeDefinition(spec.layer, spec.name, spec.body)) {
     throw new Error(
       `patch revert: the body logged for ${spec.layer}.${spec.name} starts with "${spec.layer} ${spec.name}", so it is a whole definition rather than a body and cannot be written back (earlier versions logged a tile's or a type's body that way when it had clauses or parameters); nothing was written`,
     );
@@ -113,22 +214,62 @@ function bodyFor(logged: DefSpec, qname: string): string {
   const { layer, name: from, body } = writableBody(logged);
   const [, to] = splitQname(qname);
   if (from === to) return body;
-  const alone = loadSource(assemble(layer, from, body));
+  const renamed = loadSource(respelled(layer, from, assemble(layer, from, body), to, "body"));
+  return bodyOf(renamed, renamed.byQName.get(qname)!, "patch revert");
+}
+
+/** A definition's text as the log recorded it, under the name the definition had then. */
+type DefText = { layer: string; name: string; text: string };
+
+/** The logged text, respelled for the name its definition has now. */
+function textFor(logged: DefText, qname: string): string {
+  const { layer, name: from, text } = logged;
+  const [, to] = splitQname(qname);
+  return from === to ? text : respelled(layer, from, text, to, "text");
+}
+
+/** `text`, holding `layer.from` alone, with that name spelled `to` where a rename respells it. */
+function respelled(layer: string, from: string, text: string, to: string, what: string): string {
+  const alone = loadSource(text);
   const entry = alone.byQName.get(`${layer}.${from}`);
   const sites = entry === undefined ? undefined : nameSites(alone, entry);
   if (sites?.own === undefined || sites.unpositioned.length > 0) {
     throw new Error(
-      `patch revert: cannot rename ${layer}.${from} to ${to} in the body the log recorded for it; nothing was written`,
+      `patch revert: cannot rename ${layer}.${from} to ${to} in the ${what} the log recorded for it; nothing was written`,
     );
   }
-  const lines = respell(alone.lines, [sites.own, ...sites.refs], from, to, "patch revert");
-  const renamed = loadSource(lines.join("\n"));
-  return bodyOf(renamed, renamed.byQName.get(qname)!, "patch revert");
+  return respell(alone.lines, [sites.own, ...sites.refs], from, to, "patch revert").join("\n");
 }
 
-/** The body a `replace` or an `edit` recorded its definition had before it, under the name it had then. */
-function recordedPrev(op: OpLogEntry): DefSpec | undefined {
-  return op.prev === undefined ? undefined : { layer: op.layer, name: op.name, body: op.prev };
+/**
+ * What a `replace` or an `edit` recorded its definition was before it, under the name it had then:
+ * its text, or its body when an earlier version logged that instead.
+ */
+function recordedPrev(op: OpLogEntry): DefSpec | DefText | undefined {
+  const { layer, name, prev } = op;
+  if (prev === undefined) return undefined;
+  return isWholeDefinition(layer, name, prev)
+    ? { layer, name, text: prev }
+    : { layer, name, body: prev };
+}
+
+/** Writes back what the log recorded `op` replaced, for the definition now named `qname`. */
+function writeBack(path: string, prev: DefSpec | DefText, qname: string, op: OpLogEntry): string {
+  if ("text" in prev) return replaceText(path, qname, textFor(prev, qname), textWritten(op, prev));
+  return replaceDef(path, qname, bodyFor(prev, qname)).opId;
+}
+
+/** The text `op` wrote in place of the definition whose text was `prev`, as far as the log says. */
+function textWritten(op: OpLogEntry, prev: DefText): string | undefined {
+  if (op.op === "replace") {
+    return op.body === undefined ? undefined : assemble(op.layer, op.name, op.body);
+  }
+  try {
+    return patchedLines(prev.text.split("\n"), `${op.layer}.${op.name}`, op.patch).join("\n");
+  } catch {
+    // A patch that does not apply to the text it was logged with: not one an `edit` wrote.
+    return undefined;
+  }
 }
 
 function priorBody(
@@ -215,8 +356,8 @@ function namesDef(op: OpLogEntry, qname: string): boolean {
   );
 }
 
-export function viewHistory(path: string, qname: string): OpLogEntry[] {
-  const log = readOpLog(path);
+export function viewHistory(path: string, qname: string, options: OpLogOptions = {}): OpLogEntry[] {
+  const log = readOpLog(path, options);
   const followed = new Set<OpLogEntry>();
   for (const [e, current] of namesBack(log, log.length, qname, false)) {
     if (namesDef(e, current) || renamedBy(e)?.to === current) followed.add(e);

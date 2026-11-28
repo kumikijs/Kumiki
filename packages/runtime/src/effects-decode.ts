@@ -12,10 +12,10 @@ export type Decode = (typeof SENTINELS)[number] | DecodeCheck;
 export type NotADecoder = { refused: string };
 
 /**
- * A missing or `null` `decode` is JSON. Anything else that is no decoder is refused:
- * `map-request` builds an ordinary record, so `decode` can hold any value, and read as some
- * fallback decoding it would deliver a value of a type the effect does not declare, with nothing
- * reporting it.
+ * A missing or `null` `decode` is JSON. Anything else that is no decoder is refused: the checker
+ * holds a `decode` a literal writes to `Decoder`, but one computed at run time (in a request a
+ * `fn` returns, a slot holds, or `$1` is) can hold any value, and read as some fallback decoding
+ * it would deliver a value of a type the effect does not declare, with nothing reporting it.
  */
 export function decodeOf(decode: unknown): Decode | NotADecoder {
   if (decode === undefined || decode === null) return "json";
@@ -76,8 +76,17 @@ export async function decodeRead(decode: Decode, read: Undecoded): Promise<Decod
   }
 }
 
+/**
+ * Why `decode` refuses `value`, or `undefined` when it accepts it. A check that throws, as a
+ * recursive type's does on a value nested past what the stack holds, refuses the value too.
+ */
 export function decodeRefusal(decode: Decode, value: unknown): string | undefined {
-  const f = typeof decode === "function" ? decode(value) : undefined;
-  if (!f) return undefined;
-  return `decode failed: ${showRefinementFailure(f)}`;
+  if (typeof decode !== "function") return undefined;
+  let f: ReturnType<DecodeCheck>;
+  try {
+    f = decode(value);
+  } catch (e) {
+    return `decode failed: ${String(e)}`;
+  }
+  return f && `decode failed: ${showRefinementFailure(f)}`;
 }

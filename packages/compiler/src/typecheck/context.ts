@@ -3,8 +3,10 @@ import {
   type EffectDef,
   type Expr,
   type FnDef,
+  type FragmentShape,
   type Pos,
   type ReducerDef,
+  type Refinement,
   type SlotDef,
   type TileDef,
   type TileExpr,
@@ -15,6 +17,8 @@ import {
   writtenProp,
 } from "../ast.ts";
 import { callsBuiltin } from "../builtin-calls.ts";
+import { type NestedScopes, nestedScopes } from "./nested-scopes.ts";
+import type { TileKinds } from "./tile-collect.ts";
 
 export type Severity = "error" | "warning";
 
@@ -30,6 +34,11 @@ export type KumikiError = {
    * `kumiki fix` reads it to skip the rename.
    */
   endedScope?: NestedScopeKind;
+  /**
+   * E0103 only: the kind of nested scope that declares the name and begins after this read;
+   * `kumiki fix` reads it to skip the rename.
+   */
+  laterScope?: NestedScopeKind;
   /** E0218 only: the member whose append alone makes the target a List; `kumiki fix` reads it. */
   accessor?: "keys" | "to-list";
 };
@@ -59,7 +68,7 @@ export type SymbolTable = {
   types: Map<string, TypeDef>;
   slots: Map<string, SlotDef>;
   reducers: Map<string, ReducerDef>;
-  tiles: Map<string, TileDef>;
+  tiles: ReadonlyMap<string, TileDef>;
   fns: Map<string, FnDef>;
   effects: Map<string, EffectDef>;
   /** Names declared by `timer(d, name=N)` triggers — the `stop-timer` namespace. */
@@ -71,6 +80,8 @@ export type SymbolTable = {
   themes: Set<string>;
   iconDomain: Set<string>;
   elementIds: Set<string>;
+  /** The builtin kinds each tile renders, along the edges each check follows. */
+  tileKinds: TileKinds;
   // The program's own tags come first, so a did-you-mean tie goes to one of them.
   constructorTags: ReadonlySet<string>;
   qualifiers: ReadonlySet<string>;
@@ -78,13 +89,29 @@ export type SymbolTable = {
   // undef-variant for the same variant is dropped: one mistake, one diagnostic.
   judgedVariants: WeakSet<Expr>;
   undefinedVariants: Map<KumikiError, Expr>;
+  /**
+   * The refinements over a type parameter an application has put over `Int` and held to the safe
+   * range, so that a literal past it is reported once however often its generic is applied.
+   */
+  appliedPrecision: WeakSet<Refinement>;
   /** The result of each `fn` declared without `->`, read off its body once per check. */
   fnResults: Map<string, TypeExpr | null>;
   /** The `fn`s that can reach themselves through the `fn`s they call: those E0006 reports. */
   fnLoops: ReadonlySet<string>;
   /** The program's own unions, by each tag they declare: `unionsByTag`. */
   unionsByTag: ReadonlyMap<string, readonly TypeExpr[]>;
+  /**
+   * `met`: each number literal `checkExpr` meets. `judged`: each one a declared type reads, which
+   * `checkAgainst` records where it compares a value with that type (the literal, or the one its
+   * signs negate) and where the type is written but resolves to nothing. Once every definition is
+   * checked, `checkUndeclaredIntLiterals` holds each literal met and not judged to the safe range.
+   */
+  numberLiterals: { readonly met: Set<Expr>; readonly judged: Set<Expr> };
   app?: AppDef;
+  // The same for a Map literal keyed by a Decoder: a declared type that judged the literal is
+  // refused itself or reports the key's mismatch, so the literal's own E0204 is dropped.
+  judgedMapLiterals: WeakSet<Expr>;
+  decoderKeyedLiterals: Map<KumikiError, Expr>;
 };
 
 export type LocalBinder = "input" | "for";
@@ -112,9 +139,17 @@ export type Ctx = {
    * an inner one ended.
    */
   endedScopes: Map<string, EndedScope>;
+  /** Built before the check: a read can come before the scope that declares its name. */
+  nestedScopes: NestedScopes;
+  /**
+   * The expressions checked in this scope are separate entries, fields or sections, so no
+   * `let … in` can be written around reads in two of them.
+   */
+  rootsShareNoExpression?: true;
   /** The effect whose own expressions are checked, when it declares `in=Unit` and so binds no `$1`. */
   noInputEffect?: string;
-  oneValueFragment?: { method: string; hides: boolean };
+  /** The fragment this scope is the body of, when it is handed one value and binds no `$2`. */
+  oneValueFragment?: { method: string; hides: boolean; shape: FragmentShape };
   /** A tile-test's expected tree, whose lowering reads no `{…}` block. */
   expectedTree?: boolean;
 };
@@ -190,12 +225,17 @@ export function checkArms<A>(
   for (const name of ended) ctx.endedScopes.set(name, { kind: "match-expr", sibling: false });
 }
 
-export function pureScope(binds: readonly { name: string; type: TypeExpr }[]): Ctx {
+/** `exprs` are the expressions checked in this scope, whose nested scopes it knows. */
+export function pureScope(
+  binds: readonly { name: string; type: TypeExpr }[],
+  ...exprs: (Expr | undefined)[]
+): Ctx {
   const ctx: Ctx = {
     kind: "slot-init",
     localBinds: new Set(),
     routeBind: "no-payload",
     endedScopes: new Map(),
+    nestedScopes: nestedScopes(...exprs),
     localTypes: new Map(),
     localBinders: new Map(),
   };

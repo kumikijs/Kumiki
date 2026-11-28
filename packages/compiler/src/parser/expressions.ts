@@ -1,7 +1,14 @@
-import type { BinOp, Expr, Pattern, Pos, Token } from "../ast.ts";
+import type { BinOp, EndsOuterArm, Expr, Pattern, Pos, Token } from "../ast.ts";
 import { qualifiedCallee, readsBareMemberAsCall } from "../builtin-calls.ts";
 import { ParseError } from "./token-stream.ts";
 import { TypeParser } from "./types.ts";
+
+type MatchNode<K, B> = {
+  kind: K;
+  scrutinee: Expr;
+  arms: { pattern: Pattern; body: B }[];
+  pos: Pos;
+} & EndsOuterArm;
 
 /** Stays in step with the AST's spelling of the prefix operators. */
 type UnaryOp = Extract<Expr, { kind: "UnaryOp" }>["op"];
@@ -174,14 +181,14 @@ export class ExpressionParser extends TypeParser {
         const fldTok = this.peek();
         if (e.kind === "Num" && fldTok.pos.line !== dotTok.pos.line) {
           throw new ParseError(
-            `A float needs digits after the decimal point — write "${e.raw ?? e.value}.0"`,
+            `A float needs digits after the decimal point — write "${e.raw}.0"`,
             e.pos,
           );
         }
         if (fldTok.kind !== "ident" && fldTok.kind !== "kw") {
           if (e.kind === "Num") {
             throw new ParseError(
-              `A float needs digits after the decimal point — write "${e.raw ?? e.value}.0"`,
+              `A float needs digits after the decimal point — write "${e.raw}.0"`,
               e.pos,
             );
           }
@@ -414,24 +421,33 @@ export class ExpressionParser extends TypeParser {
 
   protected parseLetIn(): Expr {
     const start = this.eat("kw", "let");
-    const name = this.eat("ident").value;
+    const nameTok = this.eat("ident");
     this.eat("op", "=");
     const value = this.parseExpr();
     this.eat("kw", "in");
     const body = this.parseExpr();
-    return { kind: "LetIn", name, value, body, pos: start.pos };
+    return {
+      kind: "LetIn",
+      name: nameTok.value,
+      namePos: nameTok.pos,
+      value,
+      body,
+      pos: start.pos,
+    };
   }
 
   protected parseMatchExpr(): Expr {
-    return { kind: "MatchExpr", ...this.parseMatch(() => this.parseExpr()) };
+    return this.parseMatch("MatchExpr", () => this.parseExpr());
   }
 
+  /**
+   * The match that finished last and the index of the token after it, for a match finishing at
+   * that same index to link.
+   */
+  private endedMatch: { node: EndsOuterArm; at: number } | undefined;
+
   // The value, statement and tile forms share this, so each holds a `match` to one arm or more.
-  protected parseMatch<B>(parseBody: () => B): {
-    scrutinee: Expr;
-    arms: { pattern: Pattern; body: B }[];
-    pos: Pos;
-  } {
+  protected parseMatch<K extends string, B>(kind: K, parseBody: () => B): MatchNode<K, B> {
     const start = this.eat("kw", "match");
     const scrutinee = this.parseExpr();
     this.eat("kw", "with");
@@ -443,7 +459,12 @@ export class ExpressionParser extends TypeParser {
       arms.push({ pattern, body: parseBody() });
     }
     if (arms.length === 0) throw new ParseError("match requires at least one arm", start.pos);
-    return { scrutinee, arms, pos: start.pos };
+    const node: MatchNode<K, B> = { kind, scrutinee, arms, pos: start.pos };
+    // No token lies between that match's end and this one's, so nothing closed it off: it ends
+    // this match's last arm.
+    if (this.endedMatch?.at === this.i) this.endedMatch.node.outer = start.pos;
+    this.endedMatch = { node, at: this.i };
+    return node;
   }
 
   protected parsePattern(): Pattern {

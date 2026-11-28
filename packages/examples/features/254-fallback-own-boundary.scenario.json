@@ -15,7 +15,7 @@
       "expect": {
         "noErrors": true,
         "state": { "lastResortShown": 1, "lastResortGone": 1, "fallbackShown": 1 },
-        "domIncludes": ["cached chart: 7 (Key \"points\" is not in the Map)"],
+        "domIncludes": ["cached chart: 7 (Key \"points\" is not in {})"],
         "domExcludes": ["chart unavailable"]
       }
     },
@@ -45,7 +45,7 @@
           "fallbackShown": 2,
           "fallbackGone": 1
         },
-        "domIncludes": ["cached chart: 7 (Key \"points\" is not in the Map)"]
+        "domIncludes": ["cached chart: 7 (Key \"points\" is not in {})"]
       }
     },
     {

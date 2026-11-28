@@ -17,7 +17,14 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { assertNever, isTileExpr } from "./ast.ts";
-import { callsBuiltin, decodedType, RUN_REDUCER, typeMemberQualifier } from "./builtin-calls.ts";
+import {
+  callsBuiltin,
+  RUN_REDUCER,
+  typeMemberQualifier,
+  visitDecodedParts,
+} from "./builtin-calls.ts";
+import { tileNamedAt } from "./builtins.ts";
+import { isReservedTypeName } from "./stdlib-types.ts";
 import { eventParts, type RecordField, recordFieldsOf, testSections } from "./test-sections.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
 
@@ -206,14 +213,20 @@ class Walker {
         }
         // Codegen decodes by this argument, so its names are types, though it parses as a value.
         if (e.callee === "Decoder.Json") {
-          const t = decodedType(e.args[0]);
-          if (t) this.typeExpr(t);
-          else for (const a of e.args) this.expr(a, locals);
+          const [first, ...rest] = e.args;
+          visitDecodedParts(
+            first,
+            (t) => this.typeExpr(t),
+            (v) => this.expr(v, locals),
+          );
+          for (const a of rest) this.expr(a, locals);
           return;
         }
+        // A reserved name's member is the built-in type's, whatever the program declares under it.
         const qualifier = typeMemberQualifier(e.callee, e.args.length);
-        if (qualifier !== undefined) this.add("type", qualifier, e.pos);
-        else if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
+        if (qualifier !== undefined && !isReservedTypeName(qualifier)) {
+          this.add("type", qualifier, e.pos);
+        } else if (!e.callee.includes(".")) this.add("fn", e.callee, e.pos);
         for (const a of e.args) this.expr(a, locals);
         return;
       }
@@ -371,7 +384,7 @@ class Walker {
         this.add("tile", t.name, t.pos);
         for (const a of t.args) {
           if (a.name !== undefined && this.namingProp(t.name, a.name, a.value)) continue;
-          this.tileArg(a, locals);
+          this.tileArg(t.name, a, locals);
         }
         for (const p of t.props) {
           if (this.namingProp(t.name, p.name, p.value)) continue;
@@ -427,10 +440,15 @@ class Walker {
     return true;
   }
 
-  private tileArg(a: TileArg, locals: ReadonlySet<string>): void {
+  private tileArg(callee: string, a: TileArg, locals: ReadonlySet<string>): void {
     const v = a.value;
     if (isTileExpr(v)) {
       this.tileExpr(v, locals);
+      return;
+    }
+    const tile = tileNamedAt(callee, a, (name) => (this.index.tile.has(name) ? name : undefined));
+    if (tile) {
+      this.add("tile", tile.def, tile.ref.pos);
       return;
     }
     this.expr(v, locals);

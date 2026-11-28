@@ -33,16 +33,19 @@ export {
   readHttpFixture,
   useHttpFixture,
 } from "./harness.ts";
+export { type LoadedApp, loadApp } from "./load.ts";
 export {
   addDef,
   CASCADE_HELP,
   type DefSpec,
   describeEdit,
+  describeSkipped,
   type EditReport,
   editDef,
   episodeLogPathFor,
   lockDef,
   type OpLogEntry,
+  type OpLogOptions,
   patchApplyFile,
   patchRevert,
   type RemovedNames,
@@ -50,14 +53,14 @@ export {
   removeDef,
   renameDef,
   replaceDef,
+  type SkippedOpLogLine,
+  UnreadableLockFileError,
   unlockDef,
   viewHash,
   viewHistory,
 } from "./mutate.ts";
 export {
   type Coverage,
-  type LoadedApp,
-  loadApp,
   runCmd,
   runScenarioSource,
   runTests,

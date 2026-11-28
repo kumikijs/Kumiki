@@ -64,21 +64,19 @@ tile B = button(text="b")
       ]);
     });
 
+    // A program's `type Decoder` is E0231, so this fixture does not check; the index still reads
+    // it, and a reserved name's type member names the built-in type, never the program's.
     describe("with a program's own `type Decoder`, a call on the namespace", () => {
       it.each([
         { call: "Decoder.Text", why: "a built-in call names no type", edges: [] },
-        // E0116, so this fixture does not check, but it is the case that fails if the namespace
-        // exclusion is dropped: `fresh` is a type member on any other qualifier.
-        { call: "Decoder.fresh()", why: "an argless fresh is E0116 and names no type", edges: [] },
-        {
-          call: "Decoder.show(raw)",
-          why: "show given its argument",
-          edges: ["type.Decoder@4:12"],
-        },
+        // The case that fails if the namespace exclusion is dropped: `fresh` is a type member on
+        // any other qualifier.
+        { call: "Decoder.fresh()", why: "an argless fresh names no type", edges: [] },
+        { call: "Decoder.show(raw)", why: "show given its argument names the built-in", edges: [] },
         {
           call: "Decoder.parse(raw)",
-          why: "parse given its argument",
-          edges: ["type.Decoder@4:12"],
+          why: "parse given its argument names the built-in",
+          edges: [],
         },
       ])("$call: $why", ({ call, edges }) => {
         const src = `type Decoder = nominal Text
@@ -105,6 +103,37 @@ effect load cap=storage.read
     expect(refsOf(src, "effect.load").filter((r) => r.includes("@7:"))).toEqual([
       "type.ItemId@7:57",
       "type.Item@7:65",
+    ]);
+  });
+
+  it("names the types in a Decoder.Json argument that also holds a value, and the value", () => {
+    const src = `type Item = {label: Text}
+slot limit : Int = 1
+effect load cap=storage.read
+    in=Unit
+    out=Result(Option(Text), Text)
+    policy=once
+    map-request={key: "items", decode: Decoder.Json({item: Item, n: limit}), extra: limit}
+`;
+    expect(refsOf(src, "effect.load").filter((r) => r.includes("@7:"))).toEqual([
+      "type.Item@7:60",
+      "slot.limit@7:69",
+      "slot.limit@7:85",
+    ]);
+  });
+
+  it("walks an argument after a Decoder.Json's first as a value", () => {
+    const src = `type Item = {label: Text}
+slot limit : Int = 1
+effect load cap=storage.read
+    in=Unit
+    out=Result(Option(Text), Text)
+    policy=once
+    map-request={key: "items", decode: Decoder.Json(Item, limit)}
+`;
+    expect(refsOf(src, "effect.load").filter((r) => r.includes("@7:"))).toEqual([
+      "type.Item@7:53",
+      "slot.limit@7:59",
     ]);
   });
 
@@ -148,6 +177,43 @@ tile B = button(text="b")
 `;
       // The key `label` is a field name; the VALUE `label` is the slot.
       expect(refsOf(src, "fn.wrap")).toEqual(["slot.label@4:36"]);
+    });
+  });
+
+  describe("a name where a tile belongs is the tile", () => {
+    const decl = `slot leaf : Text = "hello"
+tile leaf = column(text("tile"))
+tile Card in=Text = text($1)
+`;
+
+    it("is the tile beside a slot of the same name", () => {
+      expect(refsOf(`${decl}tile App = column(leaf)\n`, "tile.App")).toEqual(["tile.leaf@4:19"]);
+    });
+
+    it("leaves a value builtin's content and a user tile's input to the slot", () => {
+      const src = `${decl}tile App = column(leaf, text(leaf), Card(leaf), column(gap=leaf))\n`;
+      expect(refsOf(src, "tile.App")).toEqual([
+        "tile.leaf@4:19",
+        "slot.leaf@4:30",
+        "tile.Card@4:37",
+        "slot.leaf@4:42",
+        "slot.leaf@4:60",
+      ]);
+    });
+
+    it("is the tile beside a fn of the same name, which a call still names", () => {
+      const src = `fn leaf() -> Text = "f"
+tile leaf = column(text("tile"))
+tile App = column(leaf, text(leaf()))
+`;
+      expect(refsOf(src, "tile.App")).toEqual(["tile.leaf@3:19", "fn.leaf@3:30"]);
+    });
+
+    it("is the tile under a loop variable of the same name", () => {
+      const src = `${decl}slot items : List(Text) = []
+tile App = column(for leaf in items column(leaf, text(leaf)))
+`;
+      expect(refsOf(src, "tile.App")).toEqual(["slot.items@5:31", "tile.leaf@5:44"]);
     });
   });
 

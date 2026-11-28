@@ -2,7 +2,32 @@ import type { Pos, TypeDef, TypeExpr } from "./ast.ts";
 
 const NO_POS: Pos = { line: 0, col: 0 };
 
-export type PrimName = Extract<TypeExpr, { kind: "TypePrim" }>["name"];
+// The primitives a type spells by name. `Decoder` is one too, but no spelling makes it: the parser
+// leaves that name to its standard-library entry below, so a type parameter named `Decoder` is
+// still the parameter, and a program's own `type Decoder` is reserved rather than a primitive's.
+export const PRIM_TYPE_NAMES = [
+  "Text",
+  "Int",
+  "Float",
+  "Bool",
+  "Unit",
+  "Bytes",
+  "Time",
+  "File",
+  "EffectId",
+] as const;
+
+export type SpelledPrimName = (typeof PRIM_TYPE_NAMES)[number];
+
+/** A primitive only the standard library's own entries produce. */
+export type UnspelledPrimName = "Decoder";
+
+export type PrimName = SpelledPrimName | UnspelledPrimName;
+
+// Their values are whatever the runtime represents them as, so a page that rendered one, or a key
+// that stored one, would change when that does. `Decoder` is unspelled and opaque, `EffectId`
+// spelled and opaque, so neither set is the other.
+export const OPAQUE_HANDLES: ReadonlySet<PrimName> = new Set<PrimName>(["EffectId", "Decoder"]);
 
 const prim = (name: PrimName): TypeExpr => ({ kind: "TypePrim", name, pos: NO_POS });
 const ref = (name: string): TypeExpr => ({ kind: "TypeRef", name, pos: NO_POS });
@@ -26,6 +51,11 @@ const nominal = (inner: TypeExpr, pred?: string, args: (number | string)[] = [])
   kind: "TypeNominal",
   inner,
   ...(pred ? { refinement: { kind: "Refinement" as const, pred, args, pos: NO_POS } } : {}),
+  pos: NO_POS,
+});
+const union = (variants: Record<string, TypeExpr[]>): TypeExpr => ({
+  kind: "TypeUnion",
+  variants: Object.entries(variants).map(([name, payloads]) => ({ name, payloads, pos: NO_POS })),
   pos: NO_POS,
 });
 const def = (name: string, body: TypeExpr, params: string[] = []): TypeDef => ({
@@ -82,20 +112,47 @@ export const STDLIB_TYPES: readonly TypeDef[] = [
   def("Email", nominal(prim("Text"), "email")),
   def("Uuid", nominal(prim("Text"), "uuid")),
   def("Duration", nominal(prim("Int"))),
+  // A decoder runs as a sentinel or a check, which no literal spells, so its body is a primitive
+  // only `Decoder.*` produces. The parser leaves the name to this entry, so a type parameter of
+  // that name is still the parameter.
+  def("Decoder", prim("Decoder")),
   def("Route", ROUTE_TYPE),
   def("FormData", app("Map", prim("Text"), ref("FormValue"))),
   def("PanicInfo", PANIC_INFO_TYPE),
   def("RouteErrorInfo", ROUTE_ERROR_INFO_TYPE),
-  def("FormValue", {
-    kind: "TypeUnion",
-    variants: [
-      { name: "TextV", payloads: [prim("Text")], pos: NO_POS },
-      { name: "NumberV", payloads: [prim("Float")], pos: NO_POS },
-      { name: "BoolV", payloads: [prim("Bool")], pos: NO_POS },
-      { name: "FileV", payloads: [prim("File")], pos: NO_POS },
-    ],
-    pos: NO_POS,
-  }),
+  def(
+    "FormValue",
+    union({
+      TextV: [prim("Text")],
+      NumberV: [prim("Float")],
+      BoolV: [prim("Bool")],
+      FileV: [prim("File")],
+    }),
+  ),
+  // The HTTP handler sends a body by its tag, and a body that has none of these tags as JSON.
+  def(
+    "HttpBody",
+    union({
+      Json: [ref("T")],
+      Form: [app("Map", prim("Text"), prim("Text"))],
+      Multipart: [app("Map", prim("Text"), ref("FormValue"))],
+      Text: [prim("Text")],
+      Bytes: [prim("Bytes")],
+      Empty: [],
+    }),
+    ["T"],
+  ),
+  // The fields are `IDBKeyRange`'s, which the IndexedDB handler builds from them.
+  def(
+    "IndexRange",
+    record({
+      lower: app("Option", ref("K")),
+      upper: app("Option", ref("K")),
+      lowerOpen: prim("Bool"),
+      upperOpen: prim("Bool"),
+    }),
+    ["K"],
+  ),
 ];
 
 // The runtime or the standard library builds or reads values of these, so a
@@ -110,6 +167,9 @@ export const RUNTIME_SUPPLIED_TYPE_NAMES: ReadonlySet<string> = new Set([
   "HttpStatus",
   "Duration",
   "FormValue",
+  "Decoder",
+  "HttpBody",
+  "IndexRange",
 ]);
 
 // A browser reads a file's bytes only asynchronously, so the record a `change` event
@@ -132,29 +192,16 @@ export const BUILTIN_TYPE_CONSTRUCTORS: ReadonlyMap<string, number | null> = new
   ["Tuple", null],
 ]);
 
-// `Option` and `Result` have no body to read tags from, and `HttpBody` is read
-// by the HTTP runtime by tag alone. `FormValue`'s tags come from its definition.
+// `Option` and `Result` have no body to read tags from. Every other standard-library union's tags
+// come from its definition above.
 export const BUILTIN_UNION_TAGS: ReadonlyMap<string, readonly string[]> = new Map([
   ["Option", ["Some", "None"]],
   ["Result", ["Ok", "Err"]],
-  ["HttpBody", ["Json", "Form", "Multipart", "Text", "Bytes", "Empty"]],
 ]);
-
-export const PRIM_TYPE_NAMES: readonly PrimName[] = [
-  "Text",
-  "Int",
-  "Float",
-  "Bool",
-  "Unit",
-  "Bytes",
-  "Time",
-  "File",
-  "EffectId",
-];
 
 const PRIM_TYPE_NAME_SET: ReadonlySet<string> = new Set(PRIM_TYPE_NAMES);
 
-export function isPrimTypeName(name: string): name is PrimName {
+export function isPrimTypeName(name: string): name is SpelledPrimName {
   return PRIM_TYPE_NAME_SET.has(name);
 }
 

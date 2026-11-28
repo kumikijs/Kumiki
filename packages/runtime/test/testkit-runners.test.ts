@@ -1,4 +1,4 @@
-import { _stdlib, type TestResult } from "@kumikijs/runtime";
+import { _stdlib, KumikiPanic, type TestResult } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 
 type ReducerTestInput = Parameters<typeof _stdlib.runReducerTest>[0];
@@ -313,6 +313,66 @@ describe("runReducerTestFlow (reducer-test effect mocks)", () => {
     expect(r.pass).toBe(false);
     expect(r.diffAt).toContain("unhandled");
   });
+
+  /** The flow app, with the reducer named `reducerName` replaced by one that throws `thrown`. */
+  const throwing = (reducerName: string, thrown: unknown): FlowApp => {
+    const app = makeFlowApp();
+    for (const r of app.reducers) {
+      if (r.name === reducerName)
+        r.apply = () => {
+          throw thrown;
+        };
+    }
+    return app;
+  };
+  /** What `run` threw, so a value that is not an `Error` can be compared too. */
+  const thrownBy = (go: () => unknown): unknown => {
+    try {
+      go();
+    } catch (e) {
+      return e;
+    }
+    throw new Error("nothing was thrown");
+  };
+  const okMock: FlowInput["mocks"] = { loadUser: { outcome: "ok", value: { id: "u1" } } };
+
+  // The target and the reducers its mocked results reach share one catch today; a row for each
+  // keeps that true if the loop is restructured.
+  describe.each<[string, string, FlowInput["mocks"]]>([
+    ["the target", "fetchUser", okMock],
+    ["an .ok reducer", "userLoaded", okMock],
+    ["an .err reducer", "userFailed", { loadUser: { outcome: "err", value: "boom" } }],
+  ])("a throw from %s", (_from, reducerName, mocks) => {
+    it.each<[string, KumikiPanic, string]>([
+      ["a panic, as its message", new KumikiPanic("boom"), 'panic: "boom"'],
+      ["a panic with no message, as its kind", new KumikiPanic(""), 'panic: "KumikiPanic"'],
+    ])("reports %s, as the test's unexpected panic", (_, panic, actual) => {
+      const r = run(throwing(reducerName, panic), { mocks, expect: expected({ users: {} }) });
+      expect(r).toEqual({
+        name: "t",
+        pass: false,
+        expected: '{"users":{}}',
+        actual,
+        diffAt: "(unexpected panic)",
+      });
+    });
+
+    it.each<[string, unknown]>([
+      ["an error", new TypeError("x.map is not a function")],
+      ["a value", { a: 1 }],
+      ["a value with a message", { message: "m" }],
+    ])("lets %s that is not a panic out, as a throw in the test's body", (_, thrown) => {
+      const go = () => run(throwing(reducerName, thrown), { mocks, expect: expected({}) });
+      expect(thrownBy(go)).toBe(thrown);
+    });
+
+    it("so a test that expects a panic is not passed by a throw that is not one", () => {
+      const fault = new TypeError("x.map is not a function");
+      const expectsPanic: FlowInput["expect"] = { kind: "panic", message: "not a function" };
+      const go = () => run(throwing(reducerName, fault), { mocks, expect: expectsPanic });
+      expect(thrownBy(go)).toBe(fault);
+    });
+  });
 });
 
 describe("runPropertyTest", () => {
@@ -340,14 +400,57 @@ describe("runPropertyTest", () => {
     }
   });
 
-  it("passes, reporting the case count, when the invariant always holds", () => {
+  it.each([
+    { written: "no count", input: {}, runs: 100 },
+    { written: "count: undefined", input: { count: undefined }, runs: 100 },
+    { written: "count: 1", input: { count: 1 }, runs: 1 },
+    { written: "count: 10000", input: { count: 10_000 }, runs: 10_000 },
+  ])("runs $runs cases for $written", ({ input, runs }) => {
+    let calls = 0;
     const r = _stdlib.runPropertyTest({
-      name: "always",
+      name: "counted",
       vars: { n: { t: "Int", min: 0, max: 10 } },
-      trial: (b) => (b.n as number) >= 0,
+      trial: () => {
+        calls += 1;
+        return true;
+      },
+      ...input,
     });
-    expect(r.pass).toBe(true);
-    expect(r.cases).toBe(100);
+    expect([r.pass, r.cases, calls]).toEqual([true, runs, runs]);
+  });
+
+  // The invariant fails on every input, so a count that ran a case would report a
+  // counterexample and one that ran none would report a pass.
+  it.each([
+    { count: 0, shown: "0" },
+    { count: 0.5, shown: "0.5" },
+    { count: -3, shown: "-3" },
+    { count: -0, shown: "-0" },
+    { count: Number.NaN, shown: "NaN" },
+    { count: Number.POSITIVE_INFINITY, shown: "Infinity" },
+    { count: "5", shown: '"5"' },
+    { count: 5n, shown: "5n" },
+    { count: null, shown: "null" },
+  ])("fails a count of $shown without running a case, naming the count", ({ count, shown }) => {
+    let calls = 0;
+    const r = _stdlib.runPropertyTest({
+      name: "bad-count",
+      vars: { n: { t: "Int", min: 0, max: 10 } },
+      trial: () => {
+        calls += 1;
+        return false;
+      },
+      count: count as number,
+    });
+    expect(r).toEqual({
+      name: "bad-count",
+      pass: false,
+      expected: "count is a whole number, 1 or more",
+      actual: `count = ${shown}`,
+      diffAt: "(count)",
+      cases: 0,
+    });
+    expect(calls).toBe(0);
   });
 
   it("fails with a counterexample when the invariant is violated", () => {

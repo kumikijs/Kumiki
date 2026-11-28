@@ -166,7 +166,7 @@ reducer bump on=ui.click(Btn)
     do= if count < 3 then count := count + 1
 ```
 
-プログラムの外から来る値は、reducer に届く前に検査される。`Decoder.Json(T)` が decode した値を `T` の述語が拒否するレスポンスや保存値は、effect の `.err` になり（[§6.1.4](./http.md#_6-1-4-decoder-型)、[§6.7.2](./http.md#_6-7-2-宣言-localstorage)）、プログラムの `.err` reducer が扱う。そうでなければ、その書き込みがこの規則で破棄される `.ok` になり、reducer が行った他のすべて（ロード状態を終えることなど）も一緒に破棄される。
+プログラムの外から来る値は、reducer に届く前に検査される。`Decoder.Json(T)` が decode した値が `T` でない（形が違う、または `T` の述語が拒否する）レスポンスや保存値は、effect の `.err` になり（[§6.1.4](./http.md#_6-1-4-decoder-型)、[§6.7.2](./http.md#_6-7-2-宣言-localstorage)）、プログラムの `.err` reducer が扱う。そうでなければ、その書き込みがこの規則で破棄される `.ok` になり、reducer が行った他のすべて（ロード状態を終えることなど）も一緒に破棄される。
 
 refinement が門番を**しない**ものが 2 つある:
 
@@ -193,7 +193,7 @@ reducer clear on=ui.click(Btn) do= name := ""    # 拒否される — 許され
 
 `bind=draft.title` や `bind=rows[i].title` のように **nested lvalue path** に bind できる（[フォーム §5.1](./forms.md#_5-1-個別入力の双方向束縛)）。ランタイムは：
 - 表示: `_live[root][...path]` を辿って初期値を読む。インデックスのステップは読み出し `rows[i]` と同じく読み、そのキーは描画のたびに評価する
-- 変更: 入力イベントで `_setPath` を使い root slot を immutable に更新
+- 変更: 入力イベントで `_setPath` を使い root slot を immutable に更新し、その書き込みをそれ自身の episode として記録する（[§10.5.1](#_10-5-1-structure-of-an-episode)）
 - focus 復元: `data-kumiki-bind` 属性に full path 文字列 (`"draft.title"`、`"rows[0].title"` — インデックスのステップは指すキーで綴る) を入れて識別
 
 ### 10.3.6 動的 theme switching
@@ -225,8 +225,10 @@ app App ... theme = themeName    # ← slot 名を渡す
 `select(value=v, options=[...])` は option の選択状態を **構造的キー**で判定する:
 - variant は `_tag` + payload を再帰的にシリアライズしてキー化する。`Some(Backlog)` と `Some(InProgress)` は別キーになる（フラットな `_tag` 比較だと両者が `"Some"` で衝突するため、payload まで含めることが必須）
 - `Option(Status)` のような「variant でラップした variant」を option 値にできる
-- それ以外の値（`Text`・数値・レコード）は JSON テキストでキー化する。したがって `Text` の `m` のキーは引用符を含めた `"m"` になる。レコードの JSON テキストはフィールドを書かれた順に並べるので、`{h=3, w=2}` を持つ slot は `{w=2, h=3}` と書かれた option にマッチしない。`==` は両者を等しいとするにもかかわらずである。これは規則ではなく既知の制限である（[#941](https://github.com/kumikijs/Kumiki/issues/941)）
+- それ以外の値（`Text`・数値・レコード・`List`）は JSON テキストでキー化する。したがって `Text` の `m` のキーは引用符を含めた `"m"` になる。このテキストは、`Map` のキーを保存するテキストと同じく、どの深さのレコードもフィールドをソートした順に並べる（[stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)）。variant の payload の中のレコードも同じようにキー化する
+- `==` が等しいとする 2 つの値は、レコードのフィールドがどの順に書かれていても同じキーを持つ。`{h=3, w=2}` を持つ slot は `{w=2, h=3}` と書かれた option を選択し、`Some({h=3, w=2})` を持つ slot は `Some({w=2, h=3})` と書かれた option を選択する。`==` が区別する 2 つの値は別のキーを持つ。ただし次の 2 つは例外である：非有限の `Float`（`NaN`・`Infinity`・`-Infinity`）は JSON テキストが `null` になる。`File` は、名前・サイズ・型が同じ 2 つの File が 1 つのキーになるが、`==` は File とそれ自身の間でしか成り立たない
 - キーは両方の描画経路で `<option>` が `value` として持つものであり、キーが `v` のキーと等しい option が選択状態になる。配信されるページ（[§10.6.1](#_10-6-1-ssr)）はその option に `selected` 属性を付けるので、variant やレコードでも `Text` と同じく初期描画が `v` を表示する。`placeholder` の option が選択状態になるのは、両方の経路で、select が値を持たないときに限る
+- `radio` は `value=` を同じキーで持つ。両方の描画経路でそのキーが `<input>` の `value` になり、`value=` を持たない radio には `value` がない。配信されるページは、option と同じく、値のキーが異なる限りグループ内の radio を区別でき、`Text` の値 `pro` は option のものと同じく引用符を含めた `"pro"` として運ばれる。キーは radio の目印にすぎない：bind された radio を選ぶと値そのものが書き込まれ、radio がチェックされるかどうかは bind 先の slot との `==` または `selected=` で決まる（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）ので、レコードのフィールド順はそれを左右しない
 
 ### 10.3.9 focus 復元
 
@@ -415,18 +417,32 @@ type TileNode = (/* … kind variants … */) & { readonly key?: string };
    反復ごとにリストを描くので、そのノードは項目 3 のリストを描く呼び出しと
    同じく、外側の key の下のリストとして key が付く。内側の key が同じでも、
    外側の反復が違う兄弟は区別される。
+   入れ子が 1 段深くなるごとに、項目 3 の配列に要素が 1 つ加わる。
+   `for a in as for b in bs for c in cs text(c)` の各 `text` は、それが属する
+   `a`・`b`・`c` の反復の key 3 つを並べた JSON 配列で key 付けされ、どれだけ
+   深い入れ子も同じように key が付く。
 3. **ユーザタイル境界** は外側の暗黙 key を body に持ち込まない。`_wk` は
    境界ノードそのものに巻かれ、body 側の identity は body が反復すれば
    body 自身で組む。
    body が**リスト**を描く（body が `for`）とき、呼び出し側の key — 明示でも
    暗黙でも — は 1 つのノードではなくリストを名指す。全ノードに同じ key を
    付ければ 1 つの identity に潰れてしまう。そこで各ノードは、呼び出し側の key
-   と自身の key — どれだけ深く入れ子でも、そのノード自身の `for` が付けた
-   key — （無ければ平坦化したリスト内の位置）の組を JSON 配列 `[callKey, nodeKey]` として
-   符号化した key を持つ。ノードは互いに区別され、2 つの組が同じ文字列になる
-   ことはない。外側のリストを並べ替えると各ノードの要素が移動し、リスト内の
-   並べ替えはノード自身の key で移動する。リストのノードは、それを生んだ `for`
-   がどれだけ入れ子でも、呼び出しが置かれたコンテナの子になる。
+   と自身の key（そのノード自身の `for`、または 1 段下のリストが付けたもの）
+   （無ければ平坦化したリスト内の位置）の組を JSON 配列 `[callKey, nodeKey]` として
+   符号化した key を持つ。ノード自身の key がそれ自体この形の配列 — 2 要素以上の
+   配列を `JSON.stringify` が書くとおりに綴った JSON テキストで、1 段下のリストの
+   ノードが受け取る key — であるときは、その key 自身ではなく要素を並べる:
+   `[callKey, …nodeKey]`。したがって key は同じコンテナに平坦化されるリスト 1 段に
+   つき要素を 1 つ持ち、その長さは深さに比例する。2 つの `for` の間にコンテナが
+   あると数え直しになる — `for a in as column(for b in bs text(b))` の各 `text` は
+   その `column` の中で key 付けされる。key がこの形の配列かどうかは文字列だけから
+   読むので、そう綴った明示 `{key: …}` も同じく配列として読む。ノードは互いに
+   区別され、ノード自身の key が互いに異なる限り、2 つの組が同じ文字列になることは
+   ない — こうして伸ばした組は 3 要素以上、そうでない組は 2 要素であり、また
+   `JSON.stringify` が書くとおりに綴った key だけを分割するので、その要素からは
+   ちょうどその 1 つの key が戻る。外側のリストを並べ替えると各ノードの要素が
+   移動し、リスト内の並べ替えはノード自身の key で移動する。リストのノードは、
+   それを生んだ `for` がどれだけ入れ子でも、呼び出しが置かれたコンテナの子になる。
 4. **`TileWhen` / `TileIf` / `TileMatch`** は透過。タイルを emit する分岐に
    暗黙 key を素通しで伝える。
 
@@ -744,11 +760,17 @@ step が付く episode は、いま開いている episode ではなく、その
 
 `retry=...` 指定がある場合、`Err` 結果かつ 5xx/network エラーで、policy が定める間隔を待って再試行する（[http.md §6.5](./http.md#_6-5-リトライ)）。
 
-試行間の待機中にキャンセルされたリクエストは、その場で待機を終え、それ以上試行しない。その `.err` は直ちに発火する。アプリのアンマウントも待機を終える（[http.md §6.5](./http.md#_6-5-リトライ)）。
+試行間の待機中にキャンセルされたリクエストは、その場で待機を終え、それ以上試行しない。その `.err` は直ちに発火する。アプリのアンマウントも、アプリが launch したすべての effect を終わらせるのと同じく、待機を終える（[§10.4.7](#_10-4-7-dispose)）。
 
-### 10.4.5 結果の配送
+### 10.4.5 結果の配送 {#_10-4-5-delivery-of-results}
 
 effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.err($error, $key)` イベントとしてランタイムに通知。マッチする reducer が実行される。
+
+1 つのリクエストが配送する結果は**ちょうど 1 つ**である。invoke が例外を投げた場合は、それがそのリクエストの err になる。`{kind, value}` の結果以外のものに解決した invoke（`return` のないホストのプロバイダなど）も、例外を投げたものとして同じく err になる。`Text` で失敗する effect（[http.md §6.7](./http.md#_6-7-storage-effects)）では、その `.err` reducer は投げられた値のテキストをその `Text` として受け取り、それ以外の effect では [stdlib.md §2.5](./stdlib.md#_2-5-standard-capabilities) の `{message: Text}` を受け取る。
+
+その結果を配送している最中に、結果が実行する reducer の本体の外で throw されたものは、2 つ目の結果ではない。そこで throw しうるのは、その reducer が emit したものの dispatch や、その reducer を記録するホストの episode logger である。その後の描画でタイル自身が panic した場合は、描画がそれを捕捉し、`tile-render` の panic のままである。リクエストはその時点ですでに 1 つの結果を受け取っているので、そのリクエストに対して `.err` reducer は実行されない。この throw はアプリのエラーであり、reducer の panic と同じように報告される（[lifecycle.md §7.2.3](./lifecycle.md#_7-2-3-the-app-error-reducer)）。報告先は `console.error`、結果が属する episode の `panic` step、そして `app.error` であり、`category` は `"effect"`、`location` は effect を名指す（`effect "loadNote"`）。その後、reducer が書き込んだ内容でページが描画される。throw によってその描画が行われていなかった場合があるからであり、その描画が throw したものも同じように報告される。その結果に対する effect の他の reducer は、本体の panic の後と同じく、引き続き実行される。本体の中の panic は reducer の panic のままであり、`category` は `"reducer"`、`location` は `reducer "<name>"` となる。
+
+サーバパス（[§10.6.1](#_10-6-1-ssr)）も、`app.init` の連鎖にある effect の結果を同じように配送する：effect は同じ `retry`（[§10.4.4](#_10-4-4-retry)）のもとで走り、throw した invoke は同じ `.err` の値で失敗し、マッチする reducer には同じ `$value` / `$error` と同じ `$key` が渡される。hydration は `app.init` を再実行しない（[§10.6.2](#_10-6-2-hydration)）ので、サーバが計算したものが hydrate されたページに残り、それはマウントが計算するものと同じである。
 
 ### 10.4.6 標準 capability の実装
 
@@ -767,6 +789,12 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 | `media.*` | MediaDevices API |
 | `geo.*` | Geolocation API |
 | `socket.*` | WebSocket |
+
+### 10.4.7 dispose
+
+アプリを dispose する（最後のビューを dispose する、[§10.9](#_10-9-ランタイム-api-埋め込み用)）と、dispatcher がまだ抱えている effect はすべて終わる。まだ発火していない `debounce` タイマーと、まだ始まっていない `queue` のエントリは launch されない。すでに launch された effect は、invoke がまだ走っていても、`retry=` の試行間で待機していても（[§10.4.4](#_10-4-4-retry)）、シグナルを通じて abort される。キャンセルによってすでに abort されたがまだ結果が戻っていない effect も同様である。これらはそれぞれ、自分の `effect-start` を確保した episode に `effect-cancel` step（`targetId = <effect-name>`）を残し、その episode は status を変えずに、`effect-end` なしで、`dispose` が返る前に commit する。例外は、effect を launch する dispatch の最中に invoke がアプリを dispose した場合である。その episode はまだ開いているので、その dispatch が終わるときに commit し、それより後に reducer が emit したものは launch されない。これらの commit のどれかでロガーのフック（`onCommit` または `onEpisode`、[§10.5.2](#_10-5-2-episode-store)）が throw しても、残りは commit し、すべての episode は渡され、`dispose` はそれらが commit した後に最初の throw を投げ直す。どちらの場合もアプリはアンマウントされているので、その shape はもう一度 mount できる。
+
+それ以降、アプリが launch したものは結果を届けない。アプリの dispose 後に答えた invoke は、abort を無視したものも含めて、`.ok` / `.err` reducer に届かず、step も残さず、未処理エラーとしても報告されない。したがって `dispose` が返った時点で、アプリが launch したすべての effect の episode は、アプリが止めたところで終わった形で commit 済みである。結果をログから取る replay（[§10.5.3](#_10-5-3-replay)）は、キャンセルされた effect の結果をログに見つけず、アプリが受け取らなかった結果を届けることはない。
 
 ---
 
@@ -811,6 +839,28 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 
 `category` が `tile-render` の `panic` step の `location` は、どの `error-boundary` も捕捉しなかった panic では `render`、差分処理自身の安全網では `reconcile` である。境界が捕捉したものでは、その fallback の `PanicInfo` が持つ `location` —— panic が境界に捕捉される前に抜け出した route のターゲット、それ以外は境界を宣言した tile（[lifecycle.md §7.3](./lifecycle.md#_7-3-エラー境界-タイル単位)）—— であり、step と fallback は同じ場所を名指す。捕捉された panic も記録される —— 描画を囲んで開いている episode、すなわちその fallback の `episode-id` が名指す episode に、`handled: true` を付けて —— そして他の `panic` step と同じく、その episode を `status: "panic"` にする：status は episode が `panic` step を持つことを言い、`handled` はそれを何かが処理したかを言う。step は捕捉した描画のたびに記録され、重複は除かれない。開いている episode に囲まれていない描画は何も記録しない。
 
+**bind したコントロールの書き込みは、それ自身の episode になる。** `bind=` のコントロール — `input`、`textarea`、`editable`、`select`、`check`、`switch`、`radio`、`slider`（[フォーム §5.1](./forms.md#_5-1-個別入力の双方向束縛)）— は、背後に reducer のない書き込みで slot を書き、その書き込みはクリックと同じくプログラムへの入力である。そこで slot が受け入れた書き込みはそれぞれ、開いた時点で commit する episode として記録される。これがなければ、後で bind 先の slot を読む reducer — フォームの submit がそうである — は slot の初期値に対して replay されてしまう：
+
+```json
+{
+  "id": "ep_01JC...",
+  "trigger": {"kind": "ui.input", "target": "draft.title", "ts": ...},
+  "steps": [
+    {"kind": "bind", "slot": "draft", "path": ["title"], "value": "milk",
+     "slot-diffs": [{"name": "draft", "before": {"title": "", "body": "x"}, "after": {"title": "milk", "body": "x"}}],
+     "ts": ...}
+  ],
+  "status": "completed"
+}
+```
+
+- `trigger.kind` はコントロールが書き込むイベントである：`input`、`textarea`、`editable`、`slider` は `ui.input`、`select`、`check`、`switch`、`radio` は `ui.change`。`trigger.target` は `data-kumiki-bind` が名指す bind path である（[§10.3.5](#_10-3-5-input-textarea-select-の-bind-path)）。trigger は payload を持たない。
+- 1 つだけの `bind` step は、`slot`、path を通して bind したコントロールならその中の `path`（slot そのものに bind したときは無い）、コントロールがそこに書いた `value`、そして書き込みの前後の slot 全体である `slot-diffs` を持つ。`path` の各要素は、フィールド名（`"title"`）、`List` や `Map` へのインデックスなら `{"at": <key>}`（`{"at": 2}`、`{"at": "k"}`）、`Option` や `Result` の中身なら `{"get": true}` であり、`bind=rows[2].title` は `[{"at": 2}, "title"]` になる。replay は `slot`・`path`・`value` から書き込みをやり直し（[§10.5.3](#_10-5-3-replay)）、`slots-equal: from-log` は slot の記録された値を `slot-diffs` から読む（[testing.md §8.6](./testing.md#_8-6-episode-replay)）。
+- slot が受け入れなかった書き込みは記録されない：refinement が拒否した値と、`Int` / `Float` / `Time` のフィールドが読めないテキスト（[フォーム §5.1.2](./forms.md#_5-1-2-refinement-の扱い)）である。どちらも slot を動かしていない。
+- `volatile` な slot への書き込みも記録されない：その書き込みの `bind` step は書かれず、その slot を載せる `slot-diffs` もない。effect の `args` と UI の trigger の payload は、プログラムが渡したものをそのまま載せる。`emit login(password)` の `password` や、同じコントロールの `ui.input` reducer が `$event.value` として受け取るテキストがそうである。それを読む replay 中の reducer は、replay がそこに残した値 — replay されるどの reducer もそれを書かなければ初期値 — を読み、入力された値は読まない。
+- 書き込みが引き起こす描画は、その episode が commit した後に走る。その描画が走らせる reducer（`tile.mount` など）は bind の episode の後に episode を開き、同じコントロールの `ui.input` / `ui.change` を購読する reducer も、書き込みの後に走るので同じである。
+- Web Component（`defineKumikiElement`）の `setSlot` でホストが書く slot は、背後にコントロールのない書き込みであり、記録されない。
+
 **遅延 policy effect の帰属。** `policy=debounce(d)` と `policy=queue` で emit された effect は、トリガとなった reducer の episode が一旦閉じた *後* に launch する：`debounce` は `setTimeout` が満了したとき、`queue` は先に並ぶエントリが終わったときである。そのため dispatcher は `effect-start` step (とその episode トークン) を *launch 時* ではなく *dispatch 時* に確保し、遅れて届く `effect-end` および `.ok` / `.err` reducer 連鎖が元 episode 上に着地するようにする — 因果連鎖は一本に保たれる。確保された launch が実行前に捨てられると、その episode には `effect-end` の代わりに `effect-cancel` step が残る。いつそうなるかは下の **cancel の帰属** が述べる。`policy=throttle(d)` は先頭呼び出しを同期 `launch` するため (通常の同期パスで `effect-start` が attach される)、window 内の後続 dispatch は黙って抑制される — 元 reducer の `emits` には抑制された effect 名が残るが、続く `effect-start` は出ない。
 
 **cancel の帰属。** `effect-cancel` step は何かが解放されたことを記録するもので、書かれる場所は 2 つある：
@@ -824,7 +874,11 @@ effect 完了時、結果を `<effect-name>.ok($value, $key)` / `<effect-name>.e
 - localStorage に直近 M 件（デフォルト 20、サイズ上限 5MB）
 - 開発時は `--episode-log /path/to/log.jsonl` でファイル書き出し（`kumiki run` は `KUMIKI_EPISODE_LOG` からもパスを受け取る）
 
-`kumiki run` が書くファイルはメモリの store の写しではなく、別の store である。実行が commit した episode をすべて 1 行に 1 つの JSON オブジェクトとして持ち、N には制限されない。実行はファイルを切り詰めずに追記するので、空のファイルから始めれば、N 件を超える episode を commit した実行でも最初の行は実行の最初の episode であり、slot の初期値からの replay（[§10.5.3](#_10-5-3-replay)）はそこから始まる。シナリオが終わった後に commit する episode（invoke が abort で止まらずアプリの dispose 後も走り続ける effect のものなど）は書かれない（[#942](https://github.com/kumikijs/Kumiki/issues/942)）。`retry=` の backoff を待っている effect はこれに当たらない。アプリを dispose するとその待機は終わる（[http.md §6.5](./http.md#_6-5-リトライ)）ので、episode は実行が返る前に commit され、書かれる。
+`kumiki run` が書くファイルはメモリの store の写しではなく、別の store である。実行が commit した episode をすべて 1 行に 1 つの JSON オブジェクトとして持ち、N には制限されない。実行はファイルを切り詰めずに追記するので、空のファイルから始めれば、N 件を超える episode を commit した実行でも最初の行は実行の最初の episode であり、slot の初期値からの replay（[§10.5.3](#_10-5-3-replay)）はそこから始まる。シナリオが終わると、実行はアプリを dispose し、まだ走っている effect や `retry=` の backoff を待っている effect はすべてキャンセルされる（[§10.4.7](#_10-4-7-dispose)）。それらの episode は実行が返る前に、それぞれ `effect-cancel` で終わる形で commit されるので、ファイルにも書かれる。それらの effect がその後に答えたものは一切記録されない。
+
+**どの store も、episode を trigger が始まった順に持つ。** これは commit した順と同じとは限らない。episode はその因果の連鎖が終わったときに commit し、実行中の effect の連鎖はその effect が決着して初めて終わる — 遅延された launch はそれを emit した episode に留まる（[§10.5.1](#_10-5-1-structure-of-an-episode)）— ので、trigger が後から始まった episode のほうが先に commit することがある。メモリの store とその localStorage のミラーは、episode を commit した時点で、その trigger の位置に入れる：後から始まった episode より後に commit した episode は、その前に入る。リングがすでにそれより後に始まった episode で埋まっていれば、遅れて commit した episode は入った時点で落とされるので、`list()` もミラーもそれを持つことはない。logger の `onEpisode` フックには、episode はそれ自身とそれより前に始まったすべての episode が commit した時点で渡される：前の episode がまだ effect を待っている間に commit した episode は、それより前に始まったすべての episode が commit するまで保留され、それらの後に渡される。したがって、`kumiki run --episode-log` のファイルのように、フックが episode を渡されるたびに追記するファイルは、行を別の行の前に差し込むことなく同じ順で episode を並べる。dev クライアントは episode をサーバへ 1 リクエストずつ送るので、`kumiki dev --episode-log` のファイルも同じである（[§10.7](#_10-7-development-server)）。replay はこの順で episode を走らせる（[§10.5.3](#_10-5-3-replay)）。bootstrap は取り込まれた時点でこの順に入る。logger の `onCommit` フックには、代わりに各 episode が commit した時点で、commit した順に渡される。dev パネルのように commit のたびに更新されるビューが従うのはこちらである。throw するフックが他の episode の受け渡しを妨げることはない：commit は、渡すべきすべての episode を渡した後に最初の throw を投げ直す。
+
+episode が effect を待っている間、それより後に始まった episode は `onEpisode` に届かず、logger はフックのために保留しているすべての episode を、リングがすでに落としたものも含めて保持する。したがって、effect が決着しない episode は、logger が生きている間、それ以降のすべての episode を保留し、メモリに保持し続ける。`onEpisode` を持たない logger は何も保留せず、リングが落とした episode を保持しない。`kumiki run` では、ファイルが閉じる時点で保留されている episode はない：実行は返る前にアプリを dispose し、dispose は上記のとおり、まだ待っているすべての episode を commit する。episode を保留したまま残りうる書き手は、dispose が終わらせないものである：`kumiki dev --episode-log`、ホスト自身の `onEpisode`、そして長く動き続けるページ。
 
 ### 10.5.3 replay
 
@@ -836,17 +890,24 @@ kumiki replay --until-step 5                # 途中まで
 ```
 
 - **`--mock` の payload は JSON として読まれ、型検査されない。** したがって `Text` で失敗する effect への `err` は、provider の err 値と同じように読まれる（[§8.5](./testing.md#_8-5-effect-mock)）：`err({"message":"blocked"})` は `"blocked"` を届ける。`from-log` で replay される記録済みの `effect-end` も、`ssr.hydrate` の bootstrap で入口の reducer が `$1` として受け取るもの（下記）も、同じように読まれる。どちらでも、値のない `ok` は `null` になる。
+- `--until-step N` は観測した step（reducer / bind / effect-start / effect-end / signal-update / panic）をそれぞれ 1 つと数え、replay するすべての episode を通して 1 から数える。中断した時点の slot が出力され、`N episode(s) replayed` の数は実行が止まった episode で終わる：その後の episode は replay されていない。
+- replay は episode ごとに、reducer や bind の書き込みが実際に変えた slot から `signal-update` イベントを合成する。入力ログに記録された `signal-update` はそのまま再生しない（それは入力を駆動するものではなく、参考のための来歴である）。
+- **episode はログに並んだ順に、1 つずつ丸ごと replay される。** ログは episode を trigger が始まった順に並べる（[§10.5.2](#_10-5-2-episode-store)）ので、replay は実行が受け取った順に trigger を適用する。replay は episode の入口の reducer、その reducer が emit した effect、それらの `.ok` / `.err` の連鎖を最後まで走らせてから次の episode を始める：mock された effect は emit された時点で結果を届ける。記録された実行では、effect が後の trigger より後に決着することがある — `debounce` や `queue` の launch、あるいは次のクリックの時点でまだ実行中だったリクエスト — その場合、その連鎖は後の trigger の reducer の後に、それらが書いた slot の上で走った。replay はその連鎖をそれらより先に、自分の episode が残した slot の上で走らせる。したがって、後の trigger が書いた slot を読む連鎖の reducer はその trigger より前の値を読み、後の trigger も書く slot を書く連鎖の reducer は、それを上書きするのではなく、それに上書きされる。この失敗は黙って起こる：replay は何も報告しない。`slots-equal: from-log` の `episode-test` は、ログが episode を並べた順で、各 slot の最後に記録された値を期待する（[testing.md](./testing.md#_8-6-episode-replay)）。ログは連鎖の `slot-diffs` を実行が計算したとおりに記録するので、そのようなテストは連鎖が後の trigger の書いた値から計算した slot で失敗し、レコードはその slot に replay が計算する値を書かなければならない。上書きされた slot は捕まえない：ログでは後の trigger の diff が連鎖の diff より後に来るので、テストは trigger の値を期待し、replay もその値で終わるため、実行が終わったのとは異なる値のままテストは通る。
+- **bind したコントロールの書き込みは、推測せずにやり直す。** `bind` step の episode（[§10.5.1](#_10-5-1-structure-of-an-episode)）は reducer を走らせない。replay は各 step の `value` を、replay が残した slot の `path` の位置に、コントロールの書き込みと同じく slot の refinement を通して書き、`[bind] <bind path>  <slot>: <before> -> <after>` を出力する。書き込みが何も変えなかったときは差分を省く（`[bind] draft`）。slot の残りの部分はログが記録した値ではなく replay された reducer が作ったものなので、slot の別のフィールドを今は違うように書く reducer は、記録された値に上書きされずに最終 slot に現れる。
+  - プログラムの refinement が今は拒否する書き込みは、ライブと同じく slot をそのままにし、その行の末尾には、無い差分の代わりに `(refused <value>)` が付く：`[bind] draft  (refused "milk")`。それ自体は失敗ではなく、`slots-equal: from-log` の `episode-test` がその slot で失敗する。
+  - replay された slot がもう持たない `path` には書けない：replay された reducer が短くした `List` の末尾を越えるインデックス、後にまだ path が続く `Map` にないキー、`None` である `Option` や `Err` である `Result` の中身である。それは `bind "<bind path>"` を位置とし、category を `bind` とする panic であり（この category は replay だけが panic に付け、記録された `panic` step が持つことはない）、reducer の panic と同じく報告され数えられ、replay は次の step へ進む。
 - **入口の reducer は、記録時に受け取った payload で走る。** episode の `trigger.payload` はライブの runtime が最初の reducer に渡した payload そのもの — UI イベントなら `{$el, $event}`、effect の結果なら `{$1, $2}` — であり、replay はそれを加工せずに渡す。したがって `$el.idx` や `$event.value` はライブと同じ値を読む。payload を持たない trigger の最初の reducer が `.ok` / `.err` reducer である場合 — reducer ではなく SSR パスが開く `ssr.hydrate` の bootstrap episode — その reducer は、それより前に記録された同じ effect・同じ結果の `effect-end` のうち最後のものの上で走ったので、その値が reducer の `$1` になる。その記録済みの結果は消費され、同じ effect の `from-log` mock はその次から続く。
   - ログにそのような step がない場合 — 切り詰められた、あるいは手で編集されたログ — reducer は `$1` なしで走り、それは**推測せずに報告される**：episode のトレース行に `(no recorded result for <reducer>)` が付き、実行の最後に `entry results missing:` の要約が出るので、その後の panic が reducer のバグに見えることはない。
   - replay は episode ごとに入口の reducer を 1 つしか持たないので、SSR パスが複数の `app.init` effect を走らせた bootstrap は、最初の入口 reducer の連鎖しか replay されない。そのようなログに対する `slots-equal: from-log` の `episode-test` は panic ではなく slot の不一致で失敗し、2 つの `init` の連鎖が同じ effect を emit すると、入口が進めた `from-log` カーソルが再 emit にもう一方の連鎖の結果を渡しうる。この失敗は静かである：値は欠落ではなく交差する。
-- **入口の reducer がプログラムにない episode は replay されず、それは実行の失敗になる。** 入口の reducer とは、episode の最初の `reducer` step、または本体が throw した reducer を名指す `panic` step である（[§10.5.1](#_10-5-1-structure-of-an-episode)）。ログはその reducer が走ったときの名前を保持するので、改名や削除の後ではプログラムがその名前の reducer を宣言していないことがあり、そのとき replay にはその episode を走らせる手段がない。replay されない episode は panic も未処理のエラーも起こさないので、見過ごさずに報告する：その episode のトレース行の末尾に `(not replayed: <reason>)` が付き、`N episode(s) replayed` の数から除かれ、終了コードは `1` になる。実行の最後には stderr に `not replayed:` の行が 1 行だけ出て、そのような episode をそれぞれ `<episode-id>: <reason>` として挙げ、複数あれば `; ` でつなぐ。replay はその後の episode へ進む。`N episode(s) replayed` の数は replay が到達した episode だけを数えるので、`--until-step` で止まった episode より後のものも含まない。`<reason>` は `no reducer named "<name>"` であり、どの reducer も名指さない scenario の `{dispatch}` step が失敗するときの文言（[testing.md §8.10](./testing.md#_8-10-the-three-layers-of-tooling-verification)）と同じで、近い名前があるときに付く `— did you mean "<declared>"?`、および最も近い名前が同点のときにそのすべてを挙げる `"addA" or "addB"` まで同じである。`name` のない入口の `reducer` step — 手で編集されたログにしか現れない — も replay されず、その `<reason>` は `reducer step <n> has no name` である（`<n>` は episode の step を 1 から数える）。読み飛ばしはしない。読み飛ばせば、それを持つ bootstrap は入口の reducer がまったくない episode（下記）として replay され、クリーンになってしまう。そのような episode に対する `episode-test` は、`expect` が何を挙げていても失敗する（[testing.md §8.6](./testing.md#_8-6-episode-replay)）。
-  - 入口の reducer が**まったくない** episode — `reducer` step も、reducer を名指す `panic` step もない — は、`ssr.hydrate` の bootstrap ならクリーンに replay され、それ以外なら `no reducer step` を理由に replay されない。ライブの runtime は SSR の bootstrap（`ssr.hydrate`、[§10.5.1](#_10-5-1-structure-of-an-episode)）を除くすべての episode を reducer の dispatch で開き、その reducer を `reducer` step か名前付きの `panic` step として記録するので、そのような episode として記録されるのは、`app.init` の結果がどの reducer にも届かなかった bootstrap — `init = []`、あるいは何も処理しない init effect — だけである。replay は reducer を再実行し、`app.init` の emit は決して再実行せず、slot を書くのは reducer だけなので、何も走らせないことがその episode の再現になる。それを失敗にすれば、そのような bootstrap を含むすべてのログが失敗する。それ以外の入口の step を持たない episode は切り詰められた、あるいは手で編集されたログから来たものであり、何も走らせなければすべての検査がその上で成り立ってしまう。そのような bootstrap が記録した capability の拒否や、境界が捕捉した描画 panic — `name` のない `panic` step — は再現されない：replay は capability を検査せず、何も描画しない。
+- **入口の reducer がプログラムにない episode は replay されず、それは実行の失敗になる。** 入口の reducer とは、episode の最初の `reducer` step、または本体が throw した reducer を名指す `panic` step である（[§10.5.1](#_10-5-1-structure-of-an-episode)）。ログはその reducer が走ったときの名前を保持するので、改名や削除の後ではプログラムがその名前の reducer を宣言していないことがあり、そのとき replay にはその episode を走らせる手段がない。replay されない episode は panic も未処理のエラーも起こさないので、見過ごさずに報告する：その episode のトレース行の末尾に `(not replayed: <reason>)` が付き、`N episode(s) replayed` の数から除かれ、終了コードは `1` になる。実行の最後には stderr に `not replayed:` の行が 1 行だけ出て、そのような episode をそれぞれ `<episode-id>: <reason>` として挙げ、複数あれば `; ` でつなぐ。replay はその後の episode へ進む。`N episode(s) replayed` の数は replay が到達した episode だけを数えるので、`--until-step` で止まった episode より後のものも含まない。`<reason>` は `no reducer named "<name>"` であり、どの reducer も名指さない scenario の `{dispatch}` step が失敗するときの文言（[testing.md §8.10](./testing.md#_8-10-the-three-layers-of-tooling-verification)）と同じで、近い名前があるときに付く `— did you mean "<declared>"?`、および最も近い名前が同点のときにそのすべてを挙げる `"addA" or "addB"` まで同じである。`name` のない入口の `reducer` step — 手で編集されたログにしか現れない — も replay されず、その `<reason>` は `reducer step <n> has no name` である（`<n>` は episode の step を 1 から数える）。読み飛ばしはしない。読み飛ばせば、それを持つ bootstrap は入口の reducer がまったくない episode（下記）として replay され、クリーンになってしまう。slot も reducer と同じく改名されるので、`bind` step も同じように調べる。プログラムが宣言していない slot を名指すものは replay されず、その `<reason>` は `no slot named "<name>"` で、同じ `— did you mean` が付く。`slot` のないものは `bind step <n> has no slot` を理由に、`reducer` step も持つ episode — ライブの runtime は決して書かない — の中のものは `bind step <n> shares its episode with a reducer step` を理由に replay されない。replay はそのような episode について何も書かないので、プログラムにない slot が replay に現れて `slots-equal: from-log` に比べられることはない。そのような episode に対する `episode-test` は、`expect` が何を挙げていても失敗する（[testing.md §8.6](./testing.md#_8-6-episode-replay)）。
+  - 入口の reducer が**まったくない** episode — `reducer` step も、reducer を名指す `panic` step もない — は、`ssr.hydrate` の bootstrap ならクリーンに replay され、`bind` step を持つならその書き込みが replay され（上記）、それ以外なら `no reducer step` を理由に replay されない。ライブの runtime は SSR の bootstrap（`ssr.hydrate`、[§10.5.1](#_10-5-1-structure-of-an-episode)）と bind したコントロールの書き込み（[§10.5.1](#_10-5-1-structure-of-an-episode)）を除くすべての episode を reducer の dispatch で開き、その reducer を `reducer` step か名前付きの `panic` step として記録するので、それ以外にそのような episode として記録されるのは、`app.init` の結果がどの reducer にも届かなかった bootstrap — `init = []`、あるいは何も処理しない init effect — だけである。replay は reducer を再実行し、`app.init` の emit は決して再実行せず、slot を書くのは reducer と bind したコントロールだけなので、何も走らせないことがその episode の再現になる。それを失敗にすれば、そのような bootstrap を含むすべてのログが失敗する。それ以外の入口の step を持たない episode は切り詰められた、あるいは手で編集されたログから来たものであり、何も走らせなければすべての検査がその上で成り立ってしまう。そのような bootstrap が記録した capability の拒否や、境界が捕捉した描画 panic — `name` のない `panic` step — は再現されない：replay は capability を検査せず、何も描画しない。
 - **環境の読みはログから答える。環境からではない。** reducer 本体を走らせる前に、replay はその reducer の記録済み `env-reads`（[§10.5.1](#_10-5-1-structure-of-an-episode)）を据える。以後 `now` / `random()` / `<T>.fresh()` / `prefers-dark()` は、時計・乱数源・ID 生成器・OS の設定を読み直すのではなく、記録時に返したのと同じ値を返す。`EffectId` が ID 生成器から来る `emit` 式も、記録時に返した id を返す。したがって環境を読んだ reducer の episode を replay すると、記録された `slot-diffs` が毎回そのまま再現される。
   - 読みと記録済みの答えは **kind で** 対応付け、同じ kind の中では記録順に返す。あるビルトインの余分な読みが、別のビルトインの答えをずらすことはない。
   - 対応する答えが尽きた読み — 古いログ、あるいは記録時より多く読んだ本体 — は、replay を失敗させるのではなくライブの値にフォールバックする。その読みだけが replay に再現できないものなので、推測ではなく**報告される**：その step のトレース行に `(env: N read live)` が付き、実行の最後に `environment reads:` の要約が出る。同じ行が、replay 側の本体が使わなかった記録済みの答え（`N recorded unused`）と、ログが持っていた不正な要素（`N malformed`）も報告する。3 つとも無い step は何も言わない。
   - `value` が欠けている、あるいは `kind` が要求する型でない（`now` / `random` は数値、`fresh-id` / `effect-id` は文字列、`prefers-dark` は真偽値）要素は、本体に渡す前にスコープを開く時点で**棄却される**。不正な要素をそのまま消費すると `undefined` が返り、`now.show` は `"undefined"` を描画し算術は `NaN` になるが、理由を告げる throw は起きない。棄却された要素は `malformed` に数え、その読みはライブにフォールバックする。
   - 記録された `panic` step は `reducer` step と同じように replay される：`name` が入口の reducer を指し、`env-reads` が同じ手順で据えられるので、記録されたクラッシュは再びクラッシュする。
   - 記録済み `env-reads` と replay 中の reducer は**名前で**対応付ける：replay はログの step を辿るのではなく reducer を再実行して連鎖を導くため、reducer `foo` の n 回目の実行が、記録された n 個目の `foo` step の読みを取る。これは順序の仮定であって整合の保証ではない — replay は reducer の emit を宣言順に辿るが、記録側は `.ok` / `.err` step を effect の**完了順**に並べるので、宣言順と違う順で完了した 2 つの effect から同じ reducer に 2 回到達すると、記録された 2 つの読みの組は**入れ替わる**。この失敗は静かである：値は欠落ではなく交差するので、`live` の数には現れない。
+- `kumiki test` と同じく（[testing.md 出力](./testing.md#_8-7-1-output)）、`kumiki replay` はコンパイルの警告を自身の出力より先に stderr へ出力する。警告は出力も終了コードも変えない。
 
 ---
 
@@ -867,7 +928,7 @@ kumiki replay --until-step 5                # 途中まで
   - `overlay` は 2 つめ以降の子を、レンダラが組むのと同じ絶対配置のレイヤーで包み、`align` で配置する。
   - **閉じた** `modal` / `drawer` / `popover` は、空文字列ではなく、レンダラがマウントするのと同じ「存在するが隠れた」ホスト（コンテンツ箱を包む `display: none`）として配信される。サーフェスの開閉は両方の経路でスタイルの切り替えであり、閉じたサーフェスの中身はクローラから読める。（理由は hydration ではない：hydration はどちらの形を配信しても、配信された DOM を丸ごと置き換える — [§10.6.2](#_10-6-2-hydration)。）
   - `check` / `switch` / `radio` はコントロールを包む `<label>` として、`error` はメッセージが入る `<span>` として配信される。
-- 配信された属性が持ち、マウント済み要素が持たないものがフォーム状態である。ただしプロパティが属性へ反映されない場合に限る：`value`（`<option>` のものを除く）/ `checked` / `selected` はクライアントで DOM プロパティとして設定されマークアップには現れないため、配信されたページがそれらを運ぶ手段は属性しかない。`disabled` / `readonly` / `<details open>` は反映される（プロパティ代入が属性を書く）ので、両方の経路で属性として現れ、一致しなければならない。`<option>` の `value` も反映される。両方の経路でその option のキーになるので、両者は一致しなければならない（[§10.3.8](#_10-3-8-value-matching-of-select)）。
+- 配信された属性が持ち、マウント済み要素が持たないものがフォーム状態である。ただしプロパティが属性へ反映されない場合に限る：`value`（`<option>` と radio のものを除く）/ `checked` / `selected` はクライアントで DOM プロパティとして設定されマークアップには現れないため、配信されたページがそれらを運ぶ手段は属性しかない。`disabled` / `readonly` / `<details open>` は反映される（プロパティ代入が属性を書く）ので、両方の経路で属性として現れ、一致しなければならない。`<option>` と radio の `value` も反映される。どちらも両方の経路でその値のキーになるので、両者は一致しなければならない（[§10.3.8](#_10-3-8-value-matching-of-select)）。
 - レスポンス bundle 構成：
   - HTML（初期 tile 描画結果）
   - JSON（初期 slot snapshot）
@@ -903,8 +964,8 @@ kumiki dev --strict-a11y
 機能：
 
 - ホットリロード（コード変更時、slot は維持）
-- error overlay（何も処理しなかった panic の詳細表示：最新の episode の `panic` step のうち `handled: true` を持たない最初のもの —— [§10.5.1](#_10-5-1-structure-of-an-episode) —— を、その episode の step 列のどこにあっても表示する。`error-boundary` が捕捉した panic では overlay は開かず、timeline がその step を処理済みとして示す）
-- episode timeline panel（最近の episode を視覚化）
+- error overlay（何も処理しなかった panic の詳細表示：最後に commit した episode の `panic` step のうち `handled: true` を持たない最初のもの —— [§10.5.1](#_10-5-1-structure-of-an-episode) —— を、その episode の step 列のどこにあっても表示する。`error-boundary` が捕捉した panic では overlay は開かず、timeline がその step を処理済みとして示す）
+- episode timeline panel（最近の episode を trigger が始まった順に視覚化する。logger の `onCommit` —— [§10.5.2](#_10-5-2-episode-store) —— から各 episode の commit ごとに更新されるので、それより前に始まった episode がまだ待っている間でも、episode は commit した時点で表示され、overlay は最後に commit した episode に従う）
 - inspector（slot 値、tile ツリー、依存グラフ）
 
 開発サーバは Vite プラグイン（§10.8.1）でコンパイルし、`@kumikijs/runtime` の解決はプラグインに任せる。dev クライアント（アプリとパネルをマウントするページのスクリプト）もコンパイル済みアプリもプラグインを通してランタイムを import するので、ページが動かすコピーは 1 つ — `.kumiki` ファイルのディレクトリからパッケージを解決できればプロジェクト自身のもの、できなければプラグイン自身の依存。開発サーバは Vite の依存の事前バンドルにランタイムについて何も加えないので、Vite はプラグインを使う任意のプロジェクトと同じようにそれを扱う：プロジェクト自身のコピーは、`node_modules` にインストールされていれば事前バンドルされ、リンクされている（ワークスペースのパッケージ）ならソースのまま配信される。プラグイン自身のコピーはそのまま配信される — 公開されたランタイムのエントリは自己完結した 1 モジュールである。
