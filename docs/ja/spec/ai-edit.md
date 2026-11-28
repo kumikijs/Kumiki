@@ -265,6 +265,7 @@ hash にはどの定義の名前も含まれない。定義自身の名前は除
 - 同名でも依存先が変われば別 hash
 - リネームは `(rename, name-old, name-new)` op のみ。hash は不変
 - tile の位置に書いた名前（`column(leaf)`）は、slot や `fn` が同じ名前を持っていてもその名前の tile を指し、値の位置（`text(leaf)`）では値を指す（[言語 §1.7.1](./language.md#_1-7-1-構文)）ので、`refs`・`rename`・`remove --cascade` はチェッカとビルドがそこで解決する定義に従う
+- `when` / `if` / `for` / `match` の腕、tile の本体、tile-test の `expect` では、program の tile が持たない名前はその名前の slot か `fn` を指し、チェッカはそこでそれを tile でない値として報告する（[E0128](./errors.md#e0128-value-as-child)）。単独で書いた builtin tile の名前も、slot か `fn` がその名前を持てばそれを指す（`slot divider` の横の `when(c, divider)`）。呼び出しや prop ブロックを付けると（`divider()`）builtin で、何も指さない。その名前のスコープ内の束縛はローカルで、これも何も指さない。よって `refs` はその読みを挙げ、`rename` の後のチェックは前と同じ読みを新しい名前で報告する
 
 ### 9.5.3 表示時の名前 {#_9-5-3-names-at-display-time}
 

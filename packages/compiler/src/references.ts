@@ -23,7 +23,7 @@ import {
   typeMemberQualifier,
   visitDecodedParts,
 } from "./builtin-calls.ts";
-import { tileNamedAt } from "./builtins.ts";
+import { BUILTIN_TILES, positionalIsTile, tileNamedAt } from "./builtins.ts";
 import { isReservedTypeName } from "./stdlib-types.ts";
 import { eventParts, type RecordField, recordFieldsOf, testSections } from "./test-sections.ts";
 import { HANDLER_NAMES, handlerReducerName } from "./ui-lifts.ts";
@@ -177,12 +177,16 @@ class Walker {
     }
   }
 
-  private bareName(name: string, pos: Pos, locals: ReadonlySet<string>): void {
+  private bareName(
+    name: string,
+    pos: Pos,
+    locals: ReadonlySet<string>,
+    layers: readonly RefLayer[] = ["slot", "fn", "theme"],
+  ): void {
     if (locals.has(name)) return;
     if (name === "route" || name === "now" || name.startsWith("$")) return;
-    if (this.index.slot.has(name)) this.add("slot", name, pos);
-    else if (this.index.fn.has(name)) this.add("fn", name, pos);
-    else if (this.index.theme.has(name)) this.add("theme", name, pos);
+    const layer = layers.find((l) => this.index[l].has(name));
+    if (layer) this.add(layer, name, pos);
   }
 
   expr(e: Expr | undefined, locals: ReadonlySet<string>): void {
@@ -374,14 +378,19 @@ class Walker {
     this.typeExpr(t.in);
     this.add("tile", t.errorBoundary ?? "", t.errorBoundaryPos);
     for (const sr of t.subRoutes ?? []) this.add("tile", sr.tile, sr.tilePos);
-    this.tileExpr(t.body, t.in ? new Set(["$1"]) : new Set());
+    this.tileExpr(t.body, t.in ? new Set(["$1"]) : new Set(), true);
   }
 
-  tileExpr(t: TileExpr | undefined, locals: ReadonlySet<string>): void {
+  /** `rendered` is false for an argument no tile is rendered from, where a name is a tile only. */
+  tileExpr(t: TileExpr | undefined, locals: ReadonlySet<string>, rendered: boolean): void {
     if (!t) return;
     switch (t.kind) {
       case "TileCall":
-        this.add("tile", t.name, t.pos);
+        // Where a tile is rendered the checker reads a name no program tile has as a value, and so a
+        // builtin's name written alone that a value has; a theme's name is no value there.
+        if (rendered && !this.index.tile.has(t.name) && (t.bare || !BUILTIN_TILES.has(t.name))) {
+          this.bareName(t.name, t.pos, locals, ["slot", "fn"]);
+        } else this.add("tile", t.name, t.pos);
         for (const a of t.args) {
           if (a.name !== undefined && this.namingProp(t.name, a.name, a.value)) continue;
           this.tileArg(t.name, a, locals);
@@ -395,21 +404,23 @@ class Walker {
         this.expr(t.iter, locals);
         const inner = new Set(locals);
         inner.add(t.bind);
-        this.tileExpr(t.body, inner);
+        this.tileExpr(t.body, inner, true);
         return;
       }
       case "TileWhen":
         this.expr(t.cond, locals);
-        this.tileExpr(t.body, locals);
+        this.tileExpr(t.body, locals, true);
         return;
       case "TileIf":
         this.expr(t.cond, locals);
-        this.tileExpr(t.consequent, locals);
-        this.tileExpr(t.alternate, locals);
+        this.tileExpr(t.consequent, locals, true);
+        this.tileExpr(t.alternate, locals, true);
         return;
       case "TileMatch": {
         this.expr(t.scrutinee, locals);
-        for (const arm of t.arms) this.tileExpr(arm.body, withPatternBinds(locals, arm.pattern));
+        for (const arm of t.arms) {
+          this.tileExpr(arm.body, withPatternBinds(locals, arm.pattern), true);
+        }
         return;
       }
       default:
@@ -443,7 +454,7 @@ class Walker {
   private tileArg(callee: string, a: TileArg, locals: ReadonlySet<string>): void {
     const v = a.value;
     if (isTileExpr(v)) {
-      this.tileExpr(v, locals);
+      this.tileExpr(v, locals, a.name === undefined && positionalIsTile(callee));
       return;
     }
     const tile = tileNamedAt(callee, a, (name) => (this.index.tile.has(name) ? name : undefined));
@@ -481,7 +492,7 @@ class Walker {
       }
     }
     // A tile-test's `expect` is a tile expression, with no sections.
-    if (t.expect && isTileExpr(t.expect)) this.tileExpr(t.expect, new Set());
+    if (t.expect && isTileExpr(t.expect)) this.tileExpr(t.expect, new Set(), true);
     for (const { section, value } of testSections(t, t.testKind, "expect")) {
       switch (section) {
         case "slots":

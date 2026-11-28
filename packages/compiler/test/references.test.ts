@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import { buildDefIndex, lex, parse, type Reference, referencesIn } from "@kumikijs/compiler";
 import { allFiles } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
-import { codesOf } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf } from "./helpers/diagnostics.ts";
 
 /** Every reference the definition named `qname` makes, as `layer.name@line:col`. */
 function refsOf(src: string, qname: string): string[] {
@@ -214,6 +214,111 @@ tile App = column(leaf, text(leaf()))
 tile App = column(for leaf in items column(leaf, text(leaf)))
 `;
       expect(refsOf(src, "tile.App")).toEqual(["slot.items@5:31", "tile.leaf@5:44"]);
+    });
+  });
+
+  describe("a name written alone where a tile is rendered", () => {
+    // The definition under test is on line 7, and a row's own definitions follow it.
+    const decl = `slot total : Int = 2
+slot c : Bool = true
+slot xs : List(Int) = []
+slot pick : Option(Int) = None
+fn twice(n: Int) -> Int = n * 2
+tile Header = text("h")
+`;
+    const sourceOf = (def: string, extra = ""): string => `${decl}${def}\n${extra}`;
+    /** The references `def` makes to the definition `qname`. */
+    const refsTo = (src: string, def: string, qname: string): string[] =>
+      refsOf(src, def.startsWith("test ") ? "test.t" : "tile.P").filter((r) =>
+        r.startsWith(`${qname}@`),
+      );
+
+    it.each([
+      { place: "a `when` arm", def: "tile P = column(when(c, total))" },
+      { place: "an `if` arm", def: "tile P = column(if c then total else Header)" },
+      { place: "a `for` arm", def: "tile P = column(for x in xs total)" },
+      {
+        place: "a `match` arm",
+        def: "tile P = column(match pick with | Some(n) -> total | None -> Header)",
+      },
+      { place: "a tile's body", def: "tile P = total" },
+      {
+        place: "a tile-test's `expect`",
+        def: "test t = tile-test Header given={slots:{}} expect=total",
+      },
+      { place: "an arm, with a prop block", def: 'tile P = column(when(c, total {id: "t"}))' },
+      { place: "an arm, as a call", def: "tile P = column(when(c, twice(1)))", read: "fn.twice" },
+      {
+        place: "an arm, as a builtin's name a slot has",
+        def: "tile P = column(when(c, divider))",
+        extra: "slot divider : Int = 2\n",
+        read: "slot.divider",
+      },
+      {
+        place: "an arm, as a builtin's name a `fn` has",
+        def: "tile P = column(when(c, divider))",
+        extra: 'fn divider() -> Text = "d"\n',
+        read: "fn.divider",
+      },
+      {
+        place: "an arm, as a builtin's name a slot has, after a loop variable's scope ended",
+        def: "tile P = column(for divider in xs Header, when(c, divider))",
+        extra: "slot divider : Int = 2\n",
+        read: "slot.divider",
+      },
+    ])("is the value the checker reads in $place", ({ def, extra, read = "slot.total" }) => {
+      const src = sourceOf(def, extra);
+      const at = `7:${def.lastIndexOf(read.slice(read.indexOf(".") + 1)) + 1}`;
+      expect(refsTo(src, def, read)).toEqual([`${read}@${at}`]);
+      const valueAsTile = checkSource(src).filter((e) => e.code === "E0128");
+      expect(valueAsTile.map((e) => `${e.pos.line}:${e.pos.col}`)).toEqual([at]);
+    });
+
+    it.each([
+      {
+        place: "a builtin's call, beside a slot of its name",
+        def: "tile P = column(when(c, divider()))",
+        extra: "slot divider : Int = 2\n",
+        qname: "slot.divider",
+      },
+      {
+        place: "a builtin's prop block, beside a slot of its name",
+        def: 'tile P = column(when(c, divider {id: "d"}))',
+        extra: "slot divider : Int = 2\n",
+        qname: "slot.divider",
+      },
+      {
+        place: "a builtin's name a theme has, which is no value",
+        def: "tile P = column(when(c, divider))",
+        extra: "theme divider = {}\n",
+        qname: "theme.divider",
+      },
+      {
+        place: "a tile call where nothing is rendered, which is a tile only",
+        def: "tile P = column(button(Twice))",
+        extra: "fn Twice() -> Int = 2\n",
+        qname: "fn.Twice",
+      },
+      {
+        place: "a loop variable",
+        def: "tile P = column(for total in xs total)",
+        qname: "slot.total",
+      },
+      {
+        place: "a match binding",
+        def: "tile P = column(match pick with | Some(total) -> total | None -> Header)",
+        qname: "slot.total",
+      },
+    ])("records no $qname for $place", ({ def, extra, qname }) => {
+      expect(refsTo(sourceOf(def, extra), def, qname)).toEqual([]);
+    });
+
+    it("is the program's tile of the name, beside a slot of it", () => {
+      const src = sourceOf(
+        "tile P = column(when(c, leaf))",
+        'tile leaf = text("t")\nslot leaf : Text = ""\n',
+      );
+      expect(refsOf(src, "tile.P")).toEqual(["slot.c@7:22", "tile.leaf@7:25"]);
     });
   });
 
