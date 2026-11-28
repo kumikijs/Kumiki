@@ -259,6 +259,7 @@ const TABLE: Record<TileNode["kind"], KindRow> = {
         { kind: "radio", group: "status", value: { _tag: "Some", _0: { _tag: "B" } } },
       ],
       ["radio (a record)", { kind: "radio", group: "dims", value: { w: 2, h: 3 } }],
+      ["radio (a Set holding _tag)", { kind: "radio", group: "tags", value: { _tag: true } }],
       ["radio (no value)", { kind: "radio", group: "plan" }],
     ],
   },

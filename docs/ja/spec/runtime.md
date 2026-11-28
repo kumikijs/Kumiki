@@ -224,8 +224,9 @@ app App ... theme = themeName    # ← slot 名を渡す
 
 `select(value=v, options=[...])` は option の選択状態を **構造的キー**で判定する:
 - variant は `_tag` + payload を再帰的にシリアライズしてキー化する。`Some(Backlog)` と `Some(InProgress)` は別キーになる（フラットな `_tag` 比較だと両者が `"Some"` で衝突するため、payload まで含めることが必須）
+- 値を variant としてキー化するのは、`_tag` フィールドが識別子であり、payload `_0`・`_1`・… 以外のフィールドを持たないときに限る。テキスト `"_tag"` を持つ `Set` や、それをキーに持つ `Map` も `_tag` フィールドを持つ：Set `["_tag"]` と `["_tag", "a"]` は 2 つの option である
 - `Option(Status)` のような「variant でラップした variant」を option 値にできる
-- それ以外の値（`Text`・数値・レコード・`List`）は JSON テキストでキー化する。したがって `Text` の `m` のキーは引用符を含めた `"m"` になる。このテキストは、`Map` のキーを保存するテキストと同じく、どの深さのレコードもフィールドをソートした順に並べる（[stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)）。variant の payload の中のレコードも同じようにキー化する
+- それ以外の値（`Text`・数値・レコード・`List`・`Set`・`Map`）は JSON テキストでキー化する。したがって `Text` の `m` のキーは引用符を含めた `"m"` になる。このテキストは、`Map` のキーを保存するテキストと同じく、どの深さのレコードもフィールドをソートした順に並べる（[stdlib §2.2.2](./stdlib.md#_2-2-2-set-t)）。variant の payload の中のレコードも同じようにキー化する
 - `==` が等しいとする 2 つの値は、レコードのフィールドがどの順に書かれていても同じキーを持つ。`{h=3, w=2}` を持つ slot は `{w=2, h=3}` と書かれた option を選択し、`Some({h=3, w=2})` を持つ slot は `Some({w=2, h=3})` と書かれた option を選択する。`==` が区別する 2 つの値は別のキーを持つ。ただし次の 2 つは例外である：非有限の `Float`（`NaN`・`Infinity`・`-Infinity`）は JSON テキストが `null` になる。`File` は、名前・サイズ・型が同じ 2 つの File が 1 つのキーになるが、`==` は File とそれ自身の間でしか成り立たない
 - キーは両方の描画経路で `<option>` が `value` として持つものであり、キーが `v` のキーと等しい option が選択状態になる。配信されるページ（[§10.6.1](#_10-6-1-ssr)）はその option に `selected` 属性を付けるので、variant やレコードでも `Text` と同じく初期描画が `v` を表示する。`placeholder` の option が選択状態になるのは、両方の経路で、select が値を持たないときに限る
 - `radio` は `value=` を同じキーで持つ。両方の描画経路でそのキーが `<input>` の `value` になり、`value=` を持たない radio には `value` がない。配信されるページは、option と同じく、値のキーが異なる限りグループ内の radio を区別でき、`Text` の値 `pro` は option のものと同じく引用符を含めた `"pro"` として運ばれる。キーは radio の目印にすぎない：bind された radio を選ぶと値そのものが書き込まれ、radio がチェックされるかどうかは bind 先の slot との `==` または `selected=` で決まる（[フォーム §5.1.1](./forms.md#_5-1-1-elements-that-support-bind)）ので、レコードのフィールド順はそれを左右しない
