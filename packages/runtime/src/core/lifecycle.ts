@@ -1,17 +1,12 @@
-import type { AppShape, ReducerSpec, TileNode } from "./types.ts";
+import type { AppShape, TileNode } from "./types.ts";
 
 export function installLifecycleListeners(
   app: AppShape,
-  applyReducer: (r: ReducerSpec, payload: Record<string, unknown>) => void,
+  fire: (name: string) => void,
 ): Array<() => void> {
   if (typeof window === "undefined") return [];
   const has = (name: string): boolean =>
     app.reducers.some((r) => r.event.kind === "lifecycle" && r.event.name === name);
-  const fire = (name: string): void => {
-    for (const r of app.reducers) {
-      if (r.event.kind === "lifecycle" && r.event.name === name) applyReducer(r, {});
-    }
-  };
   const unsubs: Array<() => void> = [];
   if (has("app.stop")) {
     const onUnload = (): void => fire("app.stop");
