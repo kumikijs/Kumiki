@@ -12,4 +12,4 @@ tile App = column(button() {text: "Go"}, toast() {text: "T"})
 # after:  <button data-kumiki-tile="button">Go</button>, and the toast shows "T"
 ```
 
-When a call writes both, the block's value is the label, as for every other prop: `button(text="A") {text: "B"}` says `B`. The checker reads the label the same way, so `--strict-a11y` counts a block `text` as the button's name (E0701), and an `EffectId` written there is refused as it is under `text=`.
+When a call writes both, the block's value is the label, as for every other prop: `button(text="A") {text: "B"}` says `B`. The checker reads the label the same way, so `--strict-a11y` counts a block `text` as the button's name (E0701), and an `EffectId` written there is refused as it is under `text=`. E0701's message now reads `button must have text or aria-label`, naming no one spelling.

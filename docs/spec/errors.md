@@ -1710,7 +1710,7 @@ a11y checking is enabled via `check(program, { strictA11y: true })`.
 
 ### E0701 `a11y-button`
 
-> `button must have a text= argument or aria-label`
+> `button must have text or aria-label`
 
 ### E0702 `a11y-image`
 

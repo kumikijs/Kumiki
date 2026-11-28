@@ -1,6 +1,6 @@
 import { check, codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf, soleMessageOf } from "./helpers/diagnostics.ts";
 import { loweredOf } from "./helpers/module.ts";
 import { withRoot } from "./helpers/programs.ts";
 
@@ -142,8 +142,9 @@ reducer load on=route.enter("/") do= n := 1`;
     ["list", 'list(text("a"), ordered=false) {ordered: true}', "ordered: !!(true)", "false"],
     ["button", 'button(text="Named") {text: "Block"}', '"Block"', '"Named"'],
   ])("lowers the value the block writes when both spellings are written on %s", (kind, tile, read, dropped) => {
-    expect(fieldsOf(emit(tile), kind)).toContain(read);
-    expect(fieldsOf(emit(tile), kind)).not.toContain(dropped);
+    const fields = fieldsOf(emit(tile), kind);
+    expect(fields).toContain(read);
+    expect(fields).not.toContain(dropped);
   });
 
   it.each([
@@ -151,6 +152,12 @@ reducer load on=route.enter("/") do= n := 1`;
     'button() {text: "Go"}',
   ])("counts the text of %s as the button's name under strictA11y", (tile) => {
     expect(codesOf(withRoot(tile, ""), { strictA11y: true })).toEqual([]);
+  });
+
+  it("asks a button with neither for its text or an aria-label, in no one spelling", () => {
+    expect(soleMessageOf("E0701", withRoot("button()", ""), { strictA11y: true })).toBe(
+      "button must have text or aria-label",
+    );
   });
 
   it("reads no block in a tile-test's expected tree, which compares arguments only", () => {

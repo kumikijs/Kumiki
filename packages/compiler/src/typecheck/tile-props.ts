@@ -70,7 +70,7 @@ export function checkA11y(
       errors.push({
         code: "E0701",
         kind: "a11y-button",
-        message: `button must have a text= argument or aria-label`,
+        message: `button must have text or aria-label`,
         pos: t.pos,
       });
     }
