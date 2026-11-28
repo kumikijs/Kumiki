@@ -5,13 +5,17 @@ import {
   pointedErrorsOf,
   reservedFieldNameMessage,
 } from "./helpers/diagnostics.ts";
-import { withApp, withRoot } from "./helpers/programs.ts";
+import { withApp, withReducer, withRoot } from "./helpers/programs.ts";
 
 const reported = (text: string): Pointed => ({
   code: "E0240",
   message: reservedFieldNameMessage,
   text,
 });
+
+/** Each diagnostic's code and the text it points at. */
+const pointsOf = (src: string): [code: string, text: string][] =>
+  pointedErrorsOf(src).map((e) => [e.code, e.text]);
 
 const LOAD = (inType: string) =>
   `effect load cap=storage.read in=${inType} out=Result(Text, Text) map-request={key: "k", decode: Decoder.Json(Text)}`;
@@ -65,6 +69,37 @@ const WRITTEN: [where: string, src: string, text: string][] = [
     withRoot('text({_tag="a", n=1}.n.show)', ""),
     '_tag="a", n=1}.n.show))',
   ],
+  [
+    "a record type inside a record type",
+    withRoot(`text("x")`, "type R = {a: {_tag: Text}}"),
+    "_tag: Text}}",
+  ],
+  [
+    "an effect's out=",
+    withApp(
+      `effect load cap=storage.read in=Text out=Result({_tag: Text}, Text) map-request={key: $1, decode: Decoder.Json({tag: Text})}\ntile App = column(text("x"))`,
+      { caps: "storage.read" },
+    ),
+    "_tag: Text}, Text) map-request={key: $1, decode: Decoder.Json({tag: Text})}",
+  ],
+  [
+    "a record literal in a reducer's do",
+    withReducer("slot s : Int = 0", 's := {_tag="a", n=1}.n'),
+    '_tag="a", n=1}.n',
+  ],
+  [
+    "a property-test's for-all type",
+    withReducer(
+      `slot s : Int = 0
+test p =
+    property-test
+        for-all   = {g: {_tag: Text}}
+        given     = {event: {type: ui.click, target: B}}
+        invariant = run-reducer(r).slots.s == 1`,
+      "s := 1",
+    ),
+    "_tag: Text}}",
+  ],
 ];
 
 describe("a record field named _tag is E0240", () => {
@@ -84,7 +119,32 @@ fn picks() -> List({label: Text, value: R})
 tile App = column(
              select(bind=pick, options=picks()) {id: "pick"},
              text("n: " + pick.n.show))`);
-    expect(errorCodesOf(src)).toEqual(["E0240", "E0240", "E0240", "E0240"]);
+    expect(pointedErrorsOf(src)).toEqual([
+      reported("_tag: Text, n: Int}"),
+      reported('_tag="a", n=2}'),
+      reported('_tag="a", n=1}},'),
+      reported('_tag="a", n=2}}]'),
+    ]);
+  });
+
+  it("refuses a copy that writes _tag, beside the field its record's type lacks", () => {
+    const src = withRoot(
+      `text("x")`,
+      'type R = {tag: Text, n: Int}\nfn f(r: R) -> R = r.copy(_tag="b")',
+    );
+    expect(pointsOf(src)).toEqual([
+      ["E0215", '"b")'],
+      ["E0240", '_tag="b")'],
+    ]);
+  });
+
+  it("refuses each of two fields named _tag, beside E0008 on the second", () => {
+    const src = withRoot(`text("x")`, "type R = {_tag: Text, _tag: Int}");
+    expect(pointsOf(src)).toEqual([
+      ["E0008", "_tag: Int}"],
+      ["E0240", "_tag: Text, _tag: Int}"],
+      ["E0240", "_tag: Int}"],
+    ]);
   });
 
   it.each<[string, string]>([
@@ -119,10 +179,6 @@ test t =
     ${test}`,
     { caps: "storage.write" },
   );
-
-/** Each diagnostic's code and the text it points at. */
-const pointsOf = (src: string): [code: string, text: string][] =>
-  pointedErrorsOf(src).map((e) => [e.code, e.text]);
 
 describe("a slot or an effect named _tag", () => {
   it.each<[where: string, test: string]>([
