@@ -380,7 +380,9 @@ export function mountCore(
     extra: { name?: string; envReads?: readonly EnvRead[] } = {},
     token?: string,
   ): void {
-    const episodeId = episode?.recordPanic({ ...rec, location, ...extra }, token);
+    // Read through `fromLogger`, as a boundary records, so a logger that throws costs the
+    // episode id and not the report.
+    const episodeId = fromLogger(() => episode?.recordPanic({ ...rec, location, ...extra }, token));
     if (inPanicHandler) return;
     const handlers = app.reducers.filter(
       (h) => h.event.kind === "lifecycle" && h.event.name === "app.error",
@@ -389,7 +391,16 @@ export function mountCore(
     const info = userPanicInfo(rec, location, episodeId ?? fromLogger(() => episode?.currentId()));
     inPanicHandler = true;
     try {
-      for (const h of handlers) applyReducer(h, { $event: info });
+      for (const h of handlers) {
+        try {
+          applyReducer(h, { $event: info });
+        } catch (e) {
+          // A throw past an `app.error` reducer's body, such as the dispatch of what it emitted,
+          // is reported as a panic in its body is: not to `app.error` again, and the other
+          // handlers and whatever reported this failure carry on.
+          handleLivePanic(`reducer "${h.name}"`, e, h.name);
+        }
+      }
     } finally {
       inPanicHandler = false;
     }
@@ -413,7 +424,16 @@ export function mountCore(
     return { kind: "lifecycle", target: r.event.name };
   }
 
-  function applyReducer(r: ReducerSpec, payload: Record<string, unknown>): void {
+  /**
+   * Run `r` on `payload` inside an episode, opening one when none is open. A panic inside the
+   * body is reported by {@link applyReducerBody}. `escaped`, when given, takes what throws past
+   * the body, while that episode is still open; without it the throw goes on to the caller.
+   */
+  function applyReducer(
+    r: ReducerSpec,
+    payload: Record<string, unknown>,
+    escaped?: (e: unknown) => void,
+  ): void {
     if (disposed) return;
     const opened = episode && !episode.hasOpenEpisode();
     if (opened) {
@@ -422,6 +442,9 @@ export function mountCore(
     }
     try {
       applyReducerBody(r, payload);
+    } catch (e) {
+      if (!escaped) throw e;
+      escaped(e);
     } finally {
       if (opened) episode?.endTrigger();
     }
@@ -473,11 +496,28 @@ export function mountCore(
     token = "",
   ): void {
     const exitScope = episode?.recordEffectEnd(token, effect, outcome, value);
+    // What throws past a reducer's body here, such as the dispatch of what it emitted or the
+    // episode logger recording its render, is not another result: the request already has its
+    // one. It is an error of the app, reported as a reducer panic is. `escaped` cannot throw, so
+    // the effect's other reducers still run after it.
+    const location = `effect "${effect}"`;
+    const escaped = (e: unknown): void => {
+      reportPanic(location, e);
+      fireAppError(panicInfo(e, "effect"), location);
+      // The body committed its slots before the throw, which may have skipped the render. What
+      // that render throws in turn, such as a `tile.mount` reducer's emit, is reported the same way.
+      try {
+        render();
+      } catch (again) {
+        reportPanic(location, again);
+        fireAppError(panicInfo(again, "effect"), location);
+      }
+    };
     let matched = 0;
     try {
       for (const r of app.reducers) {
         if (r.event.kind === "effect" && r.event.effect === effect && r.event.outcome === outcome) {
-          applyReducer(r, { $1: value, $2: key });
+          applyReducer(r, { $1: value, $2: key }, escaped);
           matched++;
         }
       }
@@ -495,7 +535,7 @@ export function mountCore(
           if (name) {
             const r = app.reducers.find((r) => r.name === name);
             if (r) {
-              applyReducer(r, { $1: value, $2: key });
+              applyReducer(r, { $1: value, $2: key }, escaped);
               matched++;
             }
           }
@@ -546,10 +586,20 @@ export function mountCore(
     };
     applyReducer(r, { $route: syntheticRoute });
   };
-  seams._setSlot = (name, value, at) => {
-    if (!slotAccepts(app.slots[name], value, at)) return false;
+  seams._setSlot = (name, value, at, from) => {
+    const meta = app.slots[name];
+    if (!slotAccepts(meta, value, at)) return false;
+    const before = slotValues[name];
     slotValues[name] = value;
-    render();
+    // The write lands and renders even when a hook the journal hands the episode to throws.
+    try {
+      if (from) {
+        const { volatile } = meta ?? {};
+        episode?.recordBind({ ...from, slot: name, path: at, before, after: value, volatile });
+      }
+    } finally {
+      render();
+    }
     return true;
   };
   seams._navigate = (path, replace) => navigation.navigate(path, !!replace);

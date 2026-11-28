@@ -1,12 +1,13 @@
 # Feature (language.md): `Tile#id` on a container matches the id of the
 # descendant that dispatched the event, in either spelling of the id.
 #
-# A selector on a container is wired onto the descendants that fire the event:
-# `ui.click(Toolbar)` lands on the buttons inside `Toolbar`, not on the `row`,
-# which fires no click. `#id` then filters on the element that dispatched, so
-# `Toolbar#save` picks the Save button out of the toolbar, and
-# `Toolbar#discard` the button `DiscardBtn` renders inside it. The row's own
-# `{id: "toolbar"}` is never what a click dispatches.
+# A selector on a container is wired onto the descendants that hand the event
+# to a reducer: `ui.click(Toolbar)` lands on the buttons inside `Toolbar`, not
+# on the `row`, which fires a click but whose renderer never calls onClick.
+# `#id` then filters on the element that dispatched, so `Toolbar#save` picks
+# the Save button out of the toolbar, and `Toolbar#discard` the button
+# `DiscardBtn` renders inside it. The row's own `{id: "toolbar"}` is never what
+# a click dispatches.
 #
 # `id="…"` and `{id: "…"}` are one prop: `Clear#clear` matches
 # `button(text="Clear", id="clear")`.

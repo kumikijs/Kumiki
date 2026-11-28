@@ -24,6 +24,10 @@ export const withReducer = (defs: string, body: string, opts: AppOptions = {}): 
 export const withRoot = (child: string, defs: string): string =>
   withApp(`${defs}\ntile App = column(${child})`);
 
+/** A type definition's name as a program writes it as a type: applied to `Int` for each parameter. */
+export const appliedName = (t: { name: string; params: readonly string[] }): string =>
+  t.params.length === 0 ? t.name : `${t.name}(${t.params.map(() => "Int").join(", ")})`;
+
 /** The nesting bound in language.md, which E0237 holds a tile tree to once its tiles are inlined. */
 export const NESTING_LIMIT = 256;
 

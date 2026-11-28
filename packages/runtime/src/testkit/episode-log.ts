@@ -1,4 +1,4 @@
-import type { EnvRead, PanicCategory, PanicCauseLink } from "../core.ts";
+import type { BindSegment, EnvRead, PanicCategory, PanicCauseLink } from "../core.ts";
 
 export type EpisodeReducerStep = {
   kind: "reducer";
@@ -7,6 +7,16 @@ export type EpisodeReducerStep = {
   emits?: string[];
   /** What the body read from the environment. Absent in older logs. */
   "env-reads"?: EnvRead[];
+  ts?: number;
+};
+
+/** A write a bound control made: `value` at `path` in `slot`, which replay makes again. */
+export type EpisodeBindStep = {
+  kind: "bind";
+  slot: string;
+  path?: BindSegment[];
+  value: unknown;
+  "slot-diffs"?: { name: string; before?: unknown; after: unknown }[];
   ts?: number;
 };
 
@@ -20,6 +30,7 @@ type EpisodeEffectEndStep = {
 
 export type EpisodeStepLite =
   | EpisodeReducerStep
+  | EpisodeBindStep
   | { kind: "effect-start"; name: string; args?: unknown; ts?: number }
   | EpisodeEffectEndStep
   | { kind: "signal-update"; "dirty-slots"?: string[]; "binds-updated"?: string[]; ts?: number }

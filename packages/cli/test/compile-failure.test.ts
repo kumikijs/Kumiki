@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadApp } from "../src/smoke.ts";
+import { loadApp } from "../src/load.ts";
 
 const NOT_A_RECORD = `slot count : Int = 0
 reducer inc on=ui.click(B) do= count := count + 1

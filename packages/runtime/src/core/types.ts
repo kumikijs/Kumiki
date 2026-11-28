@@ -453,7 +453,17 @@ export interface Router {
 
 export type MountedApp = AppShape & {
   _dispatch: (name: string, el: Record<string, unknown>) => void;
-  _setSlot: (name: string, value: unknown, at?: readonly BindSegment[]) => boolean;
+  /**
+   * Write `value`, the whole slot, to slot `name` when its refinement takes it, and say whether it
+   * did. A bound control passes `from`: itself, and what it wrote at `at`, which journals the write
+   * ({@link EpisodeLogger.recordBind}).
+   */
+  _setSlot: (
+    name: string,
+    value: unknown,
+    at?: readonly BindSegment[],
+    from?: { control: HTMLElement; written: unknown },
+  ) => boolean;
   _navigate: (path: string, replace?: boolean) => void;
   _prefetch: (name: string, args: Record<string, string>, to: string) => void;
   _rerender: () => void;

@@ -1,0 +1,43 @@
+{
+  "steps": [
+    {
+      "label": "the account link lands on the sibling, without the layout",
+      "do": { "clickText": "Account settings" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Section account"],
+        "domExcludes": ["Settings layout", "Account child"],
+        "state": { "log": "+section;" }
+      }
+    },
+    {
+      "label": "the sibling takes every one-segment path under /settings",
+      "do": { "navigate": "/settings/billing" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Section billing"],
+        "domExcludes": ["Settings layout"],
+        "state": { "log": "+section;+section;" }
+      }
+    },
+    {
+      "label": "a deeper path only the wildcard matches goes through the layout",
+      "do": { "navigate": "/settings/a/b" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Settings layout", "Rest of settings"],
+        "domExcludes": ["Account child"],
+        "state": { "log": "+section;+section;" }
+      }
+    },
+    {
+      "label": "so does the bare /settings path",
+      "do": { "navigate": "/settings" },
+      "expect": {
+        "noErrors": true,
+        "domIncludes": ["Settings layout", "Rest of settings"],
+        "state": { "log": "+section;+section;" }
+      }
+    }
+  ]
+}

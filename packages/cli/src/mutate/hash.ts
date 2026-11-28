@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
 import { lex, type Pos } from "@kumikijs/compiler";
-import { type DefEntry, directDeps, referenceSites, type Store } from "../store.ts";
-import { defNamePos } from "./definition-text.ts";
+import {
+  type DefEntry,
+  definitionText,
+  directDeps,
+  posInFile,
+  referenceSites,
+  type Store,
+} from "../store.ts";
 
 function hashBody(body: string): string {
   return createHash("sha256").update(body).digest("hex").slice(0, 16);
@@ -120,22 +126,19 @@ function canonicalForm(
   const qname = `${entry.layer}.${entry.name}`;
   const key = (p: Pos): string => `${p.line}:${p.col}`;
   const labels = new Map<string, string>();
-  const own = defNamePos(store, entry, entry.name);
-  if (own !== undefined) labels.set(key(own), "@self");
+  if (entry.namePos !== undefined) labels.set(key(entry.namePos), "@self");
   for (const r of referenceSites(store, qname)) {
     if (!r.pos) continue;
     const target = `${r.layer}.${r.name}`;
     labels.set(key(r.pos), target === qname ? "@self" : label(target, r.layer));
   }
-  // Lexed on its own, so a token's line is counted from the definition's first.
-  const offset = entry.range.startLine - 1;
-  const text = store.lines.slice(offset, entry.range.endLine).join("\n");
   const out: unknown[] = [];
-  for (const t of lex(text)) {
+  // Lexed on its own, so a token's position is counted from the definition's first token.
+  for (const t of lex(definitionText(store, entry))) {
     if (t.kind === "eof") continue;
+    const { line, col } = posInFile(entry, t.pos);
     // A reference is where its name's text starts, which in a string literal is past the quote.
-    const col = t.kind === "str" ? t.pos.col + 1 : t.pos.col;
-    const at = labels.get(key({ line: t.pos.line + offset, col }));
+    const at = labels.get(key({ line, col: t.kind === "str" ? col + 1 : col }));
     out.push(at ?? [t.kind, t.kind === "num" ? t.raw : t.value]);
   }
   return JSON.stringify(out);

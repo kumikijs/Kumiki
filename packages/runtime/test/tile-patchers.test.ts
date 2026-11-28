@@ -122,6 +122,35 @@ describe("radio", () => {
     defined(inputPatchers.radio, "radio patcher")(el, before, radio(to), ctx);
     expect(labelOf(el)).toBe(shown);
   });
+
+  it.each<[string, unknown, unknown, string | null]>([
+    ["changes", { _tag: "S" }, { _tag: "L" }, "L"],
+    ["gains", undefined, "pro", '"pro"'],
+    ["loses", { w: 1, h: 1 }, undefined, null],
+  ])("%s the key in its value attribute when patched", (_, from, to, shown) => {
+    const before: Of<"radio"> = { kind: "radio", group: "g", value: from };
+    const el = defined(inputTiles.radio, "radio")(before, ctx);
+    const after: Of<"radio"> = { kind: "radio", group: "g", value: to };
+    defined(inputPatchers.radio, "radio patcher")(el, before, after, ctx);
+    expect(defined(el.querySelector("input"), "radio input").getAttribute("value")).toBe(shown);
+  });
+
+  it("writes the value a later pass gave it, not the one it was first rendered with", () => {
+    let value: unknown = { _tag: "S" };
+    const app = mountApp(
+      bareApp({
+        slots: { size: { value: { _tag: "M" } } },
+        root: () => ({ kind: "radio", group: "size", value, bind: "size" }),
+      }),
+    );
+    value = { _tag: "L" };
+    app._rerender?.();
+    defined(
+      document.body.querySelector<HTMLInputElement>("input[type=radio]"),
+      "the radio",
+    ).click();
+    expect(app.live?.size).toEqual({ _tag: "L" });
+  });
 });
 
 describe("slider", () => {

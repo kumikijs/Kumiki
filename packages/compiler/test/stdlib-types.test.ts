@@ -2,6 +2,7 @@ import { generateDts, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { BUILTIN_TYPE_CONSTRUCTORS, STDLIB_TYPES } from "../src/stdlib-types.ts";
 import { codesOf } from "./helpers/diagnostics.ts";
+import { appliedName } from "./helpers/programs.ts";
 
 const TAIL = `tile App = column(text("x"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
@@ -10,7 +11,7 @@ app A caps=[] routes={"/" -> App, "/404" -> App} init=[]
 describe("every stdlib type resolves in the checker", () => {
   for (const t of STDLIB_TYPES) {
     it(`resolves "${t.name}"`, () => {
-      expect(codesOf(`slot v : ${t.name} = 1\n${TAIL}`)).not.toContain("E0117");
+      expect(codesOf(`slot v : ${appliedName(t)} = 1\n${TAIL}`)).not.toContain("E0117");
     });
   }
 
@@ -27,12 +28,37 @@ describe("every stdlib type generates a real TypeScript type", () => {
 
   for (const t of STDLIB_TYPES) {
     it(`maps "${t.name}" with no unknown anywhere in it`, () => {
-      const line = providerLine(`effect e cap=custom.thing in=${t.name} out=Result(Unit, Text)
+      const line =
+        providerLine(`effect e cap=custom.thing in=${appliedName(t)} out=Result(Unit, Text)
 ${TAIL}`);
       expect(line, `no provider line for ${t.name}`).toBeDefined();
       expect(line, `${t.name} generated an unknown`).not.toContain("unknown");
     });
   }
+
+  const NESTED_JSON = '{ _tag: "Json"; _0: { _tag: "Json"; _0: Note } | { _tag: "Form"';
+
+  it.each([
+    ["HttpBody(Note)", '{ _tag: "Json"; _0: Note } | { _tag: "Form"'],
+    ["IndexRange(Text)", 'lower: { _tag: "Some"; _0: string } | { _tag: "None" };'],
+    ["HttpBody(HttpBody(Note))", NESTED_JSON],
+  ])("maps %s with its argument in place of the parameter", (applied, shape) => {
+    const line = providerLine(`type Note = {id: Text}
+effect e cap=custom.thing in=${applied} out=Result(Unit, Text)
+${TAIL}`);
+    expect(line).toContain(shape);
+  });
+
+  it("keeps a program generic's parameter where it applies a standard-library one", () => {
+    const dts = generateDts(
+      parse(
+        lex(`type Req(T) = {body: HttpBody(T)}
+effect e cap=custom.thing in=Req(Int) out=Result(Unit, Text)
+${TAIL}`),
+      ),
+    );
+    expect(dts).toContain('export type Req<T> = { body: { _tag: "Json"; _0: T } | { _tag: "Form"');
+  });
 
   it("quotes a field name TypeScript cannot take bare", () => {
     const line = providerLine(`effect e cap=custom.thing in=PanicInfo out=Result(Unit, Text)

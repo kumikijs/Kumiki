@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { compileOrFail, LOADABLE, writeTmpFile } from "./helpers/module.ts";
+import { compileOrFail, LOADABLE, parseErrorOn, writeTmpFile } from "./helpers/module.ts";
 import { withApp, withReducer } from "./helpers/programs.ts";
 import { scratchRoot } from "./helpers/scratch.ts";
 
@@ -30,14 +30,8 @@ function emitted(source: string): () => string {
   };
 }
 
-/** What `node --check` reports about `file`: "" when it parses, its error line otherwise. */
-function parseError(file: string): string {
-  const run = spawnSync(process.execPath, [`--stack-size=${STACK_KB}`, "--check", file], {
-    encoding: "utf8",
-  });
-  if (run.status === 0) return "";
-  return run.stderr.split("\n").find((l) => /Error/.test(l)) ?? `exit ${run.status}`;
-}
+/** What `node --check` reports about `file` on `STACK_KB`: "" when it parses. */
+const parseError = (file: string): string => parseErrorOn(STACK_KB, file);
 
 /** What the module observes after the match ran: the slots reducer `r` wrote, or the text `/` rendered. */
 type Read = "slots" | "text";

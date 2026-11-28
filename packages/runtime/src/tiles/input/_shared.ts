@@ -39,7 +39,8 @@ export function writeBind(
     bindPath && bindPath.length > 0
       ? _setPathHelper(app.live[slotName] ?? {}, bindPath, written)
       : written;
-  const accepted = unread === undefined && app._setSlot(slotName, next, bindPath);
+  const accepted =
+    unread === undefined && app._setSlot(slotName, next, bindPath, { control: el, written });
   if (!accepted && IME_COMPOSING.has(el)) {
     PENDING_REFUSAL.set(el, () => settleRefusal(app, el, slotName, written, bindPath, unread));
     return;

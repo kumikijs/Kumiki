@@ -57,7 +57,7 @@ function advancingApp(children: () => TileNode[]): MountedApp {
 }
 
 function mountRecorded(app: AppShape, tiles?: TileRenderers) {
-  const { logger, committed } = recordingLogger();
+  const { logger, handedOver: committed } = recordingLogger();
   const { dispose } = mount(app, root, { episodeLogger: logger, ...(tiles ? { tiles } : {}) });
   return { committed, dispose };
 }

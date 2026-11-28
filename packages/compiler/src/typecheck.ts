@@ -27,11 +27,13 @@ import { checkApp } from "./typecheck/app.ts";
 import type { KumikiError, SymbolTable } from "./typecheck/context.ts";
 import { checkEffect } from "./typecheck/effect.ts";
 import { checkFn } from "./typecheck/fn.ts";
+import { checkUndeclaredIntLiterals } from "./typecheck/int-literal.ts";
 import { checkMotion } from "./typecheck/motion.ts";
 import { checkReducer } from "./typecheck/reducer.ts";
 import { routeChainResolver } from "./typecheck/route-chain.ts";
 import { checkSlot } from "./typecheck/slot.ts";
 import { checkTest } from "./typecheck/test.ts";
+import { checkTheme } from "./typecheck/theme.ts";
 import { checkTile } from "./typecheck/tile.ts";
 import { collectElementIds, collectPrefetchTargets, tileKinds } from "./typecheck/tile-collect.ts";
 import { checkTypeDef, reservedTypeName } from "./typecheck/types.ts";
@@ -119,10 +121,14 @@ function checkAll(
     qualifiers: new Set(qualifierCandidates(program)),
     judgedVariants: new WeakSet(),
     undefinedVariants: new Map(),
+    appliedPrecision: new WeakSet(),
     fnResults: new Map(),
     fnLoops: new Set(),
     unionsByTag: unionsByTag(program.defs),
+    numberLiterals: { met: new Set(), judged: new Set() },
     tileKinds: tileKinds(tiles),
+    judgedMapLiterals: new WeakSet(),
+    decoderKeyedLiterals: new Map(),
   };
 
   for (const def of program.defs) {
@@ -187,14 +193,18 @@ function checkAll(
     if (def.kind === "EffectDef") checkEffect(def, sym, errors);
     if (def.kind === "AppDef") checkApp(def, sym, errors, registeredCaps, routeChain);
     if (def.kind === "MotionDef") checkMotion(def, errors);
+    if (def.kind === "ThemeDef") checkTheme(def, errors);
     if (def.kind === "TestDef") checkTest(def, sym, errors);
   }
+  checkUndeclaredIntLiterals(sym, errors);
   checkCycles(program, sym, index, errors);
   checkDuplicateNames(program, errors);
 
   return errors.filter((d) => {
     const variant = sym.undefinedVariants.get(d);
-    return variant === undefined || !sym.judgedVariants.has(variant);
+    if (variant !== undefined && sym.judgedVariants.has(variant)) return false;
+    const literal = sym.decoderKeyedLiterals.get(d);
+    return literal === undefined || !sym.judgedMapLiterals.has(literal);
   });
 }
 
