@@ -56,7 +56,7 @@ const cases: Case[] = [
     shown: [
       "themeAt=dark",
       "quote=failed ",
-      'pinged=err [Error: effect "ping" resolved to undefined, not {kind, value}]',
+      'pinged=err [Error: effect "ping" (http.post) resolved to undefined, not {kind, value}]',
     ],
   },
   {

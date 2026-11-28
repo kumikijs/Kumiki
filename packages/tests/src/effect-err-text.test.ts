@@ -134,6 +134,23 @@ describe("a failed storage-family effect delivers its declared Text to .err", ()
     expect(returned).toBe(3);
   });
 
+  it("a provider that answers no {kind, value} is called once under retry=", async () => {
+    let answered = 0;
+    const text = await problemShown(
+      await loadSource(
+        failingAtBoot("storage.write", `{key: "k", value: "v"}`, "retry=linear(3, 10ms)"),
+      ),
+      {
+        "storage.write": () => {
+          answered++;
+          return { ok: true } as unknown as EffectResult;
+        },
+      },
+    );
+    expect(text).toContain('problem: Error: effect "run" (storage.write) resolved to {"ok":true}');
+    expect(answered).toBe(1);
+  });
+
   it("a provider that rejects asynchronously is delivered as the same Text", async () => {
     const app = await loadSource(failingAtBoot("storage.write", `{key: "k", value: "v"}`));
     const text = await problemShown(app, {
@@ -179,13 +196,20 @@ describe("a failed storage-family effect delivers its declared Text to .err", ()
     expect(text).toContain("problem: the effect failed with a value that cannot be shown as Text");
   });
 
-  it("a provider that returns no {kind, value} is an err naming what it returned", async () => {
+  // The same message an HTTP or custom effect's {message} carries, so the answer is written as
+  // there: a Text quoted, a {message} record whole.
+  it.each<[string, unknown, string]>([
+    ["null", null, "null"],
+    ["a bare Text", "done", '"done"'],
+    ["a {message} record with no kind", { message: "sealed" }, '{"message":"sealed"}'],
+    ["a text past 200 characters", "x".repeat(199), `"${"x".repeat(199)}…`],
+  ])("a provider that answers %s, no {kind, value}, is an err naming it", async (_, answer, shown) => {
     const app = await loadSource(failingAtBoot("storage.read", `{key: "k"}`));
     const text = await problemShown(app, {
-      "storage.read": () => null as unknown as EffectResult,
+      "storage.read": () => answer as EffectResult,
     });
     expect(text).toContain(
-      "problem: Error: the storage.read provider returned null, not {kind, value}",
+      `problem: Error: effect "run" (storage.read) resolved to ${shown}, not {kind, value}`,
     );
   });
 });

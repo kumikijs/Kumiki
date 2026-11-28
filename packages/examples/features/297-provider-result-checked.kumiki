@@ -1,0 +1,38 @@
+# Feature: a host provider's answer that is not a result (spec/stdlib.md).
+#
+# `track` runs on `telemetry.track`, a custom capability registered in this
+# directory's kumiki.caps.json, so a host provider supplies it. A provider
+# answers with {kind: "ok", value} or {kind: "err", value}. Anything else it
+# hands back, `undefined` included, is this request's err, as a throw from the
+# provider is: `failed` is handed a {message} record naming what came back, and
+# `sentOk` does not run.
+#
+# The scenario walks one `.ok` and one `.err`.
+# `packages/tests/src/provider.test.ts` mounts this app with a provider that
+# answers something other than a result.
+
+type Failure = {message: Text}
+
+slot sent    : Int  = 0
+slot problem : Text = ""
+
+effect track cap=telemetry.track
+             in={name: Text}
+             out=Result(Unit, Failure)
+
+reducer fire   on=ui.click(TrackBtn) do= emit track({name: "click"})
+reducer sentOk on=track.ok(_, _)     do= sent := sent + 1
+reducer failed on=track.err($e, _)   do= problem := $e.message
+
+tile TrackBtn = button(text="Track", onClick=fire) {id: "track"}
+
+tile App = column(
+    TrackBtn,
+    text("sent: " + sent.show),
+    text("problem: " + problem)
+) {pad: "lg", gap: "md"}
+
+app ProviderResultChecked
+    caps   = [telemetry.track]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

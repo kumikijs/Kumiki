@@ -1,0 +1,32 @@
+{
+  "steps": [
+    {
+      "label": "nothing is tracked at mount",
+      "expect": { "noErrors": true, "domIncludes": ["sent: 0", "problem: "] }
+    },
+    {
+      "label": "an .ok result runs sentOk",
+      "do": { "click": "#track" },
+      "expect": {
+        "noErrors": true,
+        "state": { "sent": 1, "problem": "" },
+        "domIncludes": ["sent: 1"]
+      }
+    },
+    {
+      "label": "an .err result hands failed its {message} record",
+      "do": { "click": "#track" },
+      "expect": {
+        "noErrors": true,
+        "state": { "sent": 1, "problem": "offline" },
+        "domIncludes": ["sent: 1", "problem: offline"]
+      }
+    }
+  ],
+  "effects": {
+    "track": [
+      { "outcome": "ok", "value": null },
+      { "outcome": "err", "value": { "message": "offline" } }
+    ]
+  }
+}

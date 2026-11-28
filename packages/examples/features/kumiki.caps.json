@@ -2,7 +2,7 @@
   "capabilities": [
     {
       "name": "telemetry.track",
-      "description": "Demo custom capability for 27-custom-capability.kumiki — registered here so app.caps accepts it."
+      "description": "Demo custom capability that the examples in this directory run on a host provider — registered here so app.caps accepts it."
     }
   ]
 }

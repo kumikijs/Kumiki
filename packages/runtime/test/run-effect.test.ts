@@ -30,7 +30,7 @@ function answering(
   return { eff, attempts: () => attempts };
 }
 
-const noResult = 'Error: effect "load" resolved to undefined, not {kind, value}';
+const noResult = 'Error: effect "load" (http.get) resolved to undefined, not {kind, value}';
 
 const failing: ReadonlyArray<[string, () => unknown, unknown]> = [
   [
@@ -45,8 +45,7 @@ const failing: ReadonlyArray<[string, () => unknown, unknown]> = [
     "resolves to a record with no kind",
     () => ({ value: "loaded" }),
     {
-      message:
-        'Error: effect "load" resolved to an object with no ok or err kind, not {kind, value}',
+      message: 'Error: effect "load" (http.get) resolved to {"value":"loaded"}, not {kind, value}',
     },
   ],
 ];

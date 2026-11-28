@@ -153,6 +153,28 @@ describe("the SSR pass gates an effect on its capability", () => {
   });
 });
 
+describe("the SSR pass reads a provider result that is not {kind, value}", () => {
+  it.each<[string, unknown, string]>([
+    ["a record with no kind", { ok: true }, '{"ok":true}'],
+    ["undefined", undefined, "undefined"],
+  ])("as the request's err when it is %s, and still renders", async (_, returned, shown) => {
+    const { app } = makeApp("telemetry.track", ["telemetry.track"]);
+
+    const { html, snapshot } = await renderToString(app, {
+      providers: { "telemetry.track": () => returned as EffectResult },
+    });
+
+    expect(snapshot.slots.saved).toBe("none");
+    expect(html).toContain("saved: none");
+    expect(errors).toEqual([
+      expect.stringContaining(`effect "save" returned an error with no .err reducer: `),
+    ]);
+    expect(errors[0]).toContain(
+      `effect "save" (telemetry.track) resolved to ${shown}, not {kind, value}`,
+    );
+  });
+});
+
 describe("the bootstrap episode records the skip", () => {
   it("shows the effect that would have run, then why, then its cancel, and commits", async () => {
     const { app } = makeApp("storage.write", []);
@@ -274,7 +296,7 @@ describe("the SSR pass delivers an effect's result as a mount does", () => {
     [
       "fails an invoke that resolves to no result as one that throws",
       { answers: [() => undefined], on: "err", bind: "$1" },
-      { message: 'Error: effect "load" resolved to undefined, not {kind, value}' },
+      { message: 'Error: effect "load" (http.get) resolved to undefined, not {kind, value}' },
     ],
     [
       "hands the app.http 5xx reducer the emit's input as $2",

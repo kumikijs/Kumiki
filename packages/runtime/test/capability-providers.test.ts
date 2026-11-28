@@ -1,7 +1,8 @@
-import type { AppShape, CapabilityProvider, MountedApp } from "@kumikijs/runtime";
+import type { AppShape, CapabilityProvider, EffectResult, MountedApp } from "@kumikijs/runtime";
 import { mount } from "@kumikijs/runtime";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bareApp } from "./helpers/app.ts";
+import { captureConsole } from "./helpers/console.ts";
 import { freshRoot } from "./helpers/dom.ts";
 import { tick } from "./helpers/time.ts";
 
@@ -9,7 +10,7 @@ const CAP = "telemetry.track";
 
 function makeTrackApp(): AppShape {
   return bareApp({
-    slots: { sent: { value: 0 }, failed: { value: false } },
+    slots: { sent: { value: 0 }, failed: { value: false }, problem: { value: null } },
     caps: [CAP],
     effects: {
       track: {
@@ -38,7 +39,7 @@ function makeTrackApp(): AppShape {
       {
         name: "onFail",
         event: { kind: "effect", effect: "track", outcome: "err" },
-        apply: () => ({ slots: { failed: true }, emits: [] }),
+        apply: (_live, payload) => ({ slots: { failed: true, problem: payload.$1 }, emits: [] }),
       },
     ],
     root: () => ({ kind: "column", children: [] }),
@@ -86,6 +87,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   root.remove();
+  vi.restoreAllMocks();
 });
 
 describe("capability providers", () => {
@@ -113,6 +115,11 @@ describe("capability providers", () => {
       },
       { sent: 0, failed: true },
     ],
+    [
+      "accepts an ok result with no value, as a host may return for a Unit result",
+      () => ({ kind: "ok" }) as EffectResult,
+      { sent: 1, failed: false },
+    ],
   ])("%s", async (_, provider, outcome) => {
     const app = makeTrackApp();
     mount(app, root, provider ? { providers: { [CAP]: provider } } : {});
@@ -130,6 +137,62 @@ describe("capability providers", () => {
     await tick(0);
     expect(seen).toEqual([]);
     expect(app.live?.sent).toBe(0);
+  });
+});
+
+describe("a provider result that is not {kind, value}", () => {
+  const cyclic: { self?: unknown } = {};
+  cyclic.self = cyclic;
+  const bare: { self?: unknown } = Object.create(null);
+  bare.self = bare;
+  const notAResult: [string, unknown, string][] = [
+    ["a record with no kind", { ok: true }, '{"ok":true}'],
+    ["a bare Text", "done", '"done"'],
+    ["a kind other than ok and err", { kind: "success", value: 1 }, '{"kind":"success","value":1}'],
+    ["undefined", undefined, "undefined"],
+    ["null", null, "null"],
+    ["a Symbol, which JSON has no text for", Symbol("x"), "Symbol(x)"],
+    ["a returned Error", new Error("boom"), "Error: boom"],
+    ["a BigInt, which JSON cannot write", 10n, "10"],
+    ["a cycle, which JSON cannot write", cyclic, "[object Object]"],
+    ["a cycle String() cannot print either", bare, "[object Object]"],
+    ["a text of 200 characters", "x".repeat(198), `"${"x".repeat(198)}"`],
+    ["a text past 200 characters", "x".repeat(199), `"${"x".repeat(199)}…`],
+    [
+      "a text past 200 characters, cut between characters",
+      "😀".repeat(250),
+      `"${"😀".repeat(199)}…`,
+    ],
+  ];
+  const named = (shown: string): string =>
+    `Error: effect "track" (${CAP}) resolved to ${shown}, not {kind, value}`;
+
+  it.each(
+    notAResult,
+  )("is the request's err when it is %s, naming it", async (_, returned, shown) => {
+    const app = makeTrackApp();
+    const handle = mount(app, root, {
+      providers: { [CAP]: () => returned as EffectResult },
+    });
+    dispatch(app, "fire");
+    await tick(0);
+    expect(app.live).toMatchObject({ sent: 0, failed: true, problem: { message: named(shown) } });
+    handle.dispose();
+  });
+
+  it("is reported as an err no .err reducer takes", async () => {
+    const errors = captureConsole();
+    const app = makeTrackApp();
+    app.reducers = app.reducers.filter((r) => r.name !== "onFail");
+    const handle = mount(app, root, {
+      providers: { [CAP]: () => ({ ok: true }) as unknown as EffectResult },
+    });
+    dispatch(app, "fire");
+    await tick(0);
+    expect(errors).toEqual([
+      `[kumiki] effect "track" returned an error with no .err reducer: ${named('{"ok":true}')}`,
+    ]);
+    handle.dispose();
   });
 });
 
