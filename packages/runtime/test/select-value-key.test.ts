@@ -140,6 +140,14 @@ describe("a Set or a Map holding the text _tag is told apart as == tells it apar
     expect(valueKey(set(...members))).toBe(key);
   });
 
+  it("gives a radio holding such a Set its JSON text as its value on both render paths", () => {
+    const node: TileNode = { kind: "radio", group: "tags", value: set("_tag") };
+    const value = (el: Element): string | undefined =>
+      (el instanceof HTMLInputElement ? el : el.querySelector("input"))?.value;
+    expect(value(clientElement(node))).toBe('{"_tag":true}');
+    expect(value(serverElement(node))).toBe('{"_tag":true}');
+  });
+
   const sets = [set("_tag"), set("_tag", "a")];
   const maps = [{ _tag: "S" }, { _tag: "S", a: "x" }];
 
