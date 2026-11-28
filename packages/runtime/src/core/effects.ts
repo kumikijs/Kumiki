@@ -129,6 +129,21 @@ export function makeEffectDispatcher(
     }
   };
 
+  // Records a request's `effect-start`: at the emit under a policy that defers the launch, and as
+  // it launches under the others. What that throws goes to `onThrow`, as what throws inside
+  // `launch` does, and not to the reducer that emitted; the request does not run, which
+  // `undefined` says. `unspend` first gives back what the policy spent on the request, so a
+  // reducer the report runs, such as an `app.error` reducer, can emit it again.
+  const claim = (eff: EffectSpec, input: unknown, unspend?: () => void): string | undefined => {
+    try {
+      return onLaunch?.(eff.name, input) ?? "";
+    } catch (e) {
+      unspend?.();
+      onThrow(eff.name, e);
+      return undefined;
+    }
+  };
+
   // What throws past a launch, outside the reducers its result runs, such as a host's episode
   // logger recording the request, goes to `onThrow`: a promise nothing handles would drop it, and
   // under `queue` the next entry would run as its rejection handler and discard it.
@@ -137,6 +152,7 @@ export function makeEffectDispatcher(
     input: unknown,
     id: string,
     presetToken?: string,
+    unspend?: () => void,
   ): Promise<void> => {
     if (disposed) return;
     let token = presetToken;
@@ -151,7 +167,8 @@ export function makeEffectDispatcher(
         }
         return;
       }
-      token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
+      token = presetToken ?? claim(eff, input, unspend);
+      if (token === undefined) return;
       const ctl = new AbortController();
       const run: Run = { name: eff.name, token, ctl };
       state.inflight.set(id, ctl);
@@ -169,18 +186,6 @@ export function makeEffectDispatcher(
       if (state.runs.delete(run)) onResult(eff.name, outcome, value, input, token);
     } catch (e) {
       onThrow(eff.name, e, token);
-    }
-  };
-
-  // A policy that defers the launch records its `effect-start` at the emit. What that throws goes
-  // to `onThrow`, as what throws inside `launch` does, and not to the reducer that emitted; the
-  // request does not run, which `undefined` says.
-  const claim = (eff: EffectSpec, input: unknown): string | undefined => {
-    try {
-      return onLaunch?.(eff.name, input) ?? "";
-    } catch (e) {
-      onThrow(eff.name, e);
-      return undefined;
     }
   };
 
@@ -253,7 +258,8 @@ export function makeEffectDispatcher(
         }
         seen.set(k, id);
         state.onceSeen.set(eff.name, seen);
-        void launch(eff, input, id);
+        // A request that never ran has not spent its input.
+        void launch(eff, input, id, undefined, () => seen.delete(k));
         return;
       }
       if (policy.kind === "debounce") {

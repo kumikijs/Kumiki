@@ -97,15 +97,16 @@ type Seen = { ok: unknown[]; appErrors: Record<string, unknown>[] };
 
 /**
  * `send` emits `load` once for each of `inputs`, under `policy`, and `loaded` notes what each
- * `.ok` hands it. `app.error` notes every `PanicInfo`. `load` needs `storage.read`, which the app
- * declares unless `caps` leaves it out.
+ * `.ok` hands it. `app.error` notes every `PanicInfo`, and with `resend` emits `inputs` again.
+ * `load` needs `storage.read`, which the app declares unless `caps` leaves it out.
  */
 function sendApp(
   policy: EffectSpec["policy"],
   inputs: readonly string[],
-  caps: readonly string[] = ["storage.read"],
+  { caps = ["storage.read"], resend = false }: { caps?: readonly string[]; resend?: boolean } = {},
 ): { app: AppShape; seen: Seen } {
   const seen: Seen = { ok: [], appErrors: [] };
+  const loads = (): EmitSpec[] => inputs.map((i) => ({ effect: "load", args: [i] }));
   const app = bareApp({
     caps: [...caps],
     effects: {
@@ -120,7 +121,7 @@ function sendApp(
       {
         name: "send",
         event: { kind: "ui", ev: "click" },
-        apply: () => ({ slots: {}, emits: inputs.map((i) => ({ effect: "load", args: [i] })) }),
+        apply: () => ({ slots: {}, emits: loads() }),
       },
       {
         name: "loaded",
@@ -135,7 +136,7 @@ function sendApp(
         event: { kind: "lifecycle", name: "app.error" },
         apply: (_live, payload) => {
           seen.appErrors.push(payload.$event as Record<string, unknown>);
-          return { slots: {}, emits: [] };
+          return { slots: {}, emits: resend ? loads() : [] };
         },
       },
     ],
@@ -289,6 +290,17 @@ describe("a throw past an effect's launch, outside the reducers its result runs"
 
   it.each(
     POLICIES,
+  )("under %s, from the logger at effect-start, leaves the input to a later click's emit", async (_, policy) => {
+    const { app, seen } = sendApp(policy, ["a"]);
+    sent(app, throwingLogger("effect-start", [1]).logger);
+    await settled();
+    (app as MountedApp)._dispatch("send", {});
+    await settled();
+    expect(seen.ok).toEqual(["a"]);
+  });
+
+  it.each(
+    POLICIES,
   )("under %s, from the logger at effect-end, runs no .ok reducer for the request", async (_, policy) => {
     const { app, seen } = sendApp(policy, ["a"]);
     sent(app, throwingLogger("effect-end", [1]).logger);
@@ -409,6 +421,91 @@ describe("a throw past an effect's launch, outside the reducers its result runs"
   });
 });
 
+// A step of `ONCE_CASES`: a reducer to dispatch, or a wait for every request to settle.
+const WAIT = Symbol("wait");
+
+describe("under once, what spends an input", () => {
+  beforeEach(() => {
+    captureConsole("error");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // Each case: where the logger throws and for which requests, the steps, and the inputs whose
+  // invoke runs.
+  const ONCE_CASES: [string, ThrowSite, number[], (string | typeof WAIT)[], string[]][] = [
+    [
+      "a request that threw at effect-start does not, so the input's next emit launches",
+      "effect-start",
+      [1],
+      ["sendFirst", WAIT, "sendFirst", WAIT, "sendFirst", "sendSecond"],
+      ["r1", "r2"],
+    ],
+    [
+      "a request that threw at effect-start does not, even when the next emit is in the same turn",
+      "effect-start",
+      [1],
+      ["sendFirst", "sendFirst"],
+      ["r1"],
+    ],
+    [
+      "a request that threw at effect-start spends no other input",
+      "effect-start",
+      [2],
+      ["sendFirst", WAIT, "sendSecond", WAIT, "sendSecond", "sendFirst"],
+      ["r1", "r2"],
+    ],
+    [
+      "a request that threw at effect-end does, since it ran",
+      "effect-end",
+      [1],
+      ["sendFirst", WAIT, "sendFirst"],
+      ["r1"],
+    ],
+    ["a request that ran does", "effect-start", [], ["sendFirst", WAIT, "sendFirst"], ["r1"]],
+    ["a request in flight does", "effect-start", [], ["sendFirst", "sendFirst"], ["r1"]],
+    [
+      "a request a cancel reached does",
+      "effect-start",
+      [],
+      ["sendFirst", "cancelFirst", WAIT, "sendFirst"],
+      ["r1"],
+    ],
+  ];
+
+  it.each(ONCE_CASES)("%s", async (_, site, failing, steps, ran) => {
+    const { app } = releaseApp({ kind: "once" });
+    const invoke = vi.spyOn(app.effects.load as EffectSpec, "invoke");
+    mounted(app, throwingLogger(site, failing).logger);
+    for (const step of steps) {
+      if (step === WAIT) await settled();
+      else (app as MountedApp)._dispatch(step, {});
+    }
+    await settled();
+    expect(invoke.mock.calls.map(([input]) => input)).toEqual(ran);
+  });
+
+  it("a request the capability check refused does", async () => {
+    const { app, seen } = sendApp({ kind: "once" }, ["a"], { caps: [] });
+    sent(app, throwingLogger("effect-start", []).logger);
+    await settled();
+    (app as MountedApp)._dispatch("send", {});
+    await settled();
+    expect(seen.appErrors).toEqual([expect.objectContaining({ category: "capability" })]);
+  });
+
+  // The input is given back before the throw is reported, so an `app.error` reducer that emits it
+  // again launches it.
+  it("an app.error reducer's emit of the input that threw at effect-start launches it", async () => {
+    const { app, seen } = sendApp({ kind: "once" }, ["a"], { resend: true });
+    sent(app, throwingLogger("effect-start", [1]).logger);
+    await settled();
+    expect(seen.appErrors).toHaveLength(1);
+    expect(seen.ok).toEqual(["a"]);
+  });
+});
+
 describe("a throw from the built-in logger's hook, as a request's episode commits", () => {
   let errors: string[];
   beforeEach(() => {
@@ -455,7 +552,7 @@ describe("a throw from the built-in logger's hook, as a request's episode commit
   // entry's `effect-start` commits its click's episode.
   it("from onEpisode, as a refused queue entry's episode commits, is reported beside the refusals", async () => {
     const rejections = unhandledRejections();
-    const { app, seen } = sendApp({ kind: "queue" }, ["a"], []);
+    const { app, seen } = sendApp({ kind: "queue" }, ["a"], { caps: [] });
     const { logger, opened } = hookThrowingOnce("onEpisode");
     sent(app, logger, 3);
     await settled();
