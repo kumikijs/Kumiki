@@ -1,0 +1,11 @@
+{
+  "vendor": "Codex",
+  "model": "gpt-6.1-terra",
+  "track": "spec",
+  "durationMs": 104447,
+  "timedOut": false,
+  "exitCode": 0,
+  "wrote": true,
+  "kumikiCalls": {},
+  "commands": 26
+}

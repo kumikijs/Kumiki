@@ -21,6 +21,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -253,7 +254,9 @@ const out = join(task, "results", label);
 mkdirSync(out, { recursive: true });
 const wrote =
   existsSync(app) && (!changes || readFileSync(app, "utf8") !== readFileSync(base, "utf8"));
+// A run that wrote nothing leaves no output behind, rather than the previous run's.
 if (wrote) copyFileSync(app, join(out, "output.kumiki"));
+else rmSync(join(out, "output.kumiki"), { force: true });
 const run = {
   vendor,
   model: MODELS[vendor],

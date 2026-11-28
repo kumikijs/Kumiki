@@ -1,0 +1,278 @@
+# Synced Notes: a notes list kept in sync with https://api.example.com
+
+type NoteId    = nominal Text
+type Note      = {id: NoteId, title: Text, body: Text}
+type NewNote   = {title: Text, body: Text}
+type SyncState = Saved | Saving | Failed(Text)
+type LoadState = Loading | Loaded | LoadFailed(Text)
+
+slot notes      : Map(NoteId, Note)      = {}
+slot sync       : Map(NoteId, SyncState) = {}
+slot load       : LoadState              = Loading
+slot session    : Text                   = "demo-token"
+slot signedOut  : Bool                   = false
+slot draftTitle : Text                   = ""
+slot banner     : Option(Text)           = None
+# The temporary id of the note being created; it keys the createNote request
+slot pendingId  : NoteId                 = ""
+# Notes removed optimistically, kept until the server confirms the delete
+slot trash      : Map(NoteId, Note)      = {}
+
+# ---------- effects ----------
+
+effect loadNotes cap=http.get
+                 in=Unit
+                 out=Result(List(Note), HttpError)
+                 retry=exponential(3, 200ms, 2.0)
+                 map-request={
+                     url: "/notes",
+                     headers: {},
+                     query: {},
+                     decode: Decoder.Json(List(Note))
+                 }
+
+effect createNote cap=http.post
+                  in=NewNote
+                  out=Result(Note, HttpError)
+                  policy=latest-per-key(pendingId)
+                  map-request={
+                      url: "/notes",
+                      headers: {},
+                      query: {},
+                      body: Json($1),
+                      decode: Decoder.Json(Note)
+                  }
+
+effect updateNote cap=http.put
+                  in=Note
+                  out=Result(Note, HttpError)
+                  policy=latest-per-key($1.id)
+                  map-request={
+                      url: "/notes/" + $1.id,
+                      headers: {},
+                      query: {},
+                      body: Json($1),
+                      decode: Decoder.Json(Note)
+                  }
+
+effect deleteNote cap=http.delete
+                  in=NoteId
+                  out=Result(Unit, HttpError)
+                  policy=latest-per-key($1)
+                  map-request={
+                      url: "/notes/" + $1,
+                      headers: {},
+                      query: {},
+                      body: Empty,
+                      decode: Decoder.None
+                  }
+
+# ---------- helpers ----------
+
+fn toNoteMap(xs: List(Note)) -> Map(NoteId, Note) = xs.fold({}, $1.insert($2.id, $2))
+
+# ---------- loading ----------
+
+reducer notesLoaded
+    on=loadNotes.ok($list, _)
+    do= notes := toNoteMap($list)
+        sync := {}
+        trash := {}
+        load := Loaded
+
+reducer notesLoadFailed
+    on=loadNotes.err($e, _)
+    do= load := LoadFailed("" + $e.message)
+        if $e.status == 401 then {
+            signedOut := true
+        }
+
+reducer retryLoad
+    on=ui.click(RetryLoadBtn)
+    do= load := Loading
+        emit loadNotes()
+
+# ---------- adding ----------
+
+reducer addNote
+    on=ui.click(AddBtn)
+    do= let title = draftTitle.trim
+        if title != "" then {
+            let id = NoteId.fresh()
+            notes[id] := {id: id, title: title, body: ""}
+            sync[id] := Saving
+            draftTitle := ""
+            pendingId := id
+            emit createNote({title: title, body: ""})
+        }
+
+reducer noteCreated
+    on=createNote.ok($note, $tmp)
+    do= if notes.has($tmp) then {
+            notes := notes.remove($tmp).insert($note.id, $note)
+            sync := sync.remove($tmp).insert($note.id, Saved)
+        }
+
+reducer noteCreateFailed
+    on=createNote.err($e, $tmp)
+    do= notes := notes.remove($tmp)
+        sync := sync.remove($tmp)
+        banner := Some("Could not add note")
+        if $e.status == 401 then {
+            signedOut := true
+        }
+
+# ---------- editing ----------
+
+reducer editBody
+    on=ui.input(BodyBox)
+    do= let id = $el.noteId
+        if notes.has(id) then {
+            notes[id].body := $event.value
+            sync[id] := Saving
+            emit updateNote(notes[id])
+        }
+
+reducer retrySave
+    on=ui.click(RetrySaveBtn)
+    do= let id = $el.noteId
+        if notes.has(id) then {
+            sync[id] := Saving
+            emit updateNote(notes[id])
+        }
+
+reducer noteSaved
+    on=updateNote.ok(_, $id)
+    do= if notes.has($id) then {
+            sync[$id] := Saved
+        }
+
+reducer noteSaveFailed
+    on=updateNote.err($e, $id)
+    do= if $e.message != "aborted" then {
+            if notes.has($id) then {
+                sync[$id] := Failed("" + $e.message)
+            }
+            if $e.status == 401 then {
+                signedOut := true
+            }
+        }
+
+# ---------- deleting ----------
+
+reducer removeNote
+    on=ui.click(DeleteBtn)
+    do= let id = $el.noteId
+        if notes.has(id) then {
+            trash := trash.insert(id, notes[id])
+            notes := notes.remove(id)
+            emit deleteNote(id)
+        }
+
+reducer noteDeleted
+    on=deleteNote.ok(_, $id)
+    do= trash := trash.remove($id)
+        sync := sync.remove($id)
+
+reducer noteDeleteFailed
+    on=deleteNote.err($e, $id)
+    do= if trash.has($id) then {
+            notes[$id] := trash[$id]
+        }
+        trash := trash.remove($id)
+        banner := Some("Could not delete note")
+        if $e.status == 401 then {
+            signedOut := true
+        }
+
+# ---------- banner and session ----------
+
+reducer dismissBanner
+    on=ui.click(DismissBtn)
+    do= banner := None
+
+reducer handleUnauthorized
+    on=app.http-401
+    do= signedOut := true
+
+reducer signInAgain
+    on=ui.click(SignInBtn)
+    do= signedOut := false
+        session := "demo-token"
+        notes := {}
+        sync := {}
+        trash := {}
+        banner := None
+        load := Loading
+        emit loadNotes()
+
+# ---------- view ----------
+
+tile RetryLoadBtn = button(text="Retry")
+tile AddBtn       = button(text="Add note")
+tile DismissBtn   = button(text="Dismiss")
+tile SignInBtn    = button(text="Sign in again")
+
+tile DeleteBtn    in=NoteId = button(text="Delete note") {noteId: $1}
+tile RetrySaveBtn in=NoteId = button(text="Retry save") {noteId: $1}
+tile BodyBox      in=NoteId = textarea(value=notes[$1].body, id="body-" + $1, rows=4) {noteId: $1}
+
+tile SyncView in=NoteId
+    = match sync.get-or($1, Saved) with
+        | Saved     -> text("Saved")
+        | Saving    -> text("Saving")
+        | Failed(_) -> row(text("Save failed"), RetrySaveBtn($1)) {gap: "sm"}
+
+tile NoteRow in=NoteId
+    = card(
+        column(
+          text(notes[$1].title) {bold: true},
+          BodyBox($1),
+          row(SyncView($1), DeleteBtn($1)) {gap: "sm"}
+        ) {gap: "sm"})
+
+tile NoteList = column(for id in notes.keys NoteRow(id) {key: id.show}) {gap: "md"}
+
+tile LoadView
+    = match load with
+        | Loading       -> text("Loading notes")
+        | LoadFailed(_) -> column(text("Could not load notes"), RetryLoadBtn) {gap: "sm"}
+        | Loaded        -> NoteList
+
+tile BannerView
+    = when(banner.is-some,
+        row(text(banner.get-or("")) {color: "danger"}, DismissBtn) {gap: "sm"})
+
+tile NewNoteRow
+    = row(
+        input(bind=draftTitle, id="new-title", placeholder="New note title"),
+        AddBtn
+      ) {gap: "sm"}
+
+tile MainView
+    = column(
+        heading("Notes (" + notes.size.show + ")"),
+        BannerView,
+        NewNoteRow,
+        LoadView
+      ) {gap: "md"}
+
+tile SignedOutView
+    = column(
+        text("Session expired"),
+        SignInBtn
+      ) {gap: "md"}
+
+tile App = page(if signedOut then SignedOutView else MainView)
+
+app SyncedNotes
+    caps   = [http.get, http.post, http.put, http.delete]
+    routes = {"/" -> App, "/404" -> App}
+    init   = [loadNotes()]
+    http   = {
+        base-url: "https://api.example.com",
+        headers: {
+            "Authorization": "Bearer " + session
+        },
+        on-401: handleUnauthorized
+    }

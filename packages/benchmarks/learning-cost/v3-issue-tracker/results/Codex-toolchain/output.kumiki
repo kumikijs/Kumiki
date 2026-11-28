@@ -1,0 +1,214 @@
+type IssueId = nominal Text where uuid
+type Status = Open | InProgress | Done
+type Priority = Low | Med | High
+type Issue = {id: IssueId, title: Text, body: Text, status: Status, priority: Priority, assignee: Text, tags: List(Text), createdAt: Time, updatedAt: Time}
+type Comment = {id: Text, issueId: IssueId, author: Text, body: Text, createdAt: Time}
+type FilterState = {status: Option(Status), priority: Option(Priority), search: Text}
+type Draft = {title: Text, body: Text, priority: Priority, assignee: Text, tags: Text}
+
+slot issues : Map(IssueId, Issue) = {}
+slot comments : Map(Text, Comment) = {}
+slot filter : FilterState = {status: None, priority: None, search: ""}
+slot currentUser : Text = "me"
+slot draft : Draft = {title: "", body: "", priority: Med, assignee: "", tags: ""}
+slot commentDraft : Text = ""
+slot tagDraft : Text = ""
+slot themeName : Text = "Light"
+
+theme Light = {
+    colors: {bg: "#f6f8fa", fg: "#1f2328", surface: "#ffffff", border: "#d0d7de", primary: "#0969da", muted: "#57606a", danger: "#cf222e"},
+    spacing: {sm: "8px", md: "16px", lg: "24px", xl: "40px"},
+    radius: {md: "8px"},
+    typography: {family: "system-ui, sans-serif", size: {sm: "14px", md: "16px", lg: "20px"}, weight: {normal: "400", bold: "700"}}
+}
+theme Dark = {
+    colors: {bg: "#0d1117", fg: "#e6edf3", surface: "#161b22", border: "#30363d", primary: "#58a6ff", muted: "#8b949e", danger: "#f85149"},
+    spacing: {sm: "8px", md: "16px", lg: "24px", xl: "40px"},
+    radius: {md: "8px"},
+    typography: {family: "system-ui, sans-serif", size: {sm: "14px", md: "16px", lg: "20px"}, weight: {normal: "400", bold: "700"}}
+}
+
+fn statusLabel(s: Status) -> Text = match s with | Open -> "Open" | InProgress -> "In Progress" | Done -> "Done"
+fn priorityLabel(p: Priority) -> Text = match p with | Low -> "Low" | Med -> "Med" | High -> "High"
+fn priorityColor(p: Priority) -> Text = match p with | Low -> "muted" | Med -> "primary" | High -> "danger"
+fn statusValue(s: Status) -> Text = match s with | Open -> "Open" | InProgress -> "InProgress" | Done -> "Done"
+fn readStatus(s: Text) -> Status = if s == "Done" then Done else if s == "InProgress" || s == "In Progress" then InProgress else Open
+fn readPriority(s: Text) -> Priority = if s == "High" then High else if s == "Low" then Low else Med
+fn statusFilterValue(s: Option(Status)) -> Text = match s with | None -> "All" | Some(v) -> statusValue(v)
+fn priorityFilterValue(p: Option(Priority)) -> Text = match p with | None -> "All" | Some(v) -> priorityLabel(v)
+fn matchesFilter(issue: Issue, f: FilterState) -> Bool = (f.status.is-none || f.status.get == issue.status) && (f.priority.is-none || f.priority.get == issue.priority) && issue.title.lower.contains(f.search.trim.lower)
+fn filteredIssues(all: Map(IssueId, Issue), f: FilterState) -> List(IssueId) = all.filter(matchesFilter($2, f)).entries.sort-by($2.updatedAt).reverse.map($1)
+fn commentsForIssue(all: Map(Text, Comment), id: IssueId) -> List(Text) = all.filter($2.issueId == id).entries.sort-by($2.createdAt).map($1)
+fn parseTags(raw: Text) -> List(Text) = raw.split(",").map($1.trim).filter(!$1.is-empty).unique
+
+effect saveIssues cap=storage.write in=Map(IssueId, Issue) out=Result(Unit, Text) policy=debounce(300ms) map-request={key: "issues", value: $1}
+effect saveComments cap=storage.write in=Map(Text, Comment) out=Result(Unit, Text) policy=debounce(300ms) map-request={key: "comments", value: $1}
+effect loadIssues cap=storage.read in=Unit out=Result(Option(Map(IssueId, Issue)), Text) policy=once map-request={key: "issues", decode: Decoder.Json(Map(IssueId, Issue))}
+effect loadComments cap=storage.read in=Unit out=Result(Option(Map(Text, Comment)), Text) policy=once map-request={key: "comments", decode: Decoder.Json(Map(Text, Comment))}
+
+reducer loadFromStorage on=app.start do=
+    emit loadIssues()
+    emit loadComments()
+reducer issuesLoaded on=loadIssues.ok($data, _) do= issues := $data.get-or({})
+reducer commentsLoaded on=loadComments.ok($data, _) do= comments := $data.get-or({})
+reducer issueLoadError on=loadIssues.err($error, _) do= ()
+reducer commentLoadError on=loadComments.err($error, _) do= ()
+reducer issueSaveError on=saveIssues.err($error, _) do= ()
+reducer commentSaveError on=saveComments.err($error, _) do= ()
+
+reducer goNew on=ui.click(NewIssueButton) do= emit navigate({path: "/new"})
+reducer goBack on=ui.click(BackButton) do= emit navigate({path: "/"})
+reducer cancelNew on=ui.click(CancelButton) do=
+    draft := {title: "", body: "", priority: Med, assignee: "", tags: ""}
+    emit navigate({path: "/"})
+reducer setFilterStatus on=ui.change(FilterStatus) do= filter.status := if $event.value == "All" then None else Some(readStatus($event.value))
+reducer setFilterPriority on=ui.change(FilterPriority) do= filter.priority := if $event.value == "All" then None else Some(readPriority($event.value))
+reducer setSearch on=ui.input(FilterSearch) do= filter.search := $event.value
+reducer clearFilter on=ui.click(ClearButton) do= filter := {status: None, priority: None, search: ""}
+reducer setNewPriority on=ui.change(NewPriority) do= draft.priority := readPriority($event.value)
+reducer createIssue on=ui.submit(NewIssueForm) do=
+    if !draft.title.trim.is-empty then {
+        let id = IssueId.fresh()
+        let timestamp = now
+        issues[id] := {id: id, title: draft.title.trim, body: draft.body, status: Open, priority: draft.priority, assignee: draft.assignee.trim, tags: parseTags(draft.tags), createdAt: timestamp, updatedAt: timestamp}
+        draft := {title: "", body: "", priority: Med, assignee: "", tags: ""}
+        emit saveIssues(issues)
+        emit navigate({path: "/issues/{id}", params: {"id": id.show}})
+    }
+reducer updateStatus on=ui.change(DetailStatus) do=
+    let id = route.params.get-or("id", "")
+    if issues.has(id) then {
+        issues[id].status := readStatus($event.value)
+        issues[id].updatedAt := now
+        emit saveIssues(issues)
+    }
+reducer updatePriority on=ui.change(DetailPriority) do=
+    let id = route.params.get-or("id", "")
+    if issues.has(id) then {
+        issues[id].priority := readPriority($event.value)
+        issues[id].updatedAt := now
+        emit saveIssues(issues)
+    }
+reducer updateAssignee on=ui.change(DetailAssignee) do=
+    let id = route.params.get-or("id", "")
+    if issues.has(id) then {
+        issues[id].assignee := $event.value.trim
+        issues[id].updatedAt := now
+        emit saveIssues(issues)
+    }
+reducer addTag on=ui.click(AddTagButton) do=
+    let id = route.params.get-or("id", "")
+    let tag = tagDraft.trim
+    if issues.has(id) && !tag.is-empty then {
+        issues[id].tags := issues[id].tags.push(tag).unique
+        issues[id].updatedAt := now
+        tagDraft := ""
+        emit saveIssues(issues)
+    }
+reducer removeTag on=ui.click(RemoveTagButton) do=
+    let id = route.params.get-or("id", "")
+    if issues.has(id) then {
+        issues[id].tags := issues[id].tags.filter($1 != $el.tag)
+        issues[id].updatedAt := now
+        emit saveIssues(issues)
+    }
+reducer addComment on=ui.click(AddCommentButton) do=
+    let id = route.params.get-or("id", "")
+    if issues.has(id) && !commentDraft.trim.is-empty then {
+        let cid = Text.fresh()
+        comments[cid] := {id: cid, issueId: issues[id].id, author: currentUser, body: commentDraft.trim, createdAt: now}
+        commentDraft := ""
+        emit saveComments(comments)
+    }
+reducer deleteComment on=ui.click(DeleteCommentButton) do=
+    comments := comments.remove($el.commentId)
+    emit saveComments(comments)
+reducer deleteIssue on=ui.click(DeleteIssueButton) do=
+    let id = route.params.get-or("id", "")
+    issues := issues.remove(id)
+    comments := comments.filter($2.issueId != id)
+    tagDraft := ""
+    commentDraft := ""
+    emit saveIssues(issues)
+    emit saveComments(comments)
+    emit navigate({path: "/"})
+reducer switchTheme on=ui.click(ThemeButton) do= themeName := if themeName == "Light" then "Dark" else "Light"
+
+tile NewIssueButton = button(text="New Issue")
+tile BackButton = button(text="Back", type="button")
+tile CancelButton = button(text="Cancel", type="button")
+tile ClearButton = button(text="Clear filters")
+tile FilterStatus = select(id="filter-status", value=statusFilterValue(filter.status), options=[{label: "All", value: "All"}, {label: "Open", value: "Open"}, {label: "In Progress", value: "InProgress"}, {label: "Done", value: "Done"}])
+tile FilterPriority = select(id="filter-priority", value=priorityFilterValue(filter.priority), options=[{label: "All", value: "All"}, {label: "Low", value: "Low"}, {label: "Med", value: "Med"}, {label: "High", value: "High"}])
+tile FilterSearch = input(id="filter-search", value=filter.search, placeholder="Search titles")
+tile FilterBar = column(
+    row(label("Status", for="filter-status"), FilterStatus, label("Priority", for="filter-priority"), FilterPriority) {gap: "sm"},
+    row(FilterSearch, ClearButton) {gap: "sm"}
+) {gap: "sm", pad: "md", bg: "surface", radius: "md"}
+tile IssueCard in=Issue = card(column(
+    link($1.title, to="/issues/" + $1.id.show),
+    row(text(statusLabel($1.status)), text(priorityLabel($1.priority)) {color: priorityColor($1.priority)}, text("Assignee: " + $1.assignee)) {gap: "md"},
+    row(for tag in $1.tags text(tag) {key: tag, color: "muted"}) {gap: "sm"},
+    text("Created " + $1.createdAt.format("yyyy-MM-dd HH:mm")) {color: "muted", size: "sm"}
+) {gap: "sm", pad: "md"}) {bg: "surface", radius: "md"}
+tile IssueListPage = page(column(
+    row(heading("Issues"), NewIssueButton, link("Settings", to="/settings")) {gap: "md", align: "center"},
+    FilterBar,
+    when(filteredIssues(issues, filter).is-empty, text("No issues")),
+    for id in filteredIssues(issues, filter) IssueCard(issues[id]) {key: id.show}
+) {gap: "md", pad: "lg", max-w: "900px"}) {bg: "bg", color: "fg"}
+
+tile NewPriority = select(id="new-priority", value=priorityLabel(draft.priority), options=[{label: "Low", value: "Low"}, {label: "Med", value: "Med"}, {label: "High", value: "High"}])
+tile NewIssueForm = form(column(
+    label("Title", for="new-title"), input(id="new-title", bind=draft.title, placeholder="Issue title"),
+    label("Description", for="new-body"), textarea(id="new-body", bind=draft.body, rows=6),
+    label("Priority", for="new-priority"), NewPriority,
+    label("Assignee", for="new-assignee"), input(id="new-assignee", bind=draft.assignee),
+    label("Tags (comma-separated)", for="new-tags"), input(id="new-tags", bind=draft.tags),
+    row(button(text="Create issue", type="submit"), CancelButton) {gap: "sm"}
+) {gap: "sm"})
+tile NewIssuePage = page(column(heading("New issue"), NewIssueForm) {gap: "md", pad: "lg", max-w: "900px"}) {bg: "bg", color: "fg"}
+
+tile DetailStatus in=Issue = select(id="detail-status", value=statusValue($1.status), options=[{label: "Open", value: "Open"}, {label: "In Progress", value: "InProgress"}, {label: "Done", value: "Done"}])
+tile DetailPriority in=Issue = select(id="detail-priority", value=priorityLabel($1.priority), options=[{label: "Low", value: "Low"}, {label: "Med", value: "Med"}, {label: "High", value: "High"}])
+tile DetailAssignee in=Issue = input(id="detail-assignee", value=$1.assignee)
+tile RemoveTagButton in=Text = button(text="Remove tag") {tag: $1}
+tile AddTagButton = button(text="Add tag")
+tile AddCommentButton = button(text="Add comment")
+tile DeleteIssueButton = button(text="Delete issue")
+tile DeleteCommentButton in=Text = button(text="Delete comment") {commentId: $1}
+tile TagItem in=Text = row(text($1), RemoveTagButton($1)) {gap: "sm"}
+tile CommentItem in=Comment = card(column(
+    text($1.author + " · " + $1.createdAt.format("yyyy-MM-dd HH:mm")) {color: "muted", size: "sm"},
+    text($1.body), DeleteCommentButton($1.id)
+) {gap: "sm", pad: "md"}) {bg: "surface", radius: "md"}
+tile IssueDetail in=Issue = column(
+    BackButton,
+    heading($1.title),
+    row(label("Status", for="detail-status"), DetailStatus($1), label("Priority", for="detail-priority"), DetailPriority($1)) {gap: "sm"},
+    row(label("Assignee", for="detail-assignee"), DetailAssignee($1)) {gap: "sm"},
+    text($1.body),
+    heading("Tags", level=2),
+    row(for tag in $1.tags TagItem(tag) {key: tag}) {gap: "sm"},
+    row(input(id="tag-input", bind=tagDraft, placeholder="New tag"), AddTagButton) {gap: "sm"},
+    text("Created: " + $1.createdAt.format("yyyy-MM-dd HH:mm")),
+    text("Updated: " + $1.updatedAt.format("yyyy-MM-dd HH:mm")),
+    DeleteIssueButton,
+    heading("Comments", level=2),
+    for id in commentsForIssue(comments, $1.id) CommentItem(comments[id]) {key: id},
+    row(input(id="comment-input", bind=commentDraft, placeholder="Write a comment"), AddCommentButton) {gap: "sm"}
+) {gap: "md", pad: "lg", max-w: "900px"}
+tile IssueDetailPage = page(
+    match issues.get(route.params.get-or("id", "")) with
+    | Some(issue) -> IssueDetail(issue)
+    | None -> column(BackButton, heading("Issue not found")) {gap: "md", pad: "lg"}
+) {bg: "bg", color: "fg"}
+tile ThemeButton = button(text=if themeName == "Light" then "Switch to dark" else "Switch to light")
+tile SettingsPage = page(column(BackButton, heading("Settings"), text("Theme: " + themeName), ThemeButton) {gap: "md", pad: "lg"}) {bg: "bg", color: "fg"}
+tile NotFound = page(column(heading("Page not found"), link("Home", to="/")) {gap: "md", pad: "lg"}) {bg: "bg", color: "fg"}
+
+app IssueTracker
+    caps = [storage.read, storage.write, nav.push]
+    routes = {"/" -> IssueListPage, "/issues/:id" -> IssueDetailPage, "/new" -> NewIssuePage, "/settings" -> SettingsPage, "/404" -> NotFound}
+    init = []
+    theme = themeName
