@@ -631,3 +631,168 @@ describe("a throw from the built-in logger's hook, as a dispatch releases a requ
     expect(rejections).toEqual([]);
   });
 });
+
+/** How the logger throws, once, as it records a request's `effect-end`. */
+type EndThrow =
+  /** A host's logger, before it hands the step to the built-in one. */
+  | "from a host's logger before the built-in records it"
+  /** The built-in logger itself, whose clock throws as it stamps the step. */
+  | "from the built-in logger's clock"
+  /** A host's logger, once the built-in has recorded it, so the scope it handed back is lost. */
+  | "from a host's logger after the built-in records it";
+
+/**
+ * The built-in logger with an `onEpisode` hook that notes each episode it is handed and then
+ * runs `hook`, thrown at once as a request's `effect-end` is recorded, as `how` says. Also the
+ * ids of the episodes it opened, oldest first.
+ */
+function endThrowingOnce(
+  how: EndThrow,
+  hook: (ep: Episode) => void = () => {},
+): { logger: EpisodeLogger; opened: string[]; handed: string[] } {
+  let thrown = false;
+  const throwOnce = (): void => {
+    if (thrown) return;
+    thrown = true;
+    throw new Error(SINK_DOWN);
+  };
+  let stamping = false;
+  const handed: string[] = [];
+  const base = createEpisodeLogger({
+    now: () => {
+      if (stamping) throwOnce();
+      return Date.now();
+    },
+    onEpisode: (ep) => {
+      handed.push(ep.id);
+      hook(ep);
+    },
+  });
+  const opened: string[] = [];
+  const logger: EpisodeLogger = {
+    ...base,
+    beginTrigger(t) {
+      const id = base.beginTrigger(t);
+      opened.push(id);
+      return id;
+    },
+    recordEffectEnd(token, name, result, value) {
+      if (how === "from a host's logger before the built-in records it") throwOnce();
+      stamping = how === "from the built-in logger's clock";
+      try {
+        const exit = base.recordEffectEnd(token, name, result, value);
+        if (how === "from a host's logger after the built-in records it") throwOnce();
+        return exit;
+      } finally {
+        stamping = false;
+      }
+    },
+  };
+  return { logger, opened, handed };
+}
+
+/** `sendApp` with one `load` of `a`, mounted under `logger`: click `send`, then `other`. */
+function sentThenOther(policy: EffectSpec["policy"], logger: EpisodeLogger): Seen {
+  const { app, seen } = sendApp(policy, ["a"]);
+  app.reducers.push(onClick("other", []));
+  sent(app, logger);
+  (app as MountedApp)._dispatch("other", {});
+  return seen;
+}
+
+describe("a throw as the logger records a request's effect-end", () => {
+  let errors: string[];
+  beforeEach(() => {
+    errors = captureConsole("error");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // With the `effect-end` not recorded, the claim is released as a dropped launch's is. Recorded,
+  // it pairs the `effect-start`, and the `app.error` reducer runs inside the scope it opened.
+  const ENDS: [EndThrow, string[]][] = [
+    [
+      "from a host's logger before the built-in records it",
+      ["reducer", "effect-start", "panic", "effect-cancel"],
+    ],
+    ["from the built-in logger's clock", ["reducer", "effect-start", "panic", "effect-cancel"]],
+    [
+      "from a host's logger after the built-in records it",
+      ["reducer", "effect-start", "effect-end", "panic", "reducer"],
+    ],
+  ];
+  const cases = POLICIES.flatMap(([name, policy]) =>
+    ENDS.map(([how, steps]): [string, EndThrow, EffectSpec["policy"], string[]] => [
+      name,
+      how,
+      policy,
+      steps,
+    ]),
+  );
+
+  it.each(
+    cases,
+  )("under %s, %s, commits the click's episode and hands over every episode in order", async (_, how, policy, steps) => {
+    const rejections = unhandledRejections();
+    const { logger, opened, handed } = endThrowingOnce(how);
+    const seen = sentThenOther(policy, logger);
+    await settled();
+    expect(handed).toEqual(opened);
+    const click = logger.list().find((ep) => ep.id === opened[0]);
+    expect(click?.status).toBe("panic");
+    expect(click?.steps.map((step) => step.kind)).toEqual(steps);
+    expect(seen.ok).toEqual([]);
+    expect(seen.appErrors).toEqual([
+      expect.objectContaining({
+        message: SINK_DOWN,
+        location: 'effect "load"',
+        category: "effect",
+        "episode-id": some(opened[0]),
+      }),
+    ]);
+    expect(reports(errors)).toEqual([
+      expect.stringContaining(`[kumiki] error in effect "load": ${SINK_DOWN}`),
+    ]);
+    expect(rejections).toEqual([]);
+  });
+
+  it("names the effect in the effect-cancel that releases the claim", async () => {
+    const { logger, opened } = endThrowingOnce("from the built-in logger's clock");
+    sentThenOther(undefined, logger);
+    await settled();
+    const click = logger.list().find((ep) => ep.id === opened[0]);
+    expect(click?.steps.at(-1)).toEqual(
+      expect.objectContaining({ kind: "effect-cancel", targetId: "load" }),
+    );
+  });
+
+  // The release commits the click's episode, which hands it to `onEpisode`; by then the episode
+  // is stored, so this second throw names no episode.
+  it("reports a throw from the hook, as the release commits the episode, with no episode", async () => {
+    const rejections = unhandledRejections();
+    let hookThrew = false;
+    const { logger, opened, handed } = endThrowingOnce(
+      "from a host's logger before the built-in records it",
+      (ep) => {
+        if (hookThrew || ep.trigger.kind !== "ui.click") return;
+        hookThrew = true;
+        throw new Error("hook offline");
+      },
+    );
+    const seen = sentThenOther(undefined, logger);
+    await settled();
+    expect(seen.appErrors).toEqual([
+      expect.objectContaining({ message: SINK_DOWN, "episode-id": some(opened[0]) }),
+      expect.objectContaining({
+        message: "hook offline",
+        location: 'effect "load"',
+        category: "effect",
+        "episode-id": NONE,
+      }),
+    ]);
+    expect(reports(errors)).toHaveLength(2);
+    expect(handed).toEqual(opened);
+    expect(rejections).toEqual([]);
+  });
+});

@@ -248,6 +248,11 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
   const stack: Episode[] = [];
   /** Effect-end attribution by token — survives across async boundaries. */
   const inflight = new Map<string, Episode>();
+  /**
+   * The scope each recorded `effect-end` opened, by token, until it closes. `cancelPendingEffect`
+   * closes one whose caller never got it back, as when a logger wrapping this one throws after it.
+   */
+  const ending = new Map<string, () => void>();
   /** Per-episode count of effect-starts whose effect-end has not landed yet. */
   const pending = new Map<Episode, number>();
   /** Episodes whose `endTrigger` fired while effects were still in flight. */
@@ -399,19 +404,25 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
     recordEffectEnd(token, name, result, value) {
       const ep = inflight.get(token) ?? topEpisode();
       if (!ep) return () => {};
+      // Read before anything changes, so a clock that throws leaves the request in flight, where
+      // `cancelPendingEffect` can still release it.
+      const ts = now();
       inflight.delete(token);
-      ep.steps.push({ kind: "effect-end", name, result, value, ts: now() });
+      ep.steps.push({ kind: "effect-end", name, result, value, ts });
       stack.push(ep);
       let exited = false;
-      return () => {
+      const exit = (): void => {
         if (exited) return;
         exited = true;
+        ending.delete(token);
         const idx = stack.lastIndexOf(ep);
         if (idx >= 0) stack.splice(idx, 1);
         const count = pending.get(ep) ?? 0;
         if (count > 0) pending.set(ep, count - 1);
         settle(ep);
       };
+      if (token !== "") ending.set(token, exit);
+      return exit;
     },
     recordEffectCancel(targetId) {
       const ep = topEpisode();
@@ -420,7 +431,11 @@ export function createEpisodeLogger(opts: EpisodeLoggerOptions = {}): EpisodeLog
     },
     cancelPendingEffect(token, name) {
       const ep = inflight.get(token);
-      if (!ep) return;
+      if (!ep) {
+        // Its `effect-end` is recorded, so there is nothing to cancel, only the scope to close.
+        ending.get(token)?.();
+        return;
+      }
       inflight.delete(token);
       ep.steps.push({ kind: "effect-cancel", targetId: name, ts: now() });
       const count = pending.get(ep) ?? 0;
