@@ -101,6 +101,14 @@ export function fnLowering(src: string, name = "probe"): string {
   return line;
 }
 
+/**
+ * The loops of a generated module that compute implicit keys, by name. Which loops compute them
+ * shows only in the module, not in what it renders.
+ */
+export const keyedLoopsIn = (js: string): string[] => [
+  ...new Set(Array.from(js.matchAll(/_loop\(("[^"]*"), /g), (m) => JSON.parse(m[1] as string))),
+];
+
 /** The generated module for `src` without running `check` first. */
 export const loweredOf = (src: string): string =>
   codegen(parse(lex(src)), { runtimeSpecifier: "./runtime.js" }).js;

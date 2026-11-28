@@ -17,7 +17,8 @@
         "state": {
           "label": "renamed"
         },
-        "domIncludes": ["renamed"]
+        "domIncludes": ["renamed"],
+        "domExcludes": ["leaf"]
       }
     }
   ]
