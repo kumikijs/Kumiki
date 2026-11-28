@@ -58,8 +58,10 @@ export function genEffect(eff: EffectDef, gen: GenCtx): string {
   const params = `${mapped ? bindRef(mapped, "$1") : "_input"}, _caps, _signal`;
   const lookup = `const _provider = _caps.provider(${capJs});`;
   const call = `_provider(${reqVar}, _caps, _signal)`;
+  // An answer that is no `{kind, value}` is handed on as it came: the runtime reads it into the
+  // same err for every capability.
   const body = failsWithText(eff.cap)
-    ? `try { ${head}${lookup} const _r = await (_provider ? ${call} : ${fallback}); if (_r?.kind === "ok") return _r; if (_r?.kind === "err") return { kind: "err", value: _errText(_r.value) }; throw new Error(${JSON.stringify(`the ${eff.cap} provider returned `)} + _errText(_r) + ", not {kind, value}"); } catch (_thrown) { return { kind: "err", value: _errText(_thrown), final: true }; }`
+    ? `try { ${head}${lookup} const _r = await (_provider ? ${call} : ${fallback}); return _r?.kind === "err" ? { kind: "err", value: _errText(_r.value) } : _r; } catch (_thrown) { return { kind: "err", value: _errText(_thrown), final: true }; }`
     : `${head}${lookup} if (_provider) return ${call}; return ${fallback};`;
   const invokeBody = `async (${params}) => { ${body} }`;
   const errText = failsWithText(eff.cap) ? "\n    errText: _errText," : "";

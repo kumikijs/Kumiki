@@ -6,7 +6,7 @@ import { loadApp } from "./helpers/load.ts";
 
 // `track` (cap=telemetry.track) is emitted on click; its ok result bumps `sent`.
 const CUSTOM_CAP_EXAMPLE = feature("27-custom-capability");
-// `failed` shows the `{message}` an err hands it; `sentOk` counts `.ok` results.
+// `failed` writes the err's `message` to `problem`; `sentOk` counts `.ok` results.
 const CHECKED_RESULT_EXAMPLE = feature("297-provider-result-checked");
 
 describe("custom capability — host provider injection (inbound seam)", () => {
@@ -45,20 +45,18 @@ describe("custom capability — host provider injection (inbound seam)", () => {
 });
 
 describe("a provider answer that is not {kind, value}", () => {
-  it.each<[string, unknown, string]>([
-    ["a record with no kind", { ok: true }, '{"ok":true}'],
-    ["a bare Text", "done", '"done"'],
-    ["undefined", undefined, "undefined"],
-  ])("is the request's err when it is %s, naming it", async (_, answer, shown) => {
+  // The runtime's own tests read each such answer; this one shows the compiled custom-capability
+  // invoke hands the answer on and the program renders the err's message.
+  it("is the request's err, and the program shows the message naming it", async () => {
     const app = await loadApp(CHECKED_RESULT_EXAMPLE);
-    const provider: CapabilityProvider = () => answer as EffectResult;
+    const provider: CapabilityProvider = () => ({ ok: true }) as unknown as EffectResult;
     const { root, handle } = mountApp(app, { providers: { "telemetry.track": provider } });
     try {
       clickContaining(root, "Track");
       await tick(25);
       expect(root.textContent ?? "").toContain("sent: 0");
       expect(root.textContent ?? "").toContain(
-        `problem: Error: the telemetry.track provider returned ${shown}, not {kind, value}`,
+        'problem: Error: effect "track" (telemetry.track) resolved to {"ok":true}, not {kind, value}',
       );
       handle.dispose();
     } finally {

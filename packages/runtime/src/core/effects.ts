@@ -394,18 +394,38 @@ export async function runEffect(
 }
 
 // A host provider is not type-checked, so what it resolves to may be no result at all, such as
-// the `undefined` of one with no `return`. That is thrown, to be the attempt's err as a throw is.
+// `{ok: true}` or the `undefined` of one with no `return`. That is thrown, to be the attempt's err
+// as a throw is. The message names the effect, not a provider: a scenario's scripted outcome is
+// read here too, with no provider involved.
 function resultOf(eff: EffectSpec, got: unknown): EffectResult {
   const kind = (got as { kind?: unknown } | null | undefined)?.kind;
   if (kind === "ok" || kind === "err") return got as EffectResult;
-  throw new Error(`the ${eff.cap} provider returned ${shownResult(got)}, not {kind, value}`);
+  throw new Error(
+    `effect "${eff.name}" (${eff.cap}) resolved to ${shownResult(got)}, not {kind, value}`,
+  );
 }
 
+/** The most characters of an answer's text that `shownResult` keeps before cutting it with `…`. */
+const SHOWN_MAX = 200;
+
+// The likeliest such answer is a payload or a function left unwrapped, so its text is cut short:
+// the message reaches the page and the console. It is cut between characters, never inside one.
 function shownResult(v: unknown): string {
+  if (v instanceof Error) return String(v);
+  const chars = Array.from(writtenOut(v));
+  return chars.length > SHOWN_MAX ? `${chars.slice(0, SHOWN_MAX).join("")}…` : chars.join("");
+}
+
+function writtenOut(v: unknown): string {
   try {
     return JSON.stringify(v) ?? String(v);
   } catch {
-    return Object.prototype.toString.call(v);
+    // `JSON.stringify` throws on a cycle or a BigInt, and `String` on an object with no prototype.
+    try {
+      return String(v);
+    } catch {
+      return Object.prototype.toString.call(v);
+    }
   }
 }
 

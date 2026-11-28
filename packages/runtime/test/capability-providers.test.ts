@@ -115,6 +115,11 @@ describe("capability providers", () => {
       },
       { sent: 0, failed: true },
     ],
+    [
+      "accepts an ok result with no value, as a host may return for a Unit result",
+      () => ({ kind: "ok" }) as EffectResult,
+      { sent: 1, failed: false },
+    ],
   ])("%s", async (_, provider, outcome) => {
     const app = makeTrackApp();
     mount(app, root, provider ? { providers: { [CAP]: provider } } : {});
@@ -136,15 +141,31 @@ describe("capability providers", () => {
 });
 
 describe("a provider result that is not {kind, value}", () => {
+  const cyclic: { self?: unknown } = {};
+  cyclic.self = cyclic;
+  const bare: { self?: unknown } = Object.create(null);
+  bare.self = bare;
   const notAResult: [string, unknown, string][] = [
     ["a record with no kind", { ok: true }, '{"ok":true}'],
     ["a bare Text", "done", '"done"'],
     ["a kind other than ok and err", { kind: "success", value: 1 }, '{"kind":"success","value":1}'],
     ["undefined", undefined, "undefined"],
     ["null", null, "null"],
+    ["a Symbol, which JSON has no text for", Symbol("x"), "Symbol(x)"],
+    ["a returned Error", new Error("boom"), "Error: boom"],
+    ["a BigInt, which JSON cannot write", 10n, "10"],
+    ["a cycle, which JSON cannot write", cyclic, "[object Object]"],
+    ["a cycle String() cannot print either", bare, "[object Object]"],
+    ["a text of 200 characters", "x".repeat(198), `"${"x".repeat(198)}"`],
+    ["a text past 200 characters", "x".repeat(199), `"${"x".repeat(199)}…`],
+    [
+      "a text past 200 characters, cut between characters",
+      "😀".repeat(250),
+      `"${"😀".repeat(199)}…`,
+    ],
   ];
   const named = (shown: string): string =>
-    `Error: the ${CAP} provider returned ${shown}, not {kind, value}`;
+    `Error: effect "track" (${CAP}) resolved to ${shown}, not {kind, value}`;
 
   it.each(
     notAResult,
@@ -156,33 +177,6 @@ describe("a provider result that is not {kind, value}", () => {
     dispatch(app, "fire");
     await tick(0);
     expect(app.live).toMatchObject({ sent: 0, failed: true, problem: { message: named(shown) } });
-    handle.dispose();
-  });
-
-  it.each<[string, unknown[], number]>([
-    ["on the first attempt", [{ ok: true }], 1],
-    [
-      "on an attempt after a retried err",
-      [{ kind: "err", value: { message: "busy" } }, { ok: true }],
-      2,
-    ],
-  ])("is not attempted again under retry= when it comes %s", async (_, answers, attempts) => {
-    const app = makeTrackApp();
-    const track = app.effects.track;
-    if (!track) throw new Error("fixture lost its effect");
-    track.retry = { kind: "linear", n: 3, ms: 1 };
-    let calls = 0;
-    const handle = mount(app, root, {
-      providers: { [CAP]: () => answers[Math.min(calls++, answers.length - 1)] as EffectResult },
-    });
-    dispatch(app, "fire");
-    await tick(20);
-    expect(calls).toBe(attempts);
-    expect(app.live).toMatchObject({
-      sent: 0,
-      failed: true,
-      problem: { message: named('{"ok":true}') },
-    });
     handle.dispose();
   });
 

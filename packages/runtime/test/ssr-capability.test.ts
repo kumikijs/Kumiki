@@ -170,7 +170,7 @@ describe("the SSR pass reads a provider result that is not {kind, value}", () =>
       expect.stringContaining(`effect "save" returned an error with no .err reducer: `),
     ]);
     expect(errors[0]).toContain(
-      `the telemetry.track provider returned ${shown}, not {kind, value}`,
+      `effect "save" (telemetry.track) resolved to ${shown}, not {kind, value}`,
     );
   });
 });
@@ -296,7 +296,7 @@ describe("the SSR pass delivers an effect's result as a mount does", () => {
     [
       "fails an invoke that resolves to no result as one that throws",
       { answers: [() => undefined], on: "err", bind: "$1" },
-      { message: "Error: the http.get provider returned undefined, not {kind, value}" },
+      { message: 'Error: effect "load" (http.get) resolved to undefined, not {kind, value}' },
     ],
     [
       "hands the app.http 5xx reducer the emit's input as $2",

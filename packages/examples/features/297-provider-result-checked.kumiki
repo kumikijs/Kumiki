@@ -1,4 +1,4 @@
-# Feature: a host provider's answer that is not a result (stdlib.md).
+# Feature: a host provider's answer that is not a result (spec/stdlib.md).
 #
 # `track` runs on `telemetry.track`, a custom capability registered in this
 # directory's kumiki.caps.json, so a host provider supplies it. A provider
@@ -7,8 +7,9 @@
 # provider is: `failed` is handed a {message} record naming what came back, and
 # `sentOk` does not run.
 #
-# The scenario walks one `.ok` and one `.err`. An integration test in
-# `packages/tests` mounts this app with providers that answer otherwise.
+# The scenario walks one `.ok` and one `.err`.
+# `packages/tests/src/provider.test.ts` mounts this app with a provider that
+# answers something other than a result.
 
 type Failure = {message: Text}
 
