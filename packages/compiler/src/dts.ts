@@ -1,3 +1,4 @@
+import { VARIANT_TAG_FIELD } from "@kumikijs/runtime/variant-tag";
 import type { EffectDef, Program, SlotDef, TypeDef, TypeExpr } from "./ast.ts";
 import { STANDARD_CAPABILITIES } from "./capabilities.ts";
 import { FILE_FIELDS, type PrimName, STDLIB_TYPES } from "./stdlib-types.ts";
@@ -48,9 +49,9 @@ function tsOfType(t: TypeExpr, ctx: Ctx): string {
         case "Set":
           return "Record<string, true>";
         case "Option":
-          return `{ _tag: "Some"; _0: ${arg(0)} } | { _tag: "None" }`;
+          return `{ ${VARIANT_TAG_FIELD}: "Some"; _0: ${arg(0)} } | { ${VARIANT_TAG_FIELD}: "None" }`;
         case "Result":
-          return `{ _tag: "Ok"; _0: ${arg(0)} } | { _tag: "Err"; _0: ${arg(1)} }`;
+          return `{ ${VARIANT_TAG_FIELD}: "Ok"; _0: ${arg(0)} } | { ${VARIANT_TAG_FIELD}: "Err"; _0: ${arg(1)} }`;
         case "Tuple":
           return `[${t.args.map((a) => tsOfType(a, ctx)).join(", ")}]`;
         default: {
@@ -58,7 +59,11 @@ function tsOfType(t: TypeExpr, ctx: Ctx): string {
           if (declared) return `${declared}<${t.args.map((a) => tsOfType(a, ctx)).join(", ")}>`;
           const std = STDLIB_BY_NAME.get(t.name);
           if (!std || ctx.expanding.has(t.name)) return "unknown";
-          return tsOfType(std.body, { ...ctx, expanding: new Set([...ctx.expanding, t.name]) });
+          // The arguments are read before the guard holds this name, so one nested in another is
+          // still expanded; the definition then sees its own parameters and no others.
+          const typeParams = new Map(std.params.map((p, i) => [p, arg(i)]));
+          const expanding = new Set([...ctx.expanding, t.name]);
+          return tsOfType(std.body, { ...ctx, typeParams, expanding });
         }
       }
     }
@@ -110,9 +115,9 @@ function allocTypeName(name: string, taken: Set<string>): string {
 
 /** One tagged variant: `{ _tag: "Name" }` or `{ _tag: "Name"; _0: P0; … }`. */
 function variantTs(name: string, payloads: TypeExpr[], ctx: Ctx): string {
-  if (payloads.length === 0) return `{ _tag: ${JSON.stringify(name)} }`;
+  if (payloads.length === 0) return `{ ${VARIANT_TAG_FIELD}: ${JSON.stringify(name)} }`;
   const fields = payloads.map((p, i) => `_${i}: ${tsOfType(p, ctx)}`).join("; ");
-  return `{ _tag: ${JSON.stringify(name)}; ${fields} }`;
+  return `{ ${VARIANT_TAG_FIELD}: ${JSON.stringify(name)}; ${fields} }`;
 }
 
 /** Parenthesize a union so `T[]` binds correctly (`(A | null)[]`). */

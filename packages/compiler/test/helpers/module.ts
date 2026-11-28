@@ -1,7 +1,9 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { codegen, compile, type ExtendedCodegenOptions, lex, parse } from "@kumikijs/compiler";
+import type { AppShape } from "@kumikijs/runtime";
 import { expect } from "vitest";
 import { removeScratch } from "./scratch.ts";
 
@@ -18,6 +20,15 @@ export type ReducerShape = {
     payload: Record<string, unknown>,
   ) => { slots: Record<string, unknown> };
 };
+
+/** What `node --check` reports about `file` on a stack of `stackKb` KB: "" when it parses, its error line otherwise. */
+export function parseErrorOn(stackKb: number, file: string): string {
+  const run = spawnSync(process.execPath, [`--stack-size=${stackKb}`, "--check", file], {
+    encoding: "utf8",
+  });
+  if (run.status === 0) return "";
+  return run.stderr.split("\n").find((l) => /Error/.test(l)) ?? `exit ${run.status}`;
+}
 
 /** Writes `content` to `name` in a fresh directory under `root` and returns its path. */
 export function writeTmpFile(root: string, prefix: string, name: string, content: string): string {
@@ -56,6 +67,23 @@ export async function loadApp<T>(src: string, prefix?: string): Promise<T> {
   return mod.createApp();
 }
 
+/** The `decode` the compiled effect `effect` of `src` hands its capability's provider. */
+export async function decodeHandedBy(src: string, effect = "load"): Promise<unknown> {
+  const mod = await importModule<{ default: AppShape }>(compileOrFail(src, LOADABLE), "decoder");
+  const eff = mod.default.effects[effect];
+  if (!eff) expect.fail(`the program no longer declares \`${effect}\``);
+  let seen: { decode?: unknown } | undefined;
+  const caps = {
+    provider: () => async (req: { decode?: unknown }) => {
+      seen = req;
+      return { kind: "ok", value: null };
+    },
+  } as unknown as Parameters<typeof eff.invoke>[1];
+  await eff.invoke(undefined, caps, new AbortController().signal);
+  if (!seen) expect.fail(`\`${effect}\` did not reach its provider`);
+  return seen.decode;
+}
+
 /** The reducer `name` of a fresh app instance from `src`. */
 export async function loadReducer(src: string, name: string): Promise<ReducerShape> {
   const app = await loadApp<{ reducers: ReducerShape[] }>(src, "reducer");
@@ -72,6 +100,14 @@ export function fnLowering(src: string, name = "probe"): string {
   if (line === undefined) expect.fail(`no \`function ${name}\` in the generated module`);
   return line;
 }
+
+/**
+ * The loops of a generated module that compute implicit keys, by name. Which loops compute them
+ * shows only in the module, not in what it renders.
+ */
+export const keyedLoopsIn = (js: string): string[] => [
+  ...new Set(Array.from(js.matchAll(/_loop\(("[^"]*"), /g), (m) => JSON.parse(m[1] as string))),
+];
 
 /** The generated module for `src` without running `check` first. */
 export const loweredOf = (src: string): string =>

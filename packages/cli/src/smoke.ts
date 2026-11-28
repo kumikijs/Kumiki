@@ -1,11 +1,6 @@
-import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-import { compile, type KumikiError } from "@kumikijs/compiler";
-import { nodeEpisodeLogReader, nodeRuntimeBundleReader } from "@kumikijs/compiler/node";
+import { appendFileSync, readFileSync } from "node:fs";
+import type { KumikiError } from "@kumikijs/compiler";
 import {
-  type AppShape,
   createEpisodeLogger,
   describeDiagnostic,
   type EpisodeLogger,
@@ -17,98 +12,9 @@ import {
   smoke,
   type TestResult,
 } from "@kumikijs/runtime";
-import { formatDiagnostic } from "./diagnostic.ts";
-import {
-  clearStorage,
-  type HttpFixture,
-  installTestDoubles,
-  readHttpFixture,
-  useHttpFixture,
-} from "./harness.ts";
-import { builtinIconSubset } from "./icons.ts";
-import { loadSource } from "./store.ts";
+import { clearStorage, type HttpFixture, readHttpFixture, useHttpFixture } from "./harness.ts";
+import { compileForLoad, ensureDom, printWarnings } from "./load.ts";
 import { messageOf } from "./text.ts";
-
-let domReady: Promise<void> | null = null;
-export function ensureDom(): Promise<void> {
-  domReady ??= registerDom().catch((err: unknown) => {
-    // A failed import must not poison every later call.
-    domReady = null;
-    throw err;
-  });
-  return domReady;
-}
-
-async function registerDom(): Promise<void> {
-  const { GlobalRegistrator } = await import("@happy-dom/global-registrator");
-  GlobalRegistrator.register({ url: "http://localhost/" });
-  installTestDoubles();
-}
-
-export type LoadedApp = AppShape & { live: Record<string, unknown> };
-
-type LoadOptions = { includeTests?: boolean; sourcePath?: string; moduleDir?: string };
-
-export async function loadApp(
-  source: string,
-  capabilities: string[] = [],
-  opts: LoadOptions = {},
-): Promise<LoadedApp> {
-  return (await compileForLoad(source, capabilities, opts)).app;
-}
-
-async function compileForLoad(
-  source: string,
-  capabilities: string[],
-  opts: LoadOptions,
-): Promise<{ app: LoadedApp; warnings: KumikiError[] }> {
-  const baseOpts = {
-    runtimeSpecifier: "ignored",
-    bundle: true,
-    readRuntimeBundle: nodeRuntimeBundleReader,
-    capabilities,
-    includeTests: opts.includeTests === true,
-    ...(opts.sourcePath ? { readEpisodeLog: nodeEpisodeLogReader(opts.sourcePath) } : {}),
-  } as const;
-  const first = compile(source, baseOpts);
-  if (first.kind !== "ok") {
-    throw new Error(compileFailure(source, [...first.warnings, ...first.errors], opts.sourcePath));
-  }
-
-  let result = first;
-  const icons = opts.sourcePath ? await builtinIconSubset(opts.sourcePath, first.usedIcons) : null;
-  if (icons) {
-    const second = compile(source, { ...baseOpts, icons });
-    if (second.kind === "ok") result = second;
-  }
-
-  const patched = result.js.replace(/mount\(App, document\.getElementById\("root"\)[^;]*\);?/, "");
-  const dir = mkdtempSync(join(opts.moduleDir ?? tmpdir(), "kumiki-smoke-"));
-  const file = join(dir, "app.mjs");
-  writeFileSync(file, patched);
-  await import(pathToFileURL(file).href);
-  const app = (globalThis as unknown as { __kumikiApp?: LoadedApp }).__kumikiApp;
-  if (!app) throw new Error("compiled module did not expose __kumikiApp");
-  return { app, warnings: result.warnings };
-}
-
-function compileFailure(source: string, diagnostics: KumikiError[], sourcePath?: string): string {
-  const lines = diagnosticLines(source, diagnostics);
-  return `compile failed${sourcePath ? ` (${sourcePath})` : ""}:\n${lines.join("\n")}`;
-}
-
-/** Each diagnostic of a `compile` of `source`, with the `test` it sits in when there is one. */
-function diagnosticLines(source: string, diagnostics: KumikiError[]): string[] {
-  if (diagnostics.length === 0) return [];
-  // `compile` returned diagnostics rather than throwing, so the source parsed.
-  const tests = loadSource(source).defs.filter((e) => e.layer === "test");
-  return diagnostics.map((d) => {
-    const test = tests.find(
-      ({ range }) => d.pos.line >= range.startLine && d.pos.line <= range.endLine,
-    );
-    return `${formatDiagnostic(d)}${test ? ` (in test "${test.name}")` : ""}`;
-  });
-}
 
 /** Compile + mount + exercise a Kumiki source string; return the smoke report. */
 export async function smokeSource(
@@ -159,10 +65,6 @@ export async function smokeFile(
   opts: { diagnosticsAsIssues?: boolean } = {},
 ): Promise<SmokeReport & { warnings: KumikiError[] }> {
   return smokeSource(readFileSync(path, "utf8"), capabilities, { ...opts, sourcePath: path });
-}
-
-function printWarnings(source: string, warnings: KumikiError[]): void {
-  for (const line of diagnosticLines(source, warnings)) console.error(line);
 }
 
 /** CLI entry: print a human-readable report and exit non-zero on failure. */
@@ -251,12 +153,14 @@ function episodeLogError(path: string, error: unknown): Error {
 }
 
 /**
- * The in-memory store keeps only the most recent N, so the file is appended as each episode
- * commits. A failed write is held, not thrown: the hook runs inside the runtime's commit, where
- * a throw would read as an error of the app. Nothing is appended after it, so the file has no
- * gap. The app's dispose cancels every effect it launched, so their episodes have committed by
- * the time the run returns (runtime.md). `close` stops the writing all the same, so
- * nothing that commits once the run is over is written, and gives back the held failure.
+ * The in-memory store keeps only the most recent N, so the file is appended from `onEpisode`,
+ * which hands each episode over in the order its trigger began, once every episode begun before
+ * it has committed (runtime.md). A failed write is held, not thrown: the hook runs inside the
+ * runtime's commit, where a throw would read as an error of the app. Nothing is appended after
+ * it, so the file has no gap. The app's dispose cancels every effect it launched, so their
+ * episodes have committed by the time the run returns (runtime.md). `close` stops the writing all
+ * the same, so nothing that commits once the run is over is written, and gives back the held
+ * failure.
  */
 export function fileEpisodeLogger(path: string): {
   logger: EpisodeLogger;

@@ -8,5 +8,7 @@ export default defineConfig({
     // Non-zero and west of UTC, so a date-only string misread as UTC midnight shows up as the
     // previous local day.
     env: { TZ: "America/Los_Angeles" },
+    // A test that checks what the episode logger lets go has to run a full collection.
+    execArgv: ["--expose-gc"],
   },
 });

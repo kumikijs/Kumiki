@@ -1,4 +1,4 @@
-import { RUNTIME_OVERLAY_SELECTORS } from "@kumikijs/runtime";
+import { RUNTIME_OVERLAY_SELECTORS, TOAST_STACK_SELECTOR } from "@kumikijs/runtime";
 
 /** Every `confirm` dialog open in the document, oldest first. */
 export const dialogs = (): HTMLElement[] =>
@@ -17,7 +17,8 @@ export function answer(dialog: HTMLElement | undefined, outcome: "yes" | "no"): 
 export const overlays = (): Element[] =>
   Array.from(document.querySelectorAll(RUNTIME_OVERLAY_SELECTORS.join(", ")));
 
-/** Take every runtime overlay out of the document, so the next test starts without one. */
+/** Take every runtime overlay out of the document, and the toast stack, so the next test starts without one. */
 export function removeOverlays(): void {
   for (const el of overlays()) el.remove();
+  for (const el of document.querySelectorAll(TOAST_STACK_SELECTOR)) el.remove();
 }

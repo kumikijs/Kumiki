@@ -2,10 +2,19 @@ import { nearestNames } from "./text-distance.ts";
 
 /** The words a `{dispatch}` step and a replayed episode both use for a reducer name none of `names` matches. */
 export function noReducerNamed(written: string, names: Iterable<string>): string {
+  return noneNamed("reducer", written, names);
+}
+
+/** The words a replayed bind write uses for a slot name none of `names` matches. */
+export function noSlotNamed(written: string, names: Iterable<string>): string {
+  return noneNamed("slot", written, names);
+}
+
+function noneNamed(what: string, written: string, names: Iterable<string>): string {
   const near = nearestNames(written, names);
-  // A tie names every reducer in it, so declaration order does not answer what distance does not.
+  // A tie names every name in it, so declaration order does not answer what distance does not.
   const hint = near.length === 0 ? "" : ` — did you mean ${orList(near)}?`;
-  return `no reducer named "${written}"${hint}`;
+  return `no ${what} named "${written}"${hint}`;
 }
 
 /** A reducer as a `{dispatch}` step sees it: its name, and the id it is scoped to. */

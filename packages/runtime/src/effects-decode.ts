@@ -76,8 +76,17 @@ export async function decodeRead(decode: Decode, read: Undecoded): Promise<Decod
   }
 }
 
+/**
+ * Why `decode` refuses `value`, or `undefined` when it accepts it. A check that throws, as a
+ * recursive type's does on a value nested past what the stack holds, refuses the value too.
+ */
 export function decodeRefusal(decode: Decode, value: unknown): string | undefined {
-  const f = typeof decode === "function" ? decode(value) : undefined;
-  if (!f) return undefined;
-  return `decode failed: ${showRefinementFailure(f)}`;
+  if (typeof decode !== "function") return undefined;
+  let f: ReturnType<DecodeCheck>;
+  try {
+    f = decode(value);
+  } catch (e) {
+    return `decode failed: ${String(e)}`;
+  }
+  return f && `decode failed: ${showRefinementFailure(f)}`;
 }

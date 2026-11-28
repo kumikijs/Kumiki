@@ -200,13 +200,16 @@ describe("a call-site class replaces the tile's whole", () => {
 });
 
 describe("what a builtin renders from its own arguments stays the tile's", () => {
-  it("a button's text, while the call site's reaches $el", async () => {
+  it.each([
+    'Ghost(text="Other")',
+    'Ghost {text: "Other"}',
+  ])("a button's text, while the call site's reaches $el: %s", async (call) => {
     const src = program(
       [
         'tile Ghost = button(text="Ghost")',
         'reducer hit on=ui.click(Ghost) do= log := log + $el.text + ";"',
       ],
-      'Ghost(text="Other")',
+      call,
     );
     expect(await clickAll(src, ["Ghost"])).toBe("Other;");
   });

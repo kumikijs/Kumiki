@@ -1,3 +1,4 @@
+import { VARIANT_TAG_FIELD } from "@kumikijs/runtime/variant-tag";
 import type { Expr, FragmentShape, KeyKind, Pattern, Pos } from "../ast.ts";
 import { callsBuiltin, decodedType, RUN_REDUCER } from "../builtin-calls.ts";
 import { type ParseReading, parseQualifier } from "../parse-reading.ts";
@@ -64,7 +65,7 @@ function parseJs(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): string {
   const read = readingJs(answer.reading, a);
   const refine = refinementJs({ kind: "TypeRef", name: qualifier, pos }, ctx.gen);
   if (refine === undefined) return read;
-  return `((_o) => (_o._tag === "Some" && !(${refine})(_o._0)) ? _s.None : _o)(${read})`;
+  return `((_o) => (_o.${VARIANT_TAG_FIELD} === "Some" && !(${refine})(_o._0)) ? _s.None : _o)(${read})`;
 }
 
 function fnCallJs(callee: string, args: Expr[], ctx: EvalCtx): string {
@@ -190,7 +191,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "EffectId.none") return `""`;
       if (cn === "Decoder.Json") {
         const t = decodedType(e.args[0]);
-        return (t && ctx.gen.refinements.explainerOf(t)) ?? `"json"`;
+        return (t && ctx.gen.decoders.decoderOf(t)) ?? `"json"`;
       }
       if (cn === "Decoder.Text") return `"text"`;
       if (cn === "Decoder.Bytes") return `"bytes"`;
@@ -684,7 +685,7 @@ export function variantJs(name: string, payload: Expr[], ctx: EvalCtx): string {
   // Treat capital-letter bare ident as a variant tag (already in payload form).
   if (payload.length === 0) {
     if (name === "None") return `_s.None`;
-    return `({ _tag: ${JSON.stringify(name)} })`;
+    return `({ ${VARIANT_TAG_FIELD}: ${JSON.stringify(name)} })`;
   }
   if (name === "Some") return `_s.Some(${jsOfExpr(payload[0]!, ctx)})`;
   if (name === "Ok") return `_s.Ok(${jsOfExpr(payload[0]!, ctx)})`;

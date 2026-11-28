@@ -42,6 +42,11 @@ app Demo
 /** The warning above plus a repairable typo — the two must not interfere. */
 const WARN_AND_FIXABLE = WARN_ONLY.replace("count.show", "cnt.show");
 
+/** A line that starts no definition: a parse error, so no diagnostic at all. */
+const UNPARSABLE = `slot count : Int = 0
+= = =
+`;
+
 /** No `app`, so E0003 — a diagnostic `planFixes` has no repair branch for. */
 const UNFIXABLE = `slot count : Int = 0
 tile App = column(heading("Count: " + count.show))
@@ -393,6 +398,46 @@ app M caps=[] routes={"/" -> App, "/404" -> App} init=[]
     expect(code).toBe(1);
   });
 
+  // `$1` is one edit from the slot `s1`, and the read renamed to `s1` type-checks:
+  // a rename would leave a clean file that reads the slot.
+  const POSITIONAL = `slot s1    : Text = "draft"
+slot after : Text = ""
+slot count : Int = 0
+reducer go on=ui.click(Btn)
+    do= s1 := ["a"].map($1).head.get-or("")
+        after := $1
+tile Btn = button(text="go")
+tile App = column(Btn, text(s1 + after + count.show))
+app Demo
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`;
+
+  it("exits 1 proposing nothing for a `$1` after the fragment that bound it", SPAWN, () => {
+    const { stdout, code } = runCli(["fix", write("positional-dry.kumiki", POSITIONAL)]);
+    expect(stdout).toBe("(no auto-patches available)\n");
+    expect(code).toBe(1);
+  });
+
+  it("exits 1 under --apply with that `$1` left as written", SPAWN, () => {
+    const file = write("positional-apply.kumiki", POSITIONAL);
+    const { stdout, stderr, code } = runCli(["fix", file, "--apply"]);
+    expect(readFileSync(file, "utf8")).toBe(POSITIONAL);
+    expect(stdout).toBe("(no auto-patches available)\n");
+    expect(stderr).toContain('error E0103 undef-ref at 6:18: Reference to undefined name "$1"');
+    expect(code).toBe(1);
+  });
+
+  it("still repairs a misspelling beside that `$1` under --apply", SPAWN, () => {
+    const src = POSITIONAL.replace("after := $1", "after := $1\n        count := cont");
+    const file = write("positional-misspelling.kumiki", src);
+    const { stdout, code } = runCli(["fix", file, "--apply"]);
+    expect(stdout).toContain("applied 1 fix(es) — 1 error(s) remain");
+    expect(readFileSync(file, "utf8")).toBe(src.replace("count := cont", "count := count"));
+    expect(code).toBe(1);
+  });
+
   it("applies a patch to a file that also has a warning", SPAWN, () => {
     const { stdout, code } = runCli([
       "fix",
@@ -552,6 +597,20 @@ describe("kumiki list", () => {
     const { stdout, code } = runCli(["list", write("list-empty.kumiki", CLEAN), "motion"]);
     expect(stdout.trim()).toBe("");
     expect(code).toBe(0);
+  });
+
+  it.each([
+    { filter: "no filter", rest: [] },
+    { filter: "a filter", rest: ["slot"] },
+  ])("fails for a file that does not parse, with $filter", SPAWN, ({ rest }) => {
+    const { stdout, stderr, code } = runCli([
+      "list",
+      write("list-broken.kumiki", UNPARSABLE),
+      ...rest,
+    ]);
+    expect(stderr).toContain("Parse error at 2:1");
+    expect(stdout).toBe("");
+    expect(code).toBe(1);
   });
 });
 
@@ -841,6 +900,7 @@ describe("an argument of the wrong shape beside a .kumiki file that does not exi
     (f) => ["add", f, "slot", "x"],
     (f) => ["replace", f, "slot.count"],
     (f) => ["edit", f, "slot.count", "{"],
+    (f) => ["list", f, "bogus"],
   ];
 
   it.each(CASES.map((argv) => [argv("app.kumiki", ".").join(" "), argv] as const))(
