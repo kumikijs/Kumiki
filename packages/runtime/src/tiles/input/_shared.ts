@@ -39,7 +39,8 @@ export function writeBind(
     bindPath && bindPath.length > 0
       ? _setPathHelper(app.live[slotName] ?? {}, bindPath, written)
       : written;
-  const accepted = unread === undefined && app._setSlot(slotName, next, bindPath);
+  const accepted =
+    unread === undefined && app._setSlot(slotName, next, bindPath, { control: el, written });
   if (!accepted && IME_COMPOSING.has(el)) {
     PENDING_REFUSAL.set(el, () => settleRefusal(app, el, slotName, written, bindPath, unread));
     return;
@@ -84,6 +85,24 @@ export function tileId(node: { id?: unknown; props?: unknown }): string | undefi
   return raw == null ? undefined : String(raw);
 }
 
+// A variant's name is an identifier, so its key never reads as JSON text; a Map's text under
+// "_tag" can be any text.
+const VARIANT_NAME = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+/**
+ * A value shaped as a variant: a `_tag` that is an identifier, and no field beside its payload
+ * `_0`, `_1`, …. A Set or a Map of that shape is keyed the same way, which still tells apart
+ * two of one type.
+ */
+function isVariant(v: unknown): v is { _tag: string } & Record<string, unknown> {
+  if (v === null || typeof v !== "object") return false;
+  const t = v as Record<string, unknown>;
+  if (typeof t._tag !== "string" || !VARIANT_NAME.test(t._tag)) return false;
+  let payloads = 0;
+  while (`_${payloads}` in t) payloads++;
+  return Object.keys(t).length === payloads + 1;
+}
+
 /**
  * The key a `select` matches an option by, and the `value` its `<option>` carries on
  * both render paths. Two values `==` calls equal have one key, and two it tells apart
@@ -92,10 +111,9 @@ export function tileId(node: { id?: unknown; props?: unknown }): string | undefi
  * and itself.
  */
 export function valueKey(v: unknown): string {
-  if (v && typeof v === "object" && "_tag" in (v as Record<string, unknown>)) {
-    const t = v as Record<string, unknown>;
-    const parts: string[] = [String(t._tag)];
-    for (let i = 0; `_${i}` in t; i++) parts.push(valueKey(t[`_${i}`]));
+  if (isVariant(v)) {
+    const parts: string[] = [v._tag];
+    for (let i = 0; `_${i}` in v; i++) parts.push(valueKey(v[`_${i}`]));
     return parts.join("|");
   }
   // A record, a List, Bytes or a value holding one: JSON text lists a record's fields in

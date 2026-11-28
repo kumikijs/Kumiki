@@ -41,7 +41,7 @@ tile Oops in=PanicInfo error-boundary=Mid = column(text(xs.head.get.show))
 tile Boom error-boundary=Oops = column(text(panic("bang")))
 tile App = column(text("frame"), Boom)`),
     );
-    expect(root.textContent).toContain('last resort: Key "k" is not in the Map at Mid');
+    expect(root.textContent).toContain('last resort: Key "k" is not in {} at Mid');
     expect(root.textContent).toContain("frame");
     expect(root.querySelector("[data-kumiki-panic]")).toBeNull();
   });

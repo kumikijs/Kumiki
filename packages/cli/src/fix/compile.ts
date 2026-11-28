@@ -51,6 +51,14 @@ function nameAnchor(store: Store, pos: Pos, missing: string): PatchAnchor {
     : { kind: "line", pos };
 }
 
+/**
+ * Whether `pos` is at a `$` name, which only a binder in scope supplies, never a top-level
+ * definition.
+ */
+function atPositional(store: Store, pos: Pos): boolean {
+  return store.lines[pos.line - 1]?.[pos.col - 1] === "$";
+}
+
 /** Apply a name-suggest repair the way its anchor says it writes. */
 function applyNameFix(anchor: PatchAnchor, missing: string, suggested: string) {
   return (text: string): string =>
@@ -140,6 +148,19 @@ function outOfScopeReason(err: KumikiError): Declined | undefined {
   return undefined;
 }
 
+/**
+ * A `$` name renamed to the nearest top-level definition can type-check, and is never what a binder
+ * in scope supplied. An assignment's position is at its target's last member, not at the `$`, so
+ * the name the message reports is checked too.
+ */
+function positionalReason(err: KumikiError, store: Store): Declined | undefined {
+  const named = /"([^"]+)"/.exec(err.message)?.[1];
+  if (!named?.startsWith("$") && !atPositional(store, err.pos)) return undefined;
+  return {
+    reason: err.kind === "undef-slot" ? "e0103-positional-not-a-slot" : "e0103-positional-unbound",
+  };
+}
+
 // Each kind is repaired from the namespace its diagnostic suggests from: a slot
 // or tile proposed for a callee is E0116 again at the same position.
 const UNDEFINED_NAME: ReadonlyMap<string, Planner> = new Map([
@@ -197,7 +218,8 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
   ["E0102", anyDefinition], // undef-reducer
   [
     "E0103", // undef-ref / undef-slot
-    (err, store) => outOfScopeReason(err) ?? anyDefinition(err, store),
+    (err, store) =>
+      outOfScopeReason(err) ?? positionalReason(err, store) ?? anyDefinition(err, store),
   ],
   ["E0105", undefinedTile], // undef-tile
   ["E0107", anyDefinition], // undef-motion
@@ -339,6 +361,8 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
           anchor: { kind: "span", pos: err.pos },
         };
       }
+      // A block entry names no shape: `kumiki fix` rewrites the `text=` spelling alone.
+      if (err.unrendered === undefined) return { reason: "e0129-block-entry-not-rewritten" };
       return { reason: "e0129-dropped-argument-has-no-single-repair" };
     },
   ],

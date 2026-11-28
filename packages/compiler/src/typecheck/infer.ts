@@ -8,14 +8,15 @@ import {
   writtenVariants,
 } from "../assignable.ts";
 import type { Expr, Pos, TypeExpr } from "../ast.ts";
-import { isQualifierName, RUN_REDUCER } from "../builtin-calls.ts";
+import { isQualifierName, QUALIFIED_BUILTIN_CALLS, RUN_REDUCER } from "../builtin-calls.ts";
 import { qualifierType } from "../parse-reading.ts";
 import { hasMember, isOwnMember } from "../stdlib-members.ts";
-import { FILE_FIELDS, type PrimName, refType } from "../stdlib-types.ts";
+import { FILE_FIELDS, OPAQUE_HANDLES, type PrimName, refType } from "../stdlib-types.ts";
 import { getOrResultType, indexStep, unwrappedType } from "./against.ts";
 import { type Ctx, isBuiltinCall, type SymbolTable } from "./context.ts";
 import { binOpResult, letInScope } from "./expr.ts";
 import { fnResultType } from "./fn.ts";
+import { isIntLiteral } from "./int-literal.ts";
 import { memberReceivers } from "./members.ts";
 import { armScope, matchedType } from "./patterns.ts";
 import { RESERVED_SLOT_NAMES } from "./slot.ts";
@@ -71,6 +72,12 @@ export function isPrimNamed(t: TypeExpr | null, sym: SymbolTable, name: PrimName
 /** Through an alias or a `nominal` too: one answer for both halves of E0204, the operators and rendering. */
 export function isEffectId(t: TypeExpr | null, sym: SymbolTable): boolean {
   return isPrimNamed(t, sym, "EffectId");
+}
+
+/** The opaque handle `t` is, through an alias or a `nominal` too, which E0204 refuses to render. */
+export function opaqueHandleOf(t: TypeExpr | null, sym: SymbolTable): PrimName | undefined {
+  const u = unaliasType(t, sym);
+  return u?.kind === "TypePrim" && OPAQUE_HANDLES.has(u.name) ? u.name : undefined;
 }
 
 /** The member a qualified call names (`show` in `Int.show(v)`), by the spelling rule codegen and `builtinArity` apply. */
@@ -318,7 +325,7 @@ function routeType(name: string, ctx: Ctx): TypeExpr | null {
 export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null {
   switch (e.kind) {
     case "Num":
-      return prim(Number.isInteger(e.value) ? "Int" : "Float", e.pos);
+      return prim(isIntLiteral(e) ? "Int" : "Float", e.pos);
     case "Str":
       return { kind: "TypePrim", name: "Text", pos: e.pos };
     case "Bool":
@@ -454,6 +461,9 @@ export function inferType(e: Expr, sym: SymbolTable, ctx: Ctx): TypeExpr | null 
         return named === null ? null : container("Option", [named], e.pos);
       }
       if (qualifier === "Duration") return { kind: "TypeRef", name: "Duration", pos: e.pos };
+      if (qualifier === "Decoder" && QUALIFIED_BUILTIN_CALLS.has(e.callee)) {
+        return { kind: "TypeRef", name: "Decoder", pos: e.pos };
+      }
       if (qualifier === "Bytes") return prim("Bytes", e.pos);
       if (qualifier !== null && member === "fresh") return freshResultType(qualifier, e.pos, sym);
       return fnResultType(e.callee, sym);
@@ -491,9 +501,18 @@ function commonType(types: (TypeExpr | null)[], sym: SymbolTable): TypeExpr | nu
   for (const t of types.slice(1)) {
     if (!t) return null;
     if (!assignable(t, first, sym) || !assignable(first, t, sym))
-      return keepWritten(sharedBase(types, first, sym), types);
+      return keepWritten(
+        sharedBase(types, first, sym) ?? numericJoin(types, sym, first.pos),
+        types,
+      );
   }
   return keepWritten(first, types);
+}
+
+// An `Int` widens to a `Float`, so an `Int` beside a `Float` is a `Float`, as `1 + 1.5` is.
+function numericJoin(types: (TypeExpr | null)[], sym: SymbolTable, pos: Pos): TypeExpr | null {
+  const numeric = types.every((t) => isNumeric(t, sym));
+  return numeric && types.some((t) => isPrimNamed(t, sym, "Float")) ? prim("Float", pos) : null;
 }
 
 // The value is one of `types`' values, so it lands in a union only when each of them was written

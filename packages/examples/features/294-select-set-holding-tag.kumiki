@@ -1,0 +1,34 @@
+# Feature (runtime.md): a `select` tells apart options that are Sets or Maps
+# holding the text "_tag".
+#
+# A Set is held as an object keyed by its members, and a Map as one keyed by
+# its keys, so a Set holding "_tag", or a Map with it as a key, has the field a
+# variant is marked with. A select keys a value as a variant only when its
+# `_tag` is an identifier and it has no field beside its payload. The Sets are
+# keyed by their JSON text. The "bare" Map is keyed as a variant, `S`, and
+# "with a" by its JSON text, since it has a field beside `_tag`. So each option
+# here keeps a key of its own: choosing "two" writes the Set of two members, and
+# choosing "with a" writes the Map of two entries.
+
+slot pick   : Set(Text)       = ["_tag"]
+slot lookup : Map(Text, Text) = {"_tag": "S"}
+
+fn picks() -> List({label: Text, value: Set(Text)})
+   = [{label: "one", value: ["_tag"]},
+      {label: "two", value: ["_tag", "a"]}]
+
+fn lookups() -> List({label: Text, value: Map(Text, Text)})
+   = [{label: "bare", value: {"_tag": "S"}},
+      {label: "with a", value: {"_tag": "S", "a": "x"}}]
+
+tile App = column(
+             select(bind=pick, options=picks()) {id: "pick"},
+             select(bind=lookup, options=lookups()) {id: "lookup"},
+             text("pick holds " + pick.size.show),
+             text("lookup holds " + lookup.size.show))
+           {pad: "lg", gap: "md"}
+
+app SetHoldingTag
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

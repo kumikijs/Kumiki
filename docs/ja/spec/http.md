@@ -33,13 +33,15 @@ effect http-post cap=http.post
                    url: Url,
                    headers: Map(Text, Text),
                    query: Map(Text, Text),
-                   body: HttpBody,
+                   body: HttpBody(T),
                    decode: Decoder
                  }
                  out=Result(Decoded, HttpError)
 
 # put / patch / delete も同じ形
 ```
+
+`Decoded` と `T` は、ここでも [6.7](#_6-7-storage-effects) のストレージの宣言でも、プログラムが選ぶ型を表す：`Decoded` は応答を decode した先の型（`decode: Decoder.Json(User)` なら `User`）、`T` はリクエストが運ぶものの型 — 本文の `Json` が持つもの（[6.1.3](#_6-1-3-httpbody-型)）、または書き込みが保存しクエリが返す値 — である。プログラム自身の宣言は、その位置に自分の型を書く：`body: HttpBody(Note)`、`out=Result(User, HttpError)`。
 
 `query` は `http.*` のすべてのメソッド（get・post・put・patch・delete）で同じく URL のクエリ文字列として送られる。各エントリは URL エンコードされ（`URLSearchParams` による。空白は `+` に、値の中の `&` はエスケープされる）、`url` が既に持つクエリ文字列の後ろ・フラグメントの前に付け足される。空の `query` は `url` をそのまま残す。クエリ文字列中のエントリの順序は保証されないので、それに依存してはならない。
 
@@ -48,13 +50,15 @@ effect http-post cap=http.post
 ### 6.1.3 HttpBody 型
 
 ```kumiki fragment
-type HttpBody = Json(JsonValue)
-              | Form(Map(Text, Text))
-              | Multipart(Map(Text, FormValue))
-              | Text(Text)
-              | Bytes(Bytes)
-              | Empty
+type HttpBody(T) = Json(T)
+                 | Form(Map(Text, Text))
+                 | Multipart(Map(Text, FormValue))
+                 | Text(Text)
+                 | Bytes(Bytes)
+                 | Empty
 ```
+
+`HttpBody(T)` は標準ライブラリの型であり（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）、`Json` が運ぶものについて generic である。ランタイムは本文をそのタグで読むので、この名前は予約されている（[E0231](./errors.md#e0231-reserved-type-name)）。`HttpBody(T)` と宣言されたフィールドはこの 6 つの variant だけを受け取り、そこに書かれた `Json(…)` のペイロードは `T` に照らして検査される：`body: HttpBody(Note)` のもとで `Json(note)` は本文であり、素の `note` は `emit` の引数では [E0202](./errors.md#e0202-emit-arg-type-mismatch)（それ以外では [E0201](./errors.md#e0201-type-mismatch)）の `Expected HttpBody(Note) but got Note` になる。`let` が束縛した variant は、その名前が書かれた位置では判定されず、同じく束縛したプログラム自身の union の variant も判定されない：チェッカーはそのペイロードの型を推論しないので、`let b = Json({id: "a", at: "noon"})` のあとの `body: b` は通る。引数なしで書いた `HttpBody` は [E0210](./errors.md#e0210-type-arity-mismatch) であり、`Json` を決して送らない effect もその引数を書く：`HttpBody(Unit)`。
 
 各 variant は、その名前が示すものとして送られる：
 
@@ -62,12 +66,12 @@ type HttpBody = Json(JsonValue)
 |---|---|
 | `Json(v)` | `v` の JSON。`Unit` の `Json` は `null` |
 | `Form(m)` | `m` を URL エンコードしたもの（`a=1&b=2`） |
-| `Multipart(m)` | `m` の `FormData`。`FileV` のエントリはファイルとして送る。ファイルを持たない `FileV`（永続化から復元したファイルレコード）はリクエスト前に `HttpError{status: 0}` で effect を失敗させる |
+| `Multipart(m)` | `m` の `FormData`。`FileV` のエントリはファイルとして送る。ファイルを持たない `FileV`（JSON からデコードした `File` で、名前・サイズ・タイプしか持たない）はリクエスト前に `HttpError{status: 0}` で effect を失敗させる |
 | `Text(t)` | `t` そのまま |
 | `Bytes(b)` | `b` のバイト列 |
 | `Empty` | 本文なし |
 
-HttpBody の variant でない `body`（レコード・リスト・素の `Text`）は、`Json` と同じく JSON で送られる。`Text` を入力に取る `body: $1` は `x` ではなく `"x"` を送る。生のテキストを送るには `Text($1)` と書く。
+ハンドラは本文を、どの型が宣言したかに関わらずタグだけで送る：タグが `Json`・`Form`・`Multipart`・`Text`・`Bytes`・`Empty` の値はその variant として送られ、それ以外の値（レコード・リスト・素の `Text`）は `Json` と同じく JSON で送られる。`Text` を入力に取る `body: $1` は `x` ではなく `"x"` を送る。生のテキストを送るには `Text($1)` と書く。その variant 以外でありうるのは、どの `HttpBody(T)` も宣言していない本文だけである：型を検査されない `map-request` の `body`（[6.6.1](#_6-6-1-request-fields)）、または effect が別の型で宣言した `body` フィールド（`body: Note` など）。そうした型の variant でそのタグのどれかを持つものも、その variant として送られる：`type Box = Full(Int) | Empty` のもとでの `body: Box` では `Empty` は本文を送らず、`type Payload = Text(Text) | Json(Int)` のもとでは `Text("a")` は `a` として、`Json(3)` は `3` として送られる。
 
 `GET` と `HEAD` は `body` が何であっても本文を送らない。`http.get` のリクエストには `body` フィールドが無いので、それを書く `map-request` は拒否される（[6.6.1](#_6-6-1-request-fields)）。
 
@@ -80,18 +84,30 @@ Decoder.Bytes        # バイト列のまま
 Decoder.None         # レスポンス本文を捨てる
 ```
 
-`Decoder.Text` は本文を UTF-8 として読んだ `Text` を渡す。`Decoder.Bytes` は本文のバイトを届いたまま `Bytes` として渡すので、UTF-8 のテキストでない本文も損なわれずに届く。`Decoder.None` は `Unit` を渡し、本文を読まない。`decode` を持たない、または `decode` が `null` のリクエストは、述語を持たない `T` の `Decoder.Json(T)` と同じく JSON として parse される。`map-request` が組み立てるのは普通のレコードなので、その `decode` にはどんな値でも入りうる。これらのどの decoder でもない値は、リクエストを送る前に effect を失敗させる。`HttpError` の `status` は `0`、`message` はその値を示す（`decode is "TEXT", which is not a Decoder` など）。decoder が何であっても、2xx 以外のレスポンスが生む `HttpError` の `body` は、本文を読めたときはレスポンスのテキストの `Some` である。
+`T` は値の位置に書かれるが型である：その中の各名前は宣言の中と同じく解決され、何も指さない名前は [E0117](./errors.md#e0117-undef-type) になる。
 
-レスポンスの decode は型としてはコンパイル時に検査され、実行時に検査されるのは JSON の構文と、宣言した型が持つ述語。JSON として壊れている 2xx の本文は、レスポンス自身の `status`、`decode failed:` で始まる `message`、`body` にレスポンス本文（`Some(text)`）を持つ `HttpError` になる。レスポンスは届いているので接続エラー（`status: 0`）ではなく、リトライもされない（[6.5](#_6-5-リトライ)）。本文のない 2xx（204 など）には `Decoder.None` が必要で、そうしないとデフォルトの decoder がその status で `decode failed:` を報告する。
+JSON の本文はデータを持つので、`T` の中のどこにある不透明なハンドル（`Decoder` か `EffectId`）も、書かれた位置で [E0204](./errors.md#e0204-effect-id-misuse) になる：`Decoder.Json(List(Decoder))` はその `Decoder` の位置で、`Decoder.Json(EffectId)` はその `EffectId` の位置で、ハンドルを持つエイリアスやジェネリック（`Box(Decoder)` など）はその名前の位置で報告される。
 
-decode した値は `T` にも照らして検査される。`T` が持つすべての述語を、それが書かれたすべての位置で検査する。型 `T` の slot への書き込みが受けるのと同じ検査である（[§10.3.3](./runtime.md#_10-3-3-batching)）。拒否された値も同じ `HttpError` になり、`message` は述語と、値がそれを満たさなかった位置を示す（`decode failed: uuid at .id`）。検査するのは述語だけで、`T` が述語を持たない位置は届いたまま受け取る。そのため、構文は通るが宣言した型と形が合わない本文は実行時には検出されない。読み取り capability（`http.*`、`storage.read`、`session.read`、`indexed.read`。[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）に登録したホスト provider は、この検査をリクエストの `decode` として関数で受け取る。parse した値を渡すと、`T` が受け入れれば `undefined` を、拒否すれば満たされなかった述語（`{kind, args, path}`）を返す。述語を持たない `T` では、`decode` は文字列 `"json"` である。
+`Decoder.Text` は本文を UTF-8 として読んだ `Text` を渡す。`Decoder.Bytes` は本文のバイトを届いたまま `Bytes` として渡すので、UTF-8 のテキストでない本文も損なわれずに届く。`Decoder.None` は `Unit` を渡し、本文を読まない。`decode` を持たない、または `decode` が `null` のリクエストは JSON として parse され、その値はどの型にも照らして検査されない。`map-request` に書いた `decode` は `Decoder` に照らして検査されるが（下記）、`fn` が返すリクエストの中のように実行時に組み立てられたものは検査されない。これらのどの decoder でもない値は、リクエストを送る前に effect を失敗させる。`HttpError` の `status` は `0`、`message` はその値を示す（`decode is "TEXT", which is not a Decoder` など）。decoder が何であっても、2xx 以外のレスポンスが生む `HttpError` の `body` は、本文を読めたときはレスポンスのテキストの `Some` である。
+
+レスポンスの decode は型としてはコンパイル時に検査され、実行時には本文が宣言した型に照らして検査される：JSON の構文、形、そしてその型が持つすべての述語である。JSON として壊れている 2xx の本文は、レスポンス自身の `status`、`decode failed:` で始まる `message`、`body` にレスポンス本文（`Some(text)`）を持つ `HttpError` になる。レスポンスは届いているので接続エラー（`status: 0`）ではなく、リトライもされない（[6.5](#_6-5-リトライ)）。本文のない 2xx（204 など）には `Decoder.None` が必要で、そうしないとデフォルトの decoder がその status で `decode failed:` を報告する。
+
+parse した値は、プログラムが `T` を保持する形、つまり `Json(v)` が送り `storage-write` が保存する形（[6.7.2](#_6-7-2-宣言-localstorage)）で、位置ごとに `T` に照らして検査される。レコードは、型が宣言するすべてのフィールドを、それぞれそのフィールドの型で持つ素のオブジェクトである。型が宣言しないフィールドは届いたまま残す。`List` は要素型の配列、`Tuple` はちょうどその型の並びの配列、`Map` は値が値型で、キーがキー型の保存する形で保存されている素のオブジェクト（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）なので `"07"` は `Map(Int, V)` のキーではなく、`Set` は各要素の下に `true` を持つ素のオブジェクトである。素のオブジェクトとは、どの realm で作られたものであれ、プロトタイプが `Object.prototype` か `null` のオブジェクトである。したがって storage のタグ付き形式を読み戻した `Bytes` の `Uint8Array` や、IndexedDB の複製が持つ `Date` や JS の `Map` は、レコードでも `Map` でも `Set` でもない。それ自身のテキストを持たないキー型は、構造を持つキーと同じように、`Unit` なら `"null"`、`Bytes` と `File` なら JSON として保存されるので、それを要素やキーとする `Map` や `Set` が受け取るのはそのキーだけである。`Option`・`Result`・union の値は、`_tag` がバリアントの一つを名指し、そのバリアントのペイロードを `_0`・`_1`・… に持つオブジェクトである：`{"_tag": "Some", "_0": 1}` と `{"_tag": "None"}`。したがって JSON の `null` は `None` ではない。`nominal` 型はその基底として検査する。`Int` は整数、`Float` は任意の数値、`Text` は文字列、`Bool` は `true` か `false`、`Unit` は `null`、`Bytes` はバイト列を保持する値（storage のタグ付き形式を読み戻したものなど）だけである。JSON テキストはバイト列を持たない。`Int` は有限でない数値でもよい。`Float` から計算した `Int` はそうなりうる（`(-1.0).sqrt.floor` は `NaN`）し、storage はそれを保つ。構造を持つキーはそのような数値を `null` として保存するので（[標準ライブラリ §2.2.2](./stdlib.md#_2-2-2-set-t)）、その中の `Int`・`Float`・`Time` の位置は `null` も受け取り、`Bytes` は読み戻される素のオブジェクトである。`type Nest(A) = {v: A, next: Option(Nest(List(A)))}` のように自身を育つ引数に適用するジェネリックは段ごとに新しい型になるので、検査は 32 段で止まる：それより深い位置は検査されず、そこにある `Time` もテキストから読まない。slot の型でそのような型に沿う refinement は [E0803](./errors.md#e0803-unimplemented-refinement) になるが、形はどの型にもあるので、ここで診断を出すと、読む値がどれほど浅くてもそのような型の `Decoder.Json` を拒否することになる。続いて `T` が持つすべての述語を、それが書かれたすべての位置で検査する。型 `T` の slot への書き込みが受けるのと同じ検査である（[§10.3.3](./runtime.md#_10-3-3-batching)）。
+
+`T` が拒否した値も同じ `HttpError` になる。`message` は、型が並べる順で最初に合わない位置と、そこにあるべきものを示す：型の違うフィールドなら `decode failed: expected Int at .id`、ないフィールドなら `decode failed: missing at .name`、レコードでない本文なら `decode failed: expected User`、拒否された述語なら `decode failed: uuid at .id`。形は述語より先に検査する。検査がたどれないほど深く入れ子になった値（数万段の入れ子になった再帰型のテキストなど）も同じように拒否され、`decode failed: ` の後にたどる途中で止まったエラーが続く。
+
+JSON には時刻がないので、`Time` の位置（`Time`、またはそれに対する `nominal` か `where`）はテキストを `Time.parse` の文法で読む（[標準ライブラリ §2.2.8](./stdlib.md#_2-2-8-time)）：その文法の ISO 8601 テキストはそれが指す時刻であり、JSON の数値はそのミリ秒数（整数、または storage が復元したときの有限でない数値）である。それ以外は、文字列で書いた数値も含めてその位置で拒否される：`"1772877600000"` は `Time.parse` が読むテキストではないので、`{"at": "1772877600000"}` は `decode failed: expected Time at .at` になり、コロンのないオフセット（`"+0000"`）も同じである。時刻はテキストの代わりにその位置へ書き込まれるので、`.ok` は `plus`・`diff`・`to-ms` と比較演算子が読める `Time` を受け取る。`T` 自体が `Time` であるときは時刻を書き込む先がないので、そのような本文は数値としてだけ読む。
+
+読み取り capability（`http.*`、`storage.read`、`session.read`、`indexed.read`。[標準ライブラリ §2.5](./stdlib.md#_2-5-standard-capabilities)）に登録したホスト provider は、この検査をリクエストの `decode` として関数で受け取る。parse した値を渡すと、それが `T` であれば `undefined` を、そうでなければ失敗（`{kind, args, path}`。`kind` は拒否された述語、`expected <T>`（`"expected Int"` など）、または `missing`）を返す。テキストから読んだ時刻は渡された値そのものへ書き込むので、provider は受け入れられたその値をそのまま届ける。代わりに検査した複製（`decode(structuredClone(v))`）や parse し直した値を届けると、その時刻はテキストのまま届き、provider が届けた値を再び検査するものはない。`decode` は、`Time` をテキストで持つ凍結された値と、たどれないほど深く入れ子になった値には、答えずに例外を投げる。拒否された値は、失敗した位置より前で読んだ時刻をすでに持っていることがある。`decode` が文字列 `"json"` になるのは、型を名指さない引数のときだけである。
+
+`Decoder` はこの 4 つが持つ型であり、それ以外に `Decoder` であるものはない（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）。[6.1.2](#_6-1-2-standard-effect)・[6.7.2](#_6-7-2-宣言-localstorage)・[6.7.4](#_6-7-4-sessionstorage-indexeddb) のリクエストのレコードは `decode` をこの型で宣言するので、effect は decoder を入力で受け取れ、`fn` は decoder を返せる：`fn pick(raw: Bool) -> Decoder = if raw then Decoder.Text else Decoder.Json(Note)`。`Decoder` と宣言された位置にそれ以外の型の値を置くと [E0201](./errors.md#e0201-type-mismatch)、`emit` の引数では [E0202](./errors.md#e0202-emit-arg-type-mismatch) になる：`emit storage-read({key: "note", decode: "TEXT"})` は `"TEXT"` の位置で `Expected Decoder but got Text` である。`map-request` の `decode` もこの型に従い（[6.6.1](#_6-6-1-request-fields)）、`map-request` の無い effect が `in=` で宣言する `decode` も同じである。その入力がリクエストだからである：`in={key: Text, decode: Text}` はその `Text` の位置で E0201 になる。`Decoder` はメンバも演算子も持たず、描画されることも、`Map` のキーや `Set` の要素になることも、JSON から decode されることもない。JSON から decode されないのは `EffectId` も同じである（[E0204](./errors.md#e0204-effect-id-misuse)）。
 
 ### 6.1.5 共通 props（自動付与） {#_6-1-5-common-props-auto-applied}
 
 すべての HTTP effect は次を自動付与：
 
 - `Accept: application/json`（Decoder が Json のとき。リクエストが Decoder を指定しないときも Json である）
-- `Content-Type: application/json`（HttpBody が Json のとき、または本文が HttpBody の variant でないとき）
+- `Content-Type: application/json`（本文のタグが `Json` のとき、または HttpBody のどのタグでもないとき）
 - `Content-Type: application/x-www-form-urlencoded`（Form のとき）
 - `Content-Type: multipart/form-data`（Multipart のとき。boundary を含めるため fetch 自身が書く）
 
@@ -368,6 +384,8 @@ effect loadUser cap=http.get
 
 フィールドが検査されるのは、リテラルがそれを名指す位置である：`map-request` のレコードそのもの、または `if` の分岐・`match` の腕・`let` の本体がそこに返すレコード（入れ子の深さは問わない）。テキストをキーに持つ map リテラルも同じオブジェクトになるので、その `Text` のキーも検査される。それ以外の方法で計算されるリクエスト — `fn` が返すもの、slot から読むもの、`$1` そのもの — はフィールドが実行時に決まるので検査されない。
 
+リテラルが `decode` を書く位置では、その値はフィールドの型 [`Decoder`](#_6-1-4-decoder-型) に照らされる：ハンドラはそれによって応答を decode し、どの decoder も組み立てていない値はどの decode も名指さない。別の型の値は [E0201](./errors.md#e0201-type-mismatch) であり、値の位置で報告される — `decode: "TEXT"`、`Text` の slot、`in=Text` での `$1` はいずれも `Expected Decoder but got Text` である。値はそれが書かれたスコープで読まれるので、そこで `let` や `match` の腕が束縛する名前はそこでの型を持つ。フィールドはそれぞれの capability の規則に照らされる：キーで読む `indexed.read` は保存されたレコードを読み、`Decoder.Text` も `Decoder.Bytes` もそれを読めない（[6.7.4](#_6-7-4-sessionstorage-indexeddb)）ので、そのどちらかを `decode` として、またはその分岐として書くと、これも E0201 の `Expected Decoder.Json(T) or Decoder.None but got Decoder.Text` になり、`map-request` の無い effect への `emit` の引数では E0202 になる。名前が保持するものは実行時に委ねられる。`indexed.read` のクエリの `range` は、どの型の `K` についても `Option(IndexRange(K))` に照らされ、メッセージはその `K` を `?` と書く（[6.7.4](#_6-7-4-sessionstorage-indexeddb)）：`in=Text` での `range: Some($1)` は、`$1` の位置で E0201 の `Expected IndexRange(?) but got Text` になる。ほかのフィールドは型を検査されない。
+
 行の無い capability にはリクエストのスキーマが無く、その `map-request` はホスト provider が読むものを何でも組み立ててよい：カスタム capability と、それ以外の標準 capability（`nav.*`・`log.write` など）がこれに当たり、その宣言した effect は provider に届き、組み込みハンドラには届かない。`http.cancel` は `map-request` そのものを取らない（[E0303](./errors.md#e0303-invalid-cancel-target)）。
 
 ---
@@ -407,6 +425,8 @@ effect storage-clear  cap=storage.write
 クリアは宣言で決まる。`map-request` を持たず `in=Unit`（直接、または別名を通して）と宣言した effect がストレージを空にする。空になるのはこのアプリが書いたキーだけでなく、**オリジン全体**の localStorage である。それ以外の `storage.write` は書き込みか削除で、リクエスト（effect の入力、または `map-request` が組み立てたもの）で区別される。`key` を持ち `value` フィールドを持たないレコードはそのキーを削除し（以後の `storage-read` は `Ok(None)` を返す）、`value` フィールドを持つレコードはそれを書き込む。値そのものは問わない。`None`・`[]`・レコードはいずれも書き込まれる。
 
 このどれにも当たらないリクエストは `err` になり、何も変更しない。レコードでないもの（空のリクエストを含む）、空でない `Text` でない `key`、フィールドはあるが値を持たない `value`（`undefined`）がこれに当たる。Web Storage の呼び出しの失敗（容量超過、`SecurityError`）も `err` で、そのメッセージは呼び出しとキーを示す。`storage.write` のホストプロバイダ（[§2.5](./stdlib.md#_2-5-standard-capabilities)）は、effect の入力または `map-request` が組み立てたとおりのリクエストを受け取り、クリアではリクエストを受け取らない。
+
+どこかに選ばれた `File` を含む `value` も `err` になり、組み込みのハンドラは何も保存しない。ストレージはテキストを保持するが、ファイルのバイト列は書き込みが受け取れるテキストではない（ブラウザはそれを非同期にしか読み出せない）。保存したとすれば、その `File` は名前・サイズ・タイプだけを残してファイルを失い、読み戻したものの `file-url` は `""` になり、それを持つ `FileV` パートはリクエストを失敗させることになる（[6.1.3](#_6-1-3-httpbody-型)）。メッセージはキーと、値の中で最初に見つかった `File` の名前を示す: `storage.write: the value for "f" holds the File "a.txt", and localStorage would keep only its name, size and type, not the file; nothing was stored`。JSON からデコードした `File` のようにファイルを持たない `File` には失うものが無く、その JSON（`_file: {}` を含む）として保存される。
 
 **保存形。** JSON が保持できる値は、その JSON テキストとして保存される。`{n: 1}` は `{"n":1}` として保存される。どこかに `Bytes`、有限でない数（`NaN`・`Infinity`・`-Infinity`）または負のゼロを含む値は **タグ付き形式** で保存される。`~` の後に値の JSON が続き、その中で `Bytes` はそれぞれ `{"$bytes": "<その base64>"}`、そうした数はそれぞれ `{"$float": "NaN"}`（または `"Infinity"`・`"-Infinity"`・`"-0"`）と書かれ、値の中のオブジェクトのキー（タグ自身のキーを除く）のうち `$` で始まるもの（`Map(Text, V)` のキーや `Set(Text)` の要素はそうなり得る）は先頭に `$` をもう1つ付けて書かれる。エスケープされたそのキーは `$$` で始まるので、タグ付き形式で `$` 1つで始まるキーを持つオブジェクトはタグだけである。たとえば `{data: Bytes.from-text("hi"), ratio: 1.0 / 0.0}` は `~{"data":{"$bytes":"aGk="},"ratio":{"$float":"Infinity"}}` として保存され、`storage-read` は同じ2バイトと `Infinity` を返す。`~` で始まる JSON テキストは無いので、read は最初の1文字で2つの形式を見分け、JSON として保存されたエントリは、どのビルドが書いたものでも、その JSON のとおりに読み戻される。保存された `{"$bytes":"aGk="}` は書き込まれたときの1エントリの `Map(Text, Text)` であり、`Bytes` ではない。
 
@@ -449,7 +469,7 @@ reducer onChange
 
 ### 6.7.4 sessionStorage / IndexedDB
 
-`session-*` も同じ形で、保存形も同じ（[6.7.2](#_6-7-2-宣言-localstorage)）であり、`session-read` は `storage-read` と同じように decode する。`indexed-*` はキー指定が `{store: Text, key: Text}` になる以外は同じ。IndexedDB が保持するのはテキストではなく構造化された値なので、`indexed-read` は何も parse しない。`Decoder.Json(T)` と `decode` を持たない read はレコードを保存されたとおりに渡し、`Decoder.Json(T)` の検査は行うので、拒否された場合は `storage-read` と同じく `indexed-read` でも `.err` になる。`Decoder.Text` と `Decoder.Bytes` には読むテキストが無いので、どちらかを指定したキー指定の read は、キーがあるかどうかにかかわらず `decode failed:` で始まる `Text` を値とする `.err` になる。`Decoder.None` は `Unit` を渡し、キーがあるかどうかだけを答える。どの decoder でもない `decode` も `.err` になる。`indexed-*` にタグ付き形式は無い。IndexedDB は `indexed-write` が書くレコードの構造化複製を保持するので、書いたレコードの中の `Bytes`・有限でない数・負のゼロは `indexed-read` からそのまま返る。レコードでない `value` にはストアのキーを置く場所が無く、書いたとおりには返らない。
+`session-*` も同じ形で、保存形も同じ（[6.7.2](#_6-7-2-宣言-localstorage)）であり、`session-read` は `storage-read` と同じように decode する。`session-write` も選ばれた `File` を同じように拒否し、そのメッセージは sessionStorage を示す。`indexed-write` は選ばれた `File` を拒否しない: それが書く構造化複製はファイルを保持する。それ以外の点では、`indexed-*` はキー指定が `{store: Text, key: Text}` になる以外は同じ。IndexedDB が保持するのはテキストではなく構造化された値なので、`indexed-read` は何も parse しない。`Decoder.Json(T)` と `decode` を持たない read はレコードを保存されたとおりに渡し、`Decoder.Json(T)` の検査は行うので、拒否された場合は `storage-read` と同じく `indexed-read` でも `.err` になる。`Decoder.Text` と `Decoder.Bytes` には読むテキストが無いので、どちらかを指定したキー指定の read は、キーがあるかどうかにかかわらず `decode failed:` で始まる `Text` を値とする `.err` になる。リクエストのリテラルが書くものはチェック時に拒否される（[6.6.1](#_6-6-1-request-fields)）。`Decoder.None` は `Unit` を渡し、キーがあるかどうかだけを答える。どの decoder でもない `decode` も `.err` になる。`indexed-*` にタグ付き形式は無い。IndexedDB は `indexed-write` が書くレコードの構造化複製を保持するので、書いたレコードの中の `Bytes`・有限でない数・負のゼロは `indexed-read` からそのまま返る。レコードでない `value` にはストアのキーを置く場所が無く、書いたとおりには返らない。
 
 ```kumiki fragment
 effect indexed-read cap=indexed.read
@@ -461,9 +481,17 @@ effect indexed-write cap=indexed.write
                      out=Result(Unit, Text)
 
 effect indexed-query cap=indexed.read
-                     in={store: Text, index: Option(Text), range: Option(IndexRange)}
-                     out=Result(List(JsonValue), Text)
+                     in={store: Text, index: Option(Text), range: Option(IndexRange(K))}
+                     out=Result(List(T), Text)
 ```
+
+`indexed-query` は読んだレコードを `List(T)` として返す。`T` はプログラムが保存するレコード型であり、`indexed-write` の `value: T` と同じである。クエリには `decode` が無いので、レコードは保存されたとおりに届き、`T` に照らして検査するものは無い。`K` はクエリが範囲をとるキーの型で、`index` が `Some` のときはそれが名指すフィールド、`None` のときはストアの `key` である。`range` は `IndexRange(K)` であり、これは標準ライブラリのレコード（[標準ライブラリ §2.1.3](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)）で、ランタイムは IndexedDB の `IDBKeyRange` として読み、そのフィールド名をそのまま使う。この名前は予約されている（[E0231](./errors.md#e0231-reserved-type-name)）。`map-request` に書かれた（[6.6.1](#_6-6-1-request-fields)）、または `map-request` の無い effect の `in=` で宣言された、それ以外の型の `range` は [E0201](./errors.md#e0201-type-mismatch) である：そこでの `range: Option(Text)` は、境界を持たない `range` と同じくすべてのレコードを読んでしまう。
+
+```kumiki fragment
+type IndexRange(K) = {lower: Option(K), upper: Option(K), lowerOpen: Bool, upperOpen: Bool}
+```
+
+クエリは、キーが `lower` と `upper` の間にあるレコードを読む。`None` の境界はその側を制限せず、open フラグはその境界自体を除く：`{lower: Some(10), upper: Some(20), lowerOpen: false, upperOpen: true}` は 10 以上 20 未満のキーを読む。`None` の `range`、または境界を持たない `range` は、すべてのレコードを読む。どのキーも含まない範囲 — `lower` が `upper` より上、または両者が等しくどちらかのフラグが open — は IndexedDB が組み立てを拒むもので、クエリはその理由を `DataError:` で始まる `Text` として `.err` を返す。
 
 IndexedDB の `store` は `app.indexed-db` で宣言：
 

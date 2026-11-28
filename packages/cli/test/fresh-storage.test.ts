@@ -1,6 +1,7 @@
 import { app } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
-import { ensureDom, smokeFile } from "../src/smoke.ts";
+import { ensureDom } from "../src/load.ts";
+import { smokeFile } from "../src/smoke.ts";
 
 const BLOG = app("03-blog");
 

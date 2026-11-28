@@ -11,7 +11,8 @@
         "domIncludes": ["Saved"],
         "visible": ["Saved"],
         "elementState": {
-          "[data-kumiki-toast][data-level='info']": {
+          "[data-kumiki-toast][data-level='info']": { "textContent": "Saved" },
+          "[data-kumiki-toast][data-level='info'] [role='status']": {
             "textContent": "Saved",
             "role": "status",
             "ariaLive": "polite"

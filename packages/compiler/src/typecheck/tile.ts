@@ -24,6 +24,7 @@ import {
   staticPaths,
   unboundRedirectNames,
 } from "../redirects.ts";
+import { shadowingRoute } from "../route-rank.ts";
 import { appType, primType } from "../stdlib-types.ts";
 import {
   firesUnheardClauses,
@@ -44,6 +45,7 @@ import {
   checkInputBindType,
   checkSecondSpelling,
   checkToggleBind,
+  tileAsErrorField,
 } from "./bind.ts";
 import { checkCallee } from "./callee.ts";
 import {
@@ -63,12 +65,13 @@ import {
   elementTypeOf,
   letInScope,
   noteShown,
-  refuseRenderedEffectId,
+  refuseRenderedHandle,
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
 import { nestedScopes } from "./nested-scopes.ts";
 import {
   armScope,
+  checkArmsAfterNestedMatch,
   checkPatternAgainstType,
   checkPatternBindsAreDistinct,
   matchedType,
@@ -223,11 +226,18 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       pos: dup.pos,
     });
   }
-  // A top-level static route owns its path ahead of the parent's `/*`, so the map never sees it.
-  checkRedirects(subRoutes, errors, staticPaths(sym.app?.routes ?? []));
   const app = sym.app;
+  const routes = app?.routes ?? [];
+  const parents = routes.filter((r) => !r.tile.startsWith(">>") && r.tile === tile.name);
+  const shadowed = shadowedSubRoutes(subRoutes, parents, routes);
+  // A top-level static route owns its path ahead of the parent's `/*`, and so does an entry that
+  // takes every path of a key, so the map never sees those paths.
+  checkRedirects(
+    subRoutes,
+    errors,
+    new Set([...staticPaths(routes), ...staticPaths([...shadowed.keys()])]),
+  );
   if (!app) return;
-  const parents = app.routes.filter((r) => !r.tile.startsWith(">>") && r.tile === tile.name);
   if (parents.length === 0) {
     errors.push({
       code: "E0111",
@@ -247,6 +257,7 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       });
     }
   }
+  reportShadowedSubRoutes(tile, shadowed, parents, sym, errors);
   // The runtime fills the first outlet anywhere in the tree the tile renders, so an outlet in
   // a layout helper counts, and one a builtin drops does not.
   if (!sym.tileKinds.rendered(tile.name).has("route-outlet")) {
@@ -257,6 +268,70 @@ function checkSubRoutes(tile: TileDef, sym: SymbolTable, errors: KumikiError[]):
       pos: tile.pos,
     });
   }
+}
+
+/** Each sub-route that an app.routes entry takes every path of ahead of the parent, with that entry. */
+function shadowedSubRoutes(
+  subRoutes: readonly RouteMapEntry[],
+  parents: readonly RouteMapEntry[],
+  routes: readonly RouteMapEntry[],
+): Map<RouteMapEntry, RouteMapEntry> {
+  const out = new Map<RouteMapEntry, RouteMapEntry>();
+  for (const sr of subRoutes) {
+    const by = shadowingRoute(sr, parents, routes);
+    if (by) out.set(sr, by);
+  }
+  return out;
+}
+
+/** A sub-route whose every path an app.routes entry takes ahead of the parent is never reached. */
+function reportShadowedSubRoutes(
+  tile: TileDef,
+  shadowed: ReadonlyMap<RouteMapEntry, RouteMapEntry>,
+  parents: readonly RouteMapEntry[],
+  sym: SymbolTable,
+  errors: KumikiError[],
+): void {
+  const parentText =
+    parents.length === 1
+      ? `its parent "${parents[0]?.path}"`
+      : `its parents ${parents.map((p) => `"${p.path}"`).join(", ")}`;
+  for (const [sr, by] of shadowed) {
+    const taken = by.tile.startsWith(">>")
+      ? "follows that redirect there instead"
+      : "renders that route there, without the parent";
+    errors.push({
+      code: "W0218",
+      kind: "shadowed-sub-route",
+      severity: "warning",
+      message:
+        `Sub-route "${sr.path}" in tile "${tile.name}" is never matched: every path it matches is ` +
+        `matched by "${by.path}" in app.routes, which ranks ahead of ${parentText}, so the router ` +
+        `${taken}${idleSubscribers(sr, tile, sym)}`,
+      pos: sr.pathPos,
+    });
+  }
+}
+
+/**
+ * The route events on a shadowed sub-route's key never fire, unless another entry declares the
+ * same key: that one may be reached, and the reducers are named only when none does.
+ */
+function idleSubscribers(sr: RouteMapEntry, tile: TileDef, sym: SymbolTable): string {
+  if (sr.tile.startsWith(">>")) return "";
+  const sameKey = (e: RouteMapEntry) => e !== sr && e.path === sr.path && !e.tile.startsWith(">>");
+  const elsewhere = [
+    ...(sym.app?.routes ?? []),
+    ...[...sym.tiles.values()].flatMap((t) => (t === tile ? [] : (t.subRoutes ?? []))),
+  ];
+  if (elsewhere.some(sameKey)) return "";
+  const names = [...sym.reducers.values()]
+    .filter((r) => r.on.kind === "LifecycleEvent" && r.on.routePattern?.pattern === sr.path)
+    .map((r) => `"${r.name}"`);
+  if (names.length === 0) return "";
+  return names.length === 1
+    ? `. Reducer ${names[0]} subscribes to it and never runs`
+    : `. Reducers ${names.join(", ")} subscribe to it and never run`;
 }
 
 // `child` is a positional argument of a builtin that renders it only when it is a tile. The others
@@ -282,15 +357,20 @@ type ValueName =
 type NotATile = Exclude<Occupant, { readonly kind: "tile" }>;
 
 // The parser reads every name in an arm or a body as a tile call, so a call of a name no tile has
-// is resolved as a value. In a container it reads a bare lower-cased name as an expression, and a
-// program's tile of that name is taken before this (`tileNamedAt`), so a `Ref` here is a value or
-// nothing; a value of the same name wins over a builtin.
+// is resolved as a value, and so is a builtin's name written alone, which is the builtin's call when
+// no value in scope has the name. In a container it reads a bare lower-cased name as an expression,
+// and a program's tile of that name is taken before this (`tileNamedAt`), so a `Ref` here is a value
+// or nothing; in both places a value of the same name, written alone, wins over a builtin.
 function occupantOf(v: TileExpr, sym: SymbolTable, ctx: Ctx): Occupant;
 function occupantOf(v: Expr, sym: SymbolTable, ctx: Ctx): NotATile;
 function occupantOf(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): Occupant {
   if (isTileExpr(v)) {
-    if (v.kind !== "TileCall" || namesTile(v.name, sym)) return { kind: "tile" };
-    return valueNamed(v.name, v.pos, sym, ctx) ?? { kind: "unknown", name: v.name };
+    if (v.kind !== "TileCall" || sym.tiles.has(v.name)) return { kind: "tile" };
+    const builtin = BUILTIN_TILES.has(v.name);
+    if (builtin && v.bare === undefined) return { kind: "tile" };
+    const value = valueNamed(v.name, v.pos, sym, ctx);
+    if (value && !(builtin && value.kind === "out-of-scope")) return value;
+    return builtin ? { kind: "tile" } : { kind: "unknown", name: v.name };
   }
   if (v.kind !== "Ref") return { kind: "value" };
   const value = valueNamed(v.name, v.pos, sym, ctx);
@@ -399,11 +479,15 @@ export function checkTileExpr(
     case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
       const scrutType = matchedType(inferType(t.scrutinee, sym, ctx), t.arms, sym);
+      let patternsFit = true;
       checkArms(t.arms, ctx, (arm, inner) => {
         checkPatternBindsAreDistinct(arm.pattern, errors);
+        const before = errors.length;
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
+        if (errors.length > before) patternsFit = false;
         checkTileExpr(arm.body, sym, errors, inner, { kind: "arm", of: "match" });
       });
+      if (patternsFit) checkArmsAfterNestedMatch(t, "tile", scrutType, sym, errors);
       return;
     }
     case "TileCall":
@@ -430,18 +514,6 @@ function checkTileInput(
     });
     return;
   }
-  for (const named of t.args) {
-    if (named.name === undefined || !isTileExpr(named.value)) continue;
-    errors.push({
-      code: "E0201",
-      kind: "type-mismatch",
-      message:
-        `Named argument "${named.name}" on tile "${t.name}" is a prop, and a prop's value ` +
-        `cannot be a tile — nothing renders it. Pass the tile as the positional argument of ` +
-        `a tile that declares "in=", or write it as a child`,
-      pos: named.value.pos,
-    });
-  }
   const arg = positional[0];
   if (!def.in || !arg) return;
   const value = arg.value;
@@ -462,7 +534,11 @@ function alternatives(items: readonly string[]): string {
   return items.length > 1 ? `${items.slice(0, -1).join(", ")} or ${items.at(-1)}` : items.join("");
 }
 
-function checkUnrenderedArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiError[]): void {
+// Returns the `text=` argument it reports, which is moved or removed whole.
+function checkUnrenderedArgs(
+  t: TileExpr & { kind: "TileCall" },
+  errors: KumikiError[],
+): TileArg | undefined {
   const positional = t.args.filter((a) => a.name === undefined);
   const shown = shownInPlaceOfPositional(t.name);
   if (shown) {
@@ -479,10 +555,10 @@ function checkUnrenderedArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiE
         unrendered: "positional",
       });
     }
-    return;
+    return undefined;
   }
   const reading = contentReading(t.name);
-  if (!reading) return;
+  if (!reading) return undefined;
   positional.slice(1).forEach((a, i) => {
     errors.push({
       code: "E0129",
@@ -495,31 +571,42 @@ function checkUnrenderedArgs(t: TileExpr & { kind: "TileCall" }, errors: KumikiE
       unrendered: "positional",
     });
   });
+  const shadowed = reading.named === "text" && positional.length > 0;
+  const aProp = reading.named === undefined && positional.length === 0;
+  if (!shadowed && !aProp) return undefined;
+  // `text=` and the block's `text` are one argument, each reported in the spelling written. Only
+  // `text=` names a shape, since `kumiki fix` rewrites that spelling alone.
   const named = t.args.find((a) => a.name === "text");
-  if (!named?.name) return;
-  if (reading.named === "text" && positional.length > 0) {
-    errors.push({
-      code: "E0129",
-      kind: "unrendered-arg",
-      message:
-        `${t.name} renders its positional argument, so \`text=\` is never rendered — it is ` +
-        `read only when no positional argument is written. Remove \`text=\` or the ` +
-        `positional argument`,
-      pos: named.namePos,
-      unrendered: "text-shadowed",
-    });
-    return;
+  const spellings = [
+    { said: "`text=`", pos: named?.namePos, tagged: true },
+    { said: "the block's `text`", pos: t.props.find((p) => p.name === "text")?.pos, tagged: false },
+  ];
+  for (const { said, pos, tagged } of spellings) {
+    if (!pos) continue;
+    errors.push(
+      shadowed
+        ? {
+            code: "E0129",
+            kind: "unrendered-arg",
+            message:
+              `${t.name} renders its positional argument, so ${said} is never rendered — it is ` +
+              `read only when no positional argument is written. Remove ${said} or the ` +
+              `positional argument`,
+            pos,
+            ...(tagged ? { unrendered: "text-shadowed" as const } : {}),
+          }
+        : {
+            code: "E0129",
+            kind: "unrendered-arg",
+            message:
+              `content is positional: write \`${t.name}("…")\` — ${said} is a prop on ${t.name} ` +
+              `and never renders (it is the label argument of button, link, label and editable)`,
+            pos,
+            ...(tagged ? { unrendered: "text-prop" as const } : {}),
+          },
+    );
   }
-  if (reading.named !== undefined || positional.length > 0) return;
-  errors.push({
-    code: "E0129",
-    kind: "unrendered-arg",
-    message:
-      `content is positional: write \`${t.name}("…")\` — \`text=\` is a prop on ${t.name} ` +
-      `and never renders (it is the label argument of button, link, label and editable)`,
-    pos: named.namePos,
-    unrendered: "text-prop",
-  });
+  return named;
 }
 
 // Returns the content when it holds a tile: it is moved whole, so nothing else in it is checked.
@@ -529,7 +616,7 @@ function checkTileAsContent(
   errors: KumikiError[],
   ctx: Ctx,
 ): TileArg | TileProp | undefined {
-  const content = writtenContent(t);
+  const content = contentArg(t);
   if (!content) return undefined;
   const tiles = tilesInContent(content.value, sym, ctx);
   const shown =
@@ -550,13 +637,6 @@ function checkTileAsContent(
     });
   }
   return tiles.length > 0 ? content : undefined;
-}
-
-// The content as the lowering reads it: link renders its `{text: …}` when no content is written.
-function writtenContent(t: TileExpr & { kind: "TileCall" }): TileArg | TileProp | undefined {
-  const content = contentArg(t);
-  if (content || t.name !== "link") return content;
-  return t.props.find((p) => p.name === "text");
 }
 
 // The parser reads the content as an expression (but for a `when` or a `for`), so a tile there is
@@ -589,16 +669,14 @@ function tilesInContent(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): (Expr |
 }
 
 /**
- * The values a builtin renders as text, as its lowering reads them: its content, `button`'s `text=`,
- * `link`'s `{text: …}` prop when no content is written, and the value `editable` binds.
+ * The values a builtin renders as text, as its lowering reads them: its content in either spelling,
+ * `button`'s `text` in either spelling, and the value `editable` binds.
  */
 function renderedText(t: TileExpr & { kind: "TileCall" }, ctx: Ctx): Expr[] {
-  const named = (name: string) => t.args.find((a) => a.name === name)?.value;
   const content = contentArg(t)?.value;
   const values = [
     content,
-    t.name === "button" ? named("text") : undefined,
-    t.name === "link" && !content ? t.props.find((p) => p.name === "text")?.value : undefined,
+    t.name === "button" ? propOf(t, "text", ctx)?.value : undefined,
     t.name === "editable" ? propOf(t, "bind", ctx)?.value : undefined,
   ];
   return values.filter((v): v is Expr => v !== undefined && !isTileExpr(v));
@@ -623,10 +701,11 @@ function checkTileCall(
   const userTile = sym.tiles.get(t.name);
   if (userTile) checkTileInput(t, userTile, sym, errors, ctx);
   checkA11y(t, sym, errors, ctx);
-  checkUnrenderedArgs(t, errors);
+  const unrenderedText = checkUnrenderedArgs(t, errors);
   const tileContent = checkTileAsContent(t, sym, errors, ctx);
+  const errorFieldTile = tileAsErrorField(t, ctx);
   for (const value of renderedText(t, ctx)) {
-    refuseRenderedEffectId(value, `${t.name}(...)`, sym, errors, ctx);
+    refuseRenderedHandle(value, `${t.name}(...)`, sym, errors, ctx);
   }
   checkIconName(t, sym, errors);
   checkButtonType(t, errors, ctx);
@@ -681,8 +760,20 @@ function checkTileCall(
     // checkUnrenderedArgs reports this as E0129, tile or value; it is moved or removed whole, so
     // nothing inside it is checked.
     if (arg.name === undefined && shownInPlaceOfPositional(t.name)) continue;
+    // checkUnrenderedArgs reports this `text=` as E0129; a tile in it is moved or removed whole, so
+    // nothing inside it is checked.
+    if (arg === unrenderedText && isTileExpr(v)) continue;
     // checkTileAsContent reports this as E0236; it is moved whole, so nothing inside it is checked.
     if (arg === tileContent) continue;
+    // checkErrorField reports this as E0230, whose message says field= names a slot; it is replaced
+    // whole, so nothing inside it is checked.
+    if (v === errorFieldTile) continue;
+    // Past the handler branch, only a `when` or a `for` parses as a tile in a named argument, and a
+    // named argument is a prop.
+    if (arg.name !== undefined && isTileExpr(v)) {
+      errors.push(tileAsProp(t.name, arg.name, v.pos));
+      continue;
+    }
     const place: TilePlace | null =
       arg.name === undefined && positionalIsTile(t.name) ? { kind: "child", of: t.name } : null;
     if (isTileExpr(v)) {
@@ -724,6 +815,18 @@ function checkTileCall(
     }
   }
   checkErrorField(t, sym, errors, ctx);
+}
+
+function tileAsProp(tile: string, name: string, pos: Pos): KumikiError {
+  return {
+    code: "E0201",
+    kind: "type-mismatch",
+    message:
+      `Named argument "${name}" on tile "${tile}" is a prop, and a prop's value cannot be a ` +
+      `tile — nothing renders it. Write the tile as a positional child of a container — ` +
+      `\`column(when(c, …))\` — or pass a value — \`${tile}(${name}=…)\``,
+    pos,
+  };
 }
 
 const PREFETCH_ARGS_TYPE = appType("Map", primType("Text"), primType("Text"));

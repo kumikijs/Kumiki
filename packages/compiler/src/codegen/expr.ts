@@ -1,3 +1,4 @@
+import { VARIANT_TAG_FIELD } from "@kumikijs/runtime/variant-tag";
 import type { Expr, FragmentShape, KeyKind, Pattern, Pos } from "../ast.ts";
 import { callsBuiltin, decodedType, RUN_REDUCER } from "../builtin-calls.ts";
 import { type ParseReading, parseQualifier } from "../parse-reading.ts";
@@ -64,11 +65,16 @@ function parseJs(callee: string, args: Expr[], pos: Pos, ctx: EvalCtx): string {
   const read = readingJs(answer.reading, a);
   const refine = refinementJs({ kind: "TypeRef", name: qualifier, pos }, ctx.gen);
   if (refine === undefined) return read;
-  return `((_o) => (_o._tag === "Some" && !(${refine})(_o._0)) ? _s.None : _o)(${read})`;
+  return `((_o) => (_o.${VARIANT_TAG_FIELD} === "Some" && !(${refine})(_o._0)) ? _s.None : _o)(${read})`;
 }
 
 function fnCallJs(callee: string, args: Expr[], ctx: EvalCtx): string {
   return `${jsBinding(callee)}(${args.map((a) => jsOfExpr(a, ctx)).join(", ")})`;
+}
+
+/** A fragment as an arrow, its body parenthesized: a record or map literal would read as a block. */
+function fragmentArrowJs(params: readonly string[], body: string): string {
+  return `((${params.join(", ")}) => (${body}))`;
 }
 
 export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
@@ -185,7 +191,7 @@ export function jsOfExpr(e: Expr, ctx: EvalCtx): string {
       if (cn === "EffectId.none") return `""`;
       if (cn === "Decoder.Json") {
         const t = decodedType(e.args[0]);
-        return (t && ctx.gen.refinements.explainerOf(t)) ?? `"json"`;
+        return (t && ctx.gen.decoders.decoderOf(t)) ?? `"json"`;
       }
       if (cn === "Decoder.Text") return `"text"`;
       if (cn === "Decoder.Bytes") return `"bytes"`;
@@ -485,15 +491,19 @@ export function methodCallJs(
 
   const recvJs = jsOfExpr(recv, ctx);
   const takenApart = `const ${p1} = __x[0]; const ${p2} = __x[1];`;
+  const isPair = "(Array.isArray(__x) && __x.length === 2)";
   const binds: Record<FragmentShape, string> = {
     pair: takenApart,
     "key-value": takenApart,
+    // `_s.filter` hands a Set held as object keys each `[member, true]` entry, but a Set a host
+    // handed over as an array, such as a provider's value, each element itself.
+    key: `const ${p1} = ${isPair} ? __x[0] : __x;`,
     value: `const ${p1} = __x;`,
-    undecided: `const _isPair = (Array.isArray(__x) && __x.length === 2); const ${p1} = _isPair ? __x[0] : __x; const ${p2} = _isPair ? __x[1] : (__y !== undefined ? __y : __x);`,
+    undecided: `const _isPair = ${isPair}; const ${p1} = _isPair ? __x[0] : __x; const ${p2} = _isPair ? __x[1] : (__y !== undefined ? __y : __x);`,
   };
   const decided = shape ?? "undecided";
   const argFnList = (a: Expr): string =>
-    `((__x, __y) => { ${binds[decided]} return ${jsOfExpr(a, decided === "value" ? one : two)}; })`;
+    `((__x, __y) => { ${binds[decided]} return ${jsOfExpr(a, decided === "value" || decided === "key" ? one : two)}; })`;
   const argRaw = (a: Expr): string => jsOfExpr(a, ctx);
 
   switch (method) {
@@ -503,7 +513,7 @@ export function methodCallJs(
       return `_s.mapOver(${recvJs}, ${argFnList(args[0]!)}${keyKindArg(keyKind)})`;
     case "flat-map":
       // Option(T).flat-map(f): Some(v) -> f(v) (which itself returns Option), None -> None.
-      return `_s.flatMapOption(${recvJs}, ((${p1}) => ${jsOfExpr(args[0]!, one)}))`;
+      return `_s.flatMapOption(${recvJs}, ${fragmentArrowJs([p1], jsOfExpr(args[0]!, one))})`;
     case "size":
       return `_s.mapSize(${recvJs})`;
     case "keys":
@@ -527,7 +537,7 @@ export function methodCallJs(
     case "sort-by":
       return `_s.listSortBy(${recvJs}, ${argFnList(args[0]!)})`;
     case "fold":
-      return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, (${p1}, ${p2}) => ${jsOfExpr(args[1]!, two)})`;
+      return `_s.listFold(${recvJs}, ${argRaw(args[0]!)}, ${fragmentArrowJs([p1, p2], jsOfExpr(args[1]!, two))})`;
     case "show":
       return showJs(recvJs, recv, ctx.gen);
     case "is-some":
@@ -589,7 +599,7 @@ export function methodCallJs(
       return `({ ...((${recvJs}) ?? {}), ...((${argRaw(args[0]!)}) ?? {}) })`;
     case "update":
       // Within expr, $1 is the current value.
-      return `_s.mapUpdate(${recvJs}, ${argRaw(args[0]!)}, ((${p1}) => (${jsOfExpr(args[1]!, one)})))`;
+      return `_s.mapUpdate(${recvJs}, ${argRaw(args[0]!)}, ${fragmentArrowJs([p1], jsOfExpr(args[1]!, one))})`;
     case "add":
       return `_s.setAdd(${recvJs}, ${argRaw(args[0]!)})`;
     case "union":
@@ -600,7 +610,7 @@ export function methodCallJs(
       return `_s.or(${recvJs}, ${argRaw(args[0]!)})`;
     case "map-err":
       // Within expr, $1 is the current Err payload.
-      return `_s.mapErr(${recvJs}, ((${p1}) => (${jsOfExpr(args[0]!, one)})))`;
+      return `_s.mapErr(${recvJs}, ${fragmentArrowJs([p1], jsOfExpr(args[0]!, one))})`;
     case "replace":
       // `replaceAll` reads a string replacement as a pattern (`$$`, `$&`) but inserts a replacer's
       // return as written. `to` is read once, before the scan: a thunk would re-read it per match.
@@ -675,7 +685,7 @@ export function variantJs(name: string, payload: Expr[], ctx: EvalCtx): string {
   // Treat capital-letter bare ident as a variant tag (already in payload form).
   if (payload.length === 0) {
     if (name === "None") return `_s.None`;
-    return `({ _tag: ${JSON.stringify(name)} })`;
+    return `({ ${VARIANT_TAG_FIELD}: ${JSON.stringify(name)} })`;
   }
   if (name === "Some") return `_s.Some(${jsOfExpr(payload[0]!, ctx)})`;
   if (name === "Ok") return `_s.Ok(${jsOfExpr(payload[0]!, ctx)})`;

@@ -67,6 +67,8 @@ theme DefaultTheme = {
 
 A `breakpoints` width is a minimum viewport width in `px`, `rem` or `em` (`"640px"`, `"48rem"`), or a bare number, which is px (`md: 500`). Anything else — another unit, a nested entry — is not a breakpoint and is ignored ([§4.5](#_4-5-responsive)).
 
+A `spacing` token is a length, a `radius` token a corner radius and a `typography.size` token a font size, and a number is px when a prop or an `@` reference names it (`nudge: 4`, `soft: 4`, `fine: 11`). `pad`, `pad-x`, `pad-y`, `gap`, `gap-x` and `gap-y` resolve a spacing token's name, `radius` a radius token's and `size` a font size token's ([§4.3.1](#_4-3-1-shorthand-properties)), and a `style` block reads any of them as `@spacing.<key>`, `@radius.<key>` or `@typography.size.<key>` ([§4.3](#_4-3-token-references)). A number in those three sections and a bare breakpoint number are 0 or more: `flush: 0` is no padding, `square: 0` rounds nothing, and `md: 0` matches at every width. A negative length belongs in the tile's own `style` block (`style: {margin-top: -4}`), not in a token: a browser drops `padding: -4px`, `border-radius: -4px` and `font-size: -4px`, so `pad`, `gap`, `radius` and `size` would drop it. A negative width is not a breakpoint, though it still takes the default's place under its key: `md: -500` leaves the theme with no `md` at all. Each is [E0239](./errors.md#e0239-negative-theme-length), reported at the number.
+
 ### 4.2.1 Syntax
 
 ```

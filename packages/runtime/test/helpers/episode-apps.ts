@@ -26,6 +26,7 @@ export function replayableApp(overrides: Partial<AppShape>): ReplayableApp {
 /** A mount with an episode logger. `dispose` tears it down and takes its root out of the page. */
 export type LoggedMount = {
   logger: EpisodeLogger;
+  /** The element the app is mounted on, to find its controls by. */
   root: HTMLElement;
   dispatch: MountedApp["_dispatch"];
   dispose: () => void;
@@ -71,39 +72,47 @@ export function throwingLogger<M extends keyof EpisodeLogger>(
 }
 
 /**
- * Mount `app` with an episode logger, dispatch `reducer` once, tear the mount down, and return
- * what was logged as it reads back from a log line (a JSON round trip).
+ * Mount `app` with an episode logger, let `drive` work the mount, tear it down, and return what
+ * was logged as it reads back from a log line (a JSON round trip).
  */
-export function recordDispatch(app: AppShape, reducer: string): EpisodeLogEntry[] {
-  const { logger, dispatch, dispose } = mountLogged(app);
+export function recordDriven(
+  app: AppShape,
+  drive: (mounted: LoggedMount) => void,
+): EpisodeLogEntry[] {
+  const mounted = mountLogged(app);
   try {
-    dispatch(reducer, {});
+    drive(mounted);
   } finally {
-    dispose();
+    mounted.dispose();
   }
-  return JSON.parse(JSON.stringify(logger.list())) as EpisodeLogEntry[];
+  return JSON.parse(JSON.stringify(mounted.logger.list())) as EpisodeLogEntry[];
+}
+
+/** {@link recordDriven}, dispatching `reducer` once. */
+export function recordDispatch(app: AppShape, reducer: string): EpisodeLogEntry[] {
+  return recordDriven(app, ({ dispatch }) => dispatch(reducer, {}));
 }
 
 /**
- * An episode logger with a deterministic clock and ids that collects each episode as it commits,
- * then hands it to `onCommit`.
+ * An episode logger with a deterministic clock and ids that collects each episode as `onEpisode`
+ * is handed it, in the order its trigger began, then hands it to `onHandOver`.
  */
-export function recordingLogger(onCommit?: (ep: Episode) => void): {
+export function recordingLogger(onHandOver?: (ep: Episode) => void): {
   logger: EpisodeLogger;
-  committed: Episode[];
+  handedOver: Episode[];
 } {
-  const committed: Episode[] = [];
+  const handedOver: Episode[] = [];
   let t = 1000;
   let seq = 0;
   const logger = createEpisodeLogger({
     now: () => ++t,
     idGen: () => `ep_${(seq++).toString().padStart(4, "0")}`,
     onEpisode: (ep) => {
-      committed.push(ep);
-      onCommit?.(ep);
+      handedOver.push(ep);
+      onHandOver?.(ep);
     },
   });
-  return { logger, committed };
+  return { logger, handedOver };
 }
 
 /** Replay `episodes` against `app`'s live map with no mocks. */

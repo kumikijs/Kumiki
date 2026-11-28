@@ -1,9 +1,8 @@
 import { indexPlaceType, unaliasType } from "../assignable.ts";
-import type { Expr, TileArg, TileDef, TileExpr, TypeExpr } from "../ast.ts";
+import type { Expr, TileArg, TileDef, TileExpr, TileProp, TypeExpr } from "../ast.ts";
 import { isTileExpr } from "../ast.ts";
 import { bindTarget } from "../bind-target.ts";
 import { BUILTIN_TILES, contentArg, positionalIsTile } from "../builtins.ts";
-import { errorField } from "../error-field.ts";
 import { TIME_INPUT_PATTERNS } from "../input-bind.ts";
 import type { ParseReading } from "../parse-reading.ts";
 import {
@@ -97,6 +96,14 @@ function loopName(t: TileExpr & { kind: "TileFor" }, gen: GenCtx): LoopName {
 
 type LoopName = { readonly name: string; readonly id: number };
 
+/** The key a `for` hands each node in its body, and whether the code for one of them reads it. */
+type ImplicitKey = { readonly js: string; read: boolean };
+
+function readKey(key: ImplicitKey): string {
+  key.read = true;
+  return key.js;
+}
+
 const loopNames = new WeakMap<readonly TileDef[], Map<TileExpr, LoopName>>();
 
 /** Every `for` under `t`, outer before inner and in source order. */
@@ -131,7 +138,7 @@ export function tileExprJs(
   gen: GenCtx,
   ctx: EvalCtx,
   enclosingTiles?: EnclosingTiles,
-  implicitKeyExpr?: string,
+  implicitKey?: ImplicitKey,
   rootHandlers?: HandlerWiring,
 ): string {
   switch (t.kind) {
@@ -140,28 +147,25 @@ export function tileExprJs(
       const inner = childCtx(ctx);
       const bind = declareBind(inner, t.bind);
       const { name, id } = loopName(t, gen);
-      const keys = `__fk${id}`;
-      const index = `__fi${id}`;
-      const impl = `${keys}[${index}]`;
-      const body = tileExprJs(t.body, gen, inner, enclosingTiles, impl, rootHandlers);
-      const list = body.includes(impl)
-        ? `((__xs) => { const ${keys} = _s.loopKeys(__xs, ${JSON.stringify(name)}); return __xs.map((${bind}, ${index}) => (${body})); })((${iter}) || [])`
+      const key: ImplicitKey = { js: `__fk${id}`, read: false };
+      const body = tileExprJs(t.body, gen, inner, enclosingTiles, key, rootHandlers);
+      const list = key.read
+        ? `_loop(${JSON.stringify(name)}, (${iter}) || [], (${bind}, ${key.js}) => (${body}))`
         : `((${iter}) || []).map((${bind}) => (${body}))`;
-      return implicitKeyExpr ? `_wk(${list}, ${implicitKeyExpr})` : list;
+      return implicitKey ? `_wk(${list}, ${readKey(implicitKey)})` : list;
     }
     case "TileWhen":
       // Returns a Node or null. Caller flattens nulls away.
-      return `((${jsOfExpr(t.cond, ctx)}) ? (${tileExprJs(t.body, gen, ctx, enclosingTiles, implicitKeyExpr, rootHandlers)}) : null)`;
+      return `((${jsOfExpr(t.cond, ctx)}) ? (${tileExprJs(t.body, gen, ctx, enclosingTiles, implicitKey, rootHandlers)}) : null)`;
     case "TileIf":
-      return `((${jsOfExpr(t.cond, ctx)}) ? (${tileExprJs(t.consequent, gen, ctx, enclosingTiles, implicitKeyExpr, rootHandlers)}) : (${tileExprJs(t.alternate, gen, ctx, enclosingTiles, implicitKeyExpr, rootHandlers)}))`;
+      return `((${jsOfExpr(t.cond, ctx)}) ? (${tileExprJs(t.consequent, gen, ctx, enclosingTiles, implicitKey, rootHandlers)}) : (${tileExprJs(t.alternate, gen, ctx, enclosingTiles, implicitKey, rootHandlers)}))`;
     case "TileMatch":
       gen.usedTiles.add("text");
       return matchValueJs(
         jsOfExpr(t.scrutinee, ctx),
         t.arms,
         ctx,
-        (arm, inner) =>
-          tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKeyExpr, rootHandlers),
+        (arm, inner) => tileExprJs(arm.body, gen, inner, enclosingTiles, implicitKey, rootHandlers),
         `{ kind: "text", text: "" }`,
       );
     case "TileCall":
@@ -170,7 +174,7 @@ export function tileExprJs(
         gen,
         ctx,
         enclosingTiles,
-        implicitKeyExpr,
+        implicitKey,
         rootHandlers,
       );
   }
@@ -193,8 +197,11 @@ export function extractBindPath(bind: Expr | undefined, ctx: EvalCtx): BindInfo 
     else if ("at" in seg) readRaw = `_s.index(${readRaw}, ${keyJs(seg.at)})`;
     else readRaw = `_s.unwrap(${readRaw})`;
   }
-  const pathJs = `[${path.map((seg) => segmentJs(seg, keyJs)).join(",")}]`;
-  return { root, path, pathJs, read: readRaw };
+  return { root, path, pathJs: pathJs(path, ctx), read: readRaw };
+}
+
+function pathJs(path: readonly PathStep[], ctx: EvalCtx): string {
+  return `[${path.map((seg) => segmentJs(seg, (key) => jsOfExpr(key, ctx))).join(",")}]`;
 }
 
 function bindFields(bindInfo: Pick<BindInfo, "root" | "path" | "pathJs">): string[] {
@@ -273,11 +280,11 @@ function tileCallJs(
   gen: GenCtx,
   ctx: EvalCtx,
   enclosingTiles?: EnclosingTiles,
-  implicitKeyExpr?: string,
+  implicitKey?: ImplicitKey,
   rootHandlers?: HandlerWiring,
 ): string {
   const name = t.name;
-  const keyJs = keyFor(t, ctx) ?? implicitKeyExpr ?? null;
+  const keyJs = keyFor(t, ctx) ?? (implicitKey && readKey(implicitKey)) ?? null;
   const wrap = (lit: string): string => (keyJs ? `_wk(${lit}, ${keyJs})` : lit);
 
   if (!BUILTIN_TILES.has(name)) {
@@ -343,8 +350,7 @@ function tileCallJs(
         return `({ kind: "text", text: ${text}, props: ${propsObj} })`;
       }
       case "button": {
-        const textArg = t.args.find((a) => a.name === "text");
-        const textJs = textArg ? argShownJs(textArg, ctx) : showJs('""', undefined, gen);
+        const textJs = shownProp("text") ?? showJs('""', undefined, gen);
         const fields = [`kind: "button"`, `text: ${textJs}`];
         field(fields, "type");
         fields.push(`props: ${propsObj}`);
@@ -433,8 +439,7 @@ function tileCallJs(
       case "link": {
         const to = shownProp("to") ?? showJs('""', undefined, gen);
         const textArg = contentArg(t);
-        const textProp = t.props.find((p) => p.name === "text");
-        const textExpr = textArg ? asExpr(textArg.value) : textProp ? textProp.value : undefined;
+        const textExpr = textArg ? asExpr(textArg.value) : undefined;
         const text = textExpr ? jsOfExpr(textExpr, ctx) : '""';
         const fields = [`kind: "link"`, `text: ${showJs(text, textExpr, gen)}`, `to: ${to}`];
         const prefetch = prop("prefetch");
@@ -540,12 +545,14 @@ function tileCallJs(
       }
       case "error": {
         const fieldExpr = prop("field");
-        const field = fieldExpr ? errorField(fieldExpr) : null;
+        const field = fieldExpr ? bindTarget(fieldExpr) : null;
         // Only a program lowered without `check` gets here with no path, since E0230 refuses it;
         // a field that names no slot renders nothing.
         const [slot, path] =
-          field?.root.kind === "Ref" && field.path ? [field.root.name, field.path] : ["", []];
-        return `({ kind: "error", field: ${JSON.stringify(slot)}, path: ${JSON.stringify(path)}, props: ${propsObj} })`;
+          field?.root.kind === "Ref" && field.path
+            ? [field.root.name, pathJs(field.path, ctx)]
+            : ["", "[]"];
+        return `({ kind: "error", field: ${JSON.stringify(slot)}, path: ${path}, props: ${propsObj} })`;
       }
       case "route-outlet":
         return `({ kind: "route-outlet", children: [], props: ${propsObj} })`;
@@ -639,8 +646,8 @@ function contentJs(t: TileExpr & { kind: "TileCall" }, ctx: EvalCtx): string {
   return arg ? argShownJs(arg, ctx) : showJs('""', undefined, ctx.gen);
 }
 
-/** A tile argument as the text it renders (`showJs`). */
-function argShownJs(arg: TileArg, ctx: EvalCtx): string {
+/** A tile argument, or a `{…}` entry, as the text it renders (`showJs`). */
+function argShownJs(arg: TileArg | TileProp, ctx: EvalCtx): string {
   const e = asExpr(arg.value);
   return showJs(jsOfExpr(e, ctx), e, ctx.gen);
 }

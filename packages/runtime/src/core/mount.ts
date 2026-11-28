@@ -633,10 +633,20 @@ export function mountCore(
     };
     applyReducer(r, { $route: syntheticRoute });
   };
-  seams._setSlot = (name, value, at) => {
-    if (!slotAccepts(app.slots[name], value, at)) return false;
+  seams._setSlot = (name, value, at, from) => {
+    const meta = app.slots[name];
+    if (!slotAccepts(meta, value, at)) return false;
+    const before = slotValues[name];
     slotValues[name] = value;
-    render();
+    // The write lands and renders even when a hook the journal hands the episode to throws.
+    try {
+      if (from) {
+        const { volatile } = meta ?? {};
+        episode?.recordBind({ ...from, slot: name, path: at, before, after: value, volatile });
+      }
+    } finally {
+      render();
+    }
     return true;
   };
   seams._navigate = (path, replace) => navigation.navigate(path, !!replace);

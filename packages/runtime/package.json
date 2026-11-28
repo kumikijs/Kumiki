@@ -37,6 +37,10 @@
       "types": "./dist/positive-int.d.ts",
       "default": "./src/positive-int.ts"
     },
+    "./variant-tag": {
+      "types": "./dist/variant-tag.d.ts",
+      "default": "./src/variant-tag.ts"
+    },
     "./bundle": "./dist/index.js",
     "./bundle.min": "./dist/bundle.min.js",
     "./modules/*": "./dist/modules/*"
@@ -59,6 +63,10 @@
       "./positive-int": {
         "types": "./dist/positive-int.d.ts",
         "import": "./dist/positive-int.js"
+      },
+      "./variant-tag": {
+        "types": "./dist/variant-tag.d.ts",
+        "import": "./dist/variant-tag.js"
       },
       "./bundle": "./dist/index.js",
       "./bundle.min": "./dist/bundle.min.js",

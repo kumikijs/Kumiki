@@ -269,3 +269,16 @@ export async function navigate(app: AppShape, path: string): Promise<void> {
   (app as AppShape & { _navigate: (p: string, replace?: boolean) => void })._navigate(path, false);
   await tick(0);
 }
+
+/**
+ * Answer every `window.matchMedia` query as a viewport `width`px wide would, reading a `rem` or `em`
+ * `min-width` at 16px, until the test ends.
+ */
+export function stubViewport(width: number): void {
+  const spy = vi.spyOn(window, "matchMedia").mockImplementation((q: string) => {
+    const m = /min-width:\s*([\d.]+)(px|rem|em)\)/.exec(q);
+    const px = m ? Number(m[1]) * (m[2] === "px" ? 1 : 16) : Number.NaN;
+    return { matches: width >= px, media: q } as MediaQueryList;
+  });
+  onTestFinished(() => spy.mockRestore());
+}
