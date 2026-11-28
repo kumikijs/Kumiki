@@ -7,6 +7,7 @@ import { type FetchDouble, stubFetch } from "./helpers/http-double.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("284-decode-checks-shape");
+const DROPS_KEYS = feature("306-decode-drops-undeclared-keys");
 
 // 2026-03-07T10:00:00Z
 const AT = 1772877600000;
@@ -90,6 +91,13 @@ describe("Decoder.Json(T) through the built-in http handler", () => {
     expect(settled.err).toEqual({ _tag: "None" });
   });
 
+  // The runtime tells a variant from a record by its `_tag` field.
+  it("drops the keys a User does not declare, _tag among them, so .ok gets a User", async () => {
+    const settled = await answer(USER, { _tag: "a", id: 7, name: "Ann", title: "dropped" });
+    expect(settled.got).toEqual({ _tag: "Some", _0: { id: 7, name: "Ann" } });
+    expect(settled.err).toEqual({ _tag: "None" });
+  });
+
   it("reads each Time field from ISO text or a number of milliseconds", async () => {
     const body = { iso: "2026-03-07T10:00:00Z", ms: AT, off: "2026-03-07T19:00:00+09:00" };
     const settled = await answer(BOOKING, body);
@@ -134,6 +142,16 @@ describe("Decoder.Json(T) through the built-in http handler", () => {
     expect(text).toContain("user: 200 decode failed: expected Int at .id");
     expect(text).toContain(`booking: an hour later is ${AT + 3_600_000}`);
     expect(httpRequests().filter((r) => r === "GET /api/user")).toHaveLength(1);
+  });
+
+  it("shows example 306's record without the keys its fixture sends beside it", async () => {
+    useHttpFixture(readHttpFixture(DROPS_KEYS));
+    const app = await loadApp(DROPS_KEYS);
+    const text = await withMounted(app, async (root) => {
+      await waitUntil(() => !(root.textContent ?? "").includes("loading"), { timeoutMs: 3000 });
+      return root.textContent ?? "";
+    });
+    expect(text).toContain("item: {n: 1}, equal to {n=1}: true");
   });
 });
 
@@ -183,5 +201,32 @@ app S
       return live.why;
     });
     expect(seen).toBe(why);
+  });
+
+  it("drops the keys a stored record's type does not declare, so .ok gets the record", async () => {
+    const app = await loadSource(`slot got : Option({n: Int}) = None
+
+effect load cap=storage.read
+            in=Unit
+            out=Result(Option({n: Int}), Text)
+            map-request={key: "item", decode: Decoder.Json({n: Int})}
+
+reducer boot on=app.start      do= emit load()
+reducer ok   on=load.ok($v, _) do= got := $v
+
+tile App = column(text("x"))
+
+app S
+    caps   = [storage.read]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+`);
+    localStorage.setItem("item", JSON.stringify({ _tag: "a", n: 1, note: "dropped" }));
+    const got = await withMounted(app, async () => {
+      const live = defined(app.live, "the app's live map") as Record<string, { _tag?: string }>;
+      await waitUntil(() => live.got?._tag === "Some", { timeoutMs: 3000 });
+      return live.got;
+    });
+    expect(got).toEqual({ _tag: "Some", _0: { n: 1 } });
   });
 });

@@ -1,0 +1,15 @@
+{
+  "effects": {
+    "loadItem": [{ "outcome": "ok", "value": { "n": 1 } }]
+  },
+  "steps": [
+    {
+      "label": "`.ok` gets the record with only the field its type declares, so it shows as that record",
+      "expect": {
+        "noErrors": true,
+        "state": { "item": "{n: 1}, equal to {n=1}: true" },
+        "domIncludes": ["item: {n: 1}, equal to {n=1}: true"]
+      }
+    }
+  ]
+}

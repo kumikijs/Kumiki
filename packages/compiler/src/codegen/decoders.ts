@@ -14,7 +14,8 @@ export type Decoders = {
    * it can check: a function that answers `undefined` for a value that is a `t`, and otherwise the
    * first position that is not (the shape a refused predicate has, so the handlers report both
    * alike). It reads a `Time` position given as text by `Time.parse`'s grammar and writes the
-   * instant back in place, so the value it accepted is a `t`.
+   * instant back in place. It removes each key a record holds beyond its fields, and a variant
+   * beyond its tag and payloads, so the value it accepted holds a `t` and nothing else.
    */
   decoderOf(t: TypeExpr): string | undefined;
 };
@@ -68,6 +69,18 @@ export function decoders(env: TypeEnv, refinements: NestedRefinements): Decoders
   /** A statement returning the failure at `v`'s own position when `check` does not hold. */
   const unless = (check: string, label: string): string =>
     `if (!(${check})) return ${fail(label)};`;
+
+  /** A statement removing each key of `v` that `keys` does not name. */
+  const keepOnly = (keys: readonly string[]): string => {
+    const other = keys.map((k) => `k !== ${JSON.stringify(k)}`).join(" && ") || "true";
+    return `for (const k of Object.keys(v)) if (${other}) delete v[k];`;
+  };
+
+  /** The keys a variant with `payloads` payloads is held in: its tag, then `_0`, `_1`, …. */
+  const variantKeys = (payloads: number): string[] => [
+    VARIANT_TAG_FIELD,
+    ...Array.from({ length: payloads }, (_, i) => `_${i}`),
+  ];
 
   /** A step that fails with the position's failure, its path under `step`. */
   const stepInto = (failure: string | undefined, step: string): string[] =>
@@ -154,9 +167,8 @@ export function decoders(env: TypeEnv, refinements: NestedRefinements): Decoders
                     : `{ variant: ${tag}, payload: ${i} }`,
                 ),
               );
-              return steps.length > 0
-                ? [`if (v.${VARIANT_TAG_FIELD} === ${tag}) { ${steps.join(" ")} }`]
-                : [];
+              const prune = keepOnly(variantKeys(variant.payloads.length));
+              return [`if (v.${VARIANT_TAG_FIELD} === ${tag}) { ${[...steps, prune].join(" ")} }`];
             }),
           ];
         }
@@ -166,10 +178,12 @@ export function decoders(env: TypeEnv, refinements: NestedRefinements): Decoders
       }
     };
 
+    /** A record's checks, then the removal of each key it neither declares nor `also` keeps. */
     const recordOf = (
       fields: readonly { name: string; type: TypeExpr }[],
       label: string,
       generics: readonly string[],
+      also: readonly string[] = [],
     ): string[] => [
       unless(`${plain()}(v)`, label),
       ...fields.flatMap((field) => {
@@ -179,6 +193,7 @@ export function decoders(env: TypeEnv, refinements: NestedRefinements): Decoders
           ...stepInto(at(field.type, "v", name, generics), name),
         ];
       }),
+      keepOnly([...fields.map((field) => field.name), ...also]),
     ];
 
     const primOf = (
@@ -202,8 +217,9 @@ export function decoders(env: TypeEnv, refinements: NestedRefinements): Decoders
           return [unless("v === null", label)];
         case "Bytes":
           return [unless(inKey ? `${plain()}(v)` : "v instanceof Uint8Array", label)];
+        // `_file` is the runtime's handle on the picked file, held beside the fields.
         case "File":
-          return recordOf(FILE_FIELDS.fields, label, generics);
+          return recordOf(FILE_FIELDS.fields, label, generics, ["_file"]);
         // JSON holds no decoder or effect id, and the checker refuses either in the type a
         // `Decoder.Json(T)` reads.
         case "EffectId":
@@ -239,12 +255,11 @@ export function decoders(env: TypeEnv, refinements: NestedRefinements): Decoders
           names.map((n) => `v?.${VARIANT_TAG_FIELD} === ${JSON.stringify(n)}`).join(" || "),
           label,
         ),
-        ...names.flatMap((n, i) => {
+        ...names.map((n, i) => {
           const tag = JSON.stringify(n);
           const steps = stepInto(sub(tags[i], "v", '"_0"'), `{ variant: ${tag} }`);
-          return steps.length > 0
-            ? [`if (v.${VARIANT_TAG_FIELD} === ${tag}) { ${steps.join(" ")} }`]
-            : [];
+          const prune = keepOnly(variantKeys(tags[i] ? 1 : 0));
+          return `if (v.${VARIANT_TAG_FIELD} === ${tag}) { ${[...steps, prune].join(" ")} }`;
         }),
       ];
       switch (t.name) {
