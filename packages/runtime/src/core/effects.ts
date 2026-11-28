@@ -172,6 +172,18 @@ export function makeEffectDispatcher(
     }
   };
 
+  // A policy that defers the launch records its `effect-start` at the emit. What that throws goes
+  // to `onThrow`, as what throws inside `launch` does, and not to the reducer that emitted; the
+  // request does not run, which `undefined` says.
+  const claim = (eff: EffectSpec, input: unknown): string | undefined => {
+    try {
+      return onLaunch?.(eff.name, input) ?? "";
+    } catch (e) {
+      onThrow(eff.name, e);
+      return undefined;
+    }
+  };
+
   return {
     dispatch(emit: EmitSpec): void {
       if (disposed) return;
@@ -240,7 +252,12 @@ export function makeEffectDispatcher(
           absorb(prev.id, id);
           if (prev.token) onPolicyCancel?.(prev.token, eff.name);
         }
-        const token = onLaunch?.(eff.name, input) ?? "";
+        const token = claim(eff, input);
+        if (token === undefined) {
+          state.timers.delete(eff.name);
+          settle(id);
+          return;
+        }
         const h = setTimeout(() => {
           state.timers.delete(eff.name);
           void launch(eff, input, id, token);
@@ -249,7 +266,8 @@ export function makeEffectDispatcher(
         return;
       }
       if (policy.kind === "queue") {
-        const token = onLaunch?.(eff.name, input) ?? "";
+        const token = claim(eff, input);
+        if (token === undefined) return;
         const entry: QueueEntry = { id, token };
         const q = state.queues.get(eff.name) ?? { tail: Promise.resolve(), pending: [] };
         q.pending.push(entry);
