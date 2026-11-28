@@ -231,11 +231,6 @@ describe("a for-all type the generator cannot build", () => {
       'the refinements of "Int" leave no value: none is at least 1 and at most -1',
     ],
     [
-      "bounds with no whole number between them",
-      "Int where between(0.2, 0.8)",
-      'the refinements of "Int" leave no value: none is at least 1 and at most 0',
-    ],
-    [
       "lengths that cross",
       "Text where len-gt(5) where len-lt(3)",
       'the refinements of "Text" leave no value: none is at least 6 and at most 2 characters long',
@@ -267,6 +262,16 @@ describe("a for-all type the generator cannot build", () => {
     const [d] = ds as [KumikiError];
     expect(d.message).toBe(`No generator for \`for-all\` "x": ${reason}`);
     expect(textAt(source, d.pos)).toMatch(/^x: /);
+  });
+
+  // Over an `Int` a bound written with a point is a `Float`, so no checked program hands the
+  // generator bounds with no whole number between them: each bound is reported where it is written.
+  it("reports Int bounds written with a point at each literal, before the generator is asked", () => {
+    const source = program("Int where between(0.2, 0.8)");
+    expect(checkSource(source).map((d) => [d.code, textAt(source, d.pos)])).toEqual([
+      ["E0201", "0.2, 0.8)}"],
+      ["E0201", "0.8)}"],
+    ]);
   });
 
   it.each([

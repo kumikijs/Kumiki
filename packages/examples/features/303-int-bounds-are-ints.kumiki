@@ -1,0 +1,39 @@
+# Feature (errors.md, E0201 and E0217): a bound over an `Int` is an `Int`,
+# judged by how it is written, as any `Int` literal is.
+#
+# `Int where between(1, 5)` takes whole bounds. Written with a point, a bound is
+# a `Float` whatever number it is read as, so over an `Int` `between(1, 5.0)`
+# and `one-of(1, 2.5)` are E0201 at the literal, and so is
+# `between(0, 9007199254740993.5)`. A bound past the largest double, such as
+# 310 nines, is read as Infinity and is E0217 rather than a check against it.
+# Over a `Float` a point is how a bound is written, so `between(0, 0.5)` stays.
+
+type Stars = Int where between(1, 5)
+type Size  = Int where one-of(1, 2, 3)
+type Ratio = Float where between(0, 0.5)
+
+slot stars : Stars = 3
+slot size  : Size  = 1
+slot ratio : Ratio = 0.25
+
+reducer rate   on=ui.click(StarBtn)  do= stars := stars + 1
+reducer resize on=ui.click(SizeBtn)  do= size := if size == 1 then 2 else 4
+reducer tune   on=ui.click(RatioBtn) do= ratio := if ratio == 0.25 then 0.5 else 0.75
+
+tile StarBtn  = button(text="star")  {id: "star"}
+tile SizeBtn  = button(text="size")  {id: "size"}
+tile RatioBtn = button(text="ratio") {id: "ratio"}
+
+tile App = column(
+    StarBtn,
+    SizeBtn,
+    RatioBtn,
+    text("stars: " + stars.show),
+    text("size: " + size.show),
+    text("ratio: " + ratio.show)
+) {pad: "lg", gap: "md"}
+
+app IntBoundsAreInts
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
