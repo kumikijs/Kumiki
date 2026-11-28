@@ -49,25 +49,25 @@ Each task gives a model **only `docs/spec/` + a task spec** and asks for a singl
 | Task | Vendor | LOC | cl100k | parse | typecheck | build |
 |---|---|---:|---:|:--:|:--:|:--:|
 | v1 Pomodoro (~60 LOC) | Claude | 63 | 439 | ✅ | ✅ | ✅ |
-| | Codex | 41 | 289 | ✅ | ❌ | ❌ |
+| | Codex | 51 | 341 | ✅ | ✅ | ✅ |
 | | Gemini | 69 | 609 | ✅ | ✅ | ✅ |
 | v2 Kanban (~200 LOC) | Claude | 188 | 1,624 | ✅ | ✅ | ✅ |
-| | Codex | 157 | 1,311 | ✅ | ✅ | ✅ |
+| | Codex | 200 | 1,611 | ✅ | ✅ | ✅ |
 | | Gemini | 331 | 2,323 | ✅ | ✅ | ✅ |
 | v3 Issue Tracker (~600 LOC) | Claude | 864 | 7,482 | ✅ | ✅ | ✅ |
-| | Codex | 606 | 4,305 | ✅ | ✅ | ✅ |
+| | Codex | 772 | 6,143 | ✅ | ✅ | ✅ |
 | | Gemini | 1,460 | 10,353 | ✅ | ✅ | ✅ |
 | v4 Project Mgmt (~1,000 LOC) | Claude | 986 | 10,122 | ✅ | ✅ | ✅ |
-| | Codex | 287 | 6,218 | ✅ | ❌ | ❌ |
+| | Codex | 897 | 8,644 | ✅ | ✅ | ✅ |
 | | Gemini | 1,995 | 16,598 | ✅ | ✅ | ✅ |
 
-Models: Claude Opus 5.5, Codex `gpt-6.1-terra`, Gemini `gemini-4-neon-high`, each run once per task in a workspace that holds the spec and the task and nothing else — no examples, no compiler.
+Models: Claude Opus 5.5, Codex `gpt-6.1-terra`, Gemini `gemini-4-neon`, all at reasoning effort `high`, each run once per task in a workspace that holds the spec and the task and nothing else — no examples, no compiler.
 
 What the table says:
 
-- **Even the largest app builds from the spec alone, in one pass.** Claude and Gemini build all four tasks, including the ~1,000-line v4, and every output that builds also passes `kumiki smoke`. No output fails to parse.
-- **The two failures are one rule each.** Codex lists `timer` as a capability in v1 (E0302) and writes one slot twice in a v4 reducer (E0601). Its v4 is also 287 lines against a task that asks for 800–1,500 — it under-delivers rather than mis-writes.
-- **Correctness converges; size does not.** For v3 the three write 606, 864 and 1,460 lines. A build-green output is legal and runs; whether it covers the whole task spec is a separate question this benchmark does not score.
+- **Even the largest app builds from the spec alone, in one pass.** All three vendors build all four tasks, including the ~1,000-line v4, and every output also passes `kumiki smoke`.
+- **Effort is part of the result.** A first Codex pass at `low` effort failed v1 and v4 on one rule each and wrote 287 lines for v4; at `high` the same model builds both.
+- **Correctness converges; size does not.** For v3 the three write 772, 864 and 1,460 lines. A build-green output is legal and runs; whether it covers the whole task spec is a separate question this benchmark does not score.
 
 ## Reproducing
 

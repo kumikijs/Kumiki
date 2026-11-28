@@ -24,14 +24,18 @@ model) are in this file's git history.
   compiler in the workspace the rule is enforced, not only asked for; the
   session records confirm it (Claude had no shell; Codex's commands only read
   files; Gemini's sessions made only `read_file` calls).
-- **Claude** — Claude Code 2.1.332, `claude -p --model opus` (Claude Opus 5.5),
-  tools limited to `Read Write Glob Grep`, one fresh session per task. It loads
+- **Reasoning effort is `high` for all three.** It is part of the result: a
+  first Codex pass ran at `low`, its CLI's configured default, and built only v2
+  and v3 (its v4 was 287 lines). Those outputs were replaced.
+- **Claude** — Claude Code 2.1.332, `claude -p --model opus` (Claude Opus 5.5,
+  effort `high` from the user settings), tools limited to `Read Write Glob Grep`,
+  one fresh session per task. It loads
   the user-level `CLAUDE.md`, which holds generic coding rules and nothing about
   Kumiki.
 - **Codex** — codex-cli 0.172.0 (`gpt-6.1-terra`),
-  `codex exec -s workspace-write`, one task at a time: four concurrent runs
+  `codex exec -s workspace-write -c model_reasoning_effort="high"`, one task at a time: four concurrent runs
   could not start the Windows sandbox and ended having read nothing.
-- **Gemini** — agy 1.5.18, `agy --model gemini-4-neon-high --sandbox --print`,
+- **Gemini** — agy 1.5.18, `agy --model gemini-4-neon-high --sandbox --print` (the `high` variant),
   one task at a time; the code is taken from between the prompt's
   `===KUMIKI_BEGIN===` / `===KUMIKI_END===` markers on stdout.
 
@@ -40,16 +44,16 @@ model) are in this file's git history.
 | Task | Vendor | LOC | chars | cl100k | parse | typecheck | build | first error |
 |---|---|---:|---:|---:|:--:|:--:|:--:|---|
 | v1 Pomodoro | Claude | 63 | 1,543 | 439 | ✅ | ✅ | ✅ | — |
-| v1 Pomodoro | Codex | 41 | 1,047 | 289 | ✅ | ❌ | ❌ | typecheck E0302: `timer` listed in `app.caps` |
+| v1 Pomodoro | Codex | 51 | 1,269 | 341 | ✅ | ✅ | ✅ | — |
 | v1 Pomodoro | Gemini | 69 | 2,077 | 609 | ✅ | ✅ | ✅ | — |
 | v2 Kanban | Claude | 188 | 5,492 | 1,624 | ✅ | ✅ | ✅ | — |
-| v2 Kanban | Codex | 157 | 4,637 | 1,311 | ✅ | ✅ | ✅ | — |
+| v2 Kanban | Codex | 200 | 5,659 | 1,611 | ✅ | ✅ | ✅ | — |
 | v2 Kanban | Gemini | 331 | 8,192 | 2,323 | ✅ | ✅ | ✅ | — |
 | v3 Issue Tracker | Claude | 864 | 26,705 | 7,482 | ✅ | ✅ | ✅ | — |
-| v3 Issue Tracker | Codex | 606 | 17,273 | 4,305 | ✅ | ✅ | ✅ | — |
+| v3 Issue Tracker | Codex | 772 | 23,345 | 6,143 | ✅ | ✅ | ✅ | — |
 | v3 Issue Tracker | Gemini | 1,460 | 45,224 | 10,353 | ✅ | ✅ | ✅ | — |
 | v4 Project Mgmt | Claude | 986 | 35,751 | 10,122 | ✅ | ✅ | ✅ | — |
-| v4 Project Mgmt | Codex | 287 | 22,532 | 6,218 | ✅ | ❌ | ❌ | typecheck E0601: `tasks` written twice in one reducer (×1, and one E0201) |
+| v4 Project Mgmt | Codex | 897 | 32,788 | 8,644 | ✅ | ✅ | ✅ | — |
 | v4 Project Mgmt | Gemini | 1,995 | 71,908 | 16,598 | ✅ | ✅ | ✅ | — |
 
 Every output that builds also passes `kumiki smoke`: it mounts, renders, and
@@ -57,18 +61,17 @@ survives the generic interaction pass without a runtime error.
 
 ### Reading the table
 
-- **Build-green, single pass**: Claude 4/4, Gemini 4/4, Codex 2/4 (v2, v3).
-  Every output parses; the two failures are one rule each.
-- **Scale no longer breaks the single pass.** The previous re-take had every
-  vendor fail at least one of v3 / v4. This time Claude and Gemini build the
-  ~1,000-line v4, and no output fails to parse.
-- **Codex under-delivers rather than mis-writes.** Its v4 is 287 lines for a task
-  that asks for 800–1,500, and its own summary says the implementation is
-  shorter than requested; the build failure is one double write. Its v1 lists
-  `timer` as a capability, which is not one.
-- **Size varies more than correctness.** For v3 Codex writes 606 lines, Claude
-  864, Gemini 1,460; for v4 Gemini writes twice Claude's tokens. A build-green
-  output says the program is legal and runs, not that it covers the task spec.
+- **Build-green, single pass: 12/12.** Every vendor builds every task, up to the
+  ~1,000-line v4, and every output also passes `smoke`. The previous re-take had
+  every vendor fail at least one of v3 / v4.
+- **Effort matters as much as the model.** The same Codex model at `low` failed
+  v1 (it listed `timer` as a capability, E0302) and v4 (one double write, E0601,
+  in a 287-line program for a task that asks for 800–1,500). At `high` it builds
+  both, and its v4 is 897 lines.
+- **Size varies more than correctness.** For v3 Codex writes 772 lines, Claude
+  864, Gemini 1,460; for v4 Gemini writes about twice the tokens of the others. A
+  build-green output says the program is legal and runs, not that it covers the
+  task spec.
 
 ## Fairness note (why the first re-take was itself re-taken)
 
@@ -110,4 +113,4 @@ describes have since been replaced by this re-take's.
 - **Scoring**: `pnpm --filter @kumikijs/benchmarks eval <files>` writes the rows
   of `results/eval.json`, with repository-relative paths.
   `packages/tests/src/benchmark-corpus.test.ts` re-checks every output against
-  the current compiler and pins the two failures above.
+  the current compiler; it pins any output that fails (none in this re-take).

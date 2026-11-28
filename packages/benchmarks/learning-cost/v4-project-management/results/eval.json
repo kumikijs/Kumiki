@@ -13,26 +13,15 @@
   },
   {
     "path": "packages/benchmarks/learning-cost/v4-project-management/results/Codex/output.kumiki",
-    "chars": 22532,
-    "loc": 287,
-    "cl100k": 6218,
+    "chars": 32788,
+    "loc": 897,
+    "cl100k": 8644,
     "parse": true,
-    "typecheck": false,
-    "build": false,
-    "errorCount": 2,
-    "errorCategories": {
-      "reducer-payload": 1,
-      "typing": 1
-    },
-    "firstError": {
-      "stage": "typecheck",
-      "code": "E0601",
-      "message": "Slot path \"tasks\" is written more than once in this reducer",
-      "pos": {
-        "line": 147,
-        "col": 9
-      }
-    }
+    "typecheck": true,
+    "build": true,
+    "errorCount": 0,
+    "errorCategories": {},
+    "firstError": null
   },
   {
     "path": "packages/benchmarks/learning-cost/v4-project-management/results/Gemini/output.kumiki",

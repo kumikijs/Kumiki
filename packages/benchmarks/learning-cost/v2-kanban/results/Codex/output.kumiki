@@ -1,156 +1,199 @@
-type Column = Todo | Doing | Done
 type CardId = nominal Text
+type Column = Todo | Doing | Done
 type Card = {id: CardId, title: Text, column: Column, createdAt: Time}
 
 slot cards : Map(CardId, Card) = {}
 slot draft : Text = ""
 slot ready : Bool = false
-slot storageProblem : Text = ""
+slot loading : Bool = true
+slot loadError : Text = ""
+slot saveError : Text = ""
 
-effect loadCards cap=storage.read
+effect loadCards
+    cap=storage.read
     in=Unit
     out=Result(Option(Map(CardId, Card)), Text)
-    policy=once
-    map-request={key: "kanban-cards", decode: Decoder.Json(Map(CardId, Card))}
+    map-request={key: "kanban.cards", decode: Decoder.Json(Map(CardId, Card))}
 
-effect saveCards cap=storage.write
+effect saveCards
+    cap=storage.write
     in=Map(CardId, Card)
     out=Result(Unit, Text)
     policy=queue
-    map-request={key: "kanban-cards", value: $1}
+    map-request={key: "kanban.cards", value: $1}
 
-reducer start on=app.start do=
-    emit loadCards()
+reducer cardsLoaded
+    on=loadCards.ok($loaded, _)
+    do= cards := $loaded.get-or({})
+        ready := true
+        loading := false
+        loadError := ""
 
-reducer cardsLoaded on=loadCards.ok($saved, _) do=
-    cards := $saved.get-or({})
-    ready := true
+reducer cardsLoadFailed
+    on=loadCards.err($error, _)
+    do= loading := false
+        loadError := $error
 
-reducer loadFailed on=loadCards.err($error, _) do=
-    storageProblem := $error
-    ready := true
+reducer retryLoad
+    on=ui.click(RetryButton)
+    do= loading := true
+        loadError := ""
+        emit loadCards()
 
-reducer saveFailed on=saveCards.err($error, _) do=
-    storageProblem := $error
+reducer cardsSaved
+    on=saveCards.ok($result, _)
+    do= saveError := ""
 
-reducer addCard on=ui.click(AddButton) do=
-    if ready && draft.trim() != "" then {
-        let id = CardId.fresh()
-        cards[id] := {id: id, title: draft.trim(), column: Todo, createdAt: now}
-        draft := ""
-        emit saveCards(cards)
+reducer cardsSaveFailed
+    on=saveCards.err($error, _)
+    do= saveError := $error
+
+reducer addCard
+    on=ui.click(AddButton)
+    do= if ready && !draft.is-empty then {
+            let id = CardId.fresh()
+            cards[id] := {id: id, title: draft, column: Todo, createdAt: now}
+            draft := ""
+            emit saveCards(cards)
+        }
+
+reducer moveLeft
+    on=ui.click(LeftButton)
+    do= if cards.has($el.cardId) && cards[$el.cardId].column != Todo then {
+            cards[$el.cardId].column := previousColumn(cards[$el.cardId].column)
+            emit saveCards(cards)
+        }
+
+reducer moveRight
+    on=ui.click(RightButton)
+    do= if cards.has($el.cardId) && cards[$el.cardId].column != Done then {
+            cards[$el.cardId].column := nextColumn(cards[$el.cardId].column)
+            emit saveCards(cards)
+        }
+
+reducer deleteCard
+    on=ui.click(DeleteButton)
+    do= if cards.has($el.cardId) then {
+            cards := cards.remove($el.cardId)
+            emit saveCards(cards)
+        }
+
+fn previousColumn(col: Column) -> Column
+    = match col with
+        | Todo -> Todo
+        | Doing -> Todo
+        | Done -> Doing
+
+fn nextColumn(col: Column) -> Column
+    = match col with
+        | Todo -> Doing
+        | Doing -> Done
+        | Done -> Done
+
+fn columnName(col: Column) -> Text
+    = match col with
+        | Todo -> "Todo"
+        | Doing -> "Doing"
+        | Done -> "Done"
+
+fn columnCount(items: Map(CardId, Card), col: Column) -> Int
+    = items.filter($2.column == col).size
+
+fn cardIds(items: Map(CardId, Card)) -> List(CardId)
+    = items.entries.sort-by($2.createdAt).map($1)
+
+tile AddButton = button(text="Add", disabled=!ready || draft.is-empty) {
+    bg: "primary", color: "onPrimary", pad: "sm", radius: "sm"
+}
+
+tile RetryButton = button(text="Retry") {
+    pad: "sm", radius: "sm"
+}
+
+tile LeftButton in=CardId
+    = button(text="←", disabled=cards[$1].column == Todo) {
+        cardId: $1,
+        aria-label: "Move " + cards[$1].title + " left",
+        pad: "xs", radius: "sm"
     }
 
-reducer moveLeft on=ui.click(LeftButton) do=
-    match cards.get($el.cardId) with
-    | Some(card) -> {
-        cards[$el.cardId].column := previous(card.column)
-        emit saveCards(cards)
+tile RightButton in=CardId
+    = button(text="→", disabled=cards[$1].column == Done) {
+        cardId: $1,
+        aria-label: "Move " + cards[$1].title + " right",
+        pad: "xs", radius: "sm"
     }
-    | None -> ()
 
-reducer moveRight on=ui.click(RightButton) do=
-    match cards.get($el.cardId) with
-    | Some(card) -> {
-        cards[$el.cardId].column := next(card.column)
-        emit saveCards(cards)
+tile DeleteButton in=CardId
+    = button(text="✕") {
+        cardId: $1,
+        aria-label: "Delete " + cards[$1].title,
+        color: "danger", pad: "xs", radius: "sm"
     }
-    | None -> ()
 
-reducer deleteCard on=ui.click(DeleteButton) do=
-    cards := cards.remove($el.cardId)
-    emit saveCards(cards)
-
-fn previous(column: Column) -> Column =
-    match column with
-    | Todo -> Todo
-    | Doing -> Todo
-    | Done -> Doing
-
-fn next(column: Column) -> Column =
-    match column with
-    | Todo -> Doing
-    | Doing -> Done
-    | Done -> Done
-
-fn columnName(column: Column) -> Text =
-    match column with
-    | Todo -> "Todo"
-    | Doing -> "Doing"
-    | Done -> "Done"
-
-fn cardCount(all: Map(CardId, Card), column: Column) -> Int =
-    all.filter($2.column == column).size
-
-fn orderedCards(all: Map(CardId, Card), column: Column) -> List(CardId) =
-    all.filter($2.column == column).entries.sort-by($2.createdAt).map($1)
-
-tile AddButton = button(text="Add", disabled=not ready || draft.trim() == "")
-    {bg: "primary", color: "onPrimary", pad: "sm", radius: "sm"}
-
-tile LeftButton in=Card = button(text="←", disabled=$1.column == Todo)
-    {cardId: $1.id, aria-label: "Move card left", pad: "xs", radius: "sm"}
-
-tile RightButton in=Card = button(text="→", disabled=$1.column == Done)
-    {cardId: $1.id, aria-label: "Move card right", pad: "xs", radius: "sm"}
-
-tile DeleteButton in=Card = button(text="✕")
-    {cardId: $1.id, aria-label: "Delete card", color: "danger", pad: "xs", radius: "sm"}
-
-tile CardView in=Card =
-    column(
-        text($1.title),
-        row(
-            LeftButton($1),
-            RightButton($1),
-            DeleteButton($1)
-        ) {gap: "xs"}
-    ) {bg: "card", pad: "md", radius: "md", gap: "sm", shadow: "sm"}
-
-tile BoardColumn in=Column =
-    column(
-        heading(columnName($1) + " (" + cardCount(cards, $1).show + ")", level=2),
-        for id in orderedCards(cards, $1)
-            CardView(cards[id]) {key: id.show}
-    ) {bg: "surface", pad: "md", radius: "md", gap: "sm"}
-
-tile Board =
-    page(
+tile CardTile in=CardId
+    = card(
         column(
-            heading("Kanban board"),
+            text(cards[$1].title) {weight: "medium"},
             row(
-                input(bind=draft, placeholder="New card", disabled=not ready),
-                AddButton
-            ) {gap: "sm"},
-            when(not ready, text("Loading cards…")),
-            when(storageProblem != "", text("Storage error: " + storageProblem) {color: "danger"}),
-            grid(
-                BoardColumn(Todo),
-                BoardColumn(Doing),
-                BoardColumn(Done)
-            ) {cols: 3, gap: "md"}
-        ) {gap: "lg", pad: "lg"}
-    ) {bg: "background", color: "foreground"}
+                LeftButton($1),
+                RightButton($1),
+                DeleteButton($1)
+            ) {gap: "xs", justify: "end"}
+        ) {gap: "sm"}
+    ) {bg: "bg", pad: "md", radius: "md", shadow: "sm"}
 
-tile NotFound = page(heading("Page not found"))
+tile BoardColumn in=Column
+    = panel(
+        column(
+            heading(columnName($1) + " (" + columnCount(cards, $1).show + ")") {level: 2, size: "lg"},
+            for id in cardIds(cards)
+                when(cards[id].column == $1, CardTile(id) {key: id.show})
+        ) {gap: "sm"}
+    ) {bg: "surface", pad: "md", radius: "md"}
+
+tile Board = page(
+    column(
+        heading("Kanban Board") {level: 1, size: "xl"},
+        row(
+            input(bind=draft, placeholder="New card title", disabled=!ready) {
+                aria-label: "New card title", w: "full", pad: "sm", radius: "sm"
+            },
+            AddButton
+        ) {gap: "sm", align: "center"},
+        when(loading, text("Loading cards…") {color: "muted"}),
+        when(!loadError.is-empty,
+            row(
+                text("Could not load cards: " + loadError) {color: "danger"},
+                RetryButton
+            ) {gap: "sm", align: "center"}),
+        when(!saveError.is-empty,
+            text("Could not save cards: " + saveError) {color: "danger"}),
+        grid(
+            BoardColumn(Todo),
+            BoardColumn(Doing),
+            BoardColumn(Done)
+        ) {cols: 3, gap: "md"}
+    ) {gap: "lg", w: "full", max-w: 1200}
+) {bg: "bg", color: "fg", pad: "lg"}
 
 theme BoardTheme = {
     colors: {
-        background: "#f4f6fb",
-        foreground: "#20283a",
-        surface: "#e4e9f2",
-        card: "#ffffff",
-        primary: "#3157c8",
+        bg: "#ffffff",
+        fg: "#1b2430",
+        muted: "#64748b",
+        primary: "#2563eb",
         onPrimary: "#ffffff",
-        danger: "#b42318"
+        danger: "#b42318",
+        surface: "#f1f5f9"
     },
     spacing: {xs: "4px", sm: "8px", md: "16px", lg: "24px"},
-    radius: {sm: "4px", md: "8px"},
+    radius: {sm: "6px", md: "10px"},
     shadow: {sm: "0 1px 3px rgba(0,0,0,0.12)"}
 }
 
-app Kanban
-    caps = [storage.read, storage.write]
-    routes = {"/" -> Board, "/404" -> NotFound}
-    init = []
-    theme = BoardTheme
+app KanbanBoard
+    caps=[storage.read, storage.write]
+    routes={"/" -> Board, "/404" -> Board}
+    init=[loadCards()]
+    theme=BoardTheme

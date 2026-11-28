@@ -13,9 +13,9 @@
   },
   {
     "path": "packages/benchmarks/learning-cost/v2-kanban/results/Codex/output.kumiki",
-    "chars": 4637,
-    "loc": 157,
-    "cl100k": 1311,
+    "chars": 5659,
+    "loc": 200,
+    "cl100k": 1611,
     "parse": true,
     "typecheck": true,
     "build": true,

@@ -9,10 +9,8 @@ import { describe, expect, it } from "vitest";
 // way learning-cost/summary.md scores them.
 const benchmarksDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "benchmarks");
 
-const KNOWN_BAD: Record<string, "parse" | readonly string[]> = {
-  "learning-cost/v1-pomodoro/results/Codex/output.kumiki": ["E0302"],
-  "learning-cost/v4-project-management/results/Codex/output.kumiki": ["E0201", "E0601"],
-};
+// Every output of the current re-take checks clean. A future run that fails lists its file here.
+const KNOWN_BAD: Record<string, "parse" | readonly string[]> = {};
 
 // The workspace links under benchmarks/node_modules lead into other packages' fixtures.
 const SKIP_DIRS = new Set(["node_modules", ".turbo", "dist"]);

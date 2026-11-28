@@ -4,37 +4,47 @@ slot remaining : Int where between(0, 1500) = 1500
 slot mode : Mode = Work
 slot running : Bool = false
 
-fn maximum(m: Mode) -> Int = if m == Work then 1500 else 300
-fn next-mode(m: Mode) -> Mode = if m == Work then Break else Work
+fn nextMode(current: Mode) -> Mode =
+    match current with
+    | Work -> Break
+    | Break -> Work
 
-reducer start on=ui.click(StartBtn) do= running := true
-reducer pause on=ui.click(PauseBtn) do= running := false
+fn modeSeconds(current: Mode) -> Int =
+    match current with
+    | Work -> 1500
+    | Break -> 300
+
+reducer start on=ui.click(StartBtn) do=
+    running := true
+
+reducer pause on=ui.click(PauseBtn) do=
+    running := false
+
 reducer reset on=ui.click(ResetBtn) do=
-    remaining := maximum(mode)
+    remaining := modeSeconds(mode)
     running := false
 
 reducer tick on=timer(1s) do=
     if running then {
         if remaining <= 1 then {
-            mode := next-mode(mode)
-            remaining := maximum(mode)
+            mode := nextMode(mode)
+            remaining := modeSeconds(mode)
+            emit toast({kind: "info", text: mode.show + " started"})
         } else {
             remaining := remaining - 1
         }
     }
 
-tile StartBtn = button(text="Start")
-tile PauseBtn = button(text="Pause")
+tile StartBtn = button(text="Start", disabled=running)
+tile PauseBtn = button(text="Pause", disabled=not running)
 tile ResetBtn = button(text="Reset")
 
-tile App = column(
+tile App = page(
     heading("Pomodoro Timer"),
-    text(mode.show),
-    text(remaining.show + " seconds"),
-    row(StartBtn, PauseBtn, ResetBtn)
-)
+    text("Mode: " + mode.show),
+    text("Remaining: " + remaining.show + " seconds"),
+    row(StartBtn, PauseBtn, ResetBtn))
 
 app Pomodoro
-    caps = [timer]
+    caps = [notification.show]
     routes = {"/" -> App, "/404" -> App}
-    init = []

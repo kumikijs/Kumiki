@@ -13,9 +13,9 @@
   },
   {
     "path": "packages/benchmarks/learning-cost/v3-issue-tracker/results/Codex/output.kumiki",
-    "chars": 17273,
-    "loc": 606,
-    "cl100k": 4305,
+    "chars": 23345,
+    "loc": 772,
+    "cl100k": 6143,
     "parse": true,
     "typecheck": true,
     "build": true,

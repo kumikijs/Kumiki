@@ -13,25 +13,15 @@
   },
   {
     "path": "packages/benchmarks/learning-cost/v1-pomodoro/results/Codex/output.kumiki",
-    "chars": 1047,
-    "loc": 41,
-    "cl100k": 289,
+    "chars": 1269,
+    "loc": 51,
+    "cl100k": 341,
     "parse": true,
-    "typecheck": false,
-    "build": false,
-    "errorCount": 1,
-    "errorCategories": {
-      "effect-policy": 1
-    },
-    "firstError": {
-      "stage": "typecheck",
-      "code": "E0302",
-      "message": "Unknown capability \"timer\" in app.caps — use a standard capability or register it in kumiki.caps.json",
-      "pos": {
-        "line": 37,
-        "col": 1
-      }
-    }
+    "typecheck": true,
+    "build": true,
+    "errorCount": 0,
+    "errorCategories": {},
+    "firstError": null
   },
   {
     "path": "packages/benchmarks/learning-cost/v1-pomodoro/results/Gemini/output.kumiki",
