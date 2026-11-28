@@ -1,0 +1,85 @@
+{
+  "effects": {
+    "loadProjects": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadTasks": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/"
+      }
+    },
+    {
+      "do": {
+        "fill": "#project-name",
+        "value": "Website"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create project"
+      }
+    },
+    {
+      "do": {
+        "navigate": "/"
+      }
+    },
+    {
+      "label": "an archived project leaves the list",
+      "do": {
+        "clickText": "Archive"
+      },
+      "expect": {
+        "domIncludes": ["Show archived"],
+        "domExcludes": ["Website"]
+      }
+    },
+    {
+      "label": "Show archived shows it",
+      "do": {
+        "clickText": "Show archived"
+      },
+      "expect": {
+        "domIncludes": ["Website", "Unarchive", "Hide archived"]
+      }
+    },
+    {
+      "label": "Hide archived hides it again",
+      "do": {
+        "clickText": "Hide archived"
+      },
+      "expect": {
+        "domExcludes": ["Website"]
+      }
+    }
+  ]
+}

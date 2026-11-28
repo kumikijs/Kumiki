@@ -5,6 +5,7 @@
 //   - smoke? (mounts, renders, survives the generic interaction pass)
 // Emits a JSON line summary to stdout. acceptance.mjs scores what the program does.
 
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34,14 +35,30 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", ".
 // Recorded in eval.json, so it reads the same whichever directory or OS the harness ran from.
 const recordedPath = (abs) => relative(repoRoot, abs).split(sep).join("/");
 
-// A task whose app makes requests ships the answers smoke gives it, in vN-*/smoke.http.json.
-function smokeFixture(abs) {
+/** The vN-* task directory a file sits in. */
+function taskDir(abs) {
   for (let dir = dirname(abs); dir !== dirname(dir); dir = dirname(dir)) {
-    if (!/^v\d+-/.test(basename(dir))) continue;
-    const fixture = join(dir, "smoke.http.json");
-    return existsSync(fixture) ? JSON.parse(readFileSync(fixture, "utf8")) : null;
+    if (/^v\d+-/.test(basename(dir))) return dir;
   }
   return null;
+}
+
+// A task whose app makes requests ships the answers smoke gives it, in vN-*/smoke.http.json.
+function smokeFixture(task) {
+  const fixture = task && join(task, "smoke.http.json");
+  return fixture && existsSync(fixture) ? JSON.parse(readFileSync(fixture, "utf8")) : null;
+}
+
+// A task that changes a program, rather than writing one, starts from vN-*/base.kumiki: how many
+// lines the change added and removed.
+function changedLines(task, abs) {
+  const base = task && join(task, "base.kumiki");
+  if (!base || !existsSync(base)) return undefined;
+  const numstat = spawnSync("git", ["diff", "--no-index", "--numstat", base, abs], {
+    encoding: "utf8",
+  }).stdout;
+  const [added = "0", removed = "0"] = numstat.trim().split(/\s+/);
+  return { added: Number(added), removed: Number(removed) };
 }
 
 async function evalFile(abs) {
@@ -50,11 +67,13 @@ async function evalFile(abs) {
     return { path, stage: "missing", error: "file not found" };
   }
   const source = readFileSync(abs, "utf8");
+  const task = taskDir(abs);
   const result = {
     path,
     chars: source.length,
     loc: source.split("\n").length,
     cl100k: encodeCl100k(source).length,
+    changed: changedLines(task, abs),
     parse: false,
     typecheck: false,
     build: false,
@@ -108,7 +127,7 @@ async function evalFile(abs) {
 
   if (result.build) {
     try {
-      result.smoke = (await smokeSource(source, [], { httpFixture: smokeFixture(abs) })).ok;
+      result.smoke = (await smokeSource(source, [], { httpFixture: smokeFixture(task) })).ok;
     } catch {
       result.smoke = false;
     }

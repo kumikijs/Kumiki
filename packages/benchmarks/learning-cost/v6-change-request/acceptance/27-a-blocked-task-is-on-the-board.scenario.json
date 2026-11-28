@@ -1,0 +1,88 @@
+{
+  "effects": {
+    "loadProjects": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadTasks": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/"
+      }
+    },
+    {
+      "do": {
+        "fill": "#project-name",
+        "value": "Website"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create project"
+      }
+    },
+    {
+      "do": {
+        "clickText": "New task"
+      }
+    },
+    {
+      "do": {
+        "fill": "#task-title",
+        "value": "Design header"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create task"
+      }
+    },
+    {
+      "do": {
+        "choose": "#detail-status",
+        "value": "Blocked"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Back"
+      }
+    },
+    {
+      "label": "the board shows the blocked task",
+      "do": {
+        "clickText": "Board view"
+      },
+      "expect": {
+        "domIncludes": ["Design header"]
+      }
+    }
+  ]
+}

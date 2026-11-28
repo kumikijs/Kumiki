@@ -1,0 +1,128 @@
+{
+  "effects": {
+    "loadProjects": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadTasks": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/"
+      }
+    },
+    {
+      "do": {
+        "fill": "#project-name",
+        "value": "Website"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create project"
+      }
+    },
+    {
+      "do": {
+        "clickText": "New task"
+      }
+    },
+    {
+      "do": {
+        "fill": "#task-title",
+        "value": "Design header"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create task"
+      }
+    },
+    {
+      "do": {
+        "fill": "#comment-input",
+        "value": "Looks good"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Add comment"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Add subtask"
+      }
+    },
+    {
+      "do": {
+        "fill": "#task-title",
+        "value": "Pick fonts"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create task"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Back"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Design header"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Delete task"
+      }
+    },
+    {
+      "label": "Undo brings back the subtask",
+      "do": {
+        "clickText": "Undo"
+      },
+      "expect": {
+        "domIncludes": ["Design header", "Pick fonts"]
+      }
+    },
+    {
+      "label": "and the comment",
+      "do": {
+        "clickText": "Design header"
+      },
+      "expect": {
+        "domIncludes": ["Looks good"]
+      }
+    }
+  ]
+}
