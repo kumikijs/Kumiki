@@ -263,6 +263,7 @@ A name reference like `users` in the source text is recorded within the graph st
 - Even with the same name, a different dependency yields a different hash
 - Renaming is only a `(rename, name-old, name-new)` op. The hash is invariant
 - A name written where a tile belongs (`column(leaf)`) refers to the tile of that name even when a slot or a `fn` shares it, and where a value belongs (`text(leaf)`) to the value ([Language §1.7.1](./language.md#_1-7-1-syntax)), so `refs`, `rename` and `remove --cascade` follow the definition the checker and the build resolve there
+- In a `when` / `if` / `for` / `match` arm, a tile body or a tile-test's `expect`, a name no program tile has refers to the slot or `fn` of that name, which the checker reports there as a value, not a tile ([E0128](./errors.md#e0128-value-as-child)). So does a builtin tile's name written alone that a slot or `fn` has (`when(c, divider)` beside `slot divider`); with its call or a prop block (`divider()`) it is the builtin and refers to nothing. A binding in scope of the name is a local, which refers to nothing either. So `refs` lists the read, and after a `rename` the check reports the read at the new name as it did at the old one
 
 ### 9.5.3 Names at Display Time
 

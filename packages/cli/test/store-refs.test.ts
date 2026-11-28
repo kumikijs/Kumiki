@@ -11,7 +11,7 @@ import {
 } from "@kumikijs/cli";
 import { app, feature } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
-import { APP_A, renamed, seed, seedCopy } from "./helpers/files.ts";
+import { APP_A, renamed, seed, seedCopy, storeOf } from "./helpers/files.ts";
 
 const COUNTER = app("01-counter");
 const TODOMVC = app("02-todomvc");
@@ -107,6 +107,27 @@ ${APP_A}`;
   ])("cascades the removal of %s through the definitions that resolve to it", (qname, removed) => {
     const out = removeDef(seedCopy(SHARED), qname, true).removed;
     expect([...out].sort()).toEqual([...removed].sort());
+  });
+
+  // A slot read alone in an arm is E0128, so a rename is refused whatever it rewrites; the
+  // refusal names the check of the rewritten program. `divider` is a builtin's name too.
+  const READ_IN_ARM = (slot: string): string => `slot ${slot} : Int = 2
+slot c : Bool = true
+tile App = column(text("a"), when(c, ${slot}))
+${APP_A}`;
+
+  it.each(["total", "divider"])("lists the tile that reads slot %s alone in an arm", (slot) => {
+    const refs = findReferences(storeOf(READ_IN_ARM(slot)), `slot.${slot}`);
+    expect(qnamesOf(refs)).toEqual(["tile.App"]);
+  });
+
+  it.each([
+    "total",
+    "divider",
+  ])("renames slot %s where an arm reads it, so the check after it reports that read", (slot) => {
+    expect(() => renameDef(seed(READ_IN_ARM(slot)), `slot.${slot}`, "sep")).toThrow(
+      "rename rejected: Validation failed: E0128 A value is not a tile: a `when` arm has to be a tile.",
+    );
   });
 
   it("does not count a definition as a reference to itself", () => {
