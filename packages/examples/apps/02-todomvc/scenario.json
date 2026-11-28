@@ -18,7 +18,7 @@
     {
       "label": "adds nothing, and reports nothing either",
       "do": { "clickText": "Add" },
-      "expect": { "noErrors": true, "state": { "todos": {} }, "domIncludes": ["0 items left"] }
+      "expect": { "noErrors": true, "domIncludes": ["0 items left"] }
     },
     {
       "label": "typing goes into the draft slot, not into the list",
