@@ -1,4 +1,5 @@
 ---
+"@kumikijs/runtime": minor
 "@kumikijs/compiler": patch
 ---
 
@@ -35,6 +36,13 @@ error E0240 reserved-field-name at 3:15: …
 
 It is reported at each field so named, in a record type wherever one is
 written (a type, a payload, a slot, a `fn`'s parameter or result, an effect's
-or a tile's `in=`) and in a record literal wherever an expression goes. Only
-`_tag` is refused: `tag`, `_tags`, `_Tag` and `_0` are names of their own, and
-a Map keyed by the text `"_tag"` names no field.
+`in=` or `out=`, a tile's `in=`, a property-test's `for-all`) and in a record
+literal wherever an expression builds a record, a `.copy(_tag=…)` included. A
+test's keys that name its sections, slots or effects are not fields, so a slot
+or an effect named `_tag` is still tested under its name. Only `_tag` is
+refused: `tag`, `_tags`, `_Tag` and `_0` are names of their own, and a Map
+keyed by the text `"_tag"` names no field.
+
+The name the checker reserves is the runtime's own: `@kumikijs/runtime` exports
+`VARIANT_TAG_FIELD` on a new `@kumikijs/runtime/variant-tag` subpath, and the
+checker, codegen and the `.d.ts` writer read the field's name there.

@@ -1555,13 +1555,15 @@ Only a number directly under `spacing`, `radius`, `typography.size` or `breakpoi
 
 ### E0240 `reserved-field-name`
 
-A record field is named `_tag`, in a record type or a record literal: `type R = {_tag: Text, n: Int}`, the record type of a payload, a slot, a `fn`, an effect or a tile, and `{_tag="a", n=1}` wherever an expression goes. Reported at the field, once for each field so named.
+A record field is named `_tag`, in a record type or a record literal: `type R = {_tag: Text, n: Int}`, the record type of a payload, a slot, a `fn`, an effect, a tile or a property-test's `for-all`, and `{_tag="a", n=1}` wherever an expression builds a record, a `.copy(_tag="b")` included. Reported at the field, once for each field so named, and beside [E0008](#e0008-duplicate-clause-duplicate-key-duplicate-field-duplicate-param-duplicate-variant) when the name is written twice.
 
 > `Record field "_tag" is reserved: the runtime marks a variant with a field of that name, so a record that has one is read as a variant. Name the field something else — "tag"`
 
-At run time a variant is a record whose `_tag` field holds its name — `Some(1)` is `{_tag: "Some", _0: 1}` — and that field is how the runtime tells a variant from a record, so a record written with one is read as a variant. `show` renders a variant as its tag ([stdlib.md §2.2.7](./stdlib.md#_2-2-7-int-float)), and so do `+` with a `Text` and a tile's text, so `{_tag="a", n=1}.show` would be `a`, where `{tag="a", n=1}.show` is `{tag: "a", n: 1}`.
+At run time a variant is a record whose `_tag` field holds its name — `Some(1)` is `{_tag: "Some", _0: 1}` — and that field is how the runtime tells a variant from a record, so a record written with one is read as a variant. `show` renders a variant as its tag ([stdlib.md §2.2.7](./stdlib.md#_2-2-7-int-float)), and everything that renders a value through `show` renders it this way: `+` with a `Text` side, and a tile's text. So `{_tag="a", n=1}.show` would be `a`, where `{tag="a", n=1}.show` is `{tag: "a", n: 1}`.
 
 Only the name `_tag` is refused. `tag`, `_tags`, `_Tag` and `_0` are names of their own, and a Map whose key is the text `"_tag"` names no field.
+
+A test's keys that name its sections, the app's slots or its effects are not fields either. The keys of `given` and `expect`, and of `given.slots`, `expect.slots`, `expect.slots-equal`, `mocks` and `given.mocks`, are such names, so a slot or an effect named `_tag` is tested under its name; the values under those keys are checked as anywhere else. `given.in` and a `given.event`'s payload are records the test builds, so a field named `_tag` there is E0240.
 
 **Fix**: Rename the field — `tag`, `kind`, or a name that says what it holds — in the type and in every literal and field read that meant it.
 
