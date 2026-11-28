@@ -8,6 +8,7 @@ import { compile } from "@kumikijs/compiler";
 import { afterEach, describe, expect, it } from "vitest";
 import { mountApp } from "./helpers/dom.ts";
 import { loadSource, TMP_ROOT } from "./helpers/load.ts";
+import { WINDOWS_LIKE_STACK_KB } from "./helpers/stack.ts";
 
 const LEAF = 'text(test-id="leaf", "leaf")';
 
@@ -78,11 +79,6 @@ app M caps=[] routes={"/" -> T0, "/404" -> T0} init=[]
 
 const compiled = (src: string) =>
   compile(src, { runtimeSpecifier: "@kumikijs/runtime", capabilities: [] });
-
-// With the same Node, V8 on win32 parsed chains like these 77% to 89% as deep as it does on
-// Linux: a `for` passing an argument ran out at about 119 links there against 154 here. A child
-// given 77% of V8's default 984 KB stack therefore has no more room than Windows does.
-const WINDOWS_LIKE_STACK_KB = 757;
 
 describe("a chain of tiles at the inlining limit", () => {
   let mounted: ReturnType<typeof mountApp> | undefined;
