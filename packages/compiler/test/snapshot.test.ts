@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { lex, parse } from "@kumikijs/compiler";
 import { app } from "@kumikijs/examples";
 import { describe, expect, it } from "vitest";
-import { compileOrFail } from "./helpers/module.ts";
+import { compileOrFail, keyedLoopsIn } from "./helpers/module.ts";
 
 const COUNTER = app("01-counter");
 const TODOMVC = app("02-todomvc");
@@ -70,7 +70,7 @@ describe("compile output snapshots", () => {
     expect(js).toContain("_s.freshId()");
     expect(js).toContain('effect: "saveTodos"');
     expect(js).toMatch(/sortedIds\([^)]+\)\)\s*\|\|\s*\[\]\)\.map\(/);
-    expect(js).not.toMatch(/_s\.loopKeys\(/);
+    expect(keyedLoopsIn(js)).toEqual([]);
   });
 
   it("counter: variant equality stays correct", () => {
