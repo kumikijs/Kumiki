@@ -412,9 +412,8 @@ export function mountCore(
     fireAppError(rec, rec.location, {}, token);
   }
 
-  // What throws past a request's launch, outside the reducers its result runs, such as a host's
-  // episode logger recording it, is reported as a throw while its result is delivered is, on the
-  // episode that claimed the request.
+  // `token` routes the panic step to the episode still waiting on this request; once its result's
+  // scope has closed, that episode has committed and the panic names no episode.
   function handleLaunchThrow(effect: string, e: unknown, token?: string): void {
     const location = `effect "${effect}"`;
     reportPanic(location, e);
