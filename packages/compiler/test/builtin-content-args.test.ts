@@ -96,7 +96,7 @@ describe("content written in the {…} block", () => {
   ])("%s() {text: …} is E0129 at the block's text", (b) => {
     const tile = `${b}() {text: "Hi"}`;
     expect(diagnostics(tile)).toEqual([
-      `E0129 2:${at(tile, "text:")} content is positional: write \`${b}("…")\` — the block's \`text\` is a prop on ${b} and never renders (it is the label argument of button, link, label and editable)`,
+      `E0129 2:${at(tile, "text:")} content is positional: write \`${b}("…")\` — the block's \`text\` is a prop on ${b} and never renders (\`text=\` is the label argument of button, link, label and editable)`,
     ]);
   });
 
@@ -107,6 +107,33 @@ describe("content written in the {…} block", () => {
   it("gives the block's E0129 no shape, since `kumiki fix` rewrites a `text=` it does not have", () => {
     expect(shapes(`label("B") {text: "A"}`)).toEqual([undefined]);
     expect(shapes(`heading() {text: title}`)).toEqual([undefined]);
+  });
+});
+
+describe("text= and the block's text written in one call", () => {
+  it.each([
+    ['label("B", text="A") {text: "C"}', ["text-shadowed", undefined]],
+    ['heading(text="A") {text: "B"}', ["text-prop", undefined]],
+  ])("%s reports each spelling, and only text= with its shape", (tile, expected) => {
+    expect(shapes(tile)).toEqual(expected);
+  });
+
+  it("reports each at its own spelling", () => {
+    const tile = 'label("B", text="A") {text: "C"}';
+    const said = (spelling: string) =>
+      `label renders its positional argument, so ${spelling} is never rendered — it is read only when no positional argument is written. Remove ${spelling} or the positional argument`;
+    expect(diagnostics(tile)).toEqual([
+      `E0129 2:${at(tile, "text=")} ${said("`text=`")}`,
+      `E0129 2:${at(tile, "text:")} ${said("the block's `text`")}`,
+    ]);
+  });
+
+  // `text=` is removed whole, so a tile written in it is not also a tile written as a prop.
+  it("checks nothing inside a text= that holds a tile", () => {
+    expect(codes('label("B", text=when(title == "", text("x"))) {text: "C"}')).toEqual([
+      "E0129",
+      "E0129",
+    ]);
   });
 });
 

@@ -775,8 +775,8 @@ An opaque handle, an `EffectId` or a `Decoder`, is used where it is not defined.
 
 A handle is refused where these render it as text:
 
-- the content of a value builtin: `text`, `heading`, `markdown`, `code`, `label`, `link` and `editable`, and `image` / `icon`, whose content is `src=` / `name=` ([Standard Library §2.3.2](./stdlib.md#_2-3-2-text-elements));
-- `button`'s `text=`, `link`'s `{text: …}` prop, and the value `editable` binds;
+- the content of a value builtin: `text`, `heading`, `markdown`, `code`, `label`, `link` and `editable`, and `image` / `icon`, whose content is `src=` / `name=` ([Standard Library §2.3.2](./stdlib.md#_2-3-2-text-elements)), a named one in either spelling, `label(text=h)` or `label() {text: h}`;
+- `button`'s `text=`, and the value `editable` binds;
 - an argument of `fmt(...)`, the template included;
 - `.show`. `show` is the member every value has ([Standard Library §2.2.7](./stdlib.md#_2-2-7-int-float)); on a handle it is this error rather than [E0108](#e0108-undef-member), in each of its spellings: `h.show`, `h.show()`, and `T.show(h)` whatever `T` is, since the qualifier is discarded ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)). A handle has no other member, so `h.upper` is E0108.
 
@@ -1317,7 +1317,7 @@ Two places are not this code. Where a record field name goes — `{null = 1}`, `
 
 ### E0236 `tile-as-content`
 
-A tile is written as a value builtin's content. A value builtin shows a value as its content ([Language §1.7.1](./language.md#_1-7-1-syntax)) — read from the first positional argument on `text`, `heading`, `markdown` and `code`, from it or `text=` on `link`, `label` and `editable` (and on `link` from the `{text: …}` block entry when neither is written), from `src=` on `image` and from `name=` on `icon` ([E0129](#e0129-unrendered-arg)) — so a tile written there is never rendered: `text(when(c, column(…)))` shows nothing. The mirror, a value where a tile belongs, is [E0128](#e0128-value-as-child). A `when` / `for` as a user tile's input or another named argument is [E0201](#e0201-type-mismatch), save the exceptions listed there.
+A tile is written as a value builtin's content. A value builtin shows a value as its content ([Language §1.7.1](./language.md#_1-7-1-syntax)) — read from the first positional argument on `text`, `heading`, `markdown` and `code`, from it or `text=` on `link`, `label` and `editable`, from `src=` on `image` and from `name=` on `icon`, each of those named arguments also written as the `{…}` entry of its name, which is the one read when a call writes both ([E0129](#e0129-unrendered-arg)) — so a tile written there is never rendered: `text(when(c, column(…)))` shows nothing. The mirror, a value where a tile belongs, is [E0128](#e0128-value-as-child). A `when` / `for` as a user tile's input or another named argument is [E0201](#e0201-type-mismatch), save the exceptions listed there.
 
 > ``A tile is not a value: <builtin> shows a value as its content, so this tile is never rendered. Write the tile as a child of a container — `column(when(c, …))` — or show a value — `<content>` ``
 
@@ -1744,7 +1744,7 @@ Strict-icons checking is enabled via `check(program, { strictIcons: true, iconNa
 
 > `Unknown icon name "<x>" — not in @kumikijs/icons or any theme.icons block`
 
-A literal `icon(name="<x>")` reference whose name is not in the `iconNames` set passed to `check()` (typically the keys of `@kumikijs/icons`'s `ALL_ICONS`) and is not declared in any `theme.icons` block in the source. Dynamic `icon(name=<expr>)` calls are never checked — the name is unresolvable at check time and falls through to the runtime placeholder (see [Style §4.8.4](./style.md#_4-8-4-strict-mode)).
+A literal `icon(name="<x>")` or `icon() {name: "<x>"}` reference whose name is not in the `iconNames` set passed to `check()` (typically the keys of `@kumikijs/icons`'s `ALL_ICONS`) and is not declared in any `theme.icons` block in the source. Dynamic `icon(name=<expr>)` calls are never checked — the name is unresolvable at check time and falls through to the runtime placeholder (see [Style §4.8.4](./style.md#_4-8-4-strict-mode)).
 
 **Fix**: Correct the typo, register the custom path in `theme.icons`, or install `@kumikijs/icons` so the built-in name is in scope.
 

@@ -26,10 +26,13 @@ describe("icon registry codegen", () => {
   });
 
   it("surfaces a literal name written in the {…} block, which the icon renders", () => {
-    const block = FIXTURE.replace(
-      'icon(name="info") {size: "lg"}',
-      'icon() {name: "info", size: "lg"}',
-    );
+    const block = `
+      slot _ : Text = ""
+      tile A = icon(name="check")
+      tile B = icon() {name: "info", size: "lg"}
+      tile Root = column(A, B)
+      app IconApp caps=[] routes={"/" -> Root, "/404" -> Root} init=[]
+    `;
     const result = compile(block, { runtimeSpecifier: "./runtime.js" });
     expect(result.kind === "ok" && result.usedIcons).toEqual(["check", "info"]);
   });

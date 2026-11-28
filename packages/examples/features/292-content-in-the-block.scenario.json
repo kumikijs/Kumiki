@@ -4,11 +4,7 @@
       "label": "each label and the editable show the text their block wrote",
       "expect": {
         "noErrors": true,
-        "domIncludes": [
-          "label from the block",
-          "editable from the block",
-          "label from the block, over text="
-        ],
+        "domIncludes": ["block-only label", "editable from the block", "label over text="],
         "domExcludes": ["hidden label", "hidden link"]
       }
     },

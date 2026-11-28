@@ -165,7 +165,7 @@ test probe-list =
   });
 });
 
-describe("the checker reads a tile-test's expected tree as its lowering does, with no block", () => {
+describe("the checker reads a tile-test's expected tree as its lowering does", () => {
   const tileTest = (defs: string, tile: string, expected: string) => `${defs}
 tile Probe = ${tile}
 
@@ -209,6 +209,21 @@ test probe =
     ],
   ])("accepts %s written as an argument", (_, defs, tile, expected) => {
     expect(codesOf(tileTest(defs, tile, expected))).toEqual([]);
+  });
+
+  // A value builtin's named content is content, not a prop, so the expected tree compares it in
+  // either spelling, as the tile it tests renders it.
+  it.each([
+    ["a label's text", 'label(text="A")', 'label() {text: "A"}', []],
+    ["a text builtin's text, as E0129", 'heading("x")', 'heading() {text: "x"}', ["E0129"]],
+    [
+      "a positional argument shadowing it, as E0129",
+      'label("B")',
+      'label("B") {text: "C"}',
+      ["E0129"],
+    ],
+  ])("reads the content the block writes: %s", (_, tile, expected, codes) => {
+    expect(codesOf(tileTest("", tile, expected))).toEqual(codes);
   });
 });
 

@@ -577,11 +577,17 @@ function checkUnrenderedArgs(
   // `text=` and the block's `text` are one argument, each reported in the spelling written. Only
   // `text=` names a shape, since `kumiki fix` rewrites that spelling alone.
   const named = t.args.find((a) => a.name === "text");
+  // Until a `button` reads its block `text`, only `text=` is the label argument of all four.
   const spellings = [
-    { said: "`text=`", pos: named?.namePos, tagged: true },
-    { said: "the block's `text`", pos: t.props.find((p) => p.name === "text")?.pos, tagged: false },
+    { said: "`text=`", pos: named?.namePos, tagged: true, label: "it is" },
+    {
+      said: "the block's `text`",
+      pos: t.props.find((p) => p.name === "text")?.pos,
+      tagged: false,
+      label: "`text=` is",
+    },
   ];
-  for (const { said, pos, tagged } of spellings) {
+  for (const { said, pos, tagged, label } of spellings) {
     if (!pos) continue;
     errors.push(
       shadowed
@@ -600,7 +606,7 @@ function checkUnrenderedArgs(
             kind: "unrendered-arg",
             message:
               `content is positional: write \`${t.name}("…")\` — ${said} is a prop on ${t.name} ` +
-              `and never renders (it is the label argument of button, link, label and editable)`,
+              `and never renders (${label} the label argument of button, link, label and editable)`,
             pos,
             ...(tagged ? { unrendered: "text-prop" as const } : {}),
           },

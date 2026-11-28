@@ -738,8 +738,8 @@ builtin に、決して描画されない引数が書かれている。値 built
 
 ハンドルは、次の場所でテキストとして描画されるときに拒否される：
 
-- 値 builtin の内容：`text`・`heading`・`markdown`・`code`・`label`・`link`・`editable`、そして内容が `src=` / `name=` である `image` / `icon`（[標準ライブラリ §2.3.2](./stdlib.md#_2-3-2-テキスト要素)）。
-- `button` の `text=`、`link` の `{text: …}` prop、`editable` が束縛する値。
+- 値 builtin の内容：`text`・`heading`・`markdown`・`code`・`label`・`link`・`editable`、そして内容が `src=` / `name=` である `image` / `icon`（[標準ライブラリ §2.3.2](./stdlib.md#_2-3-2-テキスト要素)）。名前付きの内容はどちらの書き方でもよく、`label(text=h)` も `label() {text: h}` も拒否される。
+- `button` の `text=`、`editable` が束縛する値。
 - テンプレートを含む `fmt(...)` の引数。
 - `.show`。`show` はすべての値が持つメンバーであり（[標準ライブラリ §2.2.7](./stdlib.md#_2-2-7-int-float)）、ハンドルに対しては [E0108](#e0108-undef-member) ではなくこのエラーになる。どの書き方でも同じである：`h.show`、`h.show()`、そして修飾子は捨てられるので `T` が何であれ `T.show(h)`（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）。ハンドルはほかにメンバーを持たないので、`h.upper` は E0108 になる。
 
@@ -1280,7 +1280,7 @@ dispatcher は各リクエストをその key で実行し、同じ key で別�
 
 ### E0236 `tile-as-content`
 
-値 builtin の内容に tile が書かれている。値 builtin は値を内容として表示する（[言語 §1.7.1](./language.md#_1-7-1-構文)）—— `text`・`heading`・`markdown`・`code` は最初の位置引数から、`link`・`label`・`editable` はそれか `text=` から（`link` はどちらも書かれていなければ `{text: …}` ブロックの項目から）、`image` は `src=` から、`icon` は `name=` から読む（[E0129](#e0129-unrendered-arg)）—— ので、そこに書いた tile は決して描画されない：`text(when(c, column(…)))` は何も表示しない。逆向き、tile の位置にある値は [E0128](#e0128-value-as-child) である。ユーザー tile の入力やほかの名前付き引数にある `when` / `for` は、そこに挙げる例外を除いて [E0201](#e0201-type-mismatch) である。
+値 builtin の内容に tile が書かれている。値 builtin は値を内容として表示する（[言語 §1.7.1](./language.md#_1-7-1-構文)）—— `text`・`heading`・`markdown`・`code` は最初の位置引数から、`link`・`label`・`editable` はそれか `text=` から、`image` は `src=` から、`icon` は `name=` から読み、これらの名前付き引数はそれぞれ同じ名前の `{…}` の項目としても書け、両方を書いたときに読まれるのはその項目である（[E0129](#e0129-unrendered-arg)）—— ので、そこに書いた tile は決して描画されない：`text(when(c, column(…)))` は何も表示しない。逆向き、tile の位置にある値は [E0128](#e0128-value-as-child) である。ユーザー tile の入力やほかの名前付き引数にある `when` / `for` は、そこに挙げる例外を除いて [E0201](#e0201-type-mismatch) である。
 
 > ``A tile is not a value: <builtin> shows a value as its content, so this tile is never rendered. Write the tile as a child of a container — `column(when(c, …))` — or show a value — `<content>` ``
 
@@ -1707,7 +1707,7 @@ strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有
 
 > `Unknown icon name "<x>" — not in @kumikijs/icons or any theme.icons block`
 
-リテラルの `icon(name="<x>")` 参照のうち、`check()` に渡された `iconNames`（通常は `@kumikijs/icons` の `ALL_ICONS` キー集合）にも、ソース内のどの `theme.icons` ブロックにも含まれない名前。動的な `icon(name=<expr>)` は check 時に解決不能なので対象外で、ランタイムのプレースホルダにフォールバックする（[スタイル §4.8.4](./style.md#_4-8-4-strict-mode) 参照）。
+リテラルの `icon(name="<x>")` または `icon() {name: "<x>"}` 参照のうち、`check()` に渡された `iconNames`（通常は `@kumikijs/icons` の `ALL_ICONS` キー集合）にも、ソース内のどの `theme.icons` ブロックにも含まれない名前。動的な `icon(name=<expr>)` は check 時に解決不能なので対象外で、ランタイムのプレースホルダにフォールバックする（[スタイル §4.8.4](./style.md#_4-8-4-strict-mode) 参照）。
 
 **修正**：タイポを直す、カスタムパスを `theme.icons` に登録する、または `@kumikijs/icons` をインストールして組み込み名を有効化する。
 

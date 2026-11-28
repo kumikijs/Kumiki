@@ -16,6 +16,10 @@
 # renders (as arguments in `Close`, in the `{…}` block in `CloseBlock`): each
 # attribute is a field of its own.
 #
+# A value builtin's named content is the block's exception, since it is one
+# argument with the block entry of its name: `label-block` states in the block
+# the text `LabelBlock` writes there, and a wrong one fails.
+#
 # `packages/tests/src/tile-test-content-fields.test.ts` runs these tests, then
 # writes each stated field wrong and asserts the test fails naming it.
 
@@ -36,6 +40,7 @@ tile Go    = button(text="Go", disabled=true) {variant: "ghost"}
 tile People = column(for p in people text(p.name) {key: p.id.show})
 tile Close = button(text="x", aria-label="Close", aria-describedby="hint")
 tile CloseBlock = button(text="x") {aria-label: "Close", aria-describedby: "hint"}
+tile LabelBlock = label() {text: "Name"}
 
 tile App
     = column(
@@ -48,6 +53,7 @@ tile App
         People,
         Close,
         CloseBlock,
+        LabelBlock,
         text("agreed=" + agreed.show + " name=" + name + " size=" + size))
       {pad: "lg", gap: "md"}
 
@@ -105,3 +111,8 @@ test close-block-aria =
     tile-test CloseBlock
         given  = {slots: {}}
         expect = button(text="x", aria-label="Close")
+
+test label-block =
+    tile-test LabelBlock
+        given  = {slots: {}}
+        expect = label() {text: "Name"}
