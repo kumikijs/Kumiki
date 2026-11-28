@@ -102,8 +102,6 @@ describe("a chain of tiles at the inlining limit", () => {
     expect(elements).toBe(chain.elements);
   });
 
-  // With the same Node, V8 on win32 parsed chains like these 77% to 89% as deep as it does on
-  // Linux: a `for` passing an argument ran out at about 119 links there against 154 here.
   it.each(
     CHAINS,
   )("parses the longest chain of $what the limit admits on a stack no larger than Windows'", (chain) => {
