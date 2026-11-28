@@ -217,6 +217,8 @@ fn norm() -> List(Todo) = todos.reverse       # 同上
 
 **`sort` は、要素がすべて数値かすべて `Text` なら、要素そのものを同じ順で並べる**。判断するのは各要素の実行時の型で、欠落した要素は数えない：`List(Int)` / `List(Float)` / `List(Time)` は数値として、`List(Text)` は UTF-16 コード単位の順に並べる。したがって `[3, 1, 2, 10].sort` は `[1, 2, 3, 10]`、`["9", "10"].sort` は `["10", "9"]` である。欠落した要素は、`sort-by` で欠落したキーが並ぶのと同じく、他のすべての要素の後ろに互いの順を保って並ぶ。有限でない `Float` の値——[§2.2.7](#_2-2-7-int-float) の関数が定義域の外で与える値と、`/` が 0 の除数に与える値（[言語 §1.9.4](./language.md#_1-9-4-演算子の型)）——もほかと同じ数値である：`-Infinity` はすべての有限値の前に、`Infinity` は後ろに並ぶので、`[10.0, 9.0, 1.5, 1.0 / 0.0].sort` は `[1.5, 9.0, 10.0, Infinity]` である。`<` がどの値とも順序づけない `NaN` は、`Infinity` も含めて他のすべての要素の後ろに並ぶ。`sort-by` で `NaN` のキーが並ぶのと同じ位置である：`[(-1.0).sqrt, 2.0, 1.0].sort` は `[1.0, 2.0, NaN]`。数値と `Text` の両方を持つリスト（たとえば一部の値が `Text` として届いた `List(Float)`）は、代わりに各要素のテキストの順に並び、欠落した要素はやはり最後になる。数値と `Text` の間の `<` は順序にならないためである：`10`、`"9"`、`2` を持つそのようなリストは `10`、`2`、`"9"` の順になり、同じキーに対する `sort-by` は `2`、`"9"`、`10` の順になる。
 
+**`filter` の述語は `Bool` を返す**。`List`・`Option`・`Map`・`Set` のいずれの上でも同じで、述語が成り立つ要素が残る。それ以外を返す述語は、述語の位置で [E0201](./errors.md#e0201-type-mismatch) になる——`List(Int)` 上の `xs.filter($1 + 1)` は `Expected Bool but got Int` であり、`fn f(n: Int) -> Int` に対する `xs.filter(f)` も同じである。返す値の型を型検査器が決められない述語は、何とも照合されない。
+
 ### 2.2.4 Option(T)
 
 ```
@@ -245,6 +247,8 @@ flat-map(expr)              : Result(T', E)
 or(other)                   : Result(T, E)
 to-option                   : Option(T)
 ```
+
+**`flat-map` の式断片は受け手自身のコンテナを返す。** `Some` / `Ok` の上では、呼び出しの結果は式断片が返したものそのままなので、`Option(T)` の上では式断片は `Option` を、`Result(T, E)` の上ではエラーが `E` である `Result` を返す。中の値は式断片が決めてよい。`Some(…)`・`None`・`Ok(…)`・`Err(…)`、`->` がそのいずれかである `fn`、すべての分岐がそのいずれかである `if` や `match` は、どれもこれにあたる。それ以外を返すと、書いた位置で [E0201](./errors.md#e0201-type-mismatch) になる：`Option(Int)` 上の `o.flat-map($1 + 1)` は `Expected Option(?) but got Int`、`o.flat-map({n: $1})` は `Expected Option(?) but got {n: Int}` であり、`o.flat-map(Some($1 + 1))` が正しい。`Result(Int, Text)` 上の `r.flat-map(Err($1))` は `Expected Text but got Int` である。返す値の型を型検査器が決められない式断片——`->` のない `fn` で本体の型が決まらないもの——は、何とも照合されない。
 
 > **panic 意味論.** `Option.get` / `Result.get`（多相 unwrap、カッコ無しで `value.get` とも書ける）は空ケース（`None` / `Err`）で panic し、`Result.get-err` は `Ok` で panic する。いずれも live runtime が扱う唯一の制御された panic シグナルを送出する — [エラー処理](./lifecycle.md#_7-2-error-handling) を参照。reducer 外では `get-or(default)` を推奨。
 

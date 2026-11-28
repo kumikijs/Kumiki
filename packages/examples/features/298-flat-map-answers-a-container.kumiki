@@ -1,0 +1,54 @@
+# Feature: a `flat-map` fragment answers the next Option or Result
+# (spec/stdlib.md).
+#
+# On a `Some` / `Ok`, `flat-map` hands back what its fragment answers as it
+# is, so the fragment answers the receiver's own container: an `Option` over
+# an `Option`, and over a `Result(T, E)` a `Result` whose error is an `E`.
+# `Some(…)`, `None`, `Ok(…)`, `Err(…)`, a fn whose `->` is one, and an `if`
+# whose branches are all do. Anything else is E0201 at the fragment:
+#
+#   halved := picked.flat-map($1 / 2)   # E0201 Expected Option(?) but got Float
+#   parsed := raw.flat-map($1.length)   # E0201 Expected Result(?, Text) but got Int
+#
+# A `filter` predicate answers a `Bool` the same way: `xs.filter($1 + 1)` is
+# E0201 Expected Bool but got Int.
+
+slot picked  : Option(Int)       = Some(4)
+slot odd     : Option(Int)       = Some(3)
+slot raw     : Result(Text, Text) = Ok("kumiki")
+slot empty   : Result(Text, Text) = Ok("")
+slot xs      : List(Int)         = [3, -1, 2]
+
+slot halved  : Option(Int)       = None
+slot none    : Option(Int)       = Some(0)
+slot parsed  : Result(Int, Text) = Ok(0)
+slot refused : Result(Int, Text) = Ok(0)
+slot kept    : List(Int)         = []
+
+fn half(n: Int) -> Option(Int) = if n % 2 == 0 then Some((n / 2).to-int) else None
+fn measured(t: Text) -> Result(Int, Text) = if t.is-empty then Err("empty") else Ok(t.length)
+
+reducer run on=ui.click(Run)
+    do= halved  := picked.flat-map(half)
+        none    := odd.flat-map(if $1 % 2 == 0 then Some($1) else None)
+        parsed  := raw.flat-map(measured)
+        refused := empty.flat-map(measured($1))
+        kept    := xs.filter($1 > 0)
+
+tile Run = button(text="run") {id: "run"}
+
+tile App
+    = column(
+        heading("flat-map answers a container"),
+        Run,
+        text("halved: " + halved.get-or(0).show),
+        text("none: " + none.is-none.show),
+        text("parsed: " + parsed.get-or(0).show),
+        text("refused: " + refused.is-err.show),
+        text("kept: " + kept.length.show))
+      {pad: "lg", gap: "md"}
+
+app FlatMapAnswersAContainer
+    caps   = []
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

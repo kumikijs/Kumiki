@@ -1,0 +1,19 @@
+{
+  "steps": [
+    {
+      "label": "each flat-map lands the Option or Result its fragment answers, and filter keeps what its predicate holds",
+      "do": { "click": "#run" },
+      "expect": {
+        "noErrors": true,
+        "state": {
+          "halved": { "_tag": "Some", "_0": 2 },
+          "none": { "_tag": "None" },
+          "parsed": { "_tag": "Ok", "_0": 6 },
+          "refused": { "_tag": "Err", "_0": "empty" },
+          "kept": [3, 2]
+        },
+        "domIncludes": ["halved: 2", "none: true", "parsed: 6", "refused: true", "kept: 2"]
+      }
+    }
+  ]
+}
