@@ -57,6 +57,7 @@ describe("a tile-test compares the fields its expected node states", () => {
     ["go-disabled", "disabled=true", "disabled=false", "button.disabled", false, true],
     ["close-aria", '"Close"', '"WRONG"', "button.aria-label", "WRONG", "Close"],
     ["close-block-aria", '"Close"', '"WRONG"', "button.aria-label", "WRONG", "Close"],
+    ["label-block", '"Name"', '"WRONG"', "label.text", "WRONG", "Name"],
   ])("fails %s when %s is written %s, at %s", async (test, from, to, diffAt, exp, act) => {
     expect(asWritten.get(test)).toBe(true);
     const r = await runWith(test, from, to);

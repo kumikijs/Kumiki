@@ -1,0 +1,80 @@
+# Feature: one tile nests `for`s as deep as the parser lets a definition
+# nest, and still renders.
+#
+# `Deep` nests 250 `for`s, the most one definition may hold: a 251st goes past
+# the parser's 256 levels, which the `column` and the `text` count toward too.
+# Each level of the nest adds one call and one function to the compiled
+# module, so the module a nest this deep compiles to loads on a stack as small
+# as Windows' gives. Every list holds one element, so the nest renders one
+# text, and the button renames it, which renders the whole nest again.
+#
+# The button sits beside the nest in `Deep`, and the routes name `Deep`
+# itself: a tile around it would inline it two levels down, and put the
+# tree past the same 256 levels (E0237).
+
+slot one   : List(Int) = [0]
+slot label : Text      = "leaf"
+
+reducer rename on=ui.click(Rename) do= label := "renamed"
+
+tile Rename = button(text="rename") {id: "rename"}
+
+tile Deep
+    = column(
+        Rename,
+        for x1 in one for x2 in one for x3 in one for x4 in one for x5 in one
+        for x6 in one for x7 in one for x8 in one for x9 in one for x10 in one
+        for x11 in one for x12 in one for x13 in one for x14 in one for x15 in one
+        for x16 in one for x17 in one for x18 in one for x19 in one for x20 in one
+        for x21 in one for x22 in one for x23 in one for x24 in one for x25 in one
+        for x26 in one for x27 in one for x28 in one for x29 in one for x30 in one
+        for x31 in one for x32 in one for x33 in one for x34 in one for x35 in one
+        for x36 in one for x37 in one for x38 in one for x39 in one for x40 in one
+        for x41 in one for x42 in one for x43 in one for x44 in one for x45 in one
+        for x46 in one for x47 in one for x48 in one for x49 in one for x50 in one
+        for x51 in one for x52 in one for x53 in one for x54 in one for x55 in one
+        for x56 in one for x57 in one for x58 in one for x59 in one for x60 in one
+        for x61 in one for x62 in one for x63 in one for x64 in one for x65 in one
+        for x66 in one for x67 in one for x68 in one for x69 in one for x70 in one
+        for x71 in one for x72 in one for x73 in one for x74 in one for x75 in one
+        for x76 in one for x77 in one for x78 in one for x79 in one for x80 in one
+        for x81 in one for x82 in one for x83 in one for x84 in one for x85 in one
+        for x86 in one for x87 in one for x88 in one for x89 in one for x90 in one
+        for x91 in one for x92 in one for x93 in one for x94 in one for x95 in one
+        for x96 in one for x97 in one for x98 in one for x99 in one for x100 in one
+        for x101 in one for x102 in one for x103 in one for x104 in one for x105 in one
+        for x106 in one for x107 in one for x108 in one for x109 in one for x110 in one
+        for x111 in one for x112 in one for x113 in one for x114 in one for x115 in one
+        for x116 in one for x117 in one for x118 in one for x119 in one for x120 in one
+        for x121 in one for x122 in one for x123 in one for x124 in one for x125 in one
+        for x126 in one for x127 in one for x128 in one for x129 in one for x130 in one
+        for x131 in one for x132 in one for x133 in one for x134 in one for x135 in one
+        for x136 in one for x137 in one for x138 in one for x139 in one for x140 in one
+        for x141 in one for x142 in one for x143 in one for x144 in one for x145 in one
+        for x146 in one for x147 in one for x148 in one for x149 in one for x150 in one
+        for x151 in one for x152 in one for x153 in one for x154 in one for x155 in one
+        for x156 in one for x157 in one for x158 in one for x159 in one for x160 in one
+        for x161 in one for x162 in one for x163 in one for x164 in one for x165 in one
+        for x166 in one for x167 in one for x168 in one for x169 in one for x170 in one
+        for x171 in one for x172 in one for x173 in one for x174 in one for x175 in one
+        for x176 in one for x177 in one for x178 in one for x179 in one for x180 in one
+        for x181 in one for x182 in one for x183 in one for x184 in one for x185 in one
+        for x186 in one for x187 in one for x188 in one for x189 in one for x190 in one
+        for x191 in one for x192 in one for x193 in one for x194 in one for x195 in one
+        for x196 in one for x197 in one for x198 in one for x199 in one for x200 in one
+        for x201 in one for x202 in one for x203 in one for x204 in one for x205 in one
+        for x206 in one for x207 in one for x208 in one for x209 in one for x210 in one
+        for x211 in one for x212 in one for x213 in one for x214 in one for x215 in one
+        for x216 in one for x217 in one for x218 in one for x219 in one for x220 in one
+        for x221 in one for x222 in one for x223 in one for x224 in one for x225 in one
+        for x226 in one for x227 in one for x228 in one for x229 in one for x230 in one
+        for x231 in one for x232 in one for x233 in one for x234 in one for x235 in one
+        for x236 in one for x237 in one for x238 in one for x239 in one for x240 in one
+        for x241 in one for x242 in one for x243 in one for x244 in one for x245 in one
+        for x246 in one for x247 in one for x248 in one for x249 in one for x250 in one
+        text(label)) {pad: "lg", gap: "md"}
+
+app NestedForAtTheLimit
+    caps   = []
+    routes = {"/" -> Deep, "/404" -> Deep}
+    init   = []

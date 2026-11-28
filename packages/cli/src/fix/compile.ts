@@ -361,6 +361,8 @@ const PLANNERS: ReadonlyMap<string, Planner> = new Map<string, Planner>([
           anchor: { kind: "span", pos: err.pos },
         };
       }
+      // A block entry names no shape: `kumiki fix` rewrites the `text=` spelling alone.
+      if (err.unrendered === undefined) return { reason: "e0129-block-entry-not-rewritten" };
       return { reason: "e0129-dropped-argument-has-no-single-repair" };
     },
   ],

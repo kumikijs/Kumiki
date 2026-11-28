@@ -357,15 +357,20 @@ type ValueName =
 type NotATile = Exclude<Occupant, { readonly kind: "tile" }>;
 
 // The parser reads every name in an arm or a body as a tile call, so a call of a name no tile has
-// is resolved as a value. In a container it reads a bare lower-cased name as an expression, and a
-// program's tile of that name is taken before this (`tileNamedAt`), so a `Ref` here is a value or
-// nothing; a value of the same name wins over a builtin.
+// is resolved as a value, and so is a builtin's name written alone, which is the builtin's call when
+// no value in scope has the name. In a container it reads a bare lower-cased name as an expression,
+// and a program's tile of that name is taken before this (`tileNamedAt`), so a `Ref` here is a value
+// or nothing; in both places a value of the same name, written alone, wins over a builtin.
 function occupantOf(v: TileExpr, sym: SymbolTable, ctx: Ctx): Occupant;
 function occupantOf(v: Expr, sym: SymbolTable, ctx: Ctx): NotATile;
 function occupantOf(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): Occupant {
   if (isTileExpr(v)) {
-    if (v.kind !== "TileCall" || namesTile(v.name, sym)) return { kind: "tile" };
-    return valueNamed(v.name, v.pos, sym, ctx) ?? { kind: "unknown", name: v.name };
+    if (v.kind !== "TileCall" || sym.tiles.has(v.name)) return { kind: "tile" };
+    const builtin = BUILTIN_TILES.has(v.name);
+    if (builtin && v.bare === undefined) return { kind: "tile" };
+    const value = valueNamed(v.name, v.pos, sym, ctx);
+    if (value && !(builtin && value.kind === "out-of-scope")) return value;
+    return builtin ? { kind: "tile" } : { kind: "unknown", name: v.name };
   }
   if (v.kind !== "Ref") return { kind: "value" };
   const value = valueNamed(v.name, v.pos, sym, ctx);
@@ -566,31 +571,41 @@ function checkUnrenderedArgs(
       unrendered: "positional",
     });
   });
+  const shadowed = reading.named === "text" && positional.length > 0;
+  const aProp = reading.named === undefined && positional.length === 0;
+  if (!shadowed && !aProp) return undefined;
+  // `text=` and the block's `text` are one argument, each reported in the spelling written. Only
+  // `text=` names a shape, since `kumiki fix` rewrites that spelling alone.
   const named = t.args.find((a) => a.name === "text");
-  if (!named?.name) return undefined;
-  if (reading.named === "text" && positional.length > 0) {
-    errors.push({
-      code: "E0129",
-      kind: "unrendered-arg",
-      message:
-        `${t.name} renders its positional argument, so \`text=\` is never rendered — it is ` +
-        `read only when no positional argument is written. Remove \`text=\` or the ` +
-        `positional argument`,
-      pos: named.namePos,
-      unrendered: "text-shadowed",
-    });
-    return named;
+  const spellings = [
+    { said: "`text=`", pos: named?.namePos, tagged: true },
+    { said: "the block's `text`", pos: t.props.find((p) => p.name === "text")?.pos, tagged: false },
+  ];
+  for (const { said, pos, tagged } of spellings) {
+    if (!pos) continue;
+    errors.push(
+      shadowed
+        ? {
+            code: "E0129",
+            kind: "unrendered-arg",
+            message:
+              `${t.name} renders its positional argument, so ${said} is never rendered — it is ` +
+              `read only when no positional argument is written. Remove ${said} or the ` +
+              `positional argument`,
+            pos,
+            ...(tagged ? { unrendered: "text-shadowed" as const } : {}),
+          }
+        : {
+            code: "E0129",
+            kind: "unrendered-arg",
+            message:
+              `content is positional: write \`${t.name}("…")\` — ${said} is a prop on ${t.name} ` +
+              `and never renders (it is the label argument of button, link, label and editable)`,
+            pos,
+            ...(tagged ? { unrendered: "text-prop" as const } : {}),
+          },
+    );
   }
-  if (reading.named !== undefined || positional.length > 0) return undefined;
-  errors.push({
-    code: "E0129",
-    kind: "unrendered-arg",
-    message:
-      `content is positional: write \`${t.name}("…")\` — \`text=\` is a prop on ${t.name} ` +
-      `and never renders (it is the label argument of button, link, label and editable)`,
-    pos: named.namePos,
-    unrendered: "text-prop",
-  });
   return named;
 }
 
@@ -601,7 +616,7 @@ function checkTileAsContent(
   errors: KumikiError[],
   ctx: Ctx,
 ): TileArg | TileProp | undefined {
-  const content = writtenContent(t);
+  const content = contentArg(t);
   if (!content) return undefined;
   const tiles = tilesInContent(content.value, sym, ctx);
   const shown =
@@ -622,13 +637,6 @@ function checkTileAsContent(
     });
   }
   return tiles.length > 0 ? content : undefined;
-}
-
-// The content as the lowering reads it: link renders its `{text: …}` when no content is written.
-function writtenContent(t: TileExpr & { kind: "TileCall" }): TileArg | TileProp | undefined {
-  const content = contentArg(t);
-  if (content || t.name !== "link") return content;
-  return t.props.find((p) => p.name === "text");
 }
 
 // The parser reads the content as an expression (but for a `when` or a `for`), so a tile there is
@@ -661,16 +669,14 @@ function tilesInContent(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): (Expr |
 }
 
 /**
- * The values a builtin renders as text, as its lowering reads them: its content, `button`'s `text=`,
- * `link`'s `{text: …}` prop when no content is written, and the value `editable` binds.
+ * The values a builtin renders as text, as its lowering reads them: its content in either spelling,
+ * `button`'s `text` in either spelling, and the value `editable` binds.
  */
 function renderedText(t: TileExpr & { kind: "TileCall" }, ctx: Ctx): Expr[] {
-  const named = (name: string) => t.args.find((a) => a.name === name)?.value;
   const content = contentArg(t)?.value;
   const values = [
     content,
-    t.name === "button" ? named("text") : undefined,
-    t.name === "link" && !content ? t.props.find((p) => p.name === "text")?.value : undefined,
+    t.name === "button" ? propOf(t, "text", ctx)?.value : undefined,
     t.name === "editable" ? propOf(t, "bind", ctx)?.value : undefined,
   ];
   return values.filter((v): v is Expr => v !== undefined && !isTileExpr(v));

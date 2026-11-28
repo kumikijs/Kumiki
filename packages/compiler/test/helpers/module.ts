@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -19,6 +20,15 @@ export type ReducerShape = {
     payload: Record<string, unknown>,
   ) => { slots: Record<string, unknown> };
 };
+
+/** What `node --check` reports about `file` on a stack of `stackKb` KB: "" when it parses, its error line otherwise. */
+export function parseErrorOn(stackKb: number, file: string): string {
+  const run = spawnSync(process.execPath, [`--stack-size=${stackKb}`, "--check", file], {
+    encoding: "utf8",
+  });
+  if (run.status === 0) return "";
+  return run.stderr.split("\n").find((l) => /Error/.test(l)) ?? `exit ${run.status}`;
+}
 
 /** Writes `content` to `name` in a fresh directory under `root` and returns its path. */
 export function writeTmpFile(root: string, prefix: string, name: string, content: string): string {
@@ -90,6 +100,14 @@ export function fnLowering(src: string, name = "probe"): string {
   if (line === undefined) expect.fail(`no \`function ${name}\` in the generated module`);
   return line;
 }
+
+/**
+ * The loops of a generated module that compute implicit keys, by name. Which loops compute them
+ * shows only in the module, not in what it renders.
+ */
+export const keyedLoopsIn = (js: string): string[] => [
+  ...new Set(Array.from(js.matchAll(/_loop\(("[^"]*"), /g), (m) => JSON.parse(m[1] as string))),
+];
 
 /** The generated module for `src` without running `check` first. */
 export const loweredOf = (src: string): string =>

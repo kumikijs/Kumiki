@@ -640,13 +640,13 @@ A value is written where a tile is expected. Two kinds of place expect one ([Lan
 - A positional argument of a builtin that renders its positional arguments as children: a container — `column`, `row`, `card`, … ([Language §1.7.1](./language.md#_1-7-1-syntax) lists them). Such a builtin renders a positional argument only when it is a tile: a `tile-expr` or the name of a tile the program defines. A value builtin reads its positional argument as a value, and every other builtin (`button`, `progress`, …) renders no positional argument, tile or value: one written there is [E0129](#e0129-unrendered-arg).
 - A whole `tile-expr`: a `when` / `if` / `for` / `match` arm, a tile's body, and a tile-test's `expect`. The parser reads a name written there as a tile call, so a value named there — a slot, a `fn` call, a loop variable, a `match` binding — is a call of a tile that does not exist.
 
-In either place, a name that is neither a tile nor a value is [E0105](#e0105-undef-tile) instead. A variant tag is not looked up as a value there, so `when(c, Circle)` is E0105 as well. A name read after the scope that declared it ended — a `for` loop's variable after the loop, a `match` arm's binding in a sibling arm — is [E0103](#e0103-undef-ref-undef-slot), carrying that scope, as it is anywhere else.
+In either place, a name that is neither a tile nor a value is [E0105](#e0105-undef-tile) instead. A variant tag is not looked up as a value there, so `when(c, Circle)` is E0105 as well. A name read after the scope that declared it ended — a `for` loop's variable after the loop, a `match` arm's binding in a sibling arm — is [E0103](#e0103-undef-ref-undef-slot), carrying that scope, as it is anywhere else. In an arm a builtin tile's name is the exception: no value in scope has it, so written alone it is the builtin's call, as it is when nothing has the name (`match pick with | Some(spinner) -> Header | None -> spinner` renders a spinner for `None`).
 
 > ``A value is not a tile: <builtin> renders a positional argument only when it is a tile, so this one renders nothing. Show the value with a tile — `text(…)` — or, for a `let`, write the value where it is used or compute it in a `fn` ``
 > ``A value is not a tile: <place> has to be a tile. Show the value with a tile — `text(…)` ``
 > `` `<name>` is a builtin tile named without its call: <builtin> renders a positional argument only when it is a tile, so this one renders nothing. Call it — `<name>()` ``
 
-The first is a value as a positional argument. The second is a value where a whole `tile-expr` stands, and `<place>` names it: ``a `when` arm``, ``an `if` arm``, ``a `for` arm``, ``a `match` arm``, `a tile's body` or `` a tile-test's `expect` ``. The third is a builtin tile's name written as a positional argument without its call: `column(divider)` names `divider` and renders nothing, where `column(divider())` renders it. In an arm or a body the parser reads the same name as the call, so `when(c, divider)` renders a divider and is not reported. In a container, a name that a value in scope has too — a loop variable called `spinner` — is that value, and draws the first form; in an arm the builtin's call wins, so `for spinner in xs when(c, spinner)` renders the builtin. A lower-cased call in a container that is not a builtin tile's is an expression, so it is a value whatever it calls: `column(greting())` draws the first form, where `when(c, greting())` is E0105.
+The first is a value as a positional argument. The second is a value where a whole `tile-expr` stands, and `<place>` names it: ``a `when` arm``, ``an `if` arm``, ``a `for` arm``, ``a `match` arm``, `a tile's body` or `` a tile-test's `expect` ``. The third is a builtin tile's name written as a positional argument without its call: `column(divider)` names `divider` and renders nothing, where `column(divider())` renders it. In an arm or a body the parser reads the same name as the call, so `when(c, divider)` renders a divider and is not reported. A builtin tile's name that a value in scope has too — a loop variable called `spinner` — is that value wherever it is written alone ([Language §1.6.7](./language.md#_1-6-7-scoping-and-shadowing)): it draws the first form in a container and the second in an arm, a body or an `expect`, so `for spinner in xs when(c, spinner)` is ``a `when` arm``. Written with its call or a prop block (`spinner()`, `divider {id: "d"}`), it is the builtin in both. A lower-cased call in a container that is not a builtin tile's is an expression, so it is a value whatever it calls: `column(greting())` draws the first form, where `when(c, greting())` is E0105.
 
 Codegen drops a value in a positional argument, so `column(text("a"), 42)` rendered only the `text`, `column(text("a"), n)` with `n` a slot put a `null` into the child list, and `column(let x = 42 in Card(x))` mounted an empty root. A `let` hid a tile from the checker as well: `Card`'s argument was not compared with its `in=`, and a builtin under it was looked up as a `fn` (E0116). The diagnostic is at the value, and nothing inside the value is checked — a diagnostic in there, wrong or right (an undefined name), shows once the value is moved where it belongs.
 
@@ -672,6 +672,8 @@ A builtin is written with an argument it never renders. A value builtin reads it
 On a builtin that renders no positional argument, `<args>` names what it shows in its place, from one table: `src=` on `image` and `video`; `name=` on `icon`; `text=` on `button` and `toast`; `bind=`, `value=` or `placeholder=` on `input` and `textarea`; `options=`, `bind=`, `value=` or `placeholder=` on `select`; `label=`, `bind=` or `value=` on `check`; `bind=` or `value=` on `switch`; `label=`, `bind=` or `selected=` on `radio`; `bind=` or `value=` on `slider`; `value=` or `max=` on `progress`; `field=` on `error`. `divider`, `spinner`, `skeleton` and `route-outlet` show nothing an argument gives them, and draw the third form. The argument is reported whole, and nothing inside it is checked — a tile, a `let`, a misspelt name — as for a value in a container ([E0128](#e0128-value-as-child)): a diagnostic in there shows once the argument is moved where it renders.
 
 Each is reported at the dropped argument, and the diagnostic's `unrendered` field names which shape it is: `positional` for the first three forms, then `text-prop` and `text-shadowed`. Nothing else reports these: the argument parses and builds, and never reaches the page, so a `smoke` run is green on it. With a positional argument also written, `text=` on a text builtin is an ordinary prop and is not reported.
+
+`text=` and the block's `text` are one argument, so the last two shapes are reported in whichever spelling is written: `heading() {text: title}` and `label("B") {text: "A"}` are E0129 at the block entry, and the message says ``the block's `text` `` where it says `` `text=` `` above. Such a diagnostic has no `unrendered` field, since `kumiki fix` rewrites `text=` only; remove the entry, or move its value to where the builtin reads it. Where the builtin does read that argument, the block entry is its content (`label() {text: "A"}`, `image(alt="…") {src: url}`, [Language §1.7.1](./language.md#_1-7-1-syntax)), and nothing is reported.
 
 **Fix**: Write the content where the builtin reads it — `heading(title)`, `image(src=url, alt=…)`, `button(text="Go")` — and join values meant to show together (`text(a + " " + b)`). A tile goes beside a builtin that renders none, in a container: `row(button(text="Go"), Header)`. `kumiki fix` removes the `text=` of a text builtin that has no positional argument, making its value the content, and removes a `text=` that a positional argument shadows on `link` / `label` / `editable` — neither changes what renders. A dropped positional argument has no single repair and is left to you.
 
@@ -773,8 +775,8 @@ An opaque handle, an `EffectId` or a `Decoder`, is used where it is not defined.
 
 A handle is refused where these render it as text:
 
-- the content of a value builtin: `text`, `heading`, `markdown`, `code`, `label`, `link` and `editable`, and `image` / `icon`, whose content is `src=` / `name=` ([Standard Library §2.3.2](./stdlib.md#_2-3-2-text-elements));
-- `button`'s `text=`, `link`'s `{text: …}` prop, and the value `editable` binds;
+- the content of a value builtin: `text`, `heading`, `markdown`, `code`, `label`, `link` and `editable`, and `image` / `icon`, whose content is `src=` / `name=` ([Standard Library §2.3.2](./stdlib.md#_2-3-2-text-elements)), a named one in either spelling, `label(text=h)` or `label() {text: h}`;
+- `button`'s `text`, in either spelling, and the value `editable` binds;
 - an argument of `fmt(...)`, the template included;
 - `.show`. `show` is the member every value has ([Standard Library §2.2.7](./stdlib.md#_2-2-7-int-float)); on a handle it is this error rather than [E0108](#e0108-undef-member), in each of its spellings: `h.show`, `h.show()`, and `T.show(h)` whatever `T` is, since the qualifier is discarded ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)). A handle has no other member, so `h.upper` is E0108.
 
@@ -1315,7 +1317,7 @@ Two places are not this code. Where a record field name goes — `{null = 1}`, `
 
 ### E0236 `tile-as-content`
 
-A tile is written as a value builtin's content. A value builtin shows a value as its content ([Language §1.7.1](./language.md#_1-7-1-syntax)) — read from the first positional argument on `text`, `heading`, `markdown` and `code`, from it or `text=` on `link`, `label` and `editable` (and on `link` from the `{text: …}` block entry when neither is written), from `src=` on `image` and from `name=` on `icon` ([E0129](#e0129-unrendered-arg)) — so a tile written there is never rendered: `text(when(c, column(…)))` shows nothing. The mirror, a value where a tile belongs, is [E0128](#e0128-value-as-child). A `when` / `for` as a user tile's input or another named argument is [E0201](#e0201-type-mismatch), save the exceptions listed there.
+A tile is written as a value builtin's content. A value builtin shows a value as its content ([Language §1.7.1](./language.md#_1-7-1-syntax)) — read from the first positional argument on `text`, `heading`, `markdown` and `code`, from it or `text=` on `link`, `label` and `editable`, from `src=` on `image` and from `name=` on `icon`, each of those named arguments also written as the `{…}` entry of its name, which is the one read when a call writes both ([E0129](#e0129-unrendered-arg)) — so a tile written there is never rendered: `text(when(c, column(…)))` shows nothing. The mirror, a value where a tile belongs, is [E0128](#e0128-value-as-child). A `when` / `for` as a user tile's input or another named argument is [E0201](#e0201-type-mismatch), save the exceptions listed there.
 
 > ``A tile is not a value: <builtin> shows a value as its content, so this tile is never rendered. Write the tile as a child of a container — `column(when(c, …))` — or show a value — `<content>` ``
 
@@ -1724,7 +1726,7 @@ a11y checking is enabled via `check(program, { strictA11y: true })`.
 
 ### E0701 `a11y-button`
 
-> `button must have a text= argument or aria-label`
+> `button must have text or aria-label`
 
 ### E0702 `a11y-image`
 
@@ -1735,6 +1737,8 @@ a11y checking is enabled via `check(program, { strictA11y: true })`.
 > `link must have inner text or aria-label`
 
 `aria-label` and `alt` count in either spelling, a named argument (`button(aria-label="Close")`) or the props block (`button() {aria-label: "Close"}`): a named argument is a prop wherever it is written ([Language §1.7.1](./language.md#_1-7-1-syntax)), and both put the attribute on the element. Where both are written, the props block's is the one read, as it is the one rendered. Each check reads whether one is written, not its value, so `""` and a value read from a slot count too. A value that is not a `Text` is not checked here yet: `button(aria-label=Mark)` writes the variant `Mark`, passes, and renders `aria-label="[object Object]"`. A `when` or `for` written as the argument (`button(aria-label=when(c, text("x")))`) is a tile, not prop data, and renders no attribute, so it does not count; a prop cannot hold a tile, so it is [E0201](#e0201-type-mismatch) as well.
+
+A `button`'s `text` counts in either spelling the same way: `button(text="Go")` and `button() {text: "Go"}` both render the label that names the button, and a `when` or `for` written as it does not count.
 
 **Fix**: Provide visible text, or an `aria-label` / `alt`. For general guidance on forms, see [Forms](./forms.md).
 
@@ -1756,7 +1760,7 @@ Strict-icons checking is enabled via `check(program, { strictIcons: true, iconNa
 
 > `Unknown icon name "<x>" — not in @kumikijs/icons or any theme.icons block`
 
-A literal `icon(name="<x>")` reference whose name is not in the `iconNames` set passed to `check()` (typically the keys of `@kumikijs/icons`'s `ALL_ICONS`) and is not declared in any `theme.icons` block in the source. Dynamic `icon(name=<expr>)` calls are never checked — the name is unresolvable at check time and falls through to the runtime placeholder (see [Style §4.8.4](./style.md#_4-8-4-strict-mode)).
+A literal `icon(name="<x>")` or `icon() {name: "<x>"}` reference whose name is not in the `iconNames` set passed to `check()` (typically the keys of `@kumikijs/icons`'s `ALL_ICONS`) and is not declared in any `theme.icons` block in the source. Dynamic `icon(name=<expr>)` calls are never checked — the name is unresolvable at check time and falls through to the runtime placeholder (see [Style §4.8.4](./style.md#_4-8-4-strict-mode)).
 
 **Fix**: Correct the typo, register the custom path in `theme.icons`, or install `@kumikijs/icons` so the built-in name is in scope.
 
