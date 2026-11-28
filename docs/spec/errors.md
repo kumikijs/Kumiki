@@ -1563,7 +1563,7 @@ A record field is named `_tag`, in a record type or a record literal: `type R = 
 
 At run time a variant is a record whose `_tag` field holds its name — `Some(1)` is `{_tag: "Some", _0: 1}` — and that field is how the runtime tells a variant from a record, so a record written with one is read as a variant. `show` renders a variant as its tag ([stdlib.md §2.2.7](./stdlib.md#_2-2-7-int-float)), and everything that renders a value through `show` renders it this way: `+` with a `Text` side, and a tile's text. So `{_tag="a", n=1}.show` would be `a`, where `{tag="a", n=1}.show` is `{tag: "a", n: 1}`.
 
-Data the program does not write is not checked here: `Decoder.Json(T)` removes a `_tag` key from each record position it reads ([http.md §6.1.4](./http.md#_6-1-4-the-decoder-type)), so a response or a stored value that carries one still reads as a record.
+Data the program does not write is not checked here: `Decoder.Json(T)` removes every key a record's type does not declare, `_tag` among them ([http.md §6.1.4](./http.md#_6-1-4-the-decoder-type)), so a response or a stored value that carries one still reads as a record.
 
 Only the name `_tag` is refused. `tag`, `_tags`, `_Tag` and `_0` are names of their own, and a Map whose key is the text `"_tag"` names no field.
 

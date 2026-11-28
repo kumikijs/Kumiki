@@ -14,6 +14,7 @@ type Stamp   = {at: Time}
 type When    = At(Time) | Never
 type Memo    = {text: Text where nonempty}
 type Nest(A) = {v: A, next: Option(Nest(List(A)))}
+type Empty   = {}
 `;
 
 /** A program whose one storage read decodes with `decoder`. */
@@ -163,7 +164,6 @@ describe("Decoder.Json(T) refuses a value that is not a T", () => {
 
   it.each([
     { t: "User", value: { id: 7, name: "Ann" } },
-    { t: "User", value: { id: 7, name: "Ann", title: "kept as it came" } },
     { t: "Float", value: 1 },
     { t: "Float", value: Number.POSITIVE_INFINITY },
     { t: "Option(Text)", value: { _tag: "None" } },
@@ -196,37 +196,57 @@ describe("Decoder.Json(T) refuses a value that is not a T", () => {
   });
 });
 
-// The runtime tells a variant from a record by its `_tag` field, so a record that kept one would
-// read as a variant.
-describe("Decoder.Json(T) removes a _tag key from each record position", () => {
+// What the program reads holds only what its type declares, so `show` and `==` see a `T`, and a
+// record never keeps the `_tag` the runtime tells a variant by.
+describe("Decoder.Json(T) removes every key a position's type does not declare", () => {
   const ann = { id: 7, name: "Ann" };
 
   it.each([
+    { t: "User", value: { title: "dropped", ...ann }, read: ann },
     { t: "User", value: { _tag: "a", ...ann }, read: ann },
-    { t: "User", value: { _tag: "Some", _0: 1, ...ann }, read: { _0: 1, ...ann } },
-    { t: "{id: Int, name: Text}", value: { _tag: "a", ...ann }, read: ann },
+    { t: "User", value: { _tag: "Some", _0: 1, ...ann }, read: ann },
+    { t: "{id: Int, name: Text}", value: { _tag: "a", x: 1, ...ann }, read: ann },
     { t: "List(User)", value: [{ _tag: "a", ...ann }, ann], read: [ann, ann] },
     {
       t: "Option(User)",
-      value: { _tag: "Some", _0: { _tag: "a", ...ann } },
+      value: { _tag: "Some", _0: { _tag: "a", ...ann }, _1: 2, x: 3 },
       read: { _tag: "Some", _0: ann },
     },
-    { t: "Map(Text, User)", value: { _tag: { _tag: "a", ...ann } }, read: { _tag: ann } },
+    { t: "Option(Text)", value: { _tag: "None", _0: "x" }, read: { _tag: "None" } },
+    {
+      t: "Result(Int, Text)",
+      value: { _tag: "Err", _0: "x", _1: 2 },
+      read: { _tag: "Err", _0: "x" },
+    },
+    { t: "Shape", value: { _tag: "Circle", _0: 1, _1: 2, x: 3 }, read: { _tag: "Circle", _0: 1 } },
+    { t: "Shape", value: { _tag: "Dot", _0: 1 }, read: { _tag: "Dot" } },
+    {
+      t: "When",
+      value: { _tag: "At", _0: "2026-03-07T10:00:00Z", x: 1 },
+      read: { _tag: "At", _0: AT },
+    },
+    {
+      t: "Map(Text, User)",
+      value: { _tag: { _tag: "a", ...ann }, x: { y: 1, ...ann } },
+      read: { _tag: ann, x: ann },
+    },
     {
       t: "Page(User)",
-      value: { _tag: "p", items: [{ _tag: "a", ...ann }], next: { _tag: "None" } },
+      value: { _tag: "p", items: [{ x: 1, ...ann }], next: { _tag: "None", _0: 1 } },
       read: { items: [ann], next: { _tag: "None" } },
     },
     {
       t: "Tree",
-      value: { v: 1, kids: [{ _tag: "a", v: 2, kids: [] }] },
+      value: { v: 1, kids: [{ x: "a", v: 2, kids: [] }] },
       read: { v: 1, kids: [{ v: 2, kids: [] }] },
     },
     { t: "Memo", value: { _tag: "a", text: "x" }, read: { text: "x" } },
-    { t: "Stamp", value: { _tag: "a", at: "2026-03-07T10:00:00Z" }, read: { at: AT } },
+    { t: "Empty", value: { _tag: "a", x: 1 }, read: {} },
+    { t: "Owner", value: { id: "t", x: 1 }, read: { id: "t" } },
+    { t: "Stamp", value: { x: 1, at: "2026-03-07T10:00:00Z" }, read: { at: AT } },
     {
       t: "File",
-      value: { _tag: "a", name: "a.txt", size: 3, type: "text/plain", _file: {} },
+      value: { _tag: "a", x: 1, name: "a.txt", size: 3, type: "text/plain", _file: {} },
       read: { name: "a.txt", size: 3, type: "text/plain", _file: {} },
     },
   ])("reads $value as $t into $read", async ({ t, value, read }) => {
@@ -234,18 +254,33 @@ describe("Decoder.Json(T) removes a _tag key from each record position", () => {
     expect(value).toEqual(read);
   });
 
-  it("refuses a structured key whose record holds a _tag key, which is no text a User is stored as", async () => {
-    const key = '{"_tag":"a","id":7,"name":"Ann"}';
-    expect((await checkOf("Map(User, Int)"))({ [key]: 1 })).toEqual(
-      failure("expected User", [{ key }]),
-    );
-    expect((await checkOf("Map(User, Int)"))({ '{"id":7,"name":"Ann"}': 1 })).toBeUndefined();
+  it.each([
+    { t: "Map(User, Int)", key: '{"_tag":"a","id":7,"name":"Ann"}', refused: "expected User" },
+    { t: "Map(User, Int)", key: '{"id":7,"name":"Ann","x":1}', refused: "expected User" },
+    { t: "Set(Shape)", key: '{"_0":1,"_tag":"Dot"}', refused: "expected Shape" },
+  ])("refuses the key $key of a $t, which holds a key no value is stored with", async ({
+    t,
+    key,
+    refused,
+  }) => {
+    const step = t.startsWith("Set") ? { member: key } : { key };
+    const value = { [key]: t.startsWith("Set") ? true : 1 };
+    expect((await checkOf(t))(value)).toEqual(failure(refused, [step]));
   });
 
-  it("throws on a frozen record that holds a _tag key", async () => {
+  // A host provider calls the check on the value it delivers, so it sees what the check did.
+  it("removes the keys at the positions it took before the one it refuses", async () => {
+    const value = { u: { x: 1, ...ann }, m: { "-0": 5 }, y: 2 };
+    const check = await checkOf("{u: User, m: Map(Int, Int)}");
+    expect(check(value)).toEqual(failure("expected Int", ["m", { key: "-0" }]));
+    expect(value).toEqual({ u: ann, m: { "-0": 5 }, y: 2 });
+  });
+
+  it("throws on a frozen value that holds a key its type does not declare", async () => {
     const check = await checkOf("User");
     expect(() => check(Object.freeze({ _tag: "a", ...ann }))).toThrow(TypeError);
     expect(check(Object.freeze({ ...ann }))).toBeUndefined();
+    expect((await checkOf("Option(Int)"))(Object.freeze({ _tag: "None" }))).toBeUndefined();
   });
 });
 
@@ -366,6 +401,15 @@ describe("Decoder.Json(T) checks a growing generic 32 levels down", () => {
 
   it("takes any value past 32 levels, unchecked", async () => {
     expect((await checkOf("Nest(Int)"))(nested(32, "garbage"))).toBeUndefined();
+  });
+
+  it.each([
+    { depth: 31, read: { v: [], next: { _tag: "None" } } },
+    { depth: 32, read: { v: [], next: { _tag: "None" }, x: 1 } },
+  ])("removes a key $depth levels down only while it checks there", async ({ depth, read }) => {
+    const bottom = { v: [], next: { _tag: "None" }, x: 1 };
+    expect((await checkOf("Nest(Int)"))(nested(depth, bottom))).toBeUndefined();
+    expect(bottom).toEqual(read);
   });
 });
 

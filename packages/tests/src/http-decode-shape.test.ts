@@ -7,7 +7,7 @@ import { type FetchDouble, stubFetch } from "./helpers/http-double.ts";
 import { loadApp, loadSource } from "./helpers/load.ts";
 
 const EXAMPLE = feature("284-decode-checks-shape");
-const DROPS_TAG = feature("306-decode-drops-variant-tag");
+const DROPS_KEYS = feature("306-decode-drops-undeclared-keys");
 
 // 2026-03-07T10:00:00Z
 const AT = 1772877600000;
@@ -92,8 +92,8 @@ describe("Decoder.Json(T) through the built-in http handler", () => {
   });
 
   // The runtime tells a variant from a record by its `_tag` field.
-  it("drops a _tag key from a body that is a User, so .ok gets a User", async () => {
-    const settled = await answer(USER, { _tag: "a", id: 7, name: "Ann" });
+  it("drops the keys a User does not declare, _tag among them, so .ok gets a User", async () => {
+    const settled = await answer(USER, { _tag: "a", id: 7, name: "Ann", title: "dropped" });
     expect(settled.got).toEqual({ _tag: "Some", _0: { id: 7, name: "Ann" } });
     expect(settled.err).toEqual({ _tag: "None" });
   });
@@ -144,14 +144,14 @@ describe("Decoder.Json(T) through the built-in http handler", () => {
     expect(httpRequests().filter((r) => r === "GET /api/user")).toHaveLength(1);
   });
 
-  it("shows example 306's record without the _tag key its fixture sends", async () => {
-    useHttpFixture(readHttpFixture(DROPS_TAG));
-    const app = await loadApp(DROPS_TAG);
+  it("shows example 306's record without the keys its fixture sends beside it", async () => {
+    useHttpFixture(readHttpFixture(DROPS_KEYS));
+    const app = await loadApp(DROPS_KEYS);
     const text = await withMounted(app, async (root) => {
       await waitUntil(() => !(root.textContent ?? "").includes("loading"), { timeoutMs: 3000 });
       return root.textContent ?? "";
     });
-    expect(text).toContain('item: {n: 1, note: "kept"}, n is 1');
+    expect(text).toContain("item: {n: 1}, equal to {n=1}: true");
   });
 });
 
@@ -203,7 +203,7 @@ app S
     expect(seen).toBe(why);
   });
 
-  it("drops a _tag key from a stored record, so .ok gets the record", async () => {
+  it("drops the keys a stored record's type does not declare, so .ok gets the record", async () => {
     const app = await loadSource(`slot shown : Text = ""
 
 effect load cap=storage.read
@@ -221,7 +221,7 @@ app S
     routes = {"/" -> App, "/404" -> App}
     init   = []
 `);
-    localStorage.setItem("item", JSON.stringify({ _tag: "a", n: 1 }));
+    localStorage.setItem("item", JSON.stringify({ _tag: "a", n: 1, note: "dropped" }));
     const seen = await withMounted(app, async () => {
       const live = defined(app.live, "the app's live map") as Record<string, unknown>;
       await waitUntil(() => live.shown !== "", { timeoutMs: 3000 });
