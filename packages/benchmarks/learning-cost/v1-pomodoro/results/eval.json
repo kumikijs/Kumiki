@@ -1,9 +1,33 @@
 [
   {
     "path": "packages/benchmarks/learning-cost/v1-pomodoro/results/Claude/output.kumiki",
-    "chars": 1347,
-    "loc": 59,
-    "cl100k": 384,
+    "chars": 1543,
+    "loc": 63,
+    "cl100k": 439,
+    "parse": true,
+    "typecheck": true,
+    "build": true,
+    "errorCount": 0,
+    "errorCategories": {},
+    "firstError": null
+  },
+  {
+    "path": "packages/benchmarks/learning-cost/v1-pomodoro/results/Codex/output.kumiki",
+    "chars": 1269,
+    "loc": 51,
+    "cl100k": 341,
+    "parse": true,
+    "typecheck": true,
+    "build": true,
+    "errorCount": 0,
+    "errorCategories": {},
+    "firstError": null
+  },
+  {
+    "path": "packages/benchmarks/learning-cost/v1-pomodoro/results/Gemini/output.kumiki",
+    "chars": 2077,
+    "loc": 69,
+    "cl100k": 609,
     "parse": true,
     "typecheck": true,
     "build": true,

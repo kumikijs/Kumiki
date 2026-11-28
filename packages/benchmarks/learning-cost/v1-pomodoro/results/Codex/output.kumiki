@@ -1,0 +1,50 @@
+type Mode = Work | Break
+
+slot remaining : Int where between(0, 1500) = 1500
+slot mode : Mode = Work
+slot running : Bool = false
+
+fn nextMode(current: Mode) -> Mode =
+    match current with
+    | Work -> Break
+    | Break -> Work
+
+fn modeSeconds(current: Mode) -> Int =
+    match current with
+    | Work -> 1500
+    | Break -> 300
+
+reducer start on=ui.click(StartBtn) do=
+    running := true
+
+reducer pause on=ui.click(PauseBtn) do=
+    running := false
+
+reducer reset on=ui.click(ResetBtn) do=
+    remaining := modeSeconds(mode)
+    running := false
+
+reducer tick on=timer(1s) do=
+    if running then {
+        if remaining <= 1 then {
+            mode := nextMode(mode)
+            remaining := modeSeconds(mode)
+            emit toast({kind: "info", text: mode.show + " started"})
+        } else {
+            remaining := remaining - 1
+        }
+    }
+
+tile StartBtn = button(text="Start", disabled=running)
+tile PauseBtn = button(text="Pause", disabled=not running)
+tile ResetBtn = button(text="Reset")
+
+tile App = page(
+    heading("Pomodoro Timer"),
+    text("Mode: " + mode.show),
+    text("Remaining: " + remaining.show + " seconds"),
+    row(StartBtn, PauseBtn, ResetBtn))
+
+app Pomodoro
+    caps = [notification.show]
+    routes = {"/" -> App, "/404" -> App}

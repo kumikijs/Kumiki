@@ -9,20 +9,8 @@ import { describe, expect, it } from "vitest";
 // way learning-cost/summary.md scores them.
 const benchmarksDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "benchmarks");
 
-const KNOWN_BAD: Record<string, "parse" | readonly string[]> = {
-  "learning-cost/v3-issue-tracker/results/Gemini/output.kumiki": [
-    "E0103",
-    "E0213",
-    "E0234",
-    "W0212",
-  ],
-  "learning-cost/v3-issue-tracker/results/Codex/output.kumiki": ["E0128"],
-  "learning-cost/v4-project-management/results/Claude/output.kumiki": "parse",
-  // Still ✅ in summary.md, since W0219 is a warning: TaskDetailPage's second `| None` is the
-  // inner match's, so the outer match has no `None` arm.
-  "learning-cost/v4-project-management/results/Codex/output.kumiki": ["W0219"],
-  "learning-cost/v4-project-management/results/Gemini/output.kumiki": "parse",
-};
+// Every output of the current re-take checks clean. A future run that fails lists its file here.
+const KNOWN_BAD: Record<string, "parse" | readonly string[]> = {};
 
 // The workspace links under benchmarks/node_modules lead into other packages' fixtures.
 const SKIP_DIRS = new Set(["node_modules", ".turbo", "dist"]);

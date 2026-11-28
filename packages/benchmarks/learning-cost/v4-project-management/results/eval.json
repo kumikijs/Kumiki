@@ -1,24 +1,21 @@
 [
   {
     "path": "packages/benchmarks/learning-cost/v4-project-management/results/Claude/output.kumiki",
-    "chars": 39178,
-    "loc": 1029,
-    "cl100k": 9552,
-    "parse": false,
-    "typecheck": false,
-    "build": false,
+    "chars": 35751,
+    "loc": 986,
+    "cl100k": 10122,
+    "parse": true,
+    "typecheck": true,
+    "build": true,
     "errorCount": 0,
     "errorCategories": {},
-    "firstError": {
-      "stage": "parse",
-      "message": "Parse error at 201:20: Expected a definition keyword"
-    }
+    "firstError": null
   },
   {
     "path": "packages/benchmarks/learning-cost/v4-project-management/results/Codex/output.kumiki",
-    "chars": 32376,
-    "loc": 877,
-    "cl100k": 8703,
+    "chars": 32788,
+    "loc": 897,
+    "cl100k": 8644,
     "parse": true,
     "typecheck": true,
     "build": true,
@@ -28,17 +25,14 @@
   },
   {
     "path": "packages/benchmarks/learning-cost/v4-project-management/results/Gemini/output.kumiki",
-    "chars": 16517,
-    "loc": 294,
-    "cl100k": 4397,
-    "parse": false,
-    "typecheck": false,
-    "build": false,
+    "chars": 71908,
+    "loc": 1995,
+    "cl100k": 16598,
+    "parse": true,
+    "typecheck": true,
+    "build": true,
     "errorCount": 0,
     "errorCategories": {},
-    "firstError": {
-      "stage": "parse",
-      "message": "Parse error at 152:50: Expected op(:), got op(()"
-    }
+    "firstError": null
   }
 ]

@@ -1,152 +1,330 @@
+# Kanban Board SPA in Kumiki
+
+# --- Types ---
+
+type CardId = nominal Text
+
 type Column = Todo | Doing | Done
-type CardId = nominal Text where uuid
-type Card   = {id: CardId, title: Text, column: Column, createdAt: Time}
 
-slot cards : Map(CardId, Card) = {}
-slot draft : Text = ""
-
-theme KanbanTheme = {
-    colors: {
-        bg: "#f3f4f6",
-        fg: "#111827",
-        muted: "#6b7280",
-        primary: "#3b82f6",
-        surface: "#ffffff",
-        border: "#e5e7eb",
-        danger: "#ef4444"
-    },
-    spacing: {
-        xs: "4px", sm: "8px", md: "16px", lg: "24px"
-    },
-    radius: {
-        sm: "4px", md: "8px", lg: "16px"
-    },
-    typography: {
-        family: "system-ui, sans-serif",
-        size: {
-            sm: "14px", md: "16px", lg: "20px"
-        },
-        weight: {
-            normal: "400", bold: "700"
-        },
-        line-height: "1.5"
-    },
-    shadow: {
-        sm: "0 1px 2px rgba(0,0,0,0.1)",
-        md: "0 4px 6px rgba(0,0,0,0.1)"
-    },
-    breakpoints: {
-        sm: "640px", md: "768px", lg: "1024px", xl: "1280px"
-    }
+type Card = {
+    id: CardId,
+    title: Text,
+    column: Column,
+    createdAt: Time
 }
 
-effect saveCards cap=storage.write
-                 in=Map(CardId, Card)
-                 out=Result(Unit, Text)
-                 policy=debounce(300ms)
-                 map-request={key="kanban-cards", value=$1}
+# --- Slots ---
 
-effect loadCards cap=storage.read
-                 in=Unit
-                 out=Result(Option(Map(CardId, Card)), Text)
-                 policy=once
-                 map-request={key="kanban-cards", decode=Decoder.Json(Map(CardId, Card))}
+slot cards        : Map(CardId, Card)       = {}
+slot draft        : Text                    = ""
+slot storageError : Option(Text)  transient = None
 
-reducer boot
-    on=app.start
-    do= emit loadCards()
+# --- Effects ---
 
-reducer cardsLoaded
-    on=loadCards.ok($maybeMap, $key)
-    do= cards := $maybeMap.get-or({})
+effect loadCards
+    cap=storage.read
+    in=Unit
+    out=Result(Option(Map(CardId, Card)), Text)
+    policy=once
+    map-request={key: "kanban-cards", decode: Decoder.Json(Map(CardId, Card))}
 
-fn prevCol(c: Column) -> Column = match c with | Done -> Doing | Doing -> Todo | Todo -> Todo
-fn nextCol(c: Column) -> Column = match c with | Todo -> Doing | Doing -> Done | Done -> Done
+effect saveCards
+    cap=storage.write
+    in=Map(CardId, Card)
+    out=Result(Unit, Text)
+    policy=debounce(300ms)
+    map-request={key: "kanban-cards", value: $1}
 
-fn countInCol(allCards: Map(CardId, Card), col: Column) -> Int
-    = allCards.values.filter($1.column == col).length
+# --- Pure Functions ---
 
-fn cardsInCol(allCards: Map(CardId, Card), col: Column) -> List(CardId)
-    = allCards.entries.filter($2.column == col).sort-by($2.createdAt).map($1)
+fn columnLabel(col: Column) -> Text
+    = match col with
+        | Todo  -> "Todo"
+        | Doing -> "Doing"
+        | Done  -> "Done"
 
-tile LeftBtn   in=CardId = button(text="←") {cardId: $1, disabled: cards[$1].column == Todo}
-tile RightBtn  in=CardId = button(text="→") {cardId: $1, disabled: cards[$1].column == Done}
-tile DeleteBtn in=CardId = button(text="✕") {cardId: $1, color: "danger"}
+fn prevColumn(col: Column) -> Column
+    = match col with
+        | Todo  -> Todo
+        | Doing -> Todo
+        | Done  -> Doing
 
-tile CardUI in=CardId =
-    box(
-        column(
-            text(cards[$1].title) {weight: "bold"},
-            row(
-                LeftBtn($1),
-                RightBtn($1),
-                DeleteBtn($1)
-            ) {gap: "sm", justify: "between"}
-        ) {gap: "md"}
-    ) {bg: "surface", pad: "md", shadow: "sm", radius: "md"}
+fn nextColumn(col: Column) -> Column
+    = match col with
+        | Todo  -> Doing
+        | Doing -> Done
+        | Done  -> Done
 
-tile ColHeader in=Column =
-    heading((match $1 with | Todo -> "Todo" | Doing -> "Doing" | Done -> "Done") + " (" + countInCol(cards, $1).show + ")") {size: "lg"}
+fn isFirstColumn(col: Column) -> Bool
+    = match col with
+        | Todo  -> true
+        | Doing -> false
+        | Done  -> false
 
-tile ColumnUI in=Column =
-    column(
-        ColHeader($1),
-        column(
-            for id in cardsInCol(cards, $1)
-                CardUI(id) {key: id.show}
-        ) {gap: "sm"}
-    ) {gap: "md", pad: "md", bg: "bg", radius: "md"}
+fn isLastColumn(col: Column) -> Bool
+    = match col with
+        | Todo  -> false
+        | Doing -> false
+        | Done  -> true
 
-tile Board = grid(
-                 ColumnUI(Todo),
-                 ColumnUI(Doing),
-                 ColumnUI(Done)
-             ) {cols: 3, gap: "md", pad: "md"}
+fn cardTitle(cs: Map(CardId, Card), id: CardId) -> Text
+    = match cs.get(id) with
+        | Some(c) -> c.title
+        | None    -> ""
 
-tile NewCardForm = form(
-                       row(
-                           input(bind=draft, placeholder="New card..."),
-                           button(text="Add", type="submit") {disabled: draft.is-empty, bg: "primary", color: "surface"}
-                       ) {gap: "sm"}
-                   ) {pad: "md", bg: "surface", shadow: "sm"}
+fn cardColumn(cs: Map(CardId, Card), id: CardId) -> Column
+    = match cs.get(id) with
+        | Some(c) -> c.column
+        | None    -> Todo
 
-tile Home = page(
-                NewCardForm,
-                Board
-            ) {title: "Kanban Board", bg: "bg"}
+fn columnCards(cs: Map(CardId, Card), col: Column) -> List(CardId)
+    = cs.entries
+        .filter($2.column == col)
+        .sort-by($2.createdAt)
+        .map($1)
 
-tile NotFound = page(heading("Not Found"))
+fn columnCount(cs: Map(CardId, Card), col: Column) -> Int
+    = cs.filter($2.column == col).size
+
+# --- Reducers ---
 
 reducer addCard
     on=ui.submit(NewCardForm)
-    do= if not draft.is-empty
-        then {
+    do= let trimmed = draft.trim
+        if !trimmed.is-empty then {
             let id = CardId.fresh()
-            cards[id] := {id=id, title=draft, column=Todo, createdAt=now}
+            cards[id] := {id: id, title: trimmed, column: Todo, createdAt: now}
             draft := ""
             emit saveCards(cards)
         }
 
 reducer moveLeft
-    on=ui.click(LeftBtn)
-    do= cards[$el.cardId].column := prevCol(cards[$el.cardId].column)
-        emit saveCards(cards)
+    on=ui.click(MoveLeftBtn)
+    do= match cards.get($el.cardId) with
+          | Some(c) -> {
+              if c.column != Todo then {
+                  cards[$el.cardId].column := prevColumn(c.column)
+                  emit saveCards(cards)
+              }
+            }
 
 reducer moveRight
-    on=ui.click(RightBtn)
-    do= cards[$el.cardId].column := nextCol(cards[$el.cardId].column)
-        emit saveCards(cards)
+    on=ui.click(MoveRightBtn)
+    do= match cards.get($el.cardId) with
+          | Some(c) -> {
+              if c.column != Done then {
+                  cards[$el.cardId].column := nextColumn(c.column)
+                  emit saveCards(cards)
+              }
+            }
 
 reducer deleteCard
     on=ui.click(DeleteBtn)
-    do= cards := cards.remove($el.cardId)
-        emit saveCards(cards)
+    do= if cards.has($el.cardId) then {
+            cards := cards.remove($el.cardId)
+            emit saveCards(cards)
+        }
+
+reducer cardsLoaded
+    on=loadCards.ok($maybeCards, _)
+    do= cards := $maybeCards.get-or({})
+        storageError := None
+
+reducer cardsLoadFailed
+    on=loadCards.err($err, _)
+    do= storageError := Some($err)
+
+reducer cardsSaved
+    on=saveCards.ok(_, _)
+    do= storageError := None
+
+reducer cardsSaveFailed
+    on=saveCards.err($err, _)
+    do= storageError := Some($err)
+
+# --- Tiles ---
+
+tile NewCardForm
+    = form(
+        row(
+          input(bind=draft, placeholder="Add a new card...") {
+            w: "full",
+            pad: "sm",
+            radius: "sm"
+          },
+          button(text="Add", type="submit", disabled=draft.trim.is-empty) {
+            bg: "primary",
+            color: "bg",
+            pad-x: "md",
+            pad-y: "sm",
+            radius: "sm"
+          }
+        ) {gap: "sm", align: "center"}
+      )
+
+tile MoveLeftBtn in=CardId
+    = button(text="←", type="button", disabled=isFirstColumn(cardColumn(cards, $1))) {
+        cardId: $1,
+        aria-label: "Move card left",
+        bg: "surface",
+        color: "fg",
+        pad-x: "sm",
+        pad-y: "xs",
+        radius: "sm"
+      }
+
+tile MoveRightBtn in=CardId
+    = button(text="→", type="button", disabled=isLastColumn(cardColumn(cards, $1))) {
+        cardId: $1,
+        aria-label: "Move card right",
+        bg: "surface",
+        color: "fg",
+        pad-x: "sm",
+        pad-y: "xs",
+        radius: "sm"
+      }
+
+tile DeleteBtn in=CardId
+    = button(text="✕", type="button") {
+        cardId: $1,
+        aria-label: "Delete card",
+        bg: "danger",
+        color: "bg",
+        pad-x: "sm",
+        pad-y: "xs",
+        radius: "sm"
+      }
+
+tile CardItem in=CardId
+    = card(
+        column(
+          text(cardTitle(cards, $1)) {weight: "medium", color: "fg"},
+          row(
+            row(
+              MoveLeftBtn($1),
+              MoveRightBtn($1)
+            ) {gap: "xs"},
+            DeleteBtn($1)
+          ) {justify: "between", align: "center"}
+        ) {gap: "sm"}
+      ) {bg: "bg", pad: "md", radius: "md", shadow: "sm"}
+
+tile KanbanColumn in=Column
+    = panel(
+        column(
+          heading(fmt("{0} ({1})", columnLabel($1), columnCount(cards, $1)), level=2) {
+            size: "lg",
+            weight: "bold",
+            color: "fg"
+          },
+          divider(),
+          when(columnCount(cards, $1) == 0,
+            text("No cards") {color: "muted", size: "sm"}),
+          column(
+            for id in columnCards(cards, $1)
+              CardItem(id) {key: id.show}
+          ) {gap: "sm"}
+        ) {gap: "md"}
+      ) {bg: "surface", pad: "md", radius: "md"}
+
+tile KanbanBoard
+    = page(
+        column(
+          row(
+            heading("Kanban Board", level=1) {size: "xl", weight: "bold", color: "fg"},
+            text(fmt("{0} cards", cards.size)) {color: "muted", size: "sm"}
+          ) {justify: "between", align: "center"},
+          NewCardForm,
+          when(storageError.is-some,
+            box(
+              text(storageError.get-or("")) {color: "danger", size: "sm"}
+            ) {bg: "surface", pad: "sm", radius: "sm"}),
+          grid(
+            KanbanColumn(Todo),
+            KanbanColumn(Doing),
+            KanbanColumn(Done)
+          ) {cols: 3, gap: "md"}
+        ) {gap: "lg", pad: "lg", max-w: 1200}
+      )
+
+tile NotFound
+    = page(
+        column(
+          heading("404", level=1) {size: "xl", weight: "bold", color: "fg"},
+          text("Page not found") {color: "muted"},
+          link("Back to board", to="/") {color: "primary"}
+        ) {gap: "md", pad: "lg", align: "center"}
+      )
+
+# --- Theme ---
+
+theme KanbanTheme = {
+    colors: {
+        bg:      "#ffffff",
+        fg:      "#1a1a1a",
+        muted:   "#666666",
+        primary: "#0070f3",
+        success: "#0a7c2f",
+        warning: "#b07c00",
+        danger:  "#c4222a",
+        surface: "#f5f6f8",
+        border:  "#e0e4e8"
+    },
+    spacing: {
+        xs: "4px",
+        sm: "8px",
+        md: "16px",
+        lg: "24px",
+        xl: "40px"
+    },
+    radius: {
+        none: "0",
+        sm:   "4px",
+        md:   "8px",
+        lg:   "16px",
+        pill: "999px"
+    },
+    typography: {
+        family: "system-ui, sans-serif",
+        size: {
+            xs: "12px",
+            sm: "14px",
+            md: "16px",
+            lg: "20px",
+            xl: "28px"
+        },
+        weight: {
+            normal: "400",
+            medium: "500",
+            bold:   "700"
+        },
+        line-height: "1.5"
+    },
+    shadow: {
+        none: "none",
+        sm:   "0 1px 2px rgba(0,0,0,0.08)",
+        md:   "0 4px 8px rgba(0,0,0,0.1)",
+        lg:   "0 8px 24px rgba(0,0,0,0.15)"
+    },
+    breakpoints: {
+        sm: "640px",
+        md: "768px",
+        lg: "1024px",
+        xl: "1280px"
+    }
+}
+
+# --- App ---
 
 app KanbanApp
-    caps   = [storage.read, storage.write]
+    caps   = [storage.read, storage.write, nav.push]
     routes = {
-        "/"    -> Home,
+        "/"    -> KanbanBoard,
         "/404" -> NotFound
     }
     init   = [loadCards()]
     theme  = KanbanTheme
+    meta   = {
+        title:       "Kanban Board",
+        description: "Three-column Kanban board built with Kumiki"
+    }

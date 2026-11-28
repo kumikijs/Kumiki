@@ -5,12 +5,55 @@ type Status = Backlog | InProgress | Review | Done
 type Priority = Low | Med | High | Critical
 type ViewMode = ListView | BoardView
 type DueState = Overdue | Today | Soon | Upcoming | NoDue
-type Project = {id: ProjectId, name: Text, description: Text, color: Text, archived: Bool, createdAt: Time}
-type Task = {id: TaskId, projectId: ProjectId, title: Text, description: Text, status: Status, priority: Priority, assignee: Text, dueDate: Option(Time), tags: List(Text), parentTaskId: Option(TaskId), createdAt: Time, updatedAt: Time}
-type Comment = {id: CommentId, taskId: TaskId, author: Text, body: Text, createdAt: Time}
-type FilterState = {status: Option(Status), priority: Option(Priority), assignee: Text, search: Text}
+
+type Project = {
+    id: ProjectId,
+    name: Text,
+    description: Text,
+    color: Text,
+    archived: Bool,
+    createdAt: Time
+}
+
+type Task = {
+    id: TaskId,
+    projectId: ProjectId,
+    title: Text,
+    description: Text,
+    status: Status,
+    priority: Priority,
+    assignee: Text,
+    dueDate: Option(Time),
+    tags: List(Text),
+    parentTaskId: Option(TaskId),
+    createdAt: Time,
+    updatedAt: Time
+}
+
+type Comment = {
+    id: CommentId,
+    taskId: TaskId,
+    author: Text,
+    body: Text,
+    createdAt: Time
+}
+
+type FilterState = {
+    status: Option(Status),
+    priority: Option(Priority),
+    assignee: Text,
+    search: Text
+}
+
 type ProjectDraft = {name: Text, description: Text, color: Text}
-type TaskDraft = {title: Text, description: Text, priority: Priority, assignee: Text, tags: Text, dueDate: Text}
+type TaskDraft = {
+    title: Text,
+    description: Text,
+    priority: Priority,
+    assignee: Text,
+    tags: Text,
+    dueDate: Text
+}
 
 slot projects : Map(ProjectId, Project) = {}
 slot tasks : Map(TaskId, Task) = {}
@@ -18,52 +61,236 @@ slot comments : Map(CommentId, Comment) = {}
 slot viewMode : ViewMode = ListView
 slot filter : FilterState = {status: None, priority: None, assignee: "", search: ""}
 slot themeName : Text = "Light"
-slot draftProject : ProjectDraft = {name: "", description: "", color: "#2563eb"}
+slot draftProject : ProjectDraft = {name: "", description: "", color: "#635bff"}
 slot draftTask : TaskDraft = {title: "", description: "", priority: Med, assignee: "", tags: "", dueDate: ""}
 slot commentDraft : Text = ""
+slot commentAuthor : Text = "You"
+slot tagDraft : Text = ""
+slot subtaskDraft : Text = ""
 slot ready : Bool = false
+slot projectsLoaded : Bool = false
+slot tasksLoaded : Bool = false
+slot commentsLoaded : Bool = false
+
+theme Light = {
+    colors: {
+        bg: "#f7f8fc", fg: "#192033", surface: "#ffffff", muted: "#667085",
+        primary: "#635bff", border: "#e4e7ef", success: "#16815d",
+        warning: "#b96012", danger: "#c3334f"
+    },
+    spacing: {xs: "4px", sm: "8px", md: "16px", lg: "24px", xl: "40px"},
+    radius: {sm: "5px", md: "10px", lg: "16px", pill: "999px"},
+    typography: {
+        family: "system-ui, sans-serif",
+        size: {xs: "12px", sm: "14px", md: "16px", lg: "20px", xl: "28px"},
+        weight: {normal: "400", medium: "500", bold: "700"},
+        line-height: "1.5"
+    },
+    shadow: {sm: "0 1px 3px rgba(25,32,51,0.08)"}
+}
+
+theme Dark = {
+    colors: {
+        bg: "#10131d", fg: "#eef0f8", surface: "#1b2030", muted: "#a2abc0",
+        primary: "#aaa5ff", border: "#343b50", success: "#63cfa8",
+        warning: "#f1b76b", danger: "#ff8295"
+    },
+    spacing: {xs: "4px", sm: "8px", md: "16px", lg: "24px", xl: "40px"},
+    radius: {sm: "5px", md: "10px", lg: "16px", pill: "999px"},
+    typography: {
+        family: "system-ui, sans-serif",
+        size: {xs: "12px", sm: "14px", md: "16px", lg: "20px", xl: "28px"},
+        weight: {normal: "400", medium: "500", bold: "700"},
+        line-height: "1.5"
+    },
+    shadow: {sm: "0 1px 3px rgba(0,0,0,0.3)"}
+}
 
 effect saveProjects
     cap=storage.write
     in=Map(ProjectId, Project)
     out=Result(Unit, Text)
     policy=debounce(300ms)
-    map-request={key: "pm-projects-v4", value: $1}
+    map-request={key: "kumiki.projects", value: $1}
 
 effect saveTasks
     cap=storage.write
     in=Map(TaskId, Task)
     out=Result(Unit, Text)
     policy=debounce(300ms)
-    map-request={key: "pm-tasks-v4", value: $1}
+    map-request={key: "kumiki.tasks", value: $1}
 
 effect saveComments
     cap=storage.write
     in=Map(CommentId, Comment)
     out=Result(Unit, Text)
     policy=debounce(300ms)
-    map-request={key: "pm-comments-v4", value: $1}
+    map-request={key: "kumiki.comments", value: $1}
 
 effect loadProjects
     cap=storage.read
     in=Unit
     out=Result(Option(Map(ProjectId, Project)), Text)
     policy=once
-    map-request={key: "pm-projects-v4", decode: Decoder.Json(Map(ProjectId, Project))}
+    map-request={key: "kumiki.projects", decode: Decoder.Json(Map(ProjectId, Project))}
 
 effect loadTasks
     cap=storage.read
     in=Unit
     out=Result(Option(Map(TaskId, Task)), Text)
     policy=once
-    map-request={key: "pm-tasks-v4", decode: Decoder.Json(Map(TaskId, Task))}
+    map-request={key: "kumiki.tasks", decode: Decoder.Json(Map(TaskId, Task))}
 
 effect loadComments
     cap=storage.read
     in=Unit
     out=Result(Option(Map(CommentId, Comment)), Text)
     policy=once
-    map-request={key: "pm-comments-v4", decode: Decoder.Json(Map(CommentId, Comment))}
+    map-request={key: "kumiki.comments", decode: Decoder.Json(Map(CommentId, Comment))}
+
+fn tasksForProject(all: Map(TaskId, Task), projectId: ProjectId) -> List(TaskId)
+    = all.values.filter($1.projectId == projectId).sort-by($1.updatedAt).reverse.map($1.id)
+
+fn subtasksFor(all: Map(TaskId, Task), parentId: TaskId) -> List(TaskId)
+    = all.values.filter($1.parentTaskId == Some(parentId)).sort-by($1.createdAt).map($1.id)
+
+fn matchesTask(task: Task, criteria: FilterState) -> Bool
+    = (criteria.status == None || criteria.status == Some(task.status)) &&
+      (criteria.priority == None || criteria.priority == Some(task.priority)) &&
+      (criteria.assignee.trim.is-empty || task.assignee.lower.contains(criteria.assignee.trim.lower)) &&
+      (criteria.search.trim.is-empty || task.title.lower.contains(criteria.search.trim.lower) ||
+       task.description.lower.contains(criteria.search.trim.lower) ||
+       task.tags.join(" ").lower.contains(criteria.search.trim.lower))
+
+fn filteredTasks(all: Map(TaskId, Task), projectId: ProjectId, criteria: FilterState) -> List(TaskId)
+    = all.values.filter($1.projectId == projectId && matchesTask($1, criteria))
+        .sort-by($1.updatedAt).reverse.map($1.id)
+
+fn tasksByStatus(all: Map(TaskId, Task), projectId: ProjectId, criteria: FilterState, status: Status) -> List(TaskId)
+    = all.values.filter($1.projectId == projectId && $1.status == status && matchesTask($1, criteria))
+        .sort-by($1.updatedAt).reverse.map($1.id)
+
+fn commentsForTask(all: Map(CommentId, Comment), taskId: TaskId) -> List(CommentId)
+    = all.values.filter($1.taskId == taskId).sort-by($1.createdAt).map($1.id)
+
+fn statusLabel(status: Status) -> Text
+    = match status with
+        | Backlog -> "Backlog"
+        | InProgress -> "In progress"
+        | Review -> "In review"
+        | Done -> "Done"
+
+fn statusColor(status: Status) -> Text
+    = match status with
+        | Backlog -> "muted"
+        | InProgress -> "primary"
+        | Review -> "warning"
+        | Done -> "success"
+
+fn priorityLabel(priority: Priority) -> Text
+    = match priority with
+        | Low -> "Low"
+        | Med -> "Medium"
+        | High -> "High"
+        | Critical -> "Critical"
+
+fn priorityColor(priority: Priority) -> Text
+    = match priority with
+        | Low -> "muted"
+        | Med -> "primary"
+        | High -> "warning"
+        | Critical -> "danger"
+
+fn nextStatus(status: Status) -> Status
+    = match status with
+        | Backlog -> InProgress
+        | InProgress -> Review
+        | Review -> Done
+        | Done -> Done
+
+fn formatDate(date: Time) -> Text = date.format("yyyy-MM-dd")
+
+fn dueDateStatus(dueDate: Option(Time)) -> DueState
+    = match dueDate with
+        | None -> NoDue
+        | Some(date) ->
+            if formatDate(date) == formatDate(now) then Today
+            else if formatDate(date) < formatDate(now) then Overdue
+            else if formatDate(date) <= formatDate(now.plus(Duration.d(7))) then Soon
+            else Upcoming
+
+fn dueLabel(dueDate: Option(Time)) -> Text
+    = match dueDate with
+        | None -> "No due date"
+        | Some(date) -> formatDate(date)
+
+fn dueInputValue(dueDate: Option(Time)) -> Text
+    = match dueDate with
+        | None -> ""
+        | Some(date) -> formatDate(date)
+
+fn dueStateLabel(state: DueState) -> Text
+    = match state with
+        | Overdue -> "Overdue"
+        | Today -> "Today"
+        | Soon -> "Soon"
+        | Upcoming -> "Upcoming"
+        | NoDue -> "No due date"
+
+fn dueColor(state: DueState) -> Text
+    = match state with
+        | Overdue -> "danger"
+        | Today -> "warning"
+        | Soon -> "primary"
+        | Upcoming -> "muted"
+        | NoDue -> "muted"
+
+fn parseTags(value: Text) -> List(Text)
+    = value.split(",").map($1.trim).filter(!$1.is-empty).unique
+
+fn routeProjectId(current: Route) -> Option(ProjectId)
+    = ProjectId.parse(current.params.get-or("id", ""))
+
+fn routeTaskId(current: Route) -> Option(TaskId)
+    = TaskId.parse(current.params.get-or("taskId", ""))
+
+fn currentProject(current: Route, all: Map(ProjectId, Project)) -> Option(Project)
+    = routeProjectId(current).flat-map(all.get($1))
+
+fn currentTask(current: Route, all: Map(TaskId, Task)) -> Option(Task)
+    = routeTaskId(current).flat-map(all.get($1)).filter(Some($1.projectId) == routeProjectId(current))
+
+fn projectPath(id: ProjectId) -> Text = "/projects/" + id.show
+fn taskPath(projectId: ProjectId, taskId: TaskId) -> Text
+    = projectPath(projectId) + "/tasks/" + taskId.show
+
+fn taskInProject(all: Map(TaskId, Task), taskId: TaskId, projectId: ProjectId) -> Bool
+    = match all.get(taskId) with
+        | Some(task) -> task.projectId == projectId
+        | None -> false
+
+fn activeCount(all: Map(TaskId, Task), projectId: ProjectId) -> Int
+    = all.values.filter($1.projectId == projectId && $1.status != Done).length
+
+fn statusOptions() -> List({label: Text, value: Status})
+    = [{label: "Backlog", value: Backlog},
+       {label: "In progress", value: InProgress},
+       {label: "In review", value: Review},
+       {label: "Done", value: Done}]
+
+fn priorityOptions() -> List({label: Text, value: Priority})
+    = [{label: "Low", value: Low}, {label: "Medium", value: Med},
+       {label: "High", value: High}, {label: "Critical", value: Critical}]
+
+fn filterStatusOptions() -> List({label: Text, value: Option(Status)})
+    = [{label: "All statuses", value: None}, {label: "Backlog", value: Some(Backlog)},
+       {label: "In progress", value: Some(InProgress)}, {label: "In review", value: Some(Review)},
+       {label: "Done", value: Some(Done)}]
+
+fn filterPriorityOptions() -> List({label: Text, value: Option(Priority)})
+    = [{label: "All priorities", value: None}, {label: "Low", value: Some(Low)},
+       {label: "Medium", value: Some(Med)}, {label: "High", value: Some(High)},
+       {label: "Critical", value: Some(Critical)}]
 
 reducer loadAll
     on=app.start
@@ -71,225 +298,101 @@ reducer loadAll
         emit loadTasks()
         emit loadComments()
 
-reducer projectsLoaded
-    on=loadProjects.ok($maybeProjects, _)
-    do= projects := $maybeProjects.get-or({})
-
-reducer tasksLoaded
-    on=loadTasks.ok($maybeTasks, _)
-    do= tasks := $maybeTasks.get-or({})
-
-reducer commentsLoaded
-    on=loadComments.ok($maybeComments, _)
-    do= comments := $maybeComments.get-or({})
-        ready := true
+reducer projectsRestored
+    on=loadProjects.ok($value, _)
+    do= projects := $value.get-or({})
+        projectsLoaded := true
+        ready := projectsLoaded && tasksLoaded && commentsLoaded
 
 reducer projectsLoadFailed
-    on=loadProjects.err($err, _)
-    do= ready := true
+    on=loadProjects.err($error, _)
+    do= projectsLoaded := true
+        ready := projectsLoaded && tasksLoaded && commentsLoaded
+
+reducer tasksRestored
+    on=loadTasks.ok($value, _)
+    do= tasks := $value.get-or({})
+        tasksLoaded := true
+        ready := projectsLoaded && tasksLoaded && commentsLoaded
 
 reducer tasksLoadFailed
-    on=loadTasks.err($err, _)
-    do= ready := true
+    on=loadTasks.err($error, _)
+    do= tasksLoaded := true
+        ready := projectsLoaded && tasksLoaded && commentsLoaded
+
+reducer commentsRestored
+    on=loadComments.ok($value, _)
+    do= comments := $value.get-or({})
+        commentsLoaded := true
+        ready := projectsLoaded && tasksLoaded && commentsLoaded
 
 reducer commentsLoadFailed
-    on=loadComments.err($err, _)
-    do= ready := true
-
-fn statusLabel(s: Status) -> Text
-   = match s with
-       | Backlog -> "Backlog"
-       | InProgress -> "In Progress"
-       | Review -> "Review"
-       | Done -> "Done"
-
-fn statusColor(s: Status) -> Text
-   = match s with
-       | Backlog -> "muted"
-       | InProgress -> "primary"
-       | Review -> "warning"
-       | Done -> "success"
-
-fn priorityLabel(p: Priority) -> Text
-   = match p with
-       | Low -> "Low"
-       | Med -> "Medium"
-       | High -> "High"
-       | Critical -> "Critical"
-
-fn priorityColor(p: Priority) -> Text
-   = match p with
-       | Low -> "muted"
-       | Med -> "primary"
-       | High -> "warning"
-       | Critical -> "danger"
-
-fn formatDate(t: Time) -> Text
-   = t.format("yyyy-MM-dd")
-
-fn dueDateStatus(d: Option(Time)) -> DueState
-   = match d with
-       | None -> NoDue
-       | Some(t) -> if t < now then Overdue else if formatDate(t) == formatDate(now) then Today else if t < now.plus(Duration.d(7)) then Soon else Upcoming
-
-fn dueStateLabel(d: Option(Time)) -> Text
-   = match dueDateStatus(d) with
-       | Overdue -> "Overdue"
-       | Today -> "Today"
-       | Soon -> "Soon"
-       | Upcoming -> "Upcoming"
-       | NoDue -> "No due date"
-
-fn dueStateColor(d: Option(Time)) -> Text
-   = match dueDateStatus(d) with
-       | Overdue -> "danger"
-       | Today -> "warning"
-       | Soon -> "primary"
-       | Upcoming -> "muted"
-       | NoDue -> "muted"
-
-fn parseTags(text: Text) -> List(Text)
-   = text.split(",").map($1.trim).filter(!$1.is-empty).unique
-
-fn routeProjectId(r: Route) -> Option(ProjectId)
-   = ProjectId.parse(r.params.get-or("id", ""))
-
-fn routeTaskId(r: Route) -> Option(TaskId)
-   = TaskId.parse(r.params.get-or("taskId", ""))
-
-fn currentProject(r: Route, ps: Map(ProjectId, Project)) -> Option(Project)
-   = match routeProjectId(r) with
-       | Some(pid) -> ps.get(pid)
-       | None -> None
-
-fn tasksForProject(ts: Map(TaskId, Task), pid: ProjectId) -> List(TaskId)
-   = ts.entries.filter($2.projectId == pid).sort-by($2.updatedAt).reverse.map($1)
-
-fn subtasksFor(ts: Map(TaskId, Task), parentId: TaskId) -> List(TaskId)
-   = ts.entries.filter($2.parentTaskId == Some(parentId)).sort-by($2.updatedAt).reverse.map($1)
-
-fn taskMatchesFilter(t: Task, f: FilterState) -> Bool
-   = (f.status.is-none || t.status == f.status.get-or(t.status)) && (f.priority.is-none || t.priority == f.priority.get-or(t.priority)) && (f.assignee.trim.is-empty || t.assignee.lower.contains(f.assignee.lower)) && (f.search.trim.is-empty || t.title.lower.contains(f.search.lower) || t.description.lower.contains(f.search.lower) || t.tags.join(",").lower.contains(f.search.lower))
-
-fn filteredTasks(ts: Map(TaskId, Task), pid: ProjectId, f: FilterState) -> List(TaskId)
-   = ts.entries.filter($2.projectId == pid && taskMatchesFilter($2, f)).sort-by($2.updatedAt).reverse.map($1)
-
-fn tasksByStatus(ts: Map(TaskId, Task), pid: ProjectId, f: FilterState, s: Status) -> List(TaskId)
-   = filteredTasks(ts, pid, f).filter(ts[$1].status == s)
-
-fn commentsForTask(cs: Map(CommentId, Comment), tid: TaskId) -> List(CommentId)
-   = cs.entries.filter($2.taskId == tid).sort-by($2.createdAt).map($1)
-
-fn activeTaskCount(ts: Map(TaskId, Task), pid: ProjectId) -> Int
-   = ts.entries.filter($2.projectId == pid && $2.status != Done).map($1).length
-
-fn allTaskCount(ts: Map(TaskId, Task), pid: ProjectId) -> Int
-   = ts.entries.filter($2.projectId == pid).map($1).length
-
-fn nextStatus(s: Status) -> Status
-   = match s with
-       | Backlog -> InProgress
-       | InProgress -> Review
-       | Review -> Done
-       | Done -> Done
-
-fn parsedDraftDue(d: TaskDraft) -> Option(Time)
-   = if d.dueDate.trim.is-empty then None else Time.parse(d.dueDate.trim)
-
-fn taskPath(pid: ProjectId, tid: TaskId) -> Text
-   = "/projects/" + pid.show + "/tasks/" + tid.show
-
-fn projectPath(pid: ProjectId) -> Text
-   = "/projects/" + pid.show
-
-fn newTaskPath(pid: ProjectId) -> Text
-   = "/projects/" + pid.show + "/new-task"
-
-fn taskHasTag(t: Task, tag: Text) -> Bool
-   = t.tags.contains(tag)
-
-tile ProjectNameInput = input(bind=draftProject.name, type="text", placeholder="Project name", id="projectName", required=true)
-tile ProjectDescriptionInput = textarea(bind=draftProject.description, placeholder="Description", id="projectDescription") {rows: 3}
-tile ProjectColorInput = input(bind=draftProject.color, type="text", placeholder="#2563eb", id="projectColor")
-tile CreateProjectSubmit = button(text="Create project", type="submit", variant="primary")
-
-tile TaskTitleInput = input(bind=draftTask.title, type="text", placeholder="Task title", id="taskTitle", required=true)
-tile TaskDescriptionInput = textarea(bind=draftTask.description, placeholder="Describe the work", id="taskDescription") {rows: 5}
-tile TaskPriorityInput = select(bind=draftTask.priority, options=[{label: "Low", value: Low}, {label: "Medium", value: Med}, {label: "High", value: High}, {label: "Critical", value: Critical}], placeholder="Priority")
-tile TaskAssigneeInput = input(bind=draftTask.assignee, type="text", placeholder="Assignee", id="taskAssignee")
-tile TaskTagsInput = input(bind=draftTask.tags, type="text", placeholder="design, api, docs", id="taskTags")
-tile TaskDueDateInput = input(bind=draftTask.dueDate, type="date", id="taskDueDate")
-tile CreateTaskSubmit = button(text="Create task", type="submit", variant="primary")
-
-tile FilterStatusSelect = select(bind=filter.status, options=[{label: "Any status", value: None}, {label: "Backlog", value: Some(Backlog)}, {label: "In Progress", value: Some(InProgress)}, {label: "Review", value: Some(Review)}, {label: "Done", value: Some(Done)}], placeholder="Status")
-tile FilterPrioritySelect = select(bind=filter.priority, options=[{label: "Any priority", value: None}, {label: "Low", value: Some(Low)}, {label: "Medium", value: Some(Med)}, {label: "High", value: Some(High)}, {label: "Critical", value: Some(Critical)}], placeholder="Priority")
-tile FilterAssigneeInput = input(bind=filter.assignee, type="search", placeholder="Assignee")
-tile SearchInput = input(bind=filter.search, type="search", placeholder="Search tasks")
-tile ClearFilterBtn = button(text="Clear filters", variant="ghost")
-tile ListViewBtn = button(text="List", variant=if viewMode == ListView then "primary" else "ghost")
-tile BoardViewBtn = button(text="Board", variant=if viewMode == BoardView then "primary" else "ghost")
-tile ThemeToggleBtn = button(text=if themeName == "Light" then "Use dark theme" else "Use light theme", variant="primary")
-
-tile ArchiveProjectBtn in=ProjectId = button(text="Archive", variant="ghost") {projectId: $1}
-tile UnarchiveProjectBtn in=ProjectId = button(text="Unarchive", variant="ghost") {projectId: $1}
-tile DeleteProjectBtn in=ProjectId = button(text="Delete", variant="danger") {projectId: $1}
-tile DeleteTaskBtn in=TaskId = button(text="Delete task", variant="danger") {taskId: $1}
-tile MoveTaskBtn in=TaskId = button(text="Advance", variant="ghost") {taskId: $1}
-tile DeleteCommentBtn in=CommentId = button(text="Delete", variant="ghost") {commentId: $1}
-tile RemoveTagBtn in=Text = button(text="Remove", variant="ghost") {tag: $1}
-tile AddTagBtn in=TaskId = button(text="Add tag", variant="ghost") {taskId: $1}
-tile CommentInput = textarea(bind=commentDraft, placeholder="Add a comment", id="commentBody") {rows: 4}
-tile AddCommentBtn in=TaskId = button(text="Comment", variant="primary", disabled=commentDraft.trim.is-empty) {taskId: $1}
-tile TaskStatusSelect in=TaskId = select(value=tasks[$1].status, options=[{label: "Backlog", value: Backlog}, {label: "In Progress", value: InProgress}, {label: "Review", value: Review}, {label: "Done", value: Done}], placeholder="Status") {taskId: $1}
-tile TaskPrioritySelect in=TaskId = select(value=tasks[$1].priority, options=[{label: "Low", value: Low}, {label: "Medium", value: Med}, {label: "High", value: High}, {label: "Critical", value: Critical}], placeholder="Priority") {taskId: $1}
-tile TaskAssigneeEdit in=TaskId = input(value=tasks[$1].assignee, type="text", placeholder="Assignee") {taskId: $1}
-tile TaskDueDateEdit in=TaskId = input(value=tasks[$1].dueDate.map(formatDate($1)).get-or(""), type="date") {taskId: $1}
-tile TaskTitleEdit in=TaskId = input(value=tasks[$1].title, type="text", placeholder="Title") {taskId: $1}
-tile TaskDescriptionEdit in=TaskId = textarea(value=tasks[$1].description, placeholder="Description") {rows: 6, taskId: $1}
+    on=loadComments.err($error, _)
+    do= commentsLoaded := true
+        ready := projectsLoaded && tasksLoaded && commentsLoaded
 
 reducer createProject
     on=ui.submit(ProjectForm)
-    do= let id = ProjectId.fresh()
-        projects[id] := {id: id, name: draftProject.name.trim, description: draftProject.description.trim, color: draftProject.color.trim, archived: false, createdAt: now}
-        draftProject := {name: "", description: "", color: "#2563eb"}
-        emit saveProjects(projects)
-        emit navigate({path: "/projects/{id}", params: {"id": id.show}, query: {}})
+    do= if !draftProject.name.trim.is-empty then {
+            let id = ProjectId.fresh()
+            projects[id] := {
+                id: id,
+                name: draftProject.name.trim,
+                description: draftProject.description.trim,
+                color: draftProject.color,
+                archived: false,
+                createdAt: now
+            }
+            draftProject := {name: "", description: "", color: "#635bff"}
+            emit saveProjects(projects)
+            emit navigate({path: projectPath(id)})
+        }
 
 reducer archiveProject
-    on=ui.click(ArchiveProjectBtn)
+    on=ui.click(ArchiveButton)
     do= projects[$el.projectId].archived := true
         emit saveProjects(projects)
 
 reducer unarchiveProject
-    on=ui.click(UnarchiveProjectBtn)
+    on=ui.click(UnarchiveButton)
     do= projects[$el.projectId].archived := false
         emit saveProjects(projects)
 
 reducer deleteProject
-    on=ui.click(DeleteProjectBtn)
-    do= projects := projects.remove($el.projectId)
-        for tid in tasks.entries.filter($2.projectId == $el.projectId).map($1) {
-            tasks := tasks.remove(tid)
-        }
-        for cid in comments.entries.filter(!tasks.has($2.taskId)).map($1) {
-            comments := comments.remove(cid)
-        }
-        emit saveProjects(projects)
-        emit saveTasks(tasks)
+    on=ui.click(DeleteProjectButton)
+    do= comments := comments.filter(!taskInProject(tasks, $2.taskId, $el.projectId))
+        tasks := tasks.filter($2.projectId != $el.projectId)
+        projects := projects.remove($el.projectId)
         emit saveComments(comments)
-        emit navigate({path: "/", params: {}, query: {}})
+        emit saveTasks(tasks)
+        emit saveProjects(projects)
 
 reducer createTask
-    on=ui.submit(NewTaskForm)
+    on=ui.submit(TaskForm)
     do= match routeProjectId(route) with
-          | Some(pid) -> {
-              let id = TaskId.fresh()
-              tasks[id] := {id: id, projectId: pid, title: draftTask.title.trim, description: draftTask.description.trim, status: Backlog, priority: draftTask.priority, assignee: draftTask.assignee.trim, dueDate: parsedDraftDue(draftTask), tags: parseTags(draftTask.tags), parentTaskId: None, createdAt: now, updatedAt: now}
-              draftTask := {title: "", description: "", priority: Med, assignee: "", tags: "", dueDate: ""}
-              emit saveTasks(tasks)
-              emit navigate({path: "/projects/{id}/tasks/{taskId}", params: {"id": pid.show, "taskId": id.show}, query: {}})
+        | Some(projectId) -> {
+            if projects.has(projectId) && !draftTask.title.trim.is-empty then {
+                let id = TaskId.fresh()
+                tasks[id] := {
+                    id: id,
+                    projectId: projectId,
+                    title: draftTask.title.trim,
+                    description: draftTask.description.trim,
+                    status: Backlog,
+                    priority: draftTask.priority,
+                    assignee: draftTask.assignee.trim,
+                    dueDate: Time.parse(draftTask.dueDate.trim),
+                    tags: parseTags(draftTask.tags),
+                    parentTaskId: None,
+                    createdAt: now,
+                    updatedAt: now
+                }
+                draftTask := {title: "", description: "", priority: Med, assignee: "", tags: "", dueDate: ""}
+                emit saveTasks(tasks)
+                emit navigate({path: taskPath(projectId, id)})
             }
-          | None -> ()
+        }
+        | None -> ()
 
 reducer updateTaskStatus
     on=ui.change(TaskStatusSelect)
@@ -304,74 +407,115 @@ reducer updateTaskPriority
         emit saveTasks(tasks)
 
 reducer updateTaskAssignee
-    on=ui.input(TaskAssigneeEdit)
+    on=ui.change(TaskAssigneeInput)
     do= tasks[$el.taskId].assignee := $event.value
         tasks[$el.taskId].updatedAt := now
         emit saveTasks(tasks)
 
 reducer updateTaskDueDate
-    on=ui.change(TaskDueDateEdit)
-    do= tasks[$el.taskId].dueDate := if $event.value.trim.is-empty then None else Time.parse($event.value)
+    on=ui.change(TaskDueInput)
+    do= tasks[$el.taskId].dueDate := Time.parse($event.value)
         tasks[$el.taskId].updatedAt := now
         emit saveTasks(tasks)
 
 reducer updateTaskTitle
-    on=ui.input(TaskTitleEdit)
-    do= tasks[$el.taskId].title := $event.value
-        tasks[$el.taskId].updatedAt := now
-        emit saveTasks(tasks)
+    on=ui.change(TaskTitleInput)
+    do= if !$event.value.trim.is-empty then {
+            tasks[$el.taskId].title := $event.value.trim
+            tasks[$el.taskId].updatedAt := now
+            emit saveTasks(tasks)
+        }
 
 reducer updateTaskDescription
-    on=ui.input(TaskDescriptionEdit)
+    on=ui.change(TaskDescriptionInput)
     do= tasks[$el.taskId].description := $event.value
         tasks[$el.taskId].updatedAt := now
         emit saveTasks(tasks)
 
 reducer addTaskTag
-    on=ui.click(AddTagBtn)
-    do= if draftTask.tags.trim.is-empty then () else {
-            tasks[$el.taskId].tags := tasks[$el.taskId].tags.concat(parseTags(draftTask.tags)).unique
-            tasks[$el.taskId].updatedAt := now
-            draftTask := draftTask.copy(tags="")
-            emit saveTasks(tasks)
+    on=ui.submit(TagForm)
+    do= match currentTask(route, tasks) with
+        | Some(task) -> {
+            if !tagDraft.trim.is-empty then {
+                tasks[task.id].tags := tasks[task.id].tags.concat(parseTags(tagDraft)).unique
+                tasks[task.id].updatedAt := now
+                tagDraft := ""
+                emit saveTasks(tasks)
+            }
         }
+        | None -> ()
 
 reducer removeTaskTag
-    on=ui.click(RemoveTagBtn)
-    do= match routeTaskId(route) with
-          | Some(tid) -> {
-              tasks[tid].tags := tasks[tid].tags.filter($1 != $el.tag)
-              tasks[tid].updatedAt := now
-              emit saveTasks(tasks)
-            }
-          | None -> ()
+    on=ui.click(RemoveTagButton)
+    do= tasks[$el.taskId].tags := tasks[$el.taskId].tags.filter($1 != $el.tag)
+        tasks[$el.taskId].updatedAt := now
+        emit saveTasks(tasks)
 
 reducer deleteTask
-    on=ui.click(DeleteTaskBtn)
-    do= let pid = tasks[$el.taskId].projectId
-        tasks := tasks.remove($el.taskId)
-        for cid in comments.entries.filter($2.taskId == $el.taskId).map($1) {
-            comments := comments.remove(cid)
+    on=ui.click(DeleteTaskButton)
+    do= match currentTask(route, tasks) with
+        | Some(task) -> {
+            comments := comments.filter($2.taskId != task.id)
+            tasks := tasks.remove(task.id).map(if $2.parentTaskId == Some(task.id) then $2.copy(parentTaskId=None) else $2)
+            emit saveComments(comments)
+            emit saveTasks(tasks)
+            emit navigate({path: projectPath(task.projectId)})
         }
-        emit saveTasks(tasks)
-        emit saveComments(comments)
-        emit navigate({path: "/projects/{id}", params: {"id": pid.show}, query: {}})
+        | None -> ()
 
 reducer moveTaskStatus
-    on=ui.click(MoveTaskBtn)
+    on=ui.click(MoveTaskButton)
     do= tasks[$el.taskId].status := nextStatus(tasks[$el.taskId].status)
         tasks[$el.taskId].updatedAt := now
         emit saveTasks(tasks)
 
+reducer createSubtask
+    on=ui.submit(SubtaskForm)
+    do= match currentTask(route, tasks) with
+        | Some(parent) -> {
+            if !subtaskDraft.trim.is-empty then {
+                let id = TaskId.fresh()
+                tasks[id] := {
+                    id: id,
+                    projectId: parent.projectId,
+                    title: subtaskDraft.trim,
+                    description: "",
+                    status: Backlog,
+                    priority: Med,
+                    assignee: "",
+                    dueDate: None,
+                    tags: [],
+                    parentTaskId: Some(parent.id),
+                    createdAt: now,
+                    updatedAt: now
+                }
+                subtaskDraft := ""
+                emit saveTasks(tasks)
+            }
+        }
+        | None -> ()
+
 reducer addComment
-    on=ui.click(AddCommentBtn)
-    do= let id = CommentId.fresh()
-        comments[id] := {id: id, taskId: $el.taskId, author: "You", body: commentDraft.trim, createdAt: now}
-        commentDraft := ""
-        emit saveComments(comments)
+    on=ui.submit(CommentForm)
+    do= match currentTask(route, tasks) with
+        | Some(task) -> {
+            if !commentDraft.trim.is-empty then {
+                let id = CommentId.fresh()
+                comments[id] := {
+                    id: id,
+                    taskId: task.id,
+                    author: if commentAuthor.trim.is-empty then "You" else commentAuthor.trim,
+                    body: commentDraft.trim,
+                    createdAt: now
+                }
+                commentDraft := ""
+                emit saveComments(comments)
+            }
+        }
+        | None -> ()
 
 reducer deleteComment
-    on=ui.click(DeleteCommentBtn)
+    on=ui.click(DeleteCommentButton)
     do= comments := comments.remove($el.commentId)
         emit saveComments(comments)
 
@@ -392,475 +536,355 @@ reducer setSearch
     do= filter.search := $event.value
 
 reducer clearFilter
-    on=ui.click(ClearFilterBtn)
+    on=ui.click(ClearFilterButton)
     do= filter := {status: None, priority: None, assignee: "", search: ""}
 
-reducer setViewModeList
-    on=ui.click(ListViewBtn)
-    do= viewMode := ListView
-
-reducer setViewModeBoard
-    on=ui.click(BoardViewBtn)
-    do= viewMode := BoardView
+reducer setViewMode
+    on=ui.click(ViewButton)
+    do= viewMode := $el.mode
 
 reducer toggleTheme
-    on=ui.click(ThemeToggleBtn)
+    on=ui.click(ThemeButton)
     do= themeName := if themeName == "Light" then "Dark" else "Light"
 
-tile ProjectForm
-    = form(
-        column(
-              label(text="Name") {for: "projectName"},
-          ProjectNameInput,
-          error(field=draftProject.name),
-              label(text="Description") {for: "projectDescription"},
-          ProjectDescriptionInput,
-              label(text="Color") {for: "projectColor"},
-          ProjectColorInput,
-          CreateProjectSubmit
-        ) {gap: "sm"}
-      ) {pad: "md", bg: "surface", radius: "md"}
+tile Header = row(
+    link("KUMIKI / WORKSPACE", to="/") {color: "primary", weight: "bold"},
+    row(
+        link("Projects", to="/"),
+        link("Settings", to="/settings")
+    ) {gap: "lg", align: "center"}
+) {pad: "lg", align: "center", justify: "between", bg: "surface"}
 
-tile ProjectCard in=ProjectId
-    = card(
-        column(
-          row(
-            box() {w: 12, h: 12, radius: "pill", style: {"background": projects[$1].color}},
-            link(to=projectPath($1)) {text: projects[$1].name},
-            text(if projects[$1].archived then "Archived" else "Active") {color: if projects[$1].archived then "muted" else "success"}
-          ) {gap: "sm", align: "center", justify: "between"},
-          text(projects[$1].description) {color: "muted"},
-          row(
-            text(activeTaskCount(tasks, $1).show + " active"),
-            text(allTaskCount(tasks, $1).show + " total")
-          ) {gap: "md"},
-          row(
-            if projects[$1].archived then UnarchiveProjectBtn($1) else ArchiveProjectBtn($1),
-            DeleteProjectBtn($1)
-          ) {gap: "sm"}
-        ) {gap: "sm"}
-      ) {pad: "md", bg: "surface", radius: "md"}
+tile LoadingScreen = page(
+    Header,
+    column(spinner(size="md"), text("Loading your workspace..."))
+        {pad: "xl", gap: "md", align: "center"}
+) {bg: "bg", color: "fg"}
 
-tile ProjectList
-    = column(
-        for pid in projects.entries.sort-by($2.createdAt).reverse.map($1)
-          ProjectCard(pid) {key: pid.show}
-      ) {gap: "md"}
+tile ProjectForm = form(
+    column(
+        heading("Create a project", level=2) {size: "lg"},
+        label("Project name", for="project-name"),
+        input(bind=draftProject.name, id="project-name", placeholder="e.g. Product launch", required=true),
+        label("Description", for="project-description"),
+        textarea(bind=draftProject.description, id="project-description", placeholder="What are you working towards?", rows=3),
+        label("Color", for="project-color"),
+        input(bind=draftProject.color, id="project-color", type="color"),
+        button(text="Create project", type="submit") {bg: "primary"}
+    ) {gap: "sm", pad: "lg", bg: "surface", radius: "md", shadow: "sm"}
+)
 
-tile ProjectsPage
-    = page(
-        column(
-          TopNav,
-          divider(),
-          column(
-            row(
-              column(
-                heading("Projects") {level: 1},
-                text("Plan work, group tasks, and keep delivery visible.") {color: "muted"}
-              ) {gap: "xs"},
-              link(to="/settings") {text: "Settings"}
-            ) {justify: "between", align: "center"},
-            grid(
-              ProjectForm,
-              if ready then ProjectList else spinner() {size: "lg"}
-            ) {cols: {base: 1, lg: 2}, gap: "lg"}
-          ) {gap: "lg"}
-        ) {gap: "lg", pad: {base: "md", lg: "xl"}}
-      ) {title: "Projects"}
+tile ArchiveButton in=ProjectId = button(text="Archive") {projectId: $1}
+tile UnarchiveButton in=ProjectId = button(text="Unarchive") {projectId: $1}
+tile DeleteProjectButton in=ProjectId = button(text="Delete") {projectId: $1, color: "danger"}
 
-tile TopNav
-    = row(
-        link(to="/") {text: "Kumiki PM"},
-        link(to="/settings") {text: "Settings"}
-      ) {justify: "between", align: "center"}
-
-tile FilterBar
-    = panel(
+tile ProjectCard in=ProjectId = card(
+    column(
         row(
-          SearchInput,
-          FilterStatusSelect,
-          FilterPrioritySelect,
-          FilterAssigneeInput,
-          ClearFilterBtn
-        ) {gap: "sm", align: "center", wrap: true}
-      ) {pad: "md", bg: "surface", radius: "md"}
-
-tile ViewSwitch
-    = row(ListViewBtn, BoardViewBtn) {gap: "xs", align: "center"}
-
-tile TaskTag in=Text
-    = text($1) {size: "xs", color: "primary", bg: "surface", pad-x: "sm", pad-y: "xs", radius: "pill"}
-
-tile TaskCard in=TaskId
-    = card(
-        column(
-          row(
-            link(to=taskPath(tasks[$1].projectId, $1)) {text: tasks[$1].title},
-            text(priorityLabel(tasks[$1].priority)) {color: priorityColor(tasks[$1].priority)}
-          ) {justify: "between", align: "center"},
-          text(tasks[$1].description) {color: "muted"},
-          row(
-            text(statusLabel(tasks[$1].status)) {color: statusColor(tasks[$1].status)},
-            text(if tasks[$1].assignee.trim.is-empty then "Unassigned" else tasks[$1].assignee),
-            text(dueStateLabel(tasks[$1].dueDate)) {color: dueStateColor(tasks[$1].dueDate)}
-          ) {gap: "md", wrap: true},
-          row(
-            for tag in tasks[$1].tags
-              TaskTag(tag) {key: tag}
-          ) {gap: "xs", wrap: true},
-          row(MoveTaskBtn($1)) {justify: "end"}
+            link(projects[$1].name, to=projectPath($1)) {size: "lg", weight: "bold"},
+            when(projects[$1].archived, text("Archived") {color: "muted", size: "sm"})
+        ) {justify: "between", gap: "sm"},
+        text(projects[$1].description) {color: "muted"},
+        text(activeCount(tasks, $1).show + " active tasks") {size: "sm"},
+        row(
+            if projects[$1].archived then UnarchiveButton($1) else ArchiveButton($1),
+            DeleteProjectButton($1)
         ) {gap: "sm"}
-      ) {pad: "md", bg: "surface", radius: "md"}
+    ) {gap: "md"}
+) {pad: "lg", bg: "surface", radius: "md", shadow: "sm",
+   style: {border-left: "4px solid " + projects[$1].color}}
 
-tile TaskList in=ProjectId
-    = column(
-        for tid in filteredTasks(tasks, $1, filter)
-          TaskCard(tid) {key: tid.show}
-      ) {gap: "md"}
-
-tile BoardColumnBacklog in=ProjectId
-    = panel(
-        column(
-          row(
-            heading(statusLabel(Backlog)) {level: 3},
-            text(tasksByStatus(tasks, $1, filter, Backlog).length.show) {color: "muted"}
-          ) {justify: "between", align: "center"},
-          for tid in tasksByStatus(tasks, $1, filter, Backlog)
-            TaskCard(tid) {key: tid.show}
-        ) {gap: "sm"}
-      ) {pad: "md", bg: "bg", radius: "md"}
-
-tile BoardColumnInProgress in=ProjectId
-    = panel(
-        column(
-          row(
-            heading(statusLabel(InProgress)) {level: 3},
-            text(tasksByStatus(tasks, $1, filter, InProgress).length.show) {color: "muted"}
-          ) {justify: "between", align: "center"},
-          for tid in tasksByStatus(tasks, $1, filter, InProgress)
-            TaskCard(tid) {key: tid.show}
-        ) {gap: "sm"}
-      ) {pad: "md", bg: "bg", radius: "md"}
-
-tile BoardColumnReview in=ProjectId
-    = panel(
-        column(
-          row(
-            heading(statusLabel(Review)) {level: 3},
-            text(tasksByStatus(tasks, $1, filter, Review).length.show) {color: "muted"}
-          ) {justify: "between", align: "center"},
-          for tid in tasksByStatus(tasks, $1, filter, Review)
-            TaskCard(tid) {key: tid.show}
-        ) {gap: "sm"}
-      ) {pad: "md", bg: "bg", radius: "md"}
-
-tile BoardColumnDone in=ProjectId
-    = panel(
-        column(
-          row(
-            heading(statusLabel(Done)) {level: 3},
-            text(tasksByStatus(tasks, $1, filter, Done).length.show) {color: "muted"}
-          ) {justify: "between", align: "center"},
-          for tid in tasksByStatus(tasks, $1, filter, Done)
-            TaskCard(tid) {key: tid.show}
-        ) {gap: "sm"}
-      ) {pad: "md", bg: "bg", radius: "md"}
-
-tile TaskBoard in=ProjectId
-    = grid(
-        BoardColumnBacklog($1),
-        BoardColumnInProgress($1),
-        BoardColumnReview($1),
-        BoardColumnDone($1)
-      ) {cols: {base: 1, md: 2, xl: 4}, gap: "md"}
-
-tile ProjectPage
-    = match currentProject(route, projects) with
-        | Some(p) -> page(
+tile ProjectsContent = page(
+    Header,
+    column(
+        row(
             column(
-              TopNav,
-              divider(),
-              column(
-                row(
-                  column(
-                    heading(p.name) {level: 1},
-                    text(p.description) {color: "muted"}
-                  ) {gap: "xs"},
-                  row(
-                    link(to=newTaskPath(p.id)) {text: "New task"},
-                    ViewSwitch
-                  ) {gap: "sm", align: "center"}
-                ) {justify: "between", align: "center"},
-                FilterBar,
-                match viewMode with
-                  | ListView -> TaskList(p.id)
-                  | BoardView -> TaskBoard(p.id)
-              ) {gap: "lg"}
-            ) {gap: "lg", pad: {base: "md", lg: "xl"}}
-          ) {title: p.name}
-        | None -> NotFound
-
-tile NewTaskForm in=ProjectId
-    = form(
-        column(
-          label(text="Title") {for: "taskTitle"},
-          TaskTitleInput,
-          error(field=draftTask.title),
-          label(text="Description") {for: "taskDescription"},
-          TaskDescriptionInput,
-          grid(
-            column(label(text="Priority"), TaskPriorityInput) {gap: "xs"},
-            column(label(text="Assignee") {for: "taskAssignee"}, TaskAssigneeInput) {gap: "xs"},
-            column(label(text="Due date") {for: "taskDueDate"}, TaskDueDateInput) {gap: "xs"},
-            column(label(text="Tags") {for: "taskTags"}, TaskTagsInput) {gap: "xs"}
-          ) {cols: {base: 1, md: 2}, gap: "md"},
-          row(CreateTaskSubmit, link(to=projectPath($1)) {text: "Cancel"}) {gap: "sm"}
-        ) {gap: "md"}
-      ) {pad: "md", bg: "surface", radius: "md"}
-
-tile NewTaskPage
-    = match currentProject(route, projects) with
-        | Some(p) -> page(
-            column(
-              TopNav,
-              divider(),
-              column(
-                row(
-                  column(
-                    heading("New task") {level: 1},
-                    text("Project: " + p.name) {color: "muted"}
-                  ) {gap: "xs"},
-                  link(to=projectPath(p.id)) {text: "Back"}
-                ) {justify: "between", align: "center"},
-                NewTaskForm(p.id)
-              ) {gap: "lg"}
-            ) {gap: "lg", pad: {base: "md", lg: "xl"}}
-          ) {title: "New task"}
-        | None -> NotFound
-
-tile TaskEditor in=TaskId
-    = column(
-        TaskTitleEdit($1),
-        TaskDescriptionEdit($1),
+                text("YOUR WORKSPACE") {size: "xs", color: "primary", weight: "bold"},
+                heading("Projects") {size: "xl"},
+                text("Bring your team's work together.") {color: "muted"}
+            ) {gap: "xs"},
+            link("Settings", to="/settings")
+        ) {justify: "between", align: "center"},
+        ProjectForm,
+        heading("All projects", level=2) {size: "lg"},
+        when(projects.is-empty,
+            text("No projects yet. Create one to get started.") {color: "muted"}),
         grid(
-          column(label(text="Status"), TaskStatusSelect($1)) {gap: "xs"},
-          column(label(text="Priority"), TaskPrioritySelect($1)) {gap: "xs"},
-          column(label(text="Assignee"), TaskAssigneeEdit($1)) {gap: "xs"},
-          column(label(text="Due date"), TaskDueDateEdit($1)) {gap: "xs"}
-        ) {cols: {base: 1, md: 2}, gap: "md"},
-        row(DeleteTaskBtn($1)) {justify: "end"}
-      ) {gap: "md"}
+            for id in projects.keys
+                ProjectCard(id) {key: id.show}
+        ) {cols: 2, gap: "md"}
+    ) {pad: "xl", gap: "lg"}
+) {bg: "bg", color: "fg"}
 
-tile TagEditor in=TaskId
-    = panel(
-        column(
-          heading("Tags") {level: 3},
-          row(
+tile ProjectsPage = if ready then ProjectsContent else LoadingScreen
+
+tile ViewButton in=ViewMode = button(
+    text=if $1 == ListView then "List" else "Board"
+) {mode: $1, color: if viewMode == $1 then "primary" else "muted"}
+
+tile FilterStatusSelect = select(value=filter.status, options=filterStatusOptions())
+tile FilterPrioritySelect = select(value=filter.priority, options=filterPriorityOptions())
+tile FilterAssigneeInput = input(value=filter.assignee, placeholder="Assignee")
+tile SearchInput = input(value=filter.search, type="search", placeholder="Search tasks")
+tile ClearFilterButton = button(text="Clear filters")
+
+tile FilterBar = column(
+    text("FILTERS") {size: "xs", color: "muted", weight: "bold"},
+    row(
+        SearchInput,
+        FilterStatusSelect,
+        FilterPrioritySelect,
+        FilterAssigneeInput,
+        ClearFilterButton
+    ) {gap: "sm", wrap: true, align: "center"}
+) {gap: "sm", pad: "md", bg: "surface", radius: "md"}
+
+tile MoveTaskButton in=TaskId = button(text="Move forward", disabled=tasks[$1].status == Done)
+    {taskId: $1}
+
+tile TaskCard in=TaskId = card(
+    column(
+        link(tasks[$1].title, to=taskPath(tasks[$1].projectId, $1)) {weight: "bold"},
+        row(
+            text(statusLabel(tasks[$1].status)) {color: statusColor(tasks[$1].status), size: "sm"},
+            text(priorityLabel(tasks[$1].priority)) {color: priorityColor(tasks[$1].priority), size: "sm"}
+        ) {gap: "md", wrap: true},
+        text(if tasks[$1].assignee.is-empty then "Unassigned" else tasks[$1].assignee)
+            {color: "muted", size: "sm"},
+        text(dueLabel(tasks[$1].dueDate) + " · " + dueStateLabel(dueDateStatus(tasks[$1].dueDate)))
+            {color: dueColor(dueDateStatus(tasks[$1].dueDate)), size: "sm"},
+        row(
             for tag in tasks[$1].tags
-              row(text(tag), RemoveTagBtn(tag)) {gap: "xs", key: tag, taskId: $1}
-          ) {gap: "sm", wrap: true},
-          row(TaskTagsInput, AddTagBtn($1)) {gap: "sm", align: "center"}
-        ) {gap: "sm"}
-      ) {pad: "md", bg: "surface", radius: "md"}
+                text(tag) {key: tag, color: "primary", size: "xs"}
+        ) {gap: "sm", wrap: true}
+    ) {gap: "sm"}
+) {pad: "md", bg: "surface", radius: "md", shadow: "sm"}
 
-tile SubtaskList in=TaskId
-    = panel(
+tile BoardCard in=TaskId = column(
+    TaskCard($1),
+    MoveTaskButton($1)
+) {gap: "xs"}
+
+tile TaskList in=ProjectId = column(
+    when(filteredTasks(tasks, $1, filter).is-empty,
+        text("No tasks match these filters.") {color: "muted"}),
+    for id in filteredTasks(tasks, $1, filter)
+        TaskCard(id) {key: id.show}
+) {gap: "sm"}
+
+tile BoardColumn in={projectId: ProjectId, status: Status} = column(
+    row(
+        heading(statusLabel($1.status), level=3) {size: "md", color: statusColor($1.status)},
+        text(tasksByStatus(tasks, $1.projectId, filter, $1.status).length.show) {color: "muted"}
+    ) {justify: "between", align: "center"},
+    when(tasksByStatus(tasks, $1.projectId, filter, $1.status).is-empty,
+        text("No tasks") {color: "muted", size: "sm"}),
+    for id in tasksByStatus(tasks, $1.projectId, filter, $1.status)
+        BoardCard(id) {key: id.show}
+) {gap: "sm", pad: "md", bg: "bg", radius: "md"}
+
+tile TaskBoard in=ProjectId = grid(
+    BoardColumn({projectId: $1, status: Backlog}),
+    BoardColumn({projectId: $1, status: InProgress}),
+    BoardColumn({projectId: $1, status: Review}),
+    BoardColumn({projectId: $1, status: Done})
+) {cols: 4, gap: "md"}
+
+tile ProjectContent in=Project = page(
+    Header,
+    column(
+        link("← All projects", to="/") {color: "muted"},
+        row(
+            column(
+                text(if $1.archived then "ARCHIVED PROJECT" else "PROJECT") {color: "primary", size: "xs"},
+                heading($1.name) {size: "xl"},
+                text($1.description) {color: "muted"}
+            ) {gap: "xs"},
+            link("+ New task", to=projectPath($1.id) + "/new-task") {color: "primary", weight: "bold"}
+        ) {justify: "between", align: "center", gap: "md"},
+        row(ViewButton(ListView), ViewButton(BoardView)) {gap: "sm"},
+        FilterBar,
+        if viewMode == ListView then TaskList($1.id) else TaskBoard($1.id)
+    ) {pad: "xl", gap: "lg"}
+) {bg: "bg", color: "fg"}
+
+tile ProjectReady = match currentProject(route, projects) with
+    | Some(project) -> ProjectContent(project)
+    | None -> NotFound
+
+tile ProjectPage = if ready then ProjectReady else LoadingScreen
+
+tile TaskForm = form(
+    column(
+        heading("New task", level=2) {size: "lg"},
+        label("Title", for="new-title"),
+        input(bind=draftTask.title, id="new-title", placeholder="What needs to be done?", required=true),
+        label("Description", for="new-description"),
+        textarea(bind=draftTask.description, id="new-description", rows=5, placeholder="Add details"),
+        label("Priority", for="new-priority"),
+        select(bind=draftTask.priority, id="new-priority", options=priorityOptions()),
+        label("Assignee", for="new-assignee"),
+        input(bind=draftTask.assignee, id="new-assignee", placeholder="Name"),
+        label("Tags", for="new-tags"),
+        input(bind=draftTask.tags, id="new-tags", placeholder="Design, launch, research"),
+        label("Due date", for="new-due"),
+        input(bind=draftTask.dueDate, id="new-due", type="date"),
+        button(text="Create task", type="submit") {bg: "primary"}
+    ) {gap: "sm", pad: "lg", bg: "surface", radius: "md", shadow: "sm"}
+)
+
+tile NewTaskContent in=Project = page(
+    Header,
+    column(
+        link("← Back to " + $1.name, to=projectPath($1.id)) {color: "muted"},
+        heading("Create a task") {size: "xl"},
+        TaskForm
+    ) {pad: "xl", gap: "lg"}
+) {bg: "bg", color: "fg"}
+
+tile NewTaskReady = match currentProject(route, projects) with
+    | Some(project) -> NewTaskContent(project)
+    | None -> NotFound
+
+tile NewTaskPage = if ready then NewTaskReady else LoadingScreen
+
+tile TaskTitleInput in=TaskId = input(value=tasks[$1].title, aria-label="Task title") {taskId: $1}
+tile TaskDescriptionInput in=TaskId = textarea(value=tasks[$1].description, rows=5, aria-label="Description") {taskId: $1}
+tile TaskStatusSelect in=TaskId = select(value=tasks[$1].status, options=statusOptions()) {taskId: $1}
+tile TaskPrioritySelect in=TaskId = select(value=tasks[$1].priority, options=priorityOptions()) {taskId: $1}
+tile TaskAssigneeInput in=TaskId = input(value=tasks[$1].assignee, placeholder="Unassigned") {taskId: $1}
+tile TaskDueInput in=TaskId = input(value=dueInputValue(tasks[$1].dueDate), type="date") {taskId: $1}
+tile DeleteTaskButton = button(text="Delete task") {color: "danger"}
+
+tile RemoveTagButton in={taskId: TaskId, tag: Text} = button(text="Remove " + $1.tag)
+    {taskId: $1.taskId, tag: $1.tag}
+
+tile TagForm = form(
+    row(
+        input(bind=tagDraft, placeholder="Add tags, separated by commas", aria-label="New tags"),
+        button(text="Add tags", type="submit")
+    ) {gap: "sm"}
+)
+
+tile TaskTags in=TaskId = column(
+    heading("Tags", level=3) {size: "md"},
+    when(tasks[$1].tags.is-empty, text("No tags") {color: "muted", size: "sm"}),
+    row(
+        for tag in tasks[$1].tags
+            RemoveTagButton({taskId: $1, tag: tag}) {key: tag}
+    ) {gap: "sm", wrap: true},
+    TagForm
+) {gap: "sm"}
+
+tile SubtaskForm = form(
+    row(
+        input(bind=subtaskDraft, placeholder="Add a subtask", aria-label="Subtask title"),
+        button(text="Add subtask", type="submit")
+    ) {gap: "sm"}
+)
+
+tile Subtasks in=TaskId = column(
+    heading("Subtasks", level=2) {size: "lg"},
+    when(subtasksFor(tasks, $1).is-empty, text("No subtasks yet.") {color: "muted"}),
+    for id in subtasksFor(tasks, $1)
+        TaskCard(id) {key: id.show},
+    SubtaskForm
+) {gap: "sm", pad: "lg", bg: "surface", radius: "md"}
+
+tile DeleteCommentButton in=CommentId = button(text="Delete") {commentId: $1, color: "danger"}
+
+tile CommentCard in=CommentId = card(
+    column(
+        row(
+            text(comments[$1].author) {weight: "bold"},
+            text(formatDate(comments[$1].createdAt)) {color: "muted", size: "sm"},
+            DeleteCommentButton($1)
+        ) {gap: "md", align: "center"},
+        text(comments[$1].body)
+    ) {gap: "sm"}
+) {pad: "md", bg: "bg", radius: "sm"}
+
+tile CommentForm = form(
+    column(
+        label("Your name", for="comment-author"),
+        input(bind=commentAuthor, id="comment-author"),
+        label("Comment", for="comment-body"),
+        textarea(bind=commentDraft, id="comment-body", rows=3, placeholder="Write a comment...", required=true),
+        button(text="Post comment", type="submit") {bg: "primary"}
+    ) {gap: "sm"}
+)
+
+tile CommentSection in=TaskId = column(
+    heading("Comments", level=2) {size: "lg"},
+    when(commentsForTask(comments, $1).is-empty, text("No comments yet.") {color: "muted"}),
+    for id in commentsForTask(comments, $1)
+        CommentCard(id) {key: id.show},
+    CommentForm
+) {gap: "md", pad: "lg", bg: "surface", radius: "md"}
+
+tile TaskDetailContent in=Task = page(
+    Header,
+    column(
+        link("← Back to project", to=projectPath($1.projectId)) {color: "muted"},
         column(
-          heading("Subtasks") {level: 3},
-          for tid in subtasksFor(tasks, $1)
-            TaskCard(tid) {key: tid.show},
-          when(subtasksFor(tasks, $1).is-empty, text("No subtasks yet.") {color: "muted"})
-        ) {gap: "sm"}
-      ) {pad: "md", bg: "surface", radius: "md"}
+            row(
+                heading("Task details", level=1) {size: "xl"},
+                DeleteTaskButton
+            ) {justify: "between", align: "center"},
+            label("Title"),
+            TaskTitleInput($1.id),
+            label("Description"),
+            TaskDescriptionInput($1.id),
+            grid(
+                column(label("Status"), TaskStatusSelect($1.id)) {gap: "xs"},
+                column(label("Priority"), TaskPrioritySelect($1.id)) {gap: "xs"},
+                column(label("Assignee"), TaskAssigneeInput($1.id)) {gap: "xs"},
+                column(label("Due date"), TaskDueInput($1.id)) {gap: "xs"}
+            ) {cols: 2, gap: "md"},
+            text(dueStateLabel(dueDateStatus($1.dueDate))) {color: dueColor(dueDateStatus($1.dueDate)), size: "sm"},
+            TaskTags($1.id),
+            text("Created " + formatDate($1.createdAt) + " · Updated " + formatDate($1.updatedAt))
+                {color: "muted", size: "xs"}
+        ) {gap: "md", pad: "lg", bg: "surface", radius: "md", shadow: "sm"},
+        Subtasks($1.id),
+        CommentSection($1.id)
+    ) {pad: "xl", gap: "lg"}
+) {bg: "bg", color: "fg"}
 
-tile CommentCard in=CommentId
-    = card(
+tile TaskDetailReady = match currentTask(route, tasks) with
+    | Some(task) -> TaskDetailContent(task)
+    | None -> NotFound
+
+tile TaskDetailPage = if ready then TaskDetailReady else LoadingScreen
+
+tile ThemeButton = button(text=if themeName == "Light" then "Switch to dark" else "Switch to light")
+
+tile SettingsPage = page(
+    Header,
+    column(
+        link("← Projects", to="/") {color: "muted"},
+        heading("Settings") {size: "xl"},
         column(
-          row(
-            text(comments[$1].author) {bold: true},
-            text(formatDate(comments[$1].createdAt)) {color: "muted"},
-            DeleteCommentBtn($1)
-          ) {gap: "sm", justify: "between", align: "center"},
-          text(comments[$1].body)
-        ) {gap: "xs"}
-      ) {pad: "md", bg: "bg", radius: "md"}
+            heading("Appearance", level=2) {size: "lg"},
+            text("Current theme: " + themeName) {color: "muted"},
+            ThemeButton
+        ) {gap: "md", pad: "lg", bg: "surface", radius: "md"}
+    ) {pad: "xl", gap: "lg"}
+) {bg: "bg", color: "fg"}
 
-tile CommentsPanel in=TaskId
-    = panel(
-        column(
-          heading("Comments") {level: 3},
-          for cid in commentsForTask(comments, $1)
-            CommentCard(cid) {key: cid.show},
-          when(commentsForTask(comments, $1).is-empty, text("No comments yet.") {color: "muted"}),
-          CommentInput,
-          row(AddCommentBtn($1)) {justify: "end"}
-        ) {gap: "sm"}
-      ) {pad: "md", bg: "surface", radius: "md"}
+tile NotFound = page(
+    Header,
+    column(
+        text("404") {color: "primary", weight: "bold"},
+        heading("Page not found") {size: "xl"},
+        text("This project or task could not be found.") {color: "muted"},
+        link("Back to projects", to="/")
+    ) {pad: "xl", gap: "md"}
+) {bg: "bg", color: "fg"}
 
-tile TaskDetailPage
-    = match routeTaskId(route) with
-        | Some(tid) -> match tasks.get(tid) with
-            | Some(t) -> page(
-                column(
-                  TopNav,
-                  divider(),
-                  column(
-                    row(
-                      link(to=projectPath(t.projectId)) {text: "Back to project"},
-                      text(statusLabel(t.status)) {color: statusColor(t.status)}
-                    ) {justify: "between", align: "center"},
-                    TaskEditor(tid),
-                    TagEditor(tid),
-                    SubtaskList(tid),
-                    CommentsPanel(tid)
-                  ) {gap: "lg"}
-                ) {gap: "lg", pad: {base: "md", lg: "xl"}}
-              ) {title: t.title}
-            | None -> NotFound
-        | None -> NotFound
-
-tile SettingsPage
-    = page(
-        column(
-          TopNav,
-          divider(),
-          column(
-            heading("Settings") {level: 1},
-            panel(
-              column(
-                text("Theme") {bold: true},
-                text("Current theme: " + themeName) {color: "muted"},
-                ThemeToggleBtn
-              ) {gap: "sm"}
-            ) {pad: "md", bg: "surface", radius: "md"}
-          ) {gap: "lg"}
-        ) {gap: "lg", pad: {base: "md", lg: "xl"}}
-      ) {title: "Settings"}
-
-tile NotFound
-    = page(
-        column(
-          TopNav,
-          divider(),
-          column(
-            heading("404") {level: 1},
-            text("The requested project or task could not be found.") {color: "muted"},
-            link(to="/") {text: "Go to projects"}
-          ) {gap: "md", align: "start"}
-        ) {gap: "lg", pad: {base: "md", lg: "xl"}}
-      ) {title: "Not found"}
-
-theme Light = {
-    colors: {
-        bg: "#f8fafc",
-        fg: "#0f172a",
-        muted: "#64748b",
-        primary: "#2563eb",
-        success: "#15803d",
-        warning: "#b45309",
-        danger: "#dc2626",
-        surface: "#ffffff",
-        border: "#e2e8f0"
-    },
-    spacing: {
-        xs: "4px",
-        sm: "8px",
-        md: "16px",
-        lg: "24px",
-        xl: "40px"
-    },
-    radius: {
-        none: "0",
-        sm: "4px",
-        md: "8px",
-        pill: "999px"
-    },
-    typography: {
-        family: "Inter, system-ui, sans-serif",
-        size: {
-            xs: "12px",
-            sm: "14px",
-            md: "16px",
-            lg: "20px",
-            xl: "28px"
-        },
-        weight: {
-            normal: "400",
-            medium: "500",
-            bold: "700"
-        },
-        line-height: "1.5"
-    },
-    shadow: {
-        none: "none",
-        sm: "0 1px 2px rgba(15,23,42,0.08)",
-        md: "0 8px 24px rgba(15,23,42,0.12)"
-    },
-    breakpoints: {
-        sm: "640px",
-        md: "768px",
-        lg: "1024px",
-        xl: "1280px"
-    }
-}
-
-theme Dark = {
-    colors: {
-        bg: "#111827",
-        fg: "#f9fafb",
-        muted: "#9ca3af",
-        primary: "#60a5fa",
-        success: "#34d399",
-        warning: "#fbbf24",
-        danger: "#f87171",
-        surface: "#1f2937",
-        border: "#374151"
-    },
-    spacing: {
-        xs: "4px",
-        sm: "8px",
-        md: "16px",
-        lg: "24px",
-        xl: "40px"
-    },
-    radius: {
-        none: "0",
-        sm: "4px",
-        md: "8px",
-        pill: "999px"
-    },
-    typography: {
-        family: "Inter, system-ui, sans-serif",
-        size: {
-            xs: "12px",
-            sm: "14px",
-            md: "16px",
-            lg: "20px",
-            xl: "28px"
-        },
-        weight: {
-            normal: "400",
-            medium: "500",
-            bold: "700"
-        },
-        line-height: "1.5"
-    },
-    shadow: {
-        none: "none",
-        sm: "0 1px 2px rgba(0,0,0,0.35)",
-        md: "0 8px 24px rgba(0,0,0,0.45)"
-    },
-    breakpoints: {
-        sm: "640px",
-        md: "768px",
-        lg: "1024px",
-        xl: "1280px"
-    }
-}
-
-app ProjectManagementApp
-    caps = [storage.read, storage.write, nav.push, nav.replace]
-    routes = {
+app ProjectManagement
+    caps=[storage.read, storage.write, nav.push]
+    routes={
         "/" -> ProjectsPage,
         "/projects/:id" -> ProjectPage,
         "/projects/:id/tasks/:taskId" -> TaskDetailPage,
@@ -868,9 +892,5 @@ app ProjectManagementApp
         "/settings" -> SettingsPage,
         "/404" -> NotFound
     }
-    init = []
-    theme = themeName
-    meta = {
-        title: "Kumiki Project Management",
-        description: "Project and task management SPA"
-    }
+    init=[]
+    theme=themeName

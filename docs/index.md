@@ -26,7 +26,7 @@ features:
   - title: Easy for AI to edit in parts
     details: Each definition is independent and references are explicit. The CLI and MCP server provide per-definition list / view / add / replace / fix.
   - title: Measured ease of learning
-    details: Cross-vendor (Claude / Codex / Gemini) — mid-size apps (~600 LOC) build from the spec alone in a single pass; larger ones still need an edit loop.
+    details: Measured on Claude, Codex and Gemini — from the spec alone, in a single pass, apps up to ~1,000 lines build and run.
     link: /guide/benchmarks
     linkText: See the benchmarks
   - title: Answers everything with working examples

@@ -1,12 +1,11 @@
-# Pomodoro Timer
+type Mode    = Work | Break
+type Seconds = Int where between(0, 1500)
 
-type Mode = Work | Break
+slot remaining : Seconds = 1500
+slot mode      : Mode    = Work
+slot running   : Bool    = false
 
-slot remaining : Int  = 1500
-slot mode      : Mode = Work
-slot running   : Bool = false
-
-fn maxFor(m: Mode) -> Int
+fn duration(m: Mode) -> Int
    = match m with
        | Work  -> 1500
        | Break -> 300
@@ -21,6 +20,18 @@ fn modeLabel(m: Mode) -> Text
        | Work  -> "Work"
        | Break -> "Break"
 
+fn pad2(n: Int) -> Text = if n < 10 then "0" + n.show else n.show
+
+fn formatTime(s: Int) -> Text = pad2((s / 60).floor) + ":" + pad2(s % 60)
+
+reducer tick
+    on=timer(1s)
+    do= if running && (remaining <= 1) then {
+          let next = nextMode(mode)
+          mode := next
+          remaining := duration(next)
+        } else if running then remaining := remaining - 1
+
 reducer start
     on=ui.click(StartBtn)
     do= running := true
@@ -31,26 +42,19 @@ reducer pause
 
 reducer reset
     on=ui.click(ResetBtn)
-    do= remaining := maxFor(mode)
+    do= remaining := duration(mode)
         running := false
 
-reducer tick
-    on=timer(1s, name=pomodoro)
-    do= if running
-        then if remaining <= 1
-             then { mode := nextMode(mode); remaining := maxFor(nextMode(mode)) }
-             else remaining := remaining - 1
-        else ()
-
-tile StartBtn = button(text="Start", onClick=start)
-tile PauseBtn = button(text="Pause", onClick=pause)
-tile ResetBtn = button(text="Reset", onClick=reset)
+tile StartBtn = button(text="Start", disabled=running)
+tile PauseBtn = button(text="Pause", disabled=!running)
+tile ResetBtn = button(text="Reset")
 
 tile App = page(
-             heading("Pomodoro"),
-             text("Mode: " + modeLabel(mode)),
-             text("Remaining: " + remaining.show + "s"),
-             row(StartBtn, PauseBtn, ResetBtn) {gap: "sm"})
+             column(
+               heading(modeLabel(mode)),
+               text(formatTime(remaining)),
+               text(remaining.show + " sec"),
+               row(StartBtn, PauseBtn, ResetBtn) {gap: "sm"}) {gap: "md"})
 
 app Pomodoro
     caps   = []

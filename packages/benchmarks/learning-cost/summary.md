@@ -5,71 +5,75 @@ Kumiki spec + the task spec**, can write a `.kumiki` program that **parses,
 typechecks, and builds**, in a **single pass**. LOC / token counts are recorded
 for token-efficiency.
 
-The committed `results/*/eval.json` were generated in the old **"Strand"** era
-(pre-rename, an earlier compiler). This re-take refreshes them against the
-current toolchain across three vendors **under one protocol**.
-
-> **Re-scored against the current compiler.** The *same*
-> single-pass model outputs are re-evaluated against the patched compiler. The
-> `error` built-in tile now builds, which flips **Codex's v3 and v4 from
-> build-fail to build-green** — Codex now builds all three tasks it attempted,
-> including the ~880-LOC v4. The remaining failures (v3 Gemini, v4 Claude, v4
-> Gemini) are genuine authoring errors the spec documents as *intentionally*
-> rejected — the toolchain is correctly refusing them, not gapping.
->
-> **Re-scored again when E0128 `value-as-child` landed.** Codex's v3 writes its
-> `Shell` tile's `Text` input as a child, `column(HeaderBar, $1)`. A value in a
-> child position renders nothing, and `check` used to accept it; it is now
-> E0128, so **Codex's v3 flips from build-green to typecheck-fail**. `Shell` is
-> never called, so the app itself rendered the same either way.
+This is the second cross-vendor re-take: all three vendors, all four tasks, on
+current models, against the current spec and compiler. The previous re-take's
+results (Claude Opus 4.8 sub-agents, Codex v0.125, Gemini via agy's default
+model) are in this file's git history.
 
 ## Protocol (uniform — single pass, spec only)
 
-- **Inputs**: each version's `task-spec.md` + `docs/spec/*.md` only. The worked
-  example apps under `packages/examples/apps/` (esp. `04-issue-tracker`,
-  `05-project-management`, which mirror v3/v4) were **off-limits** — reading them
-  is copying the answer, not measuring learning cost.
+- **Inputs**: each version's `task-spec.md` + `docs/spec/*.md` only, copied into
+  a fresh temporary workspace that holds nothing else — no `packages/examples/`
+  (whose `04-issue-tracker` and `05-project-management` mirror v3/v4), no
+  compiler, no `node_modules`. The prompts (`vN-*/codex-prompt.txt`, also used
+  for Claude with its own output path, and `gemini-prompt.txt`) point at that
+  workspace.
 - **Single pass**: write from spec once; **no `check`/`build`/`smoke` loop**, no
   scratch compiles. The author never sees a compiler error before submitting.
-  Verification (the table below) is run *afterward* by the harness.
-- **Claude** — Opus 4.8, each task written by a **fresh isolated sub-agent** with
-  no prior session context (see "Fairness note").
-- **Codex** — `codex exec --full-auto` (v0.125).
-- **Gemini** — `agy --print` (antigravity-cli), run in an isolated temp workspace
-  (spec + task-spec only). agy writes to its SQLite conversation store, not
-  stdout; outputs were extracted from there.
+  Verification (the table below) is run *afterward* by the harness. With no
+  compiler in the workspace the rule is enforced, not only asked for; the
+  session records confirm it (Claude had no shell; Codex's commands only read
+  files; Gemini's sessions made only `read_file` calls).
+- **Reasoning effort is `high` for all three.** It is part of the result: a
+  first Codex pass ran at `low`, its CLI's configured default, and built only v2
+  and v3 (its v4 was 287 lines). Those outputs were replaced.
+- **Claude** — Claude Code 2.1.332, `claude -p --model opus` (Claude Opus 5.5,
+  effort `high` from the user settings), tools limited to `Read Write Glob Grep`,
+  one fresh session per task. It loads
+  the user-level `CLAUDE.md`, which holds generic coding rules and nothing about
+  Kumiki.
+- **Codex** — codex-cli 0.172.0 (`gpt-6.1-terra`),
+  `codex exec -s workspace-write -c model_reasoning_effort="high"`, one task at a time: four concurrent runs
+  could not start the Windows sandbox and ended having read nothing.
+- **Gemini** — agy 1.5.18, `agy --model gemini-4-neon-high --sandbox --print` (the `high` variant),
+  one task at a time; the code is taken from between the prompt's
+  `===KUMIKI_BEGIN===` / `===KUMIKI_END===` markers on stdout.
 
 ## Results
 
 | Task | Vendor | LOC | chars | cl100k | parse | typecheck | build | first error |
 |---|---|---:|---:|---:|:--:|:--:|:--:|---|
-| v1 Pomodoro | Claude | 59 | 1,347 | 384 | ✅ | ✅ | ✅ | — |
-| v2 Kanban | Claude | 178 | 5,291 | 1,421 | ✅ | ✅ | ✅ | — |
-| v2 Kanban | Codex | 243 | 6,517 | 1,881 | ✅ | ✅ | ✅ | — |
-| v2 Kanban | Gemini | 152 | 4,591 | 1,314 | ✅ | ✅ | ✅ | — |
-| v3 Issue Tracker | Claude | 629 | 23,915 | 5,325 | ✅ | ✅ | ✅ | — |
-| v3 Issue Tracker | Codex | 674 | 23,210 | 6,417 | ✅ | ❌ | ❌ | typecheck E0128: `$1` as a child of `column` (×1) |
-| v3 Issue Tracker | Gemini | 440 | 20,270 | 4,995 | ✅ | ❌ | ❌ | typecheck E0103: `$1` w/o `in=` (×23) |
-| v4 Project Mgmt | Claude | 1029 | 39,178 | 9,552 | ❌ | ❌ | ❌ | parse @201:20 (literal match pattern) |
-| v4 Project Mgmt | Codex | 877 | 32,376 | 8,703 | ✅ | ✅ | ✅ | — |
-| v4 Project Mgmt | Gemini | 294 | 16,517 | 4,397 | ❌ | ❌ | ❌ | parse @152:50 (tile call in props block) |
+| v1 Pomodoro | Claude | 63 | 1,543 | 439 | ✅ | ✅ | ✅ | — |
+| v1 Pomodoro | Codex | 51 | 1,269 | 341 | ✅ | ✅ | ✅ | — |
+| v1 Pomodoro | Gemini | 69 | 2,077 | 609 | ✅ | ✅ | ✅ | — |
+| v2 Kanban | Claude | 188 | 5,492 | 1,624 | ✅ | ✅ | ✅ | — |
+| v2 Kanban | Codex | 200 | 5,659 | 1,611 | ✅ | ✅ | ✅ | — |
+| v2 Kanban | Gemini | 331 | 8,192 | 2,323 | ✅ | ✅ | ✅ | — |
+| v3 Issue Tracker | Claude | 864 | 26,705 | 7,482 | ✅ | ✅ | ✅ | — |
+| v3 Issue Tracker | Codex | 772 | 23,345 | 6,143 | ✅ | ✅ | ✅ | — |
+| v3 Issue Tracker | Gemini | 1,460 | 45,224 | 10,353 | ✅ | ✅ | ✅ | — |
+| v4 Project Mgmt | Claude | 986 | 35,751 | 10,122 | ✅ | ✅ | ✅ | — |
+| v4 Project Mgmt | Codex | 897 | 32,788 | 8,644 | ✅ | ✅ | ✅ | — |
+| v4 Project Mgmt | Gemini | 1,995 | 71,908 | 16,598 | ✅ | ✅ | ✅ | — |
+
+Every output that builds also passes `kumiki smoke`: it mounts, renders, and
+survives the generic interaction pass without a runtime error.
 
 ### Reading the table
 
-- **Build-green, single pass**: Claude 3/4 (v1–v3), Codex 2/3 (v2, v4), Gemini 1/3.
-- **Codex is the only vendor to build v4** (~880 LOC) in one pass. The `error`-tile
-  codegen gap had blocked
-  its v3 and v4; with it fixed both built, until E0128 refused v3's one value
-  written as a child — a single diagnostic in 674 lines.
-- **Claude leads on smaller tasks but parse-fails v4** — it used a literal `match`
-  pattern, which is *not* supported (stated in `language.md`).
-- **Token efficiency** (v2, the one task all three build): Gemini 1,314 <
-  Claude 1,421 < Codex 1,881 tokens.
-- **Degradation with scale**: Gemini builds v2 → typecheck-fails v3 → parse-fails
-  v4. Claude holds through v3 then parse-fails v4. **Codex builds v4** — the most
-  robust at scale — but trips one rule at v3.
+- **Build-green, single pass: 12/12.** Every vendor builds every task, up to the
+  ~1,000-line v4, and every output also passes `smoke`. The previous re-take had
+  every vendor fail at least one of v3 / v4.
+- **Effort matters as much as the model.** The same Codex model at `low` failed
+  v1 (it listed `timer` as a capability, E0302) and v4 (one double write, E0601,
+  in a 287-line program for a task that asks for 800–1,500). At `high` it builds
+  both, and its v4 is 897 lines.
+- **Size varies more than correctness.** For v3 Codex writes 772 lines, Claude
+  864, Gemini 1,460; for v4 Gemini writes about twice the tokens of the others. A
+  build-green output says the program is legal and runs, not that it covers the
+  task spec.
 
-## Fairness note (why this is a re-take of the re-take)
+## Fairness note (why the first re-take was itself re-taken)
 
 The **first** Claude column reported 4/4 builds. That was **not a fair
 measurement** and was discarded: it was written inline by the main session,
@@ -80,29 +84,33 @@ session. Re-running Claude as **fresh isolated sub-agents under the same
 single-pass, no-check, spec-only protocol as Codex/Gemini** drops it to **3/4**
 (v4 parse-fails) — consistent with the vendors struggling at v4 scale.
 
-## Gaps surfaced by the benchmark (both fixed)
+## Gaps surfaced by the first re-take (both fixed)
 
-The re-take surfaced two real defects, now resolved:
+The first re-take surfaced two real defects, now resolved. The outputs it
+describes have since been replaced by this re-take's.
+
 
 - **Documented tiles that crashed at build.** Codex's v3/v4 failed `build` on `Tile "error" not found`.
   The `error` tile (and `code`/`video`/`list`/`table`/`modal`/`drawer`/`tooltip`/
   `popover`/`toast`/`progress`) was documented in `stdlib.md` and accepted by
   `check`, but missing from codegen — accept-then-crash-at-build. **Fixed**: all
-  built-in tiles are now single-sourced and implemented, so Codex v3/v4 build
-  (v3 has since failed again on E0128 — see the note at the top).
+  built-in tiles are now single-sourced and implemented.
 - **Under-specified rules models reliably got wrong.** The three remaining failures each hit a rule the
   spec stated only by example: a literal `match` pattern (Claude v4), `$1` in a
   tile with no `in=` (Gemini v3), and a tile call inside the `{}` props block
   (Gemini v4). **Fixed**: `language.md` now states each rule, with
-  counterexamples and an E0103 `in=` hint. These outputs still fail — correctly,
-  because the constructs are illegal by design.
+  counterexamples and an E0103 `in=` hint. None of the three recurs in this
+  re-take.
 
 ## Notes
 
 - **v1 S1/S2/S3** (zero/one/few-shot) are not reproduced — they measure a
   cold-context single pass under different prompting strategies that an
-  interactive agent cannot honestly simulate. v1 has no vendor columns.
-- **agy quirks**: writes answers to `~/.gemini/antigravity-cli/conversations/*.db`
-  (not stdout); large outputs truncate at the default 5-minute `--print-timeout`;
-  runs are non-deterministic (v4 took 3 attempts). Prompts:
-  `learning-cost/v{2,3,4}-*/gemini-prompt.txt`.
+  interactive agent cannot honestly simulate. v1 is run like the other tasks,
+  from prompts derived from v2's.
+- **One run per cell.** Model output is non-deterministic, so a single ✅ or ❌
+  is a sample, not a rate.
+- **Scoring**: `pnpm --filter @kumikijs/benchmarks eval <files>` writes the rows
+  of `results/eval.json`, with repository-relative paths.
+  `packages/tests/src/benchmark-corpus.test.ts` re-checks every output against
+  the current compiler; it pins any output that fails (none in this re-take).

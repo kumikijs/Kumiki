@@ -19,7 +19,7 @@ benchmarks/
 └── learning-cost/          # Can an LLM write Kumiki from the spec alone?
     ├── summary.md          #   cross-vendor results + methodology (read this)
     ├── eval.mjs            #   scores one .kumiki file: parse / typecheck / build + LOC / tokens
-    ├── v1-pomodoro/        #   ~90 LOC   (Claude only)
+    ├── v1-pomodoro/        #   ~60 LOC
     ├── v2-kanban/          #   ~200 LOC
     ├── v3-issue-tracker/   #   ~600 LOC
     └── v4-project-management/  # ~1000 LOC
@@ -82,6 +82,6 @@ Each `vN-*/` task gives a model only its `task-spec.md` + `docs/spec/` and asks 
 pnpm --filter @kumikijs/benchmarks eval learning-cost/v3-issue-tracker/results/Claude/output.kumiki
 ```
 
-Cross-vendor results (Claude / Codex / Gemini) and the full methodology — including how each model failed and why — are in **[learning-cost/summary.md](./learning-cost/summary.md)**. The runs surfaced two real defects, both since fixed (unimplemented built-in tiles and under-specified rules); the scores there are re-evaluated against the patched compiler.
+Cross-vendor results (Claude / Codex / Gemini), the exact commands, and how each failure happened are in **[learning-cost/summary.md](./learning-cost/summary.md)**.
 
-To refresh a vendor column: run the model on `vN-*/codex-prompt.txt` or `gemini-prompt.txt`, save its output to `results/<Vendor>/output.kumiki`, then re-run `eval` and update `results/eval.json`.
+To refresh a vendor column: copy `docs/spec/` and the tasks into an empty workspace, point the prompts (`vN-*/codex-prompt.txt` or `gemini-prompt.txt`) at it, run the model, save its output to `results/<Vendor>/output.kumiki`, then re-run `eval` over the task's three outputs into `results/eval.json` and update the failures `packages/tests/src/benchmark-corpus.test.ts` pins.
