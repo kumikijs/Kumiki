@@ -2,7 +2,7 @@ import type { AppShape, MountedApp } from "@kumikijs/runtime";
 import { defineKumikiElement, mount, resolveApp } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bareApp } from "./helpers/app.ts";
-import { freshRoot, freshTag } from "./helpers/dom.ts";
+import { freshRoot, freshTag, typeInto } from "./helpers/dom.ts";
 
 function makeBindApp(): AppShape {
   const app: AppShape = bareApp({
@@ -33,11 +33,6 @@ function makeIconApp(iconPath: string): AppShape {
     }),
   });
   return app;
-}
-
-function typeInto(input: HTMLInputElement, value: string): void {
-  input.value = value;
-  input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 describe("multi-mount isolation (WeakMap app registry)", () => {

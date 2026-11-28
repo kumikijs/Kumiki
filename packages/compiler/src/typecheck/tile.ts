@@ -65,12 +65,13 @@ import {
   elementTypeOf,
   letInScope,
   noteShown,
-  refuseRenderedEffectId,
+  refuseRenderedHandle,
 } from "./expr.ts";
 import { inferType } from "./infer.ts";
 import { nestedScopes } from "./nested-scopes.ts";
 import {
   armScope,
+  checkArmsAfterNestedMatch,
   checkPatternAgainstType,
   checkPatternBindsAreDistinct,
   matchedType,
@@ -356,15 +357,20 @@ type ValueName =
 type NotATile = Exclude<Occupant, { readonly kind: "tile" }>;
 
 // The parser reads every name in an arm or a body as a tile call, so a call of a name no tile has
-// is resolved as a value. In a container it reads a bare lower-cased name as an expression, and a
-// program's tile of that name is taken before this (`tileNamedAt`), so a `Ref` here is a value or
-// nothing; a value of the same name wins over a builtin.
+// is resolved as a value, and so is a builtin's name written alone, which is the builtin's call when
+// no value in scope has the name. In a container it reads a bare lower-cased name as an expression,
+// and a program's tile of that name is taken before this (`tileNamedAt`), so a `Ref` here is a value
+// or nothing; in both places a value of the same name, written alone, wins over a builtin.
 function occupantOf(v: TileExpr, sym: SymbolTable, ctx: Ctx): Occupant;
 function occupantOf(v: Expr, sym: SymbolTable, ctx: Ctx): NotATile;
 function occupantOf(v: Expr | TileExpr, sym: SymbolTable, ctx: Ctx): Occupant {
   if (isTileExpr(v)) {
-    if (v.kind !== "TileCall" || namesTile(v.name, sym)) return { kind: "tile" };
-    return valueNamed(v.name, v.pos, sym, ctx) ?? { kind: "unknown", name: v.name };
+    if (v.kind !== "TileCall" || sym.tiles.has(v.name)) return { kind: "tile" };
+    const builtin = BUILTIN_TILES.has(v.name);
+    if (builtin && v.bare === undefined) return { kind: "tile" };
+    const value = valueNamed(v.name, v.pos, sym, ctx);
+    if (value && !(builtin && value.kind === "out-of-scope")) return value;
+    return builtin ? { kind: "tile" } : { kind: "unknown", name: v.name };
   }
   if (v.kind !== "Ref") return { kind: "value" };
   const value = valueNamed(v.name, v.pos, sym, ctx);
@@ -473,11 +479,15 @@ export function checkTileExpr(
     case "TileMatch": {
       checkExpr(t.scrutinee, sym, errors, ctx);
       const scrutType = matchedType(inferType(t.scrutinee, sym, ctx), t.arms, sym);
+      let patternsFit = true;
       checkArms(t.arms, ctx, (arm, inner) => {
         checkPatternBindsAreDistinct(arm.pattern, errors);
+        const before = errors.length;
         checkPatternAgainstType(arm.pattern, scrutType, sym, errors, inner);
+        if (errors.length > before) patternsFit = false;
         checkTileExpr(arm.body, sym, errors, inner, { kind: "arm", of: "match" });
       });
+      if (patternsFit) checkArmsAfterNestedMatch(t, "tile", scrutType, sym, errors);
       return;
     }
     case "TileCall":
@@ -696,7 +706,7 @@ function checkTileCall(
   const tileContent = checkTileAsContent(t, sym, errors, ctx);
   const errorFieldTile = tileAsErrorField(t, ctx);
   for (const value of renderedText(t, ctx)) {
-    refuseRenderedEffectId(value, `${t.name}(...)`, sym, errors, ctx);
+    refuseRenderedHandle(value, `${t.name}(...)`, sym, errors, ctx);
   }
   checkIconName(t, sym, errors);
   checkButtonType(t, errors, ctx);

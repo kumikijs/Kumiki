@@ -13,6 +13,7 @@ export {
   emitId,
   overridableInvoke,
   readStatus,
+  runEffect,
   standInValue,
 } from "./core/effects.ts";
 export {
@@ -44,6 +45,7 @@ export {
   entryKey,
   isEntryOf,
   listPosition,
+  type PathGap,
   type PathSegment,
 } from "./core/path.ts";
 export { PatchRequiresRebuild, WRAPPING_TILE_KINDS } from "./core/reconcile.ts";

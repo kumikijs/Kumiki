@@ -1,10 +1,22 @@
-import type { AppShape, EpisodeLogEntry, EpisodeStep, ScenarioStep } from "@kumikijs/runtime";
+import { readFileSync, writeFileSync } from "node:fs";
+import { basename } from "node:path";
+import type {
+  AppShape,
+  EpisodeLogEntry,
+  EpisodeStep,
+  Scenario,
+  ScenarioStep,
+} from "@kumikijs/runtime";
 import { createEpisodeLogger, replayEpisodes, runScenario } from "@kumikijs/runtime";
 import { expect } from "vitest";
 import { withRoot } from "./dom.ts";
+import { loadApp, writeSource } from "./load.ts";
 import { failureDetail } from "./scenario.ts";
 
 export type ReducerStep = Extract<EpisodeStep, { kind: "reducer" }>;
+
+/** An app as a load hands it back, with its `live` map, which replay reads and writes. */
+export type LiveApp = AppShape & { live: Record<string, unknown> };
 
 /** The first reducer step of `ep`. */
 export function reducerStep(ep: EpisodeLogEntry): ReducerStep {
@@ -42,11 +54,37 @@ export async function replayEpisode(
   load: () => Promise<AppShape>,
   ep: EpisodeLogEntry,
 ): Promise<ReturnType<typeof replayEpisodes>> {
-  const app = (await load()) as AppShape & { live: Record<string, unknown> };
+  const app = (await load()) as LiveApp;
   return replayEpisodes({
     app: { live: app.live, slots: app.slots, reducers: app.reducers, effects: app.effects },
     episodes: [ep],
     mocks: {},
     observer: () => "continue",
   });
+}
+
+/**
+ * Run the `.scenario.json` beside `example` through the live runtime, check it passed, and return
+ * the log it recorded, through JSON.
+ */
+export async function recordScenario(example: string): Promise<EpisodeLogEntry[]> {
+  const scenario = JSON.parse(
+    readFileSync(example.replace(/\.kumiki$/, ".scenario.json"), "utf8"),
+  ) as Scenario;
+  const app = await loadApp(example);
+  const logger = createEpisodeLogger();
+  const report = await withRoot((root) =>
+    runScenario(app, root, scenario, { episodeLogger: logger }),
+  );
+  expect(report.ok, failureDetail(report)).toBe(true);
+  return JSON.parse(JSON.stringify(logger.list())) as EpisodeLogEntry[];
+}
+
+/** A copy of `example` whose fixture is `log`, for the `episode-test`s that read one. */
+export function withFixture(example: string, log: EpisodeLogEntry[]): string {
+  const name = basename(example, ".kumiki");
+  const path = writeSource(`${name}/${name}`, readFileSync(example, "utf8"));
+  const lines = log.map((ep) => `${JSON.stringify(ep)}\n`).join("");
+  writeFileSync(path.replace(/\.kumiki$/, ".fixture.jsonl"), lines);
+  return path;
 }

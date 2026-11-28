@@ -84,6 +84,10 @@ export function textAt(source: string, at: { line: number; col: number }): strin
   return (source.split("\n")[at.line - 1] ?? "").slice(at.col - 1);
 }
 
+/** The errors of `src`, each as its code and the source text it was reported at. */
+export const pointedCodesOf = (src: string): Pick<Pointed, "code" | "text">[] =>
+  errorsOf(src).map((e) => ({ code: e.code, text: textAt(src, e.pos) }));
+
 /** Where `needle` first occurs, as the 1-based line/col diagnostics use. */
 export function posOf(source: string, needle: string): { line: number; col: number } {
   const idx = source.indexOf(needle);
@@ -95,3 +99,12 @@ export function posOf(source: string, needle: string): { line: number; col: numb
 /** The errors of `src`, each pointing at the source text it was reported at. */
 export const pointedErrorsOf = (src: string): Pointed[] =>
   errorsOf(src).map((e) => ({ code: e.code, message: e.message, text: textAt(src, e.pos) }));
+
+/** As {@link pointedErrorsOf}, warnings included. */
+export const pointedDiagnosticsOf = (src: string): Pointed[] =>
+  checkSource(src).map((e) => ({ code: e.code, message: e.message, text: textAt(src, e.pos) }));
+
+/** E0227's message, for a value match on `type` that has no arm for `values`. */
+export const nonExhaustiveMessage = (type: string, values: string): string =>
+  `This match on "${type}" has no arm for ${values}, and a match used as a value has to evaluate ` +
+  "to one of its arms. Add the missing arms, or end with `_ -> …`";

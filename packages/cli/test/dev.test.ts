@@ -59,6 +59,18 @@ describe("kumiki dev", () => {
     expect(code).toMatch(/app\.kumiki/);
   });
 
+  it("serves every dev module the dev client imports", async () => {
+    await start();
+    const client = await (await fetch(new URL("/@kumiki-dev/client.ts", baseUrl))).text();
+    const imports = Array.from(client.matchAll(/from\s*"(\/@kumiki-dev\/[^"]+)"/g), (m) => m[1]);
+    expect(imports).toEqual(
+      expect.arrayContaining(["/@kumiki-dev/episode-post.ts", "/@kumiki-dev/panel.ts"]),
+    );
+    for (const path of imports) {
+      expect((await fetch(new URL(path ?? "", baseUrl))).status, path).toBe(200);
+    }
+  });
+
   it("puts a project path holding `$$` or `$&` into the dev client as written", async () => {
     const dir = join(tempDir(), "a$$b$&c");
     mkdirSync(dir);

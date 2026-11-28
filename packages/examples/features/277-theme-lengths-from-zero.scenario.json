@@ -1,0 +1,8 @@
+{
+  "steps": [
+    {
+      "label": "the app mounts under its theme with no error and shows both cards",
+      "expect": { "noErrors": true, "domIncludes": ["flush", "nudged"] }
+    }
+  ]
+}

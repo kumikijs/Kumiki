@@ -1,0 +1,5 @@
+{
+  "GET /theme/dark": { "text": "ok" },
+  "GET /quote": [{ "status": 503, "text": "busy" }, { "text": "hello" }],
+  "POST /ping": { "text": "pong" }
+}

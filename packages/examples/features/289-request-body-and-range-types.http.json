@@ -1,0 +1,4 @@
+{
+  "POST /notes": { "text": "ok" },
+  "POST /ping": { "text": "pong" }
+}

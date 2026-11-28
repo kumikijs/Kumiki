@@ -144,7 +144,7 @@ function bindRootNotASlot(root: Expr, sym: SymbolTable, ctx: Ctx): RootReport | 
     case "Num":
     case "Bool":
       return notASlot(
-        `the literal ${root.kind === "Num" ? (root.raw ?? root.value) : root.value}`,
+        `the literal ${root.kind === "Num" ? root.raw : root.value}`,
         "a literal is a value",
         fix,
       );
@@ -333,7 +333,7 @@ export function tileAsErrorField(
 
 /**
  * Run after the field has been checked as a value, so what that read already
- * reported (E0103, E0127, E0108, E0213, an E0201 or E0232 at a key) is not reported again.
+ * reported (E0103, E0127, E0108, E0213, an E0201, E0232 or E0238 at a key) is not reported again.
  */
 export function checkErrorField(
   t: TileExpr & { kind: "TileCall" },
@@ -415,7 +415,7 @@ export function checkErrorField(
         if (member === "field") break;
         const base = unaliasType(raw, sym);
         if (step.field === "get" && base && unwrappedType(base) !== null) break;
-        // E0108 names a field the record lacks.
+        // E0108 names a field the record lacks, or one no variant of a union answers.
         if (member === "unknown") return;
         refuse(
           member === "member" && base
