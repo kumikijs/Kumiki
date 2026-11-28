@@ -1,6 +1,6 @@
 import { check, codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf, soleMessageOf } from "./helpers/diagnostics.ts";
 import { loweredOf } from "./helpers/module.ts";
 import { withRoot } from "./helpers/programs.ts";
 
@@ -126,19 +126,38 @@ describe("a prop a kind lifts into its node reads either spelling", () => {
       "column(for t in ts Row {key: t})",
       "column(for t in ts Row(key=t))",
     ],
+    ["a button's text", 'button() {text: "Go"}', 'button(text="Go")'],
+    ["a button's text from a slot", "button() {text: label}", "button(text=label)"],
   ])("lowers %s the same from either spelling", (_, block, arg) => {
     const defs = `slot xs : List(Text) = []
 slot ts : List(Tuple(Int, Text)) = []
 tile Row = text("r")
 slot n : Int = 0
+slot label : Text = "Go"
 reducer load on=route.enter("/") do= n := 1`;
     expect(emit(arg, defs)).toBe(emit(block, defs));
   });
 
-  it("lowers the value the block writes when both spellings are written", () => {
-    const js = emit('list(text("a"), ordered=false) {ordered: true}');
-    expect(fieldsOf(js, "list")).toContain("ordered: !!(true)");
-    expect(fieldsOf(js, "list")).not.toContain("false");
+  it.each([
+    ["list", 'list(text("a"), ordered=false) {ordered: true}', "ordered: !!(true)", "false"],
+    ["button", 'button(text="Named") {text: "Block"}', '"Block"', '"Named"'],
+  ])("lowers the value the block writes when both spellings are written on %s", (kind, tile, read, dropped) => {
+    const fields = fieldsOf(emit(tile), kind);
+    expect(fields).toContain(read);
+    expect(fields).not.toContain(dropped);
+  });
+
+  it.each([
+    'button(text="Go")',
+    'button() {text: "Go"}',
+  ])("counts the text of %s as the button's name under strictA11y", (tile) => {
+    expect(codesOf(withRoot(tile, ""), { strictA11y: true })).toEqual([]);
+  });
+
+  it("asks a button with neither for its text or an aria-label, in no one spelling", () => {
+    expect(soleMessageOf("E0701", withRoot("button()", ""), { strictA11y: true })).toBe(
+      "button must have text or aria-label",
+    );
   });
 
   it("reads no block in a tile-test's expected tree, which compares arguments only", () => {

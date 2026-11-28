@@ -1673,7 +1673,7 @@ a11y 検査は `check(program, { strictA11y: true })` で有効化される。
 
 ### E0701 `a11y-button`
 
-> `button must have a text= argument or aria-label`
+> `button must have text or aria-label`
 
 ### E0702 `a11y-image`
 
@@ -1684,6 +1684,8 @@ a11y 検査は `check(program, { strictA11y: true })` で有効化される。
 > `link must have inner text or aria-label`
 
 `aria-label` と `alt` は、名前付き引数（`button(aria-label="Close")`）と props ブロック（`button() {aria-label: "Close"}`）のどちらで書いても数える。名前付き引数はどこに書いても prop であり（[言語 §1.7.1](./language.md#_1-7-1-構文)）、どちらも要素に属性を付けるからである。両方を書いた場合は、描かれるのと同じく props ブロックのほうを読む。検査が見るのは書かれているかどうかで値ではないので、`""` やスロットから読む値も数える。`Text` でない値はここではまだ検査しない：`button(aria-label=Mark)` はバリアント `Mark` を書いたことになり、検査を通って `aria-label="[object Object]"` を描く。引数に `when` / `for` を書いた場合（`button(aria-label=when(c, text("x")))`）はタイルで prop のデータではなく、属性を描かないので数えない。prop はタイルを保持できないので、これは [E0201](#e0201-type-mismatch) でもある。
+
+`button` の `text` も同じく、どちらで書いても数える：`button(text="Go")` も `button() {text: "Go"}` もボタンの名前になるラベルを描く。`when` / `for` を書いた場合は数えない。
 
 **修正**：可視テキストか、`aria-label` / `alt` を付与する。フォーム全般の指針は [フォーム](./forms.md)。
 
