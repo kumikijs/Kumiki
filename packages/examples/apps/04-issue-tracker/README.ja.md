@@ -2,7 +2,7 @@
 
 [English](./README.md) · 日本語
 
-CRUD を中心とした中規模アプリ（~726 行）。`Map` 主体のデータモデルと `Option` バリアントの分岐が学べる。
+CRUD を中心とした中規模アプリ（約 730 行）です。`Map` 主体のデータモデルと、`Option` バリアントの分岐を学べます。
 
 ## 学べること
 
@@ -15,7 +15,7 @@ CRUD を中心とした中規模アプリ（~726 行）。`Map` 主体のデー�
 
 ## 実行
 
-以下のコマンドはすべて**リポジトリルート**で実行する。
+以下のコマンドはすべて**リポジトリルート**で実行します。
 
 ```sh
 pnpm kumiki check packages/examples/apps/04-issue-tracker/app.kumiki
@@ -24,6 +24,6 @@ pnpm kumiki smoke packages/examples/apps/04-issue-tracker/app.kumiki
 pnpm kumiki run packages/examples/apps/04-issue-tracker/app.kumiki packages/examples/apps/04-issue-tracker/scenario.json
 ```
 
-`scenario.json` はこのアプリの要件を実行可能な受け入れ基準（AC）に落としたもので、CI では [`packages/tests/`](../../../tests/) が再生する。
+`scenario.json` はこのアプリの要件を実行可能な受け入れ基準（AC）に落としたもので、CI では [`packages/tests/`](../../../tests/) が再生します。
 
 関連仕様: [language](../../../../docs/ja/spec/language.md) / [stdlib](../../../../docs/ja/spec/stdlib.md) / [forms](../../../../docs/ja/spec/forms.md)

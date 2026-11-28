@@ -22,17 +22,14 @@
 
 | アプリ | 行数 | 主に学べること |
 |---|---|---|
-| [01-counter](./apps/01-counter/) | 26 行 | slot / reducer / tile / イベント |
-| [02-todomvc](./apps/02-todomvc/) | 163 行 | リスト・フィルタ・`bind`・localStorage 永続化 |
+| [01-counter](./apps/01-counter/) | 25 行 | slot / reducer / tile / イベント |
+| [02-todomvc](./apps/02-todomvc/) | 168 行 | todo の `Map`・フィルタ・`bind` と `error(field=…)` を使うフォーム・localStorage 永続化 |
 | [03-blog](./apps/03-blog/) | 423 行 | ルーティング・HTTP fetch・サスペンス |
 | [04-issue-tracker](./apps/04-issue-tracker/) | 727 行 | CRUD・`Map`・`Option` バリアント・フォーム・日付 |
 | [05-project-management](./apps/05-project-management/) | 1254 行 | 入れ子データ・カンバン・コメント・タグ・テーマ切替 |
 | [06-expenses](./apps/06-expenses/) | 56 行 | `Map` + `fold` の集計・`Int.parse`・合計を変えないフィルタ |
-| [07-app-http](./apps/07-app-http/) | 44 行 | `app.http` — base URL・共通ヘッダ・`on-401`・タイムアウト |
-| [08-http-retry](./apps/08-http-retry/) | 36 行 | `retry=exponential(…)` — 5xx はバックオフ再試行、4xx は再試行しない |
-| [09-app-meta-analytics](./apps/09-app-meta-analytics/) | 32 行 | `app.meta` の head メタデータと `app.analytics` の既定シンク |
-| [10-ssr-hydration](./apps/10-ssr-hydration/) | 42 行 | SSR スナップショット・`volatile` slot・ハイドレーション後の操作 |
-| [11-multi-subscribe](./apps/11-multi-subscribe/) | 23 行 | 1 つのイベントを購読する 2 つの reducer がソース順に発火する |
+| [07-http](./apps/07-http/) | 49 行 | `app.http`（base URL・slot から作るヘッダ・`on-401`・タイムアウト）と `retry=exponential(…)` |
+| [08-ssr-hydration](./apps/08-ssr-hydration/) | 42 行 | SSR スナップショット・`volatile` slot・ハイドレーション後の操作 |
 
 <!-- apps:end -->
 

@@ -22,17 +22,14 @@ From small to large. Shows how features combine in real apps.
 
 | App | Lines | Main takeaways |
 |---|---|---|
-| [01-counter](./apps/01-counter/) | 26 lines | slot / reducer / tile / events |
-| [02-todomvc](./apps/02-todomvc/) | 163 lines | lists, filters, `bind`, localStorage persistence |
+| [01-counter](./apps/01-counter/) | 25 lines | slot / reducer / tile / events |
+| [02-todomvc](./apps/02-todomvc/) | 168 lines | a `Map` of todos, filters, a form with `bind` and `error(field=…)`, localStorage persistence |
 | [03-blog](./apps/03-blog/) | 423 lines | routing, HTTP fetch, suspense |
 | [04-issue-tracker](./apps/04-issue-tracker/) | 727 lines | CRUD, `Map`, `Option` variants, forms, dates |
 | [05-project-management](./apps/05-project-management/) | 1254 lines | nested data, kanban, comments, tags, theme switching |
 | [06-expenses](./apps/06-expenses/) | 56 lines | aggregation with `Map` + `fold`, `Int.parse`, a filter that leaves the total alone |
-| [07-app-http](./apps/07-app-http/) | 44 lines | `app.http` — one base URL, shared headers, `on-401`, timeout |
-| [08-http-retry](./apps/08-http-retry/) | 36 lines | `retry=exponential(…)` — backoff on 5xx, no retry on 4xx |
-| [09-app-meta-analytics](./apps/09-app-meta-analytics/) | 32 lines | `app.meta` head metadata, `app.analytics` as the default sink |
-| [10-ssr-hydration](./apps/10-ssr-hydration/) | 42 lines | the SSR snapshot, `volatile` slots, interaction after hydration |
-| [11-multi-subscribe](./apps/11-multi-subscribe/) | 23 lines | two reducers on one event, firing in source order |
+| [07-http](./apps/07-http/) | 49 lines | `app.http` (base URL, a header from a slot, `on-401`, timeout) and `retry=exponential(…)` |
+| [08-ssr-hydration](./apps/08-ssr-hydration/) | 42 lines | the SSR snapshot, `volatile` slots, interaction after hydration |
 
 <!-- apps:end -->
 

@@ -8,7 +8,7 @@
       "do": { "fill": "input[type='text']", "value": "buy milk" }
     },
     {
-      "label": "a real browser submit reaches the reducer — the form has no button to click, and this is the path a user takes with Enter",
+      "label": "a real browser submit reaches the reducer — the path a user takes with Enter, beside the Add button",
       "do": { "submit": "input[type='text']" },
       "expect": {
         "visible": ["buy milk", "1 items left"],

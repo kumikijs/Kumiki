@@ -115,7 +115,7 @@ async function reducersRunBy(file: string, action: Action): Promise<string[]> {
 
 const TODO_LISTS = [
   app("02-todomvc"),
-  ...["01-add-priority", "02-strict-validation", "03-add-archived", "04-dark-theme"].map((s) =>
+  ...["01-add-priority", "02-length-limit", "03-add-archived", "04-dark-theme"].map((s) =>
     join(
       here,
       "..",

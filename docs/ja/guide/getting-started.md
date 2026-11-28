@@ -1,6 +1,6 @@
 # はじめに
 
-CLI を入れ、1 ファイル書き、ブラウザで動かすところまで。clone もバンドラ設定もプロジェクト雛形も要らない。
+CLI を入れ、1 ファイル書き、ブラウザで動かすところまでを扱います。clone もバンドラ設定もプロジェクト雛形も要りません。
 
 ## インストール
 
@@ -10,15 +10,15 @@ npm i -g kumiki
 npx kumiki --help
 ```
 
-必要なのは Node.js 24 以降（パッケージが宣言している下限）。
+必要なのは Node.js 24 以降です。
 
 ::: tip インストールすらせずに試す
-[Playground](./playground.md) はコンパイラとランタイムをブラウザ内で動かす。例を選び、左で編集すれば右に描画される。
+[Playground](./playground.md) はコンパイラとランタイムをブラウザ内で動かします。例を選び、左で編集すれば右に描画されます。
 :::
 
 ## アプリを書く
 
-`app.kumiki` として保存する:
+`app.kumiki` として保存します。
 
 ```kumiki
 slot count : Int = 0
@@ -34,7 +34,7 @@ app Counter
     init   = []
 ```
 
-宣言は 4 つ。`slot` が状態、`reducer` がイベントを状態変更に変え、`tile` が状態を UI へ投影し、`app` がエントリを名指しする。同じファイルを 1 行ずつ組み立てるのが [最初のアプリ](./your-first-app.md)、残り 3 レイヤを含む全体像が [Kumiki の考え方](./thinking-in-kumiki.md) にある。
+宣言は 4 つです。`slot` が状態、`reducer` がイベントを状態変更に変え、`tile` が状態を UI へ投影し、`app` がエントリを名指しします。同じファイルを 1 行ずつ組み立てるのが [最初のアプリ](./your-first-app.md) で、残り 3 レイヤを含む全体像は [Kumiki の考え方](./thinking-in-kumiki.md) にあります。
 
 ## 動かす
 
@@ -43,9 +43,9 @@ kumiki dev app.kumiki
 # → kumiki dev — http://localhost:5173/
 ```
 
-この URL を開いて `+1` を押す。dev サーバは保存のたびに再ビルドし、コンパイルエラーはオーバーレイに出る。
+この URL を開いて `+1` を押してください。dev サーバは保存のたびに再ビルドし、コンパイルエラーはオーバーレイに表示します。
 
-静的な成果物が欲しいときは build する:
+静的な成果物が欲しいときは build します。
 
 ```sh
 kumiki build app.kumiki ./out
@@ -53,37 +53,37 @@ kumiki build app.kumiki ./out
 #   tiles-input-button, tiles-text-heading, tiles-input-shared)
 ```
 
-`out/index.html` はそのままブラウザで開ける。`runtime/` にはこのアプリが触るものしか入らない — tile ファミリ単位ではなく tile 単位なので、カウンターが受け取るのは button と heading だけで、残り 15 個の tile は入らない。gzip 約 22KB で済む。ルーティングもテーブルも使わないアプリに、ルーターとテーブルのコードは含まれない。
+`out/index.html` はそのままブラウザで開けます。`runtime/` にはこのアプリが触るものしか入りません。tile ファミリ単位ではなく tile 単位で分かれているので、カウンターが受け取るのは button と heading だけで、残り 15 個の tile は入りません。gzip で約 27KB です。ルーティングもテーブルも使わないアプリには、ルーターとテーブルのコードも含まれません。
 
-`--bundle` を付けると `app.js` とそれらのモジュールを 1 つの minify 済みファイルに結合する（`runtime/` は出力されない）。カウンターで gzip 約 18KB になるが、`app.js` の可読性と、再訪者がキャッシュを使い回せる `runtime/` を手放すことになる。
+`--bundle` を付けると `app.js` とそれらのモジュールを 1 つの minify 済みファイルに結合します（`runtime/` は出力されません）。カウンターで gzip 約 22KB になりますが、`app.js` の可読性と、再訪者がキャッシュを使い回せる `runtime/` を手放すことになります。
 
 ## 検査する
 
-`check` はファイルを実行せずに読む:
+`check` はファイルを実行せずに読みます。
 
 ```sh
 kumiki check app.kumiki
 # → ok
 ```
 
-`smoke` はヘッドレス DOM にマウントしてクリックまで通す。「コンパイルは通るが何も描画しない」を捕まえるのはこちらである:
+`smoke` はヘッドレス DOM にマウントし、クリックまで通します。「コンパイルは通るが何も描画しない」を捕まえるのはこちらです。
 
 ```sh
 kumiki smoke app.kumiki
 # → ok — mounted, rendered, 1 interaction(s), no runtime errors
 ```
 
-公開前にはどちらも通しておく。引数なしの `kumiki` が残りのコマンドを一覧する。
+公開前にはどちらも通しておいてください。引数なしで `kumiki` を実行すると、残りのコマンドを一覧できます。
 
 ## check が落ちたら
 
-診断は重大度・コード・位置を伴う:
+診断は重大度・コード・位置を伴います。
 
 ```
 error E0103 undef-ref at 3:39: Reference to undefined name "total"
 ```
 
-`error` は check を失敗させる。`warning` の行は助言で、`check` はそれを表示したうえで `ok (1 warning)` で終わる。コードが種類を表す。[エラーカタログ](../spec/errors.md) を引けば、`E0103` は名前がどこにも解決しないこと、つまりほとんどの場合はタイプミスか定義漏れだと分かる。自動修正のあるコードなら `kumiki fix app.kumiki E0103` がパッチを提案する。
+`error` は check を失敗させます。`warning` の行は助言で、`check` はそれを表示したうえで `ok (1 warning)` で終わります。コードが種類を表していて、[エラーカタログ](../spec/errors.md) を引けば、`E0103` は名前がどこにも解決しないこと、つまりほとんどの場合はタイプミスか定義漏れだと分かります。自動修正のあるコードなら、`kumiki fix app.kumiki E0103` がパッチを提案します。
 
 ## 次へ
 
@@ -92,7 +92,7 @@ error E0103 undef-ref at 3:39: Reference to undefined name "total"
 - [Examples](https://github.com/kumikijs/Kumiki/tree/main/packages/examples) — 機能ごとに 1 ファイル、それと完成アプリ
 
 ::: details clone して使う場合
-example・benchmarks・コンパイラのソースを触るならリポジトリを clone する。ワークスペースはリポジトリルートから `pnpm kumiki` として同じ CLI を公開する:
+example・benchmarks・コンパイラのソースを触るなら、リポジトリを clone します。ワークスペースはリポジトリルートから `pnpm kumiki` として同じ CLI を公開しています。
 
 ```sh
 git clone https://github.com/kumikijs/Kumiki.git
@@ -103,5 +103,5 @@ pnpm kumiki check packages/examples/apps/01-counter/app.kumiki
 :::
 
 ::: details AI エージェントから操作する場合
-`@kumikijs/mcp` は check・build・定義単位の編集・仕様検索を MCP ツールとして公開する。クライアント設定例は [README](https://github.com/kumikijs/Kumiki/blob/main/packages/mcp/README.md) を参照。
+`@kumikijs/mcp` は check・build・定義単位の編集・仕様検索を MCP ツールとして公開しています。クライアントの設定例は [README](https://github.com/kumikijs/Kumiki/blob/main/packages/mcp/README.md) を参照してください。
 :::

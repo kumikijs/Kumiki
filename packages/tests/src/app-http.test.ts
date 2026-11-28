@@ -4,7 +4,7 @@ import { clickContaining, fill, find, mountApp, tick, waitUntil } from "./helper
 import { type FetchCall, type FetchDouble, readHeader, stubFetch } from "./helpers/http-double.ts";
 import { loadApp } from "./helpers/load.ts";
 
-const APP_HTTP_EXAMPLE = app("07-app-http");
+const APP_HTTP_EXAMPLE = app("07-http");
 
 describe("app.http", () => {
   let double: FetchDouble | undefined;

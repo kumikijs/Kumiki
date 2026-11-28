@@ -172,12 +172,12 @@ export function App() {
 
   const addTodo = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const trimmed = draft.trim();
-    if (trimmed.length === 0 || trimmed.length >= 100) return;
+    const text = draft.trim();
+    if (draft.length >= 100 || text.length === 0) return;
     const id = freshId();
     setTodos((prev) => ({
       ...prev,
-      [id]: { id, text: trimmed, done: false, createdAt: Date.now() },
+      [id]: { id, text, done: false, createdAt: Date.now() },
     }));
     setDraft("");
   };
@@ -222,24 +222,42 @@ export function App() {
     >
       <h1 style={{ margin: 0, fontSize: "32px" }}>Todos</h1>
       <form onSubmit={addTodo}>
-        <input
-          type="text"
-          value={draft}
-          onChange={(e) => setDraft(e.currentTarget.value)}
-          placeholder="What needs to be done?"
-          autoFocus
-          maxLength={100}
-          style={{
-            width: "100%",
-            padding: "6px 10px",
-            border: `1px solid ${theme.colors.border}`,
-            borderRadius: theme.radius.sm,
-            background: theme.colors.surface,
-            color: theme.colors.fg,
-            fontSize: "16px",
-            boxSizing: "border-box",
-          }}
-        />
+        <div style={{ display: "flex", flexDirection: "row", gap: theme.spacing.sm }}>
+          <input
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.currentTarget.value)}
+            placeholder="What needs to be done?"
+            autoFocus
+            maxLength={100}
+            style={{
+              width: "100%",
+              padding: "6px 10px",
+              border: `1px solid ${theme.colors.border}`,
+              borderRadius: theme.radius.sm,
+              background: theme.colors.surface,
+              color: theme.colors.fg,
+              fontSize: "16px",
+              boxSizing: "border-box",
+            }}
+          />
+          <button
+            type="submit"
+            style={{
+              background: theme.colors.primary,
+              color: theme.colors.surface,
+              border: "none",
+              borderRadius: theme.radius.sm,
+              padding: "6px 12px",
+              cursor: "pointer",
+            }}
+          >
+            Add
+          </button>
+        </div>
+        {draft.length >= 100 && (
+          <p style={{ margin: 0, color: theme.colors.danger }}>Must be less than 100 characters</p>
+        )}
       </form>
       {ready ? (
         <div style={{ display: "flex", flexDirection: "column", gap: theme.spacing.md }}>

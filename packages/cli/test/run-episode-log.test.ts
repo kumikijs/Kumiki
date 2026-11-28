@@ -8,7 +8,7 @@ import { runCli, SPAWN, spawns } from "./helpers/cli.ts";
 import { tempDir } from "./helpers/files.ts";
 
 const COUNTER = app("01-counter");
-const RETRY = app("08-http-retry");
+const RETRY = app("07-http");
 const EVERY_EPISODE = feature("191-episode-log-keeps-every-episode");
 const EVERY_EPISODE_SCENARIO = EVERY_EPISODE.replace(/\.kumiki$/, ".scenario.json");
 const TRIGGER_ORDER = feature("283-episode-log-trigger-order");
@@ -106,8 +106,8 @@ describe("kumiki run --episode-log", () => {
 
   // The request is still waiting in its retry backoff when the scenario ends. Disposing the app
   // cancels it, so the click's episode commits before the run returns, ending in an
-  // `effect-cancel`, and nothing the request could still deliver is recorded. Replaying that
-  // episode ends in the state the run ended in.
+  // `effect-cancel`, and nothing the request could still deliver is recorded. Replaying the
+  // log (the sign-in click's episode, then that one) ends in the state the run ended in.
   it(
     "writes the episode of a request the app's dispose cancelled in its retry backoff",
     SPAWN,
@@ -123,8 +123,11 @@ describe("kumiki run --episode-log", () => {
       const r = runCli(["run", RETRY, scenario, "--episode-log", logFile]);
       expect(r.code, r.out).toBe(0);
       const lines = readFileSync(logFile, "utf8").trim().split("\n");
-      expect(lines).toHaveLength(1);
-      const ep = JSON.parse(lines[0] ?? "") as { status: string; steps: Array<{ kind: string }> };
+      expect(lines).toHaveLength(2);
+      const ep = JSON.parse(lines.at(-1) ?? "") as {
+        status: string;
+        steps: Array<{ kind: string }>;
+      };
       expect(ep.status).toBe("completed");
       expect(ep.steps.at(-1)).toMatchObject({ kind: "effect-cancel", targetId: "loadQuote" });
       expect(ep.steps.map((s) => s.kind)).not.toContain("effect-end");
@@ -138,7 +141,9 @@ describe("kumiki run --episode-log", () => {
         "loadQuote: from-log",
       ]);
       expect(replayed.code, replayed.out).toBe(0);
-      expect(replayed.stdout).toContain('final slots: {"state":{"_tag":"Loading"}}');
+      expect(replayed.stdout).toContain(
+        'final slots: {"state":{"_tag":"Loading"},"session":"user-1"}',
+      );
     },
   );
 

@@ -79,6 +79,11 @@ onBeforeUnmount(() => window.removeEventListener("hashchange", fromHash));
         <h2 :id="app.name" class="ks-detail-title">{{ app.title }}</h2>
         <a :href="repo + app.name" target="_blank" rel="noreferrer">{{ t.open }}</a>
       </header>
+      <p class="ks-detail-summary">
+        <template v-for="(s, i) in segments(app.summary)" :key="i">
+          <code v-if="s.code">{{ s.text }}</code><template v-else>{{ s.text }}</template>
+        </template>
+      </p>
       <div class="ks-frame">
         <iframe
           v-if="preview?.kind === 'ok'"
@@ -185,6 +190,10 @@ onBeforeUnmount(() => window.removeEventListener("hashchange", fromHash));
   margin: 0;
   padding: 0;
   border: 0;
+}
+.ks-detail-summary {
+  margin: 8px 0 0;
+  color: var(--vp-c-text-2);
 }
 .ks-frame {
   height: 520px;

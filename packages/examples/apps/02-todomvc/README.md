@@ -6,9 +6,10 @@ The classic TodoMVC. It adds list operations and persistence, forming the skelet
 
 ## What you'll learn
 
-- Adding, removing, and updating a `List`, plus `.filter` / `.map`
-- Two-way binding of input fields with `bind`
-- Switching filter state (All / Active / Done)
+- Adding, removing, and updating entries of a `Map`, plus `.filter`
+- Two-way binding of input fields with `bind`, and a form submitted by its Add button or Enter
+- A refinement on the draft (`len-lt(280)`) shown by `error(field=draft)` while the form holds the submit back
+- Switching filter state (All / Active / Done), with the current tab styled by `bg` / `color`
 - Persistence with `effect` + localStorage (debouncing `saveTodos`)
 - Restoring state in the `app.start` lifecycle
 

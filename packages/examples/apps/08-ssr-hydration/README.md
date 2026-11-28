@@ -1,8 +1,8 @@
-# 10 — SSR and Hydration
+# 08 — SSR and Hydration
 
 English · [日本語](./README.ja.md)
 
-The server-render boundary. The app renders on the server with `app.init` already resolved, then hydrates in the browser and carries on from there.
+The server-render boundary. The app renders on the server with `app.init` already resolved, then hydrates in the browser and carries on from there. The showcase preview mounts it as a client app inside the browser, so the server render itself is not visible there; the SSR path is covered by the `packages/tests` tests that call `renderToString` and `hydrate`.
 
 ## What you'll learn
 
@@ -15,10 +15,10 @@ The server-render boundary. The app renders on the server with `app.init` alread
 Every command below is run **from the repository root**.
 
 ```sh
-pnpm kumiki check packages/examples/apps/10-ssr-hydration/app.kumiki
-pnpm kumiki build packages/examples/apps/10-ssr-hydration/app.kumiki ./out
-pnpm kumiki smoke packages/examples/apps/10-ssr-hydration/app.kumiki
-pnpm kumiki run packages/examples/apps/10-ssr-hydration/app.kumiki packages/examples/apps/10-ssr-hydration/scenario.json
+pnpm kumiki check packages/examples/apps/08-ssr-hydration/app.kumiki
+pnpm kumiki build packages/examples/apps/08-ssr-hydration/app.kumiki ./out
+pnpm kumiki smoke packages/examples/apps/08-ssr-hydration/app.kumiki
+pnpm kumiki run packages/examples/apps/08-ssr-hydration/app.kumiki packages/examples/apps/08-ssr-hydration/scenario.json
 ```
 
 `scenario.json` distills this app's requirements into executable acceptance criteria; [`packages/tests/`](../../../tests/) replays it in CI. `app.http.json` is the fixture those runs answer from — the headless tiers never reach the network.

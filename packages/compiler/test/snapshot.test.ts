@@ -50,7 +50,7 @@ describe("compile output snapshots", () => {
       {
         "AppDef": 1,
         "EffectDef": 2,
-        "FnDef": 4,
+        "FnDef": 3,
         "ReducerDef": 8,
         "SlotDef": 4,
         "ThemeDef": 1,

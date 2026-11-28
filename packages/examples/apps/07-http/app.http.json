@@ -1,0 +1,7 @@
+{
+  "GET /quote": [
+    { "status": 503, "text": "busy" },
+    { "status": 503, "text": "busy" },
+    { "json": { "text": "Make it work, make it right, make it fast.", "author": "Kent Beck" } }
+  ]
+}
