@@ -59,6 +59,13 @@ export type BrowserExpect = CommonExpect & {
 
 export type ScenarioStep<A = Action, E = Expect> = { label?: string; do?: A; expect?: E };
 
+const SCRIPT_OUTCOMES = ["ok", "err"] as const;
+
+/** A result a scenario scripts in place of what an effect's provider would answer. */
+export type EffectScript = { outcome: (typeof SCRIPT_OUTCOMES)[number]; value?: unknown };
+
+const SCRIPT_KEYS = ["outcome", "value"] as const satisfies readonly (keyof EffectScript)[];
+
 type ActionKind<A> = A extends unknown ? keyof A : never;
 
 /** Fields that accompany an action kind rather than naming one. */
@@ -124,6 +131,7 @@ type _HeadlessActionsCovered = Covers<Verb<Action>, (typeof HEADLESS_ACTION_KEYS
 type _BrowserActionsCovered = Covers<Verb<BrowserAction>, (typeof BROWSER_ACTION_KEYS)[number]>;
 type _HeadlessExpectsCovered = Covers<keyof Expect, (typeof HEADLESS_EXPECT_KEYS)[number]>;
 type _BrowserExpectsCovered = Covers<keyof BrowserExpect, (typeof BROWSER_EXPECT_KEYS)[number]>;
+type _ScriptKeysCovered = Covers<keyof EffectScript, (typeof SCRIPT_KEYS)[number]>;
 // A verb missing from `CONTROL_DEMANDS` would ask nothing of a disabled or read-only control.
 type _ControlVerbsTotal = Covers<Verb<Action> | Verb<BrowserAction>, ControlVerb>;
 
@@ -184,6 +192,13 @@ export function validateScenario(scenario: object, tier: ScenarioTier = "headles
       problems.push(`unknown scenario key "${key}" (${rules.documentKeys.join(", ")})`);
     }
   }
+  const { effects, defaultEffect } = scenario as { effects?: unknown; defaultEffect?: unknown };
+  if (effects !== undefined && rules.documentKeys.includes("effects")) {
+    problems.push(...validateEffectScripts(effects));
+  }
+  if (defaultEffect !== undefined && rules.documentKeys.includes("defaultEffect")) {
+    problems.push(...validateScript(defaultEffect, "defaultEffect"));
+  }
   const steps = (scenario as { steps?: unknown }).steps;
   if (!Array.isArray(steps)) {
     problems.push(`a ${rules.noun} needs a "steps" array`);
@@ -214,6 +229,48 @@ export function validateScenario(scenario: object, tier: ScenarioTier = "headles
 
 const isRecord = (v: unknown): v is object =>
   typeof v === "object" && v !== null && !Array.isArray(v);
+
+function validateEffectScripts(effects: unknown): string[] {
+  if (!isRecord(effects)) {
+    return [
+      `"effects" must map each effect's name to its scripted results, not ${JSON.stringify(effects)}`,
+    ];
+  }
+  const problems: string[] = [];
+  for (const [name, scripts] of Object.entries(effects)) {
+    const where = `effects.${name}`;
+    if (!Array.isArray(scripts)) {
+      problems.push(`${where} must be a list of scripted results, not ${JSON.stringify(scripts)}`);
+      continue;
+    }
+    for (const [i, script] of scripts.entries()) {
+      problems.push(...validateScript(script, `${where}[${i}]`));
+    }
+  }
+  return problems;
+}
+
+/** A scripted result stands in for a provider's answer, so it must be one the runtime reads. */
+function validateScript(script: unknown, where: string): string[] {
+  if (!isRecord(script)) {
+    return [`${where} must be a scripted result {outcome, value}, not ${JSON.stringify(script)}`];
+  }
+  const problems: string[] = [];
+  for (const key of Object.keys(script)) {
+    if ((SCRIPT_KEYS as readonly string[]).includes(key)) continue;
+    problems.push(`${where}: unknown key "${key}" (${SCRIPT_KEYS.join(", ")})`);
+  }
+  const { outcome } = script as { outcome?: unknown };
+  if (!(SCRIPT_OUTCOMES as readonly unknown[]).includes(outcome)) {
+    const outcomes = SCRIPT_OUTCOMES.map((o) => `"${o}"`).join(" or ");
+    problems.push(
+      outcome === undefined
+        ? `${where}.outcome must be ${outcomes}; it is missing`
+        : `${where}.outcome must be ${outcomes}, not ${JSON.stringify(outcome)}`,
+    );
+  }
+  return problems;
+}
 
 function foreignTo(rules: TierRules, other: TierRules, key: "actions" | "expects") {
   return (k: string): boolean => other[key].includes(k) && !rules[key].includes(k);
