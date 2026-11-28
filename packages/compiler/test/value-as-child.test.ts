@@ -277,6 +277,32 @@ describe("a name read after the scope that declared it ended", () => {
     expect(errors.map((e) => [e.code, e.endedScope])).toEqual([["E0103", scope]]);
     expect(armErrors(home).map((e) => e.text)).toEqual([text]);
   });
+
+  // No value in scope has the name, so an arm reads it as the builtin, as it reads its call.
+  it.each([
+    [
+      "after a sibling for in a when",
+      'column(for spinner in xs text("a"), when(c, spinner))',
+      'column(for spinner in xs text("a"), when(c, spinner()))',
+    ],
+    [
+      "after a sibling for in an if",
+      'column(for divider in xs text("a"), if c then divider else Header)',
+      'column(for divider in xs text("a"), if c then divider() else Header)',
+    ],
+    [
+      "in a sibling match arm",
+      "match pick with | Some(spinner) -> Header | None -> spinner",
+      "match pick with | Some(spinner) -> Header | None -> spinner()",
+    ],
+    [
+      "before a later for",
+      'column(when(c, spinner), for spinner in xs text("a"))',
+      'column(when(c, spinner()), for spinner in xs text("a"))',
+    ],
+  ])("is the builtin when it names one, in an arm: %s", (_, bare, called) => {
+    expect([armErrors(bare), armErrors(called)]).toEqual([[], []]);
+  });
 });
 
 describe("a tile's name written where a tile belongs", () => {
@@ -385,7 +411,9 @@ describe("a builtin tile named without its call", () => {
   it.each([
     ...BUILTIN_TILES,
   ])("is a call of it in an arm when nothing else has its name: %s", (name) => {
-    expect(codesOf(armProgram(`column(when(c, ${name}))`))).not.toContain("E0128");
+    expect(codesOf(armProgram(`column(when(c, ${name}))`))).toEqual(
+      codesOf(armProgram(`column(when(c, ${name}()))`)),
+    );
   });
 });
 
@@ -432,6 +460,21 @@ describe("a builtin's name that a value in scope has too", () => {
     expect(pointedErrorsOf(src)).toEqual([
       { code: "E0128", message: placed(place), text: "divider" },
     ]);
+  });
+
+  it.each([
+    ["a `when` arm", "column(when(c, divider))", "divider))"],
+    ["a tile's body", "divider", "divider"],
+  ])("is the fn as %s", (place, home, text) => {
+    const src = `${armProgram(home)}fn divider() -> Text = "d"\n`;
+    expect(pointedErrorsOf(src)).toEqual([{ code: "E0128", message: placed(place), text }]);
+  });
+
+  it.each([
+    "column(when(c, divider()))",
+    "divider()",
+  ])("is the builtin beside a fn of its name when it is called: %s", (home) => {
+    expect(pointedErrorsOf(`${armProgram(home)}fn divider() -> Text = "d"\n`)).toEqual([]);
   });
 
   it.each([

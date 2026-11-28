@@ -480,7 +480,8 @@ export type TileExpr =
       args: TileArg[];
       props: TileProp[];
       pos: Pos;
-      // A name written alone where a whole tile-expr stands, which a container would read as a value.
+      // Written with neither `(…)` nor `{…}`: a builtin's name written so is the builtin only when no
+      // value in scope has the name.
       bare?: true;
     }
   | { kind: "TileFor"; bind: string; bindPos: Pos; iter: Expr; body: TileExpr; pos: Pos }

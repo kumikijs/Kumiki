@@ -56,7 +56,6 @@ export class TileParser extends StatementParser {
     return bare && call.kind === "TileCall" ? { ...call, bare } : call;
   }
 
-  // Whether the name at the cursor is followed by its arguments or its prop block.
   protected nameOpensCall(): boolean {
     const next = this.peek(1);
     return next.kind === "op" && (next.value === "(" || next.value === "{");
