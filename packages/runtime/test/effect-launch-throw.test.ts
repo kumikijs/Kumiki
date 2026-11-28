@@ -2,10 +2,12 @@ import type {
   AppShape,
   EffectResult,
   EffectSpec,
+  EmitSpec,
   Episode,
   EpisodeLogger,
   EpisodeLoggerOptions,
   MountedApp,
+  ReducerSpec,
 } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
@@ -300,9 +302,9 @@ describe("a throw past an effect's launch, outside the reducers its result runs"
   it("under debounce, from the logger at effect-start, leaves nothing a cancel of the replaced request reaches", async () => {
     const ok: unknown[] = [];
     const load = (input: string, id: string) => ({ effect: "load", args: [input], id });
-    const onClick = (name: string, emits: { effect: string; args: unknown[]; id?: string }[]) => ({
+    const onClick = (name: string, emits: EmitSpec[]): ReducerSpec => ({
       name,
-      event: { kind: "ui" as const, ev: "click" },
+      event: { kind: "ui", ev: "click" },
       apply: () => ({ slots: {}, emits }),
     });
     const app = bareApp({
