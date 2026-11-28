@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { BUILTIN_TILES } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
 import { checkSource, codesOf, pointedErrorsOf } from "./helpers/diagnostics.ts";
 
@@ -276,6 +277,32 @@ describe("a name read after the scope that declared it ended", () => {
     expect(errors.map((e) => [e.code, e.endedScope])).toEqual([["E0103", scope]]);
     expect(armErrors(home).map((e) => e.text)).toEqual([text]);
   });
+
+  // No value in scope has the name, so an arm reads it as the builtin, as it reads its call.
+  it.each([
+    [
+      "after a sibling for in a when",
+      'column(for spinner in xs text("a"), when(c, spinner))',
+      'column(for spinner in xs text("a"), when(c, spinner()))',
+    ],
+    [
+      "after a sibling for in an if",
+      'column(for divider in xs text("a"), if c then divider else Header)',
+      'column(for divider in xs text("a"), if c then divider() else Header)',
+    ],
+    [
+      "in a sibling match arm",
+      "match pick with | Some(spinner) -> Header | None -> spinner",
+      "match pick with | Some(spinner) -> Header | None -> spinner()",
+    ],
+    [
+      "before a later for",
+      'column(when(c, spinner), for spinner in xs text("a"))',
+      'column(when(c, spinner()), for spinner in xs text("a"))',
+    ],
+  ])("is the builtin when it names one, in an arm: %s", (_, bare, called) => {
+    expect([armErrors(bare), armErrors(called)]).toEqual([[], []]);
+  });
 });
 
 describe("a tile's name written where a tile belongs", () => {
@@ -379,5 +406,81 @@ describe("a builtin tile named without its call", () => {
 
   it("is a call of it in an arm, which reads a name as a tile call", () => {
     expect(armErrors("column(when(c, divider), if c then spinner else Header)")).toEqual([]);
+  });
+
+  it.each([
+    ...BUILTIN_TILES,
+  ])("is a call of it in an arm when nothing else has its name: %s", (name) => {
+    expect(codesOf(armProgram(`column(when(c, ${name}))`))).toEqual(
+      codesOf(armProgram(`column(when(c, ${name}()))`)),
+    );
+  });
+});
+
+describe("a builtin's name that a value in scope has too", () => {
+  it.each([
+    [
+      "a loop variable in a when",
+      "column(for spinner in xs when(c, spinner))",
+      "spinner))",
+      "a `when` arm",
+    ],
+    [
+      "a loop variable in an if",
+      "column(for spinner in xs if c then spinner else Header)",
+      "spinner else Header)",
+      "an `if` arm",
+    ],
+    ["a loop variable in a for", "column(for divider in xs divider)", "divider)", "a `for` arm"],
+    [
+      "a loop variable in a match",
+      "column(for spinner in xs match shape with | Circle -> spinner | Square -> Header)",
+      "spinner | Square -> Header)",
+      "a `match` arm",
+    ],
+    [
+      "a match binding in a match",
+      "match pick with | Some(spinner) -> spinner | None -> Header",
+      "spinner | None -> Header",
+      "a `match` arm",
+    ],
+  ])("is that value in an arm, as in a container: %s", (_, home, text, place) => {
+    expect(armErrors(home)).toEqual([{ code: "E0128", message: placed(place), text }]);
+  });
+
+  it.each([
+    ["a tile's body", "divider", ""],
+    [
+      "a tile-test's `expect`",
+      "Header",
+      "test t = tile-test Header given={slots:{}} expect=divider\n",
+    ],
+  ])("is the slot as %s", (place, home, test) => {
+    const src = `${armProgram(home)}slot divider : Int = 1\n${test}`;
+    expect(pointedErrorsOf(src)).toEqual([
+      { code: "E0128", message: placed(place), text: "divider" },
+    ]);
+  });
+
+  it.each([
+    ["a `when` arm", "column(when(c, divider))", "divider))"],
+    ["a tile's body", "divider", "divider"],
+  ])("is the fn as %s", (place, home, text) => {
+    const src = `${armProgram(home)}fn divider() -> Text = "d"\n`;
+    expect(pointedErrorsOf(src)).toEqual([{ code: "E0128", message: placed(place), text }]);
+  });
+
+  it.each([
+    "column(when(c, divider()))",
+    "divider()",
+  ])("is the builtin beside a fn of its name when it is called: %s", (home) => {
+    expect(pointedErrorsOf(`${armProgram(home)}fn divider() -> Text = "d"\n`)).toEqual([]);
+  });
+
+  it.each([
+    ["its call", "column(for spinner in xs when(c, spinner()))"],
+    ["a prop block", `column(for divider in xs divider {id: "d"})`],
+  ])("is the builtin when it is written with %s", (_, home) => {
+    expect(armErrors(home)).toEqual([]);
   });
 });

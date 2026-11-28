@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 import type { ReplayEvent } from "@kumikijs/runtime";
 import { describe, expect, it } from "vitest";
 import { formatEvent } from "../src/replay.ts";
-import { runCli, SPAWN } from "./helpers/cli.ts";
+import { runCli, SPAWN, spawns } from "./helpers/cli.ts";
+import { warningLinesOf } from "./helpers/diagnostics.ts";
 import { seed, seedLines } from "./helpers/files.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -75,6 +76,37 @@ describe("formatEvent episode-start", () => {
       trigger: { kind: "ssr.hydrate", target: "/" },
     };
     expect(formatEvent(ev)).toBe("episode ep_0001 — ssr.hydrate on /");
+  });
+});
+
+describe("formatEvent bind", () => {
+  const bind = (rest: Partial<Extract<ReplayEvent, { kind: "bind" }>>): ReplayEvent => ({
+    kind: "bind",
+    episodeId: "ep_0001",
+    stepIndex: 1,
+    name: "draft",
+    value: "milk",
+    slotDiffs: [],
+    ...rest,
+  });
+
+  it.each([
+    [
+      "the slot it moved",
+      bind({ slotDiffs: [{ name: "draft", before: "", after: "milk" }] }),
+      `  [bind] draft  draft: "" -> "milk"`,
+    ],
+    [
+      "the whole slot a path bind moved",
+      bind({
+        name: "form.title",
+        slotDiffs: [{ name: "form", before: { title: "" }, after: { title: "milk" } }],
+      }),
+      `  [bind] form.title  form: {"title":""} -> {"title":"milk"}`,
+    ],
+    ["the value a refinement refused", bind({ refused: true }), `  [bind] draft  (refused "milk")`],
+  ])("prints %s", (_, ev, line) => {
+    expect(formatEvent(ev)).toBe(line);
   });
 });
 
@@ -196,4 +228,57 @@ describe("kumiki replay", () => {
     expect(code).toBe(2);
     expect(out).toMatch(/--from-log/);
   });
+});
+
+describe("kumiki replay and the warnings of the compile it runs", () => {
+  /** The counter with a reducer on a `ui.focus` its tile can never fire: W0212. */
+  const WARNED = `${readFileSync(COUNTER, "utf8")}
+reducer peek on=ui.focus(Card) do= count := count
+tile Card = box(heading("Count"))
+`;
+  // As `kumiki check` prints it, computed in-process: the line names no file.
+  const warning = warningLinesOf(WARNED);
+
+  it("the warned program warns once, as the other cases assume", () => {
+    expect(warning).toMatch(/^[^\n]*\bW0212 ui-event-tile-mismatch at \d+:\d+: [^\n]+\n$/);
+  });
+
+  it("prints them on stderr and its output as for a clean program", spawns(2), () => {
+    const clean = replayCounter("ep_0001");
+    const warned = runCli(["replay", seed(WARNED), "--from-log", COUNTER_LOG, "ep_0001"]);
+    expect(warned).toMatchObject({ stdout: clean.stdout, stderr: warning, code: 0 });
+    expect(clean).toMatchObject({ stderr: "", code: 0 });
+  });
+
+  it.each([
+    {
+      failure: "an entry it cannot replay",
+      program: WARNED.replace(/\binc\b/g, "bump"),
+      log: () => COUNTER_LOG,
+      id: "ep_0001",
+      says: "not replayed: ",
+    },
+    {
+      failure: "a log that does not parse",
+      program: WARNED,
+      log: () => seed("{", "bad.log.jsonl"),
+      id: "ep_0001",
+      says: "invalid episode log '",
+    },
+    {
+      failure: "an episode the log does not hold",
+      program: WARNED,
+      log: () => COUNTER_LOG,
+      id: "ep_9999",
+      says: `episode ep_9999 not found in ${COUNTER_LOG}`,
+    },
+  ])(
+    "prints them ahead of what a replay that fails on $failure prints on stderr",
+    SPAWN,
+    ({ program, log, id, says }) => {
+      const { stderr, code } = runCli(["replay", seed(program), "--from-log", log(), id]);
+      expect(code).toBe(1);
+      expect(stderr.slice(0, warning.length + says.length)).toBe(warning + says);
+    },
+  );
 });

@@ -17,7 +17,7 @@ type Opts = {
   loads?: number;
   /** Runs inside each `load`'s invoke, before it waits. */
   onInvoke?: () => void;
-  onCommit?: (ep: Episode) => void;
+  onHandOver?: (ep: Episode) => void;
 };
 
 /**
@@ -108,7 +108,7 @@ function launchedApp(opts: Opts = {}) {
     reducers,
     root: () => ({ kind: "text", text: "ready" }),
   };
-  const { logger, committed } = recordingLogger(opts.onCommit);
+  const { logger, handedOver } = recordingLogger(opts.onHandOver);
   const root = freshRoot();
   const handle = mount(app, root, { episodeLogger: logger });
   const dispatch = (name: string, el: Record<string, unknown> = {}): void =>
@@ -123,8 +123,8 @@ function launchedApp(opts: Opts = {}) {
     },
     signals,
     results,
-    committed,
-    steps: (): string[] => committed.flatMap((ep) => ep.steps.map((s) => s.kind)),
+    handedOver,
+    steps: (): string[] => handedOver.flatMap((ep) => ep.steps.map((s) => s.kind)),
   };
 }
 
@@ -140,13 +140,13 @@ describe("disposing the app while an effect it launched is running", () => {
   it("records an effect-cancel on the episode that launched it, which commits before dispose returns", () => {
     const a = launchedApp();
     a.dispatch("go");
-    expect(a.committed).toEqual([]);
+    expect(a.handedOver).toEqual([]);
 
     a.dispose();
 
-    expect(a.committed).toHaveLength(1);
-    expect(a.committed[0]?.status).toBe("completed");
-    expect(a.committed[0]?.steps).toEqual([
+    expect(a.handedOver).toHaveLength(1);
+    expect(a.handedOver[0]?.status).toBe("completed");
+    expect(a.handedOver[0]?.steps).toEqual([
       expect.objectContaining({ kind: "reducer", name: "go" }),
       expect.objectContaining({ kind: "effect-start", name: "load" }),
       expect.objectContaining({ kind: "effect-cancel", targetId: "load" }),
@@ -167,7 +167,7 @@ describe("disposing the app while an effect it launched is running", () => {
     await tick(10);
 
     expect(a.results).toEqual([]);
-    expect(a.committed).toHaveLength(1);
+    expect(a.handedOver).toHaveLength(1);
     expect(a.steps()).toEqual(after);
     expect(after).not.toContain("effect-end");
     expect(errors).toEqual([]);
@@ -191,7 +191,7 @@ describe("disposing the app while an effect it launched is running", () => {
     a.dispatch("stop", { id: "load#a" });
     a.dispose();
 
-    const launched = a.committed.find((ep) => ep.steps.some((s) => s.kind === "effect-start"));
+    const launched = a.handedOver.find((ep) => ep.steps.some((s) => s.kind === "effect-start"));
     expect(launched?.steps.map((s) => s.kind)).toEqual([
       "reducer",
       "effect-start",
@@ -208,19 +208,21 @@ describe("disposing the app with more than one effect to end", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const seen: { aborted: boolean[]; timers: number }[] = [];
     const a = launchedApp({
-      onCommit: () =>
+      onHandOver: () =>
         seen.push({ aborted: a.signals.map((s) => s.aborted), timers: vi.getTimerCount() }),
     });
     a.dispatch("go");
     a.dispatch("go");
     a.dispatch("wait");
-    expect(a.committed).toEqual([]);
+    expect(a.handedOver).toEqual([]);
 
     a.dispose();
 
     expect(seen).toEqual(Array.from({ length: 3 }, () => ({ aborted: [true, true], timers: 0 })));
-    expect(a.committed.map((ep) => ep.trigger.target)).toEqual(["wait", "go", "go"]);
-    for (const ep of a.committed) {
+    // `wait`'s debounced `later` is cancelled first, so its episode commits first; it is handed on
+    // after the two `go`s, which began before it.
+    expect(a.handedOver.map((ep) => ep.trigger.target)).toEqual(["go", "go", "wait"]);
+    for (const ep of a.handedOver) {
       const started = ep.steps.find((s) => s.kind === "effect-start");
       expect(kinds(ep)).toEqual(["reducer", "effect-start", "effect-cancel"]);
       expect(ep.steps.at(-1)).toEqual(
@@ -243,14 +245,14 @@ describe("disposing the app with more than one effect to end", () => {
     a.dispatch("go");
     a.dispose();
 
-    expect(a.committed).toHaveLength(1);
-    expect(kinds(a.committed[0])).toEqual(["reducer", "effect-start", "effect-cancel"]);
+    expect(a.handedOver).toHaveLength(1);
+    expect(kinds(a.handedOver[0])).toEqual(["reducer", "effect-start", "effect-cancel"]);
   });
 
   it("still cancels the rest, and lets the shape mount again, when a commit throws", () => {
     let commits = 0;
     const a = launchedApp({
-      onCommit: () => {
+      onHandOver: () => {
         commits++;
         if (commits === 1) throw new Error("host failed");
       },
@@ -260,7 +262,7 @@ describe("disposing the app with more than one effect to end", () => {
 
     expect(() => a.dispose()).toThrow("host failed");
 
-    expect(a.committed.map(kinds)).toEqual([
+    expect(a.handedOver.map(kinds)).toEqual([
       ["reducer", "effect-start", "effect-cancel"],
       ["reducer", "effect-start", "effect-cancel"],
     ]);
@@ -270,6 +272,25 @@ describe("disposing the app with more than one effect to end", () => {
     a.dispatch("go");
     expect(a.pending).toHaveLength(3);
     handle.dispose();
+  });
+
+  it("still hands over an episode held behind the one whose hand-over throws", () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let handOvers = 0;
+    const a = launchedApp({
+      onHandOver: () => {
+        handOvers++;
+        if (handOvers === 1) throw new Error("host failed");
+      },
+    });
+    a.dispatch("go");
+    a.dispatch("wait");
+
+    // `wait`'s debounce is cancelled first, so its episode commits first and is held behind `go`,
+    // which began before it; `go`'s hand-over throws.
+    expect(() => a.dispose()).toThrow("host failed");
+
+    expect(a.handedOver.map((ep) => ep.trigger.target)).toEqual(["go", "wait"]);
   });
 });
 
@@ -292,7 +313,7 @@ describe("disposing the app from inside the dispatch that launches an effect", (
     a.dispatch("go");
 
     expect(a.pending).toHaveLength(1);
-    expect(a.committed.map(kinds)).toEqual([["reducer", "effect-start", "effect-cancel"]]);
+    expect(a.handedOver.map(kinds)).toEqual([["reducer", "effect-start", "effect-cancel"]]);
     a.answer({ kind: "err", value: { status: 503, message: "late", body: "" } });
     await tick(10);
     expect(a.results).toEqual([]);

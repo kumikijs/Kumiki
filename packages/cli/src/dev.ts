@@ -9,7 +9,10 @@ import { messageOf } from "./text.ts";
 export type DevCmdOptions = {
   /** TCP port to bind; defaults to Vite's 5173. `0` picks an ephemeral port. */
   port?: number;
-  /** Absolute path to append every committed Episode to (one JSON per line, matching `kumiki run`). */
+  /**
+   * Absolute path to append every Episode to, one JSON per line, in the order their triggers began,
+   * as `kumiki run` does; an episode begun after one that still waits is appended once that one is.
+   */
   episodeLog?: string;
   /** Promote a11y warnings (E07xx) to compile errors via @kumikijs/vite. */
   strictA11y?: boolean;
@@ -17,6 +20,7 @@ export type DevCmdOptions = {
 
 const VIRTUAL_CLIENT_ID = "/@kumiki-dev/client.ts";
 const VIRTUAL_PANEL_ID = "/@kumiki-dev/panel.ts";
+const VIRTUAL_POST_ID = "/@kumiki-dev/episode-post.ts";
 const EPISODE_ENDPOINT = "/__kumiki/episode";
 
 export async function startDevServer(
@@ -87,6 +91,7 @@ function kumikiDevPlugin(opts: InternalOptions): Plugin {
   const devSrcDir = dirname(fileURLToPath(import.meta.url));
   const clientTemplate = readFileSync(join(devSrcDir, "dev", "client.ts"), "utf8");
   const panelSource = readFileSync(join(devSrcDir, "dev", "panel.ts"), "utf8");
+  const postSource = readFileSync(join(devSrcDir, "dev", "episode-post.ts"), "utf8");
 
   const targetUrl = opts.targetAbs.replace(/\\/g, "/");
   // A replacer, so a `$$` or `$&` in the path is inserted as written rather than read as a pattern.
@@ -159,13 +164,14 @@ function kumikiDevPlugin(opts: InternalOptions): Plugin {
     // resolves it from the root — the `.kumiki` file's directory — for any
     // importer, and the plugin answers the client's import as it answers the app's.
     resolveId(id) {
-      if (id === VIRTUAL_CLIENT_ID || id === VIRTUAL_PANEL_ID) return id;
+      if (id === VIRTUAL_CLIENT_ID || id === VIRTUAL_PANEL_ID || id === VIRTUAL_POST_ID) return id;
       return null;
     },
 
     load(id) {
       if (id === VIRTUAL_CLIENT_ID) return clientSource;
       if (id === VIRTUAL_PANEL_ID) return panelSource;
+      if (id === VIRTUAL_POST_ID) return postSource;
       return null;
     },
 

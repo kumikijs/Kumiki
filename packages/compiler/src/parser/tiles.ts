@@ -51,7 +51,14 @@ export class TileParser extends StatementParser {
     if (this.matchKw("match")) {
       return this.parseMatch("TileMatch", () => this.parseTileExpr());
     }
-    return this.parseTileCall();
+    const bare = !this.nameOpensCall();
+    const call = this.parseTileCall();
+    return bare && call.kind === "TileCall" ? { ...call, bare } : call;
+  }
+
+  protected nameOpensCall(): boolean {
+    const next = this.peek(1);
+    return next.kind === "op" && (next.value === "(" || next.value === "{");
   }
 
   protected parseTileCall(): TileExpr {
@@ -139,9 +146,7 @@ export class TileParser extends StatementParser {
     if (this.matchKw("if") || this.matchKw("match")) return this.parseTileExpr();
     const head = this.peek();
     if (head.kind === "ident") {
-      const next = this.peek(1);
-      const opensCall = next.kind === "op" && (next.value === "(" || next.value === "{");
-      if (BUILTIN_TILES.has(head.value) && opensCall) return this.parseTileCall();
+      if (BUILTIN_TILES.has(head.value) && this.nameOpensCall()) return this.parseTileCall();
       if (isCapitalised(head.value)) return this.parseTileCall();
     }
     return this.parseExpr();

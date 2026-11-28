@@ -52,10 +52,13 @@ export function seedCopy(src: string, name = "input.kumiki"): string {
   return file;
 }
 
+/** The text of `file`, as a write verb left it. */
+export const read = (file: string): string => readFileSync(file, "utf8");
+
 /** Rename `qname` to `to` in `file`; return the file's text afterwards. */
 export function renamed(file: string, qname: string, to: string): string {
   renameDef(file, qname, to);
-  return readFileSync(file, "utf8");
+  return read(file);
 }
 
 /** Load `source` as the store of a file holding it. */

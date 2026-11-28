@@ -474,7 +474,16 @@ export type RetryExpr =
 // ----- Tile expressions -----
 
 export type TileExpr =
-  | { kind: "TileCall"; name: string; args: TileArg[]; props: TileProp[]; pos: Pos }
+  | {
+      kind: "TileCall";
+      name: string;
+      args: TileArg[];
+      props: TileProp[];
+      pos: Pos;
+      // Written with neither `(…)` nor `{…}`: a builtin's name written so is the builtin only when no
+      // value in scope has the name.
+      bare?: true;
+    }
   | { kind: "TileFor"; bind: string; bindPos: Pos; iter: Expr; body: TileExpr; pos: Pos }
   | { kind: "TileWhen"; cond: Expr; body: TileExpr; pos: Pos }
   | { kind: "TileIf"; cond: Expr; consequent: TileExpr; alternate: TileExpr; pos: Pos }
