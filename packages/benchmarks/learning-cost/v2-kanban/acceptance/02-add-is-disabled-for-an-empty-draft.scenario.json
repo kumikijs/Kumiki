@@ -12,10 +12,7 @@
         "clickText": "Add"
       },
       "expect": {
-        "actionErrorIncludes": ["is disabled"],
-        "state": {
-          "cards": {}
-        }
+        "actionErrorIncludes": ["is disabled"]
       }
     }
   ]

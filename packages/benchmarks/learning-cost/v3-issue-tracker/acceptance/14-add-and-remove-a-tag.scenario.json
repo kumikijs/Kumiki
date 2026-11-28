@@ -1,0 +1,68 @@
+{
+  "effects": {
+    "loadIssues": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/new"
+      }
+    },
+    {
+      "do": {
+        "fill": "#new-title",
+        "value": "Login fails"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create issue"
+      }
+    },
+    {
+      "do": {
+        "fill": "#tag-input",
+        "value": "urgent"
+      }
+    },
+    {
+      "label": "Add tag adds it",
+      "do": {
+        "clickText": "Add tag"
+      },
+      "expect": {
+        "domIncludes": ["urgent"]
+      }
+    },
+    {
+      "label": "Remove tag removes it",
+      "do": {
+        "clickText": "Remove tag"
+      },
+      "expect": {
+        "domExcludes": ["urgent"]
+      }
+    }
+  ]
+}

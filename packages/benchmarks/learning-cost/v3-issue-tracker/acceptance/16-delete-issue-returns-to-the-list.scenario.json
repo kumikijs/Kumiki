@@ -1,0 +1,53 @@
+{
+  "effects": {
+    "loadIssues": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/new"
+      }
+    },
+    {
+      "do": {
+        "fill": "#new-title",
+        "value": "Login fails"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create issue"
+      }
+    },
+    {
+      "label": "Delete issue removes it and returns to the list",
+      "do": {
+        "clickText": "Delete issue"
+      },
+      "expect": {
+        "domIncludes": ["No issues"]
+      }
+    }
+  ]
+}

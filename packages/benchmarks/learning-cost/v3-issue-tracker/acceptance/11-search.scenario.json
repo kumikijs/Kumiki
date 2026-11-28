@@ -1,0 +1,81 @@
+{
+  "effects": {
+    "loadIssues": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/new"
+      }
+    },
+    {
+      "do": {
+        "fill": "#new-title",
+        "value": "Login fails"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create issue"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Back"
+      }
+    },
+    {
+      "do": {
+        "navigate": "/new"
+      }
+    },
+    {
+      "do": {
+        "fill": "#new-title",
+        "value": "Crash on save"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create issue"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Back"
+      }
+    },
+    {
+      "label": "search narrows the list to matching titles",
+      "do": {
+        "fill": "#filter-search",
+        "value": "Crash"
+      },
+      "expect": {
+        "domIncludes": ["Crash on save"],
+        "domExcludes": ["Login fails"]
+      }
+    }
+  ]
+}

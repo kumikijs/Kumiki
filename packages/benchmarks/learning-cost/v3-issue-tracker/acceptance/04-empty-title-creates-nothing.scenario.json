@@ -1,0 +1,47 @@
+{
+  "effects": {
+    "loadIssues": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/new"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create issue"
+      }
+    },
+    {
+      "label": "an empty title creates no issue: the list is still empty",
+      "do": {
+        "navigate": "/"
+      },
+      "expect": {
+        "domIncludes": ["No issues"]
+      }
+    }
+  ]
+}

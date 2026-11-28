@@ -1,0 +1,62 @@
+{
+  "effects": {
+    "loadIssues": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/new"
+      }
+    },
+    {
+      "do": {
+        "fill": "#new-title",
+        "value": "Login fails"
+      }
+    },
+    {
+      "do": {
+        "choose": "#new-priority",
+        "value": "High"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create issue"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Back"
+      }
+    },
+    {
+      "label": "the list shows the issue's title, status and priority",
+      "expect": {
+        "domIncludes": ["Login fails", "Open", "High"],
+        "domExcludes": ["No issues"]
+      }
+    }
+  ]
+}

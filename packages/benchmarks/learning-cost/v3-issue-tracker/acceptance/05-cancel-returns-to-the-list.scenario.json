@@ -1,0 +1,48 @@
+{
+  "effects": {
+    "loadIssues": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/new"
+      }
+    },
+    {
+      "do": {
+        "fill": "#new-title",
+        "value": "Never saved"
+      }
+    },
+    {
+      "label": "Cancel returns to the list and creates nothing",
+      "do": {
+        "clickText": "Cancel"
+      },
+      "expect": {
+        "domIncludes": ["No issues"]
+      }
+    }
+  ]
+}

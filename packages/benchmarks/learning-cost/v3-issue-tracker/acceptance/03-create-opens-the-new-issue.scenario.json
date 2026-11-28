@@ -1,0 +1,72 @@
+{
+  "effects": {
+    "loadIssues": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/new"
+      }
+    },
+    {
+      "do": {
+        "fill": "#new-title",
+        "value": "Login fails"
+      }
+    },
+    {
+      "do": {
+        "fill": "#new-body",
+        "value": "Steps to reproduce"
+      }
+    },
+    {
+      "do": {
+        "choose": "#new-priority",
+        "value": "High"
+      }
+    },
+    {
+      "do": {
+        "fill": "#new-assignee",
+        "value": "ana"
+      }
+    },
+    {
+      "do": {
+        "fill": "#new-tags",
+        "value": "bug, auth"
+      }
+    },
+    {
+      "label": "Create issue opens the new issue's page, showing its title, body and tags",
+      "do": {
+        "clickText": "Create issue"
+      },
+      "expect": {
+        "domIncludes": ["Login fails", "Steps to reproduce", "bug", "auth", "Delete issue"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "effects": {
+    "loadIssues": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "label": "New Issue opens the creation form",
+      "do": {
+        "clickText": "New Issue"
+      },
+      "expect": {
+        "domIncludes": ["Create issue"]
+      }
+    }
+  ]
+}

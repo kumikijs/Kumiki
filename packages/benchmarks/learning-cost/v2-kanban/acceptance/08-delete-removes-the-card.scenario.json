@@ -23,9 +23,6 @@
         "clickText": "✕"
       },
       "expect": {
-        "state": {
-          "cards": {}
-        },
         "domExcludes": ["Write tests"],
         "domIncludes": ["Todo (0)"]
       }

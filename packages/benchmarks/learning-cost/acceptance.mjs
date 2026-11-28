@@ -40,8 +40,12 @@ for (const task of taskDirs) {
       scenario: JSON.parse(readFileSync(join(acDir, f), "utf8")),
     }));
   const result = {};
-  for (const vendor of VENDORS) {
-    const file = join(task, "results", vendor, "output.kumiki");
+  // reference/app.kumiki proves the criteria can all be met; it is scored like an output.
+  const outputs = [
+    ["Reference", join(task, "reference", "app.kumiki")],
+    ...VENDORS.map((v) => [v, join(task, "results", v, "output.kumiki")]),
+  ];
+  for (const [vendor, file] of outputs) {
     if (!existsSync(file)) continue;
     const source = readFileSync(file, "utf8");
     const failed = [];
@@ -49,7 +53,10 @@ for (const task of taskDirs) {
       failed.push(...criteria.map((c) => c.name));
     } else {
       for (const c of criteria) {
+        // One process runs every criterion, so the storage and the URL the last one left are reset,
+        // as a fresh `kumiki run` would start with none and at `/`.
         clearStorage();
+        globalThis.history?.replaceState(null, "", "/");
         let ok = false;
         try {
           ok = (await runScenarioSource(source, c.scenario)).ok;
