@@ -137,6 +137,8 @@ app TileMountSeveralTiles
 
 本体全体が別のユーザー tile である tile —— `tile Outer = Inner` —— は、両方の全体である 1 つのツリーを描画するので、両方が画面上にある。`tile.mount(Outer)` と `tile.mount(Inner)` がともに `Outer` から順に発火し、そのツリーが消えると両方の `tile.unmount` が同じ順で発火する。これは何段でも同じで（`tile A = B` と `tile B = C` なら `A`、`B`、`C` の順に発火する）、本体が、行や分岐そのものが別のユーザー tile である `for`・`when`・`match` である場合も、外側の tile がどこで描画される場合 —— 呼び出し位置、ルートや `sub-routes` のターゲット、`error-boundary` の fallback —— も同じである。上の名前ごとの規則により、単独でも表示されている `Inner` は、どちらかが残っている間はマウントされたままである。`Inner` が `error-boundary` を宣言して fallback を表示しているときは、ツリーは `Outer` と fallback の全体であり、発火するのはその 2 つで `Inner` は発火しない。
 
+描画は、負っている `tile.mount` と `tile.unmount` の reducer をすべて実行する。そのうちの 1 つが、emit したものの dispatch や、それを記録するホストの episode logger のように、本体の外で throw しても変わらない。その tile はすでに現れたか消えたかしており、そこで飛ばされた reducer は二度と実行されないからである。本体の中の panic は、どの reducer でもそうであるように報告される（[§7.2.3](#_7-2-3-the-app-error-reducer)）。本体の外で throw されたものは、すべてが実行された後に、コミットしたバッチの後のステップと同じように渡される（[runtime.md](./runtime.md#what-follows-a-committed-batch)）。reducer のバッチが描画を始めたときはその描画のステップに渡り、ステップは各 throw を順に渡す。mount の最初の描画のときは `mount` の外へ、1 つの throw のまま、または reducer が実行された順に各 throw を持つ 1 つの `AggregateError` として渡る。1 つの `tile.mount`・`tile.unmount`・`app.*` イベントに複数の reducer があるときも同じで、たとえば `app.start` や `app.online` の reducer が本体の外で throw しても、そのイベントの次の reducer の実行は妨げられない。
+
 ---
 
 ## 7.2 エラー処理 {#_7-2-error-handling}

@@ -103,16 +103,33 @@ function rejectViewOptions(options: MountOptions): void {
 }
 
 /**
- * What `applyReducer` throws when several steps after a reducer's batch threw. Its message names
- * each throw, because what reads a throw reads its message. A step that catches one takes the
- * throws it holds one by one, so one never holds another; an `AggregateError` the app's own code
- * threw is a throw like any other.
+ * What is thrown when several steps that each run whatever the ones before them threw did throw:
+ * the steps after a reducer's batch, or the lifecycle reducers one event or one render fires.
+ * `what` names those steps, and the message names each throw, because what reads a throw reads its
+ * message. {@link collectThrows} takes the throws one holds one by one, so one never holds
+ * another; an `AggregateError` the app's own code threw is a throw like any other.
  */
 class StepsThrew extends AggregateError {
-  constructor(reducer: string, errors: unknown[]) {
+  constructor(what: string, errors: unknown[]) {
     const each = errors.map((e) => panicInfo(e).message).join("; ");
-    super(errors, `${errors.length} steps after reducer "${reducer}" threw: ${each}`);
+    super(errors, `${errors.length} ${what} threw: ${each}`);
   }
+}
+
+/** Run `run`, adding to `failed` each throw a {@link StepsThrew} it threw holds, or what it threw. */
+function collectThrows(failed: unknown[], run: () => void): void {
+  try {
+    run();
+  } catch (e) {
+    if (e instanceof StepsThrew) failed.push(...e.errors);
+    else failed.push(e);
+  }
+}
+
+/** Throw what `failed` holds: its one throw, or a {@link StepsThrew} of `what` holding each. */
+function rethrowCollected(what: string, failed: unknown[]): void {
+  if (failed.length === 0) return;
+  throw failed.length === 1 ? failed[0] : new StepsThrew(what, failed);
 }
 
 export function mountCore(
@@ -308,14 +325,25 @@ export function mountCore(
     for (const n of nowMounted) if (!prevMountedTiles.has(n)) toMount.push(n);
     for (const n of prevMountedTiles) if (!nowMounted.has(n)) toUnmount.push(n);
     prevMountedTiles = nowMounted;
-    for (const n of toMount) fireLifecycle(`tile.mount(${JSON.stringify(n)})`);
-    for (const n of toUnmount) fireLifecycle(`tile.unmount(${JSON.stringify(n)})`);
+    // Each runs whatever the ones before it threw: they are owed in this render or never.
+    const failed: unknown[] = [];
+    for (const n of toMount) {
+      collectThrows(failed, () => fireLifecycle(`tile.mount(${JSON.stringify(n)})`));
+    }
+    for (const n of toUnmount) {
+      collectThrows(failed, () => fireLifecycle(`tile.unmount(${JSON.stringify(n)})`));
+    }
+    rethrowCollected("tile.mount and tile.unmount reducers", failed);
   }
 
   function fireLifecycle(name: string, payload: Record<string, unknown> = {}): void {
+    const failed: unknown[] = [];
     for (const r of app.reducers) {
-      if (r.event.kind === "lifecycle" && r.event.name === name) applyReducer(r, payload);
+      if (r.event.kind === "lifecycle" && r.event.name === name) {
+        collectThrows(failed, () => applyReducer(r, payload));
+      }
     }
+    rethrowCollected(`${name} reducers`, failed);
   }
 
   // `leave` walks the chain innermost first: a route is left in the reverse of its entry order.
@@ -482,8 +510,7 @@ export function mountCore(
         }
       }
     }
-    if (failed.length === 0) return;
-    throw failed.length === 1 ? failed[0] : new StepsThrew(r.name, failed);
+    rethrowCollected(`steps after reducer "${r.name}"`, failed);
   }
 
   /**
@@ -506,14 +533,7 @@ export function mountCore(
       return [];
     }
     const failed: unknown[] = [];
-    const step = (run: () => void): void => {
-      try {
-        run();
-      } catch (e) {
-        if (e instanceof StepsThrew) failed.push(...e.errors);
-        else failed.push(e);
-      }
-    };
+    const step = (run: () => void): void => collectThrows(failed, run);
     step(() =>
       episode?.recordReducer(
         r.name,
@@ -674,7 +694,7 @@ export function mountCore(
     for (const emit of app.init) dispatcher.dispatch(emit);
   }
   fireLifecycle("app.start");
-  const lifecycleUnsubs = installLifecycleListeners(app, applyReducer);
+  const lifecycleUnsubs = installLifecycleListeners(app, fireLifecycle);
   for (const r of app.reducers) {
     if (r.event.kind === "timer") {
       const handle = setInterval(() => applyReducer(r, {}), r.event.intervalMs);

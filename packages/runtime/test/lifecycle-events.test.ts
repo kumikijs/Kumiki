@@ -1,9 +1,10 @@
-import type { AppShape, ReducerSpec, TileNode } from "@kumikijs/runtime";
+import type { AppShape, EpisodeLogger, MountedApp, ReducerSpec, TileNode } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bareApp, keylessEffect, lifecycleReducer } from "./helpers/app.ts";
 import { captureConsole } from "./helpers/console.ts";
 import { freshRoot } from "./helpers/dom.ts";
+import { SINK_DOWN, throwingLogger } from "./helpers/episode-apps.ts";
 
 const baseApp = (overrides: Partial<AppShape>): AppShape =>
   bareApp({ root: () => ({ kind: "text", text: "x" }), ...overrides });
@@ -109,6 +110,180 @@ describe("runtime: tile.mount / tile.unmount", () => {
     app._rerender?.();
     // Only user tiles carry a `_tile` marker; `card` is a built-in.
     expect(events).toEqual([]);
+    dispose();
+  });
+});
+
+describe("runtime: a lifecycle reducer that throws past its body", () => {
+  let root: HTMLElement;
+
+  beforeEach(() => {
+    root = freshRoot();
+  });
+  afterEach(() => {
+    root.remove();
+    vi.restoreAllMocks();
+  });
+
+  const NO_KEY = {
+    A: new Error("no key for A"),
+    B: new Error("no key for B"),
+    C: new Error("no key for C"),
+  };
+  type Tile = keyof typeof NO_KEY;
+  const named = (name: string): TileNode =>
+    ({ kind: "box", children: [{ kind: "text", text: name }], props: { _tile: name } }) as TileNode;
+  const thrownBy = (run: () => void): unknown => {
+    try {
+      run();
+    } catch (e) {
+      return e;
+    }
+    return undefined;
+  };
+
+  /**
+   * `A` and `B` mount while `C` unmounts, in the render `go` starts, or in the first render when
+   * `atMount`. Each of their lifecycle reducers, named after its event, records that it ran.
+   * Those of the tiles in `emitting` emit an effect whose key throws, so they throw past their
+   * bodies.
+   */
+  function tileApp(opts: { atMount?: boolean; emitting?: Tile[] } = {}) {
+    const events: string[] = [];
+    let shown: Tile[] = opts.atMount ? ["A", "B"] : ["C"];
+    const emitting = new Set(opts.emitting ?? []);
+    const record = (event: string, tile: Tile): ReducerSpec => ({
+      name: event,
+      event: { kind: "lifecycle", name: event },
+      apply: (s) => {
+        events.push(event);
+        return {
+          slots: s,
+          emits: emitting.has(tile) ? [{ effect: `save${tile}`, args: [tile] }] : [],
+        };
+      },
+    });
+    const app: AppShape = baseApp({
+      effects: {
+        saveA: keylessEffect("saveA", () => NO_KEY.A),
+        saveB: keylessEffect("saveB", () => NO_KEY.B),
+        saveC: keylessEffect("saveC", () => NO_KEY.C),
+      },
+      reducers: [
+        record('tile.mount("A")', "A"),
+        record('tile.mount("B")', "B"),
+        record('tile.unmount("C")', "C"),
+        {
+          name: "go",
+          event: { kind: "ui", ev: "click" },
+          apply: (s) => {
+            shown = ["A", "B"];
+            return { slots: s, emits: [] };
+          },
+        },
+      ],
+      root: () => ({ kind: "column", children: shown.map(named) }) as TileNode,
+    });
+    return { app, events };
+  }
+
+  const ALL = ['tile.mount("A")', 'tile.mount("B")', 'tile.unmount("C")'];
+
+  it.each([
+    {
+      source: "the key of what it emitted",
+      emitting: ["A"] as Tile[],
+      logger: (): EpisodeLogger => createEpisodeLogger(),
+      message: "no key for A",
+    },
+    {
+      source: "the episode logger recording it",
+      emitting: [] as Tile[],
+      logger: (): EpisodeLogger =>
+        throwingLogger("recordReducer", (name) => name === 'tile.mount("A")'),
+      message: SINK_DOWN,
+    },
+  ])("runs the render's other tile.mount and tile.unmount reducers when one throws past its body through $source, then hands the throw on", ({
+    emitting,
+    logger,
+    message,
+  }) => {
+    const { app, events } = tileApp({ emitting });
+    const { dispose } = mount(app, root, { episodeLogger: logger() });
+    const e = thrownBy(() => (app as MountedApp)._dispatch("go", {}));
+    expect(e).toBeInstanceOf(Error);
+    expect(e).not.toBeInstanceOf(AggregateError);
+    expect((e as Error).message).toBe(message);
+    expect(events).toEqual(ALL);
+    expect(root.textContent).toBe("AB");
+    // They ran in that render, so the next one owes none of them.
+    app._rerender?.();
+    expect(events).toEqual(ALL);
+    dispose();
+  });
+
+  it("hands several throws on as one AggregateError holding each, in the order their reducers ran", () => {
+    const { app, events } = tileApp({ emitting: ["C", "A"] });
+    const { dispose } = mount(app, root);
+    const e = thrownBy(() => (app as MountedApp)._dispatch("go", {}));
+    expect(e).toBeInstanceOf(AggregateError);
+    expect((e as AggregateError).errors).toEqual([NO_KEY.A, NO_KEY.C]);
+    expect((e as AggregateError).message).toBe(
+      '2 steps after reducer "go" threw: no key for A; no key for C',
+    );
+    expect(events).toEqual(ALL);
+    dispose();
+  });
+
+  it("runs every tile.mount reducer of the first render when one throws, then throws it out of mount", () => {
+    const { app, events } = tileApp({ atMount: true, emitting: ["A"] });
+    expect(thrownBy(() => mount(app, root))).toBe(NO_KEY.A);
+    expect(events).toEqual(['tile.mount("A")', 'tile.mount("B")']);
+  });
+
+  it("names the tile reducers in the AggregateError the first render throws out of mount", () => {
+    const { app, events } = tileApp({ atMount: true, emitting: ["A", "B"] });
+    const e = thrownBy(() => mount(app, root));
+    expect((e as AggregateError).errors).toEqual([NO_KEY.A, NO_KEY.B]);
+    expect((e as AggregateError).message).toBe(
+      "2 tile.mount and tile.unmount reducers threw: no key for A; no key for B",
+    );
+    expect(events).toEqual(['tile.mount("A")', 'tile.mount("B")']);
+  });
+
+  /** Two reducers on `event`, in that order; `first` throws past its body. */
+  function twoOn(event: string) {
+    const ran: string[] = [];
+    const reducer = (name: string, emits: boolean): ReducerSpec => ({
+      name,
+      event: { kind: "lifecycle", name: event },
+      apply: (s) => {
+        ran.push(name);
+        return { slots: s, emits: emits ? [{ effect: "saveA", args: [name] }] : [] };
+      },
+    });
+    const app: AppShape = baseApp({
+      effects: { saveA: keylessEffect("saveA", () => NO_KEY.A) },
+      reducers: [reducer("first", true), reducer("second", false)],
+      root: () => named("A"),
+    });
+    return { app, ran };
+  }
+
+  it.each([
+    'tile.mount("A")',
+    "app.start",
+  ])("runs every %s reducer when an earlier one throws past its body, then throws it out of mount", (event) => {
+    const { app, ran } = twoOn(event);
+    expect(thrownBy(() => mount(app, root))).toBe(NO_KEY.A);
+    expect(ran).toEqual(["first", "second"]);
+  });
+
+  it("runs every app.online reducer when an earlier one throws past its body", () => {
+    const { app, ran } = twoOn("app.online");
+    const { dispose } = mount(app, root);
+    thrownBy(() => window.dispatchEvent(new Event("online")));
+    expect(ran).toEqual(["first", "second"]);
     dispose();
   });
 });
