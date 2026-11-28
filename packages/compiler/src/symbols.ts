@@ -133,9 +133,12 @@ function collectTagsForTypeName(
   program: Program,
   seen: Set<string>,
 ): string[] | null {
-  // The checker never reads a program's definition under a reserved name (E0231).
-  if (seen.has(name) || isReservedTypeName(name)) return null;
-  const def = program.defs.find((d): d is TypeDef => d.kind === "TypeDef" && d.name === name);
+  if (seen.has(name)) return null;
+  const named = (d: Def): d is TypeDef => d.kind === "TypeDef" && d.name === name;
+  // Under a reserved name the checker reads the standard library's definition, never the
+  // program's (E0231); under any other, the program's own comes first.
+  const own = isReservedTypeName(name) ? undefined : program.defs.find(named);
+  const def = own ?? STDLIB_TYPES.find(named);
   if (!def) return null;
   const next = new Set(seen);
   next.add(name);

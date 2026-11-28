@@ -7,6 +7,7 @@ import {
   FIX_COUNTER_TYPO,
   FIX_MIXED,
   FIX_PROPOSAL_BESIDE_SKIP,
+  FIX_REPAIR_INTRODUCES,
   FIX_WARNING_ONLY,
   flag,
   useWorkdir,
@@ -44,23 +45,35 @@ describe("kumiki_fix", () => {
     expect(readFileSync(file, "utf8")).toBe(original);
   });
 
-  it("proposes no rename for a read before the scope that declares the name", async () => {
-    // `idx` is one edit from the slot `id`; renamed, the first `text` would read the slot.
-    const file = join(workdir.path, "before-scope.kumiki");
-    const source = [
-      "slot id : Int = 0",
-      "slot xs : List(Int) = [1, 2]",
-      "tile App = column(text(idx.show), for idx in xs text(idx.show))",
-      'app M caps=[] routes={"/" -> App, "/404" -> App} init=[]',
-      "",
-    ].join("\n");
-    writeFileSync(file, source);
+  it.each([
+    {
+      // `idx` is one edit from the slot `id`; renamed, the first `text` would read the slot.
+      name: "a read before the scope that declares the name",
+      source: [
+        "slot id : Int = 0",
+        "slot xs : List(Int) = [1, 2]",
+        "tile App = column(text(idx.show), for idx in xs text(idx.show))",
+      ],
+      error: /^error E0103 undef-ref at 3:24: Reference to undefined name "idx" — /,
+    },
+    {
+      // `$1` is one edit from the slot `s1`; renamed, the second `text` would read the slot.
+      name: "a `$1` in a tile that declares no `in=`",
+      source: ['slot s1 : Text = "draft"', "tile App = column(text(s1), text($1))"],
+      error: /^error E0103 undef-ref at 2:34: "\$1" is undefined here — /,
+    },
+  ])("proposes no rename for $name", async ({ source, error }) => {
+    const file = join(workdir.path, "unrenamed.kumiki");
+    const text = [...source, 'app M caps=[] routes={"/" -> App, "/404" -> App} init=[]', ""].join(
+      "\n",
+    );
+    writeFileSync(file, text);
     const res = await callOnce("kumiki_fix", { path: file });
     expect(res.body.split("\n")).toEqual([
       "(no auto-patches available)",
-      expect.stringMatching(/^error E0103 undef-ref at 3:24: Reference to undefined name "idx" — /),
+      expect.stringMatching(error),
     ]);
-    expect(readFileSync(file, "utf8")).toBe(source);
+    expect(readFileSync(file, "utf8")).toBe(text);
   });
 
   it.each([
@@ -174,6 +187,32 @@ describe("kumiki_fix", () => {
     } finally {
       writeSpy.mockRestore();
     }
+    expect(readFileSync(file, "utf8")).toBe(before);
+  });
+
+  it("apply-mode reports a regression-gate refusal as `blocked`, its diagnostics on the wire", async () => {
+    const file = join(workdir.path, "repair-introduces.kumiki");
+    copyFileSync(FIX_REPAIR_INTRODUCES, file);
+    const before = readFileSync(file, "utf8");
+    const res = await callOnce("kumiki_fix", { path: file, apply: true });
+    expect(res.isError).toBe(true);
+    const parsed = JSON.parse(res.body) as Applied & {
+      blocked: { reason: string; introduced: Array<Record<string, unknown>> };
+    };
+    expect(parsed.applied).toBe(0);
+    expect(parsed.regressionBlocked).toBe(true);
+    expect(parsed.blocked.reason).toBe("introduced");
+    expect(parsed.blocked.introduced.map((d) => [d.code, d.severity])).toEqual([
+      ["E0201", "error"],
+    ]);
+    expect(Object.keys(parsed.blocked.introduced[0] ?? {}).sort()).toEqual([
+      "code",
+      "col",
+      "kind",
+      "line",
+      "message",
+      "severity",
+    ]);
     expect(readFileSync(file, "utf8")).toBe(before);
   });
 });

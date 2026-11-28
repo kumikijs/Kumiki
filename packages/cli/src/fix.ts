@@ -49,6 +49,9 @@ export function rollbackLine(r: {
       return `fixes broke the file: ${r.blocked.message}`;
     case "resolved-none":
       return "(auto-patch rolled back — it resolved none of the reported diagnostics)";
+    case "locked":
+      // The lock's own message goes to stderr (`lockRefusal`), as the write verbs print it.
+      return "(auto-patch rolled back — a definition it changes is locked by another agent)";
     case "introduced": {
       const where = r.blocked.introduced
         .map((e) => `${e.code}@${e.pos.line}:${e.pos.col}`)
@@ -58,6 +61,11 @@ export function rollbackLine(r: {
     default:
       return r.regressionBlocked ? "(auto-patch rolled back)" : "(no auto-patches available)";
   }
+}
+
+/** Prints a lock refusal's message on stderr, word for word as the write verbs print it. */
+function lockRefusal(blocked: FixApplyResult["blocked"]): void {
+  if (blocked?.reason === "locked") console.error(blocked.message);
 }
 
 export function fixCmd(
@@ -99,6 +107,7 @@ export function fixCmd(
       return 0;
     }
     console.log(rollbackLine(result));
+    lockRefusal(result.blocked);
     for (const e of result.remaining) console.error(formatDiagnostic(e));
     reportWarnings(result.warnings);
     return 1;
@@ -174,6 +183,7 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path: s
     }
     case "compile-blocked": {
       console.log(rollbackLine({ ...outcome, regressionBlocked: true }));
+      lockRefusal(outcome.blocked);
       console.log(
         `test "${testName}" is still blocked by ${outcome.compileErrors.length} compile error(s):`,
       );
@@ -215,7 +225,11 @@ function printFixFromTest(outcome: FixFromTestOutcome, testName: string, path: s
       const b = outcome.blocked;
       if (b.reason === "introduced")
         for (const e of b.introduced) console.error(formatDiagnostic(e));
-      else if (b.reason === "parse-error" || b.reason === "test-runner-threw")
+      else if (
+        b.reason === "parse-error" ||
+        b.reason === "test-runner-threw" ||
+        b.reason === "locked"
+      )
         console.error(`  ${b.message}`);
       else if (b.reason === "regressed") {
         for (const name of b.regressed) {

@@ -11,6 +11,10 @@ const PRIM_TS: Record<Exclude<PrimName, "File">, string> = {
   Unit: "null",
   Bytes: "Uint8Array",
   EffectId: "string",
+  // The sentinel a decoder lowers to, or `Decoder.Json(T)`'s check, which answers the predicate a
+  // parsed value fails.
+  Decoder:
+    '"json" | "text" | "bytes" | "none" | ((value: {} | null) => { kind: string; args: (number | string)[]; path: readonly (string | number | object)[] } | undefined)',
 };
 
 const STDLIB_BY_NAME: ReadonlyMap<string, TypeDef> = new Map(STDLIB_TYPES.map((t) => [t.name, t]));
@@ -54,7 +58,11 @@ function tsOfType(t: TypeExpr, ctx: Ctx): string {
           if (declared) return `${declared}<${t.args.map((a) => tsOfType(a, ctx)).join(", ")}>`;
           const std = STDLIB_BY_NAME.get(t.name);
           if (!std || ctx.expanding.has(t.name)) return "unknown";
-          return tsOfType(std.body, { ...ctx, expanding: new Set([...ctx.expanding, t.name]) });
+          // The arguments are read before the guard holds this name, so one nested in another is
+          // still expanded; the definition then sees its own parameters and no others.
+          const typeParams = new Map(std.params.map((p, i) => [p, arg(i)]));
+          const expanding = new Set([...ctx.expanding, t.name]);
+          return tsOfType(std.body, { ...ctx, typeParams, expanding });
         }
       }
     }

@@ -59,6 +59,14 @@ test pick-panics =
 test pick-expects-a-panic =
     reducer-test pick
         given  = {slots: {items: []}, event: {type: ui.click, target: Go}}
+        expect = {panic: "not a function"}
+test pick-panics-mocked =
+    reducer-test pick
+        given  = {slots: {items: []}, event: {type: ui.click, target: Go}, mocks: {}}
+        expect = {slots: {count: 1}}
+test pick-mocked-expects-a-panic =
+    reducer-test pick
+        given  = {slots: {items: []}, event: {type: ui.click, target: Go}, mocks: {}}
         expect = {panic: "not a function"}`;
 
 /** The message `[0][1]` and `[""][1]` panic with — distinct from the render's. */
@@ -110,9 +118,14 @@ describe("a tile-test's guard", () => {
     });
   });
 
-  it("reports it in the shape a reducer-test reports a reducer that panics", async () => {
+  // `given.mocks` runs the reducer through another runner, which has to tell a panic the
+  // compiled code throws from any other throw as well.
+  it.each([
+    ["the target's render", "render-panics"],
+    ["a reducer-test's reducer under mocks", "pick-panics-mocked"],
+  ])("reports a panic in %s in the shape a reducer-test without mocks reports one", async (_, name) => {
     const shape = (r: TestResult) => ({ pass: r.pass, actual: r.actual, diffAt: r.diffAt });
-    expect(shape(await run("render-panics"))).toEqual(shape(await run("pick-panics")));
+    expect(shape(await run(name))).toEqual(shape(await run("pick-panics")));
   });
 
   it("renders the target's body, so the target's own boundary does not catch its panic", async () => {
@@ -171,11 +184,17 @@ describe.each(FAULTS)("the guard around the code under test, given %s", (_kind, 
     await expect(run("render-panics")).rejects.toBe(fault);
   });
 
-  it("lets it out of a reducer-test's reducer too", async () => {
-    await expect(run("pick-panics")).rejects.toBe(fault);
+  it.each([
+    "pick-panics",
+    "pick-panics-mocked",
+  ])("lets it out of a reducer-test's reducer too, with or without mocks (%s)", async (name) => {
+    await expect(run(name)).rejects.toBe(fault);
   });
 
-  it("so a test that expects a panic is not passed by a fault", async () => {
-    await expect(run("pick-expects-a-panic")).rejects.toBe(fault);
+  it.each([
+    "pick-expects-a-panic",
+    "pick-mocked-expects-a-panic",
+  ])("so a test that expects a panic is not passed by a fault, with or without mocks (%s)", async (name) => {
+    await expect(run(name)).rejects.toBe(fault);
   });
 });

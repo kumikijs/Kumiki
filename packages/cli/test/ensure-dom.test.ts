@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ensureDom } from "../src/smoke.ts";
+import { ensureDom } from "../src/load.ts";
 
 describe("ensureDom", () => {
   it("registers once when two calls overlap", async () => {

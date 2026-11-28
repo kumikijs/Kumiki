@@ -18,6 +18,9 @@ const KNOWN_BAD: Record<string, "parse" | readonly string[]> = {
   ],
   "learning-cost/v3-issue-tracker/results/Codex/output.kumiki": ["E0128"],
   "learning-cost/v4-project-management/results/Claude/output.kumiki": "parse",
+  // Still ✅ in summary.md, since W0219 is a warning: TaskDetailPage's second `| None` is the
+  // inner match's, so the outer match has no `None` arm.
+  "learning-cost/v4-project-management/results/Codex/output.kumiki": ["W0219"],
   "learning-cost/v4-project-management/results/Gemini/output.kumiki": "parse",
 };
 

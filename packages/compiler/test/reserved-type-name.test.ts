@@ -1,5 +1,6 @@
 import { lex, parse, variantTagsOf } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
+import type { TypeDef } from "../src/ast.ts";
 import {
   BUILTIN_TYPE_CONSTRUCTORS,
   isReservedTypeName,
@@ -12,8 +13,10 @@ import {
   checkSource,
   codesOf,
   locatedSummariesOf,
+  posOf,
   reservedTypeNameMessage,
 } from "./helpers/diagnostics.ts";
+import { appliedName } from "./helpers/programs.ts";
 
 const TAIL = `tile App = column(text("x"))
 app A caps=[] routes={"/" -> App, "/404" -> App} init=[]`;
@@ -30,6 +33,9 @@ const RUNTIME_SUPPLIED = [
   "HttpStatus",
   "Duration",
   "FormValue",
+  "Decoder",
+  "HttpBody",
+  "IndexRange",
 ];
 
 const RESERVED: [name: string, meaning: string][] = [
@@ -61,7 +67,7 @@ const DECLARABLE: [string, string][] = [
 ];
 
 describe("the reserved names", () => {
-  it("are the primitives, the built-in constructors and seven standard library entries", () => {
+  it("are the primitives, the built-in constructors and the runtime-supplied standard library entries", () => {
     const named = (rows: [string, string][]) => rows.map(([n, m]) => `${n}: ${m}`).sort();
     expect(named(RESERVED)).toEqual(named(SPELLED_OUT));
     const stdlib = STDLIB_TYPES.map((t) => t.name);
@@ -168,6 +174,11 @@ describe("a use of a reserved name keeps the standard library's type", () => {
       "FormValue",
       "fn f(v: FormValue) -> Text = match v with | TextV(t) -> t | NumberV(n) -> n.show | BoolV(b) -> b.show | FileV(x) -> x.name",
     ],
+    [
+      "HttpBody",
+      'fn f(b: HttpBody(Int)) -> Text = match b with | Json(n) -> n.show | Form(_) -> "f" | Multipart(_) -> "m" | Text(t) -> t | Bytes(_) -> "b" | Empty -> "e"',
+    ],
+    ["IndexRange", "fn f(r: IndexRange(Int)) -> Bool = r.lowerOpen"],
   ])("keeps the standard library's %s under a program's own declaration", (name, use) => {
     expect(codesOf(`type ${name} = Text\n${use}\n${TAIL}`)).toEqual(["E0231"]);
   });
@@ -176,6 +187,18 @@ describe("a use of a reserved name keeps the standard library's type", () => {
     expect(locatedSummariesOf(`type Route = Text\nslot r : Route = "x"\n${TAIL}`)).toEqual([
       `E0231 1:1 ${reservedTypeNameMessage("Route", RUNTIME)}`,
       "E0201 2:18 Expected Route but got Text",
+    ]);
+  });
+
+  it("checks a map-request's decode against the standard library's Decoder, not the declared Text", () => {
+    const src = `type Decoder = Text
+effect load cap=storage.read in=Unit out=Result(Option(Text), Text) map-request={key: "k", decode: "TEXT"}
+tile App = column(text("x"))
+app A caps=[storage.read] routes={"/" -> App, "/404" -> App} init=[]`;
+    const { line, col } = posOf(src, '"TEXT"');
+    expect(locatedSummariesOf(src)).toEqual([
+      `E0231 1:1 ${reservedTypeNameMessage("Decoder")}`,
+      `E0201 ${line}:${col} Expected Decoder but got Text`,
     ]);
   });
 
@@ -256,6 +279,18 @@ describe("the variant tags kumiki fix reads under a reserved name", () => {
     expect(variantTagsOf("Option", program("type Option = A | B"))).toEqual(["Some", "None"]);
   });
 
+  it.each([
+    ["HttpBody(Int)", "", ["Json", "Form", "Multipart", "Text", "Bytes", "Empty"]],
+    ["FormValue", "", ["TextV", "NumberV", "BoolV", "FileV"]],
+    [
+      "HttpBody(Int)",
+      "type HttpBody(T) = A | B",
+      ["Json", "Form", "Multipart", "Text", "Bytes", "Empty"],
+    ],
+  ])("are the standard library's for %s, with %j declared", (name, decl, tags) => {
+    expect(variantTagsOf(name, program(decl))).toEqual(tags);
+  });
+
   it("are the program's own under a name of its own", () => {
     expect(variantTagsOf("Mine", program("type Mine = A | B"))).toEqual(["A", "B"]);
   });
@@ -332,13 +367,15 @@ describe("a use of a constructor name keeps the built-in constructor", () => {
 });
 
 describe("the standard library names everywhere else", () => {
-  const positions = (n: string): [string, string][] => {
+  const positions = (t: TypeDef): [string, string][] => {
+    const n = t.name;
+    const ty = appliedName(t);
     return [
-      ["a slot annotation", `slot x : Option(${n}) = None`],
-      ["a fn parameter and return", `fn f(a: Option(${n})) -> Option(${n}) = a`],
-      ["a tile in=", `tile T in=${n} = text("t")`],
-      ["a record field", `type Box = {v: ${n}}\nslot b : Option(Box) = None`],
-      ["an alias of it", `type Mine = ${n}\nslot b : Option(Mine) = None`],
+      ["a slot annotation", `slot x : Option(${ty}) = None`],
+      ["a fn parameter and return", `fn f(a: Option(${ty})) -> Option(${ty}) = a`],
+      ["a tile in=", `tile T in=${ty} = text("t")`],
+      ["a record field", `type Box = {v: ${ty}}\nslot b : Option(Box) = None`],
+      ["an alias of it", `type Mine = ${ty}\nslot b : Option(Mine) = None`],
       [
         "a type parameter of that spelling",
         `type Box(${n}) = {v: ${n}}\nslot b : Box(Int) = {v: 1}`,
@@ -352,7 +389,7 @@ describe("the standard library names everywhere else", () => {
     ];
   };
   const cases = STDLIB_TYPES.flatMap((t) =>
-    positions(t.name).map(([where, decls]) => ({ name: t.name, where, decls })),
+    positions(t).map(([where, decls]) => ({ name: t.name, where, decls })),
   );
   it.each(cases)("leaves $name in $where alone", ({ decls }) => {
     expect(locatedSummariesOf(`${decls}\n${TAIL}`)).toEqual([]);

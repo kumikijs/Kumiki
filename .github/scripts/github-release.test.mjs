@@ -66,6 +66,12 @@ describe("releaseBody", () => {
     const bumpedOnly = changelogSection("## 0.15.0\n\n## 0.14.0\n\n- abc1234: Older\n", "0.15.0");
     assert.equal(releaseBody(bumpedOnly, URL), expected);
     assert.equal(releaseBody("### Patch Changes\n", URL), expected);
+    // What `changeset version` writes for a package the fixed group bumps without an entry.
+    const noChanges = changelogSection(
+      "## 0.15.0\n\nNo changes in this release.\n\n## 0.14.0\n\n- abc1234: Older\n",
+      "0.15.0",
+    );
+    assert.equal(releaseBody(noChanges, URL), expected);
   });
 
   it("is the whole section when it fits", () => {

@@ -46,7 +46,11 @@ type Params =
 type RefinementEntry = {
   readonly tests: Tests;
   readonly params: Params;
-  readonly combined?: (args: readonly RefinementArg[]) => string | undefined;
+  /** A problem the arguments have together, naming each as `shown` does. */
+  readonly combined?: (
+    args: readonly RefinementArg[],
+    shown: (i: number) => string,
+  ) => string | undefined;
   readonly body?: (args: readonly RefinementArg[]) => string;
   /** The answer `body` gives for a literal, for a value known before the program runs. */
   readonly holds: (args: readonly RefinementArg[], v: RefinementArg) => boolean;
@@ -78,9 +82,9 @@ export const REFINEMENTS: ReadonlyMap<string, RefinementEntry> = new Map<string,
     {
       tests: "number",
       params: { fixed: ["number", "number"] },
-      combined: (a) =>
+      combined: (a, shown) =>
         num(a, 0) > num(a, 1)
-          ? `between(${a[0]}, ${a[1]}) has a lower bound above its upper bound, so no value satisfies it`
+          ? `between(${shown(0)}, ${shown(1)}) has a lower bound above its upper bound, so no value satisfies it`
           : undefined,
       body: (a) => `${NUM} && v >= ${num(a, 0)} && v <= ${num(a, 1)}`,
       holds: (a, v) => isNumber(v) && v >= num(a, 0) && v <= num(a, 1),
@@ -235,6 +239,13 @@ const ARG_DESCRIPTION: Record<ArgKind, string> = {
   literal: "a number or text literal",
 };
 
+/** Whether argument `index` of `pred` is a count, a whole number whatever the base. */
+export function isCountArgument(pred: string, index: number): boolean {
+  const params = REFINEMENTS.get(pred)?.params;
+  if (params === undefined) return false;
+  return ("rest" in params ? params.rest : params.fixed[index]) === "count";
+}
+
 function argFits(kind: ArgKind, arg: RefinementArg | undefined): boolean {
   switch (kind) {
     case "number":
@@ -248,9 +259,12 @@ function argFits(kind: ArgKind, arg: RefinementArg | undefined): boolean {
   }
 }
 
-/** How an argument reads in a message — quoted when it is text, as written. */
-const showArg = (arg: RefinementArg | undefined): string =>
-  arg === undefined ? "nothing" : JSON.stringify(arg);
+/** How argument `i` of `r` reads in a message: as written, and quoted when it is text. */
+function showArg(r: Refinement, i: number): string {
+  const arg = r.args[i];
+  if (arg === undefined) return "nothing";
+  return r.numbers?.find((n) => n.index === i)?.raw ?? JSON.stringify(arg);
+}
 
 export function refinementProblem(r: Refinement): RefinementProblem | undefined {
   const entry = REFINEMENTS.get(r.pred);
@@ -260,9 +274,9 @@ export function refinementProblem(r: Refinement): RefinementProblem | undefined 
       message: `Refinement "${r.pred}" is not a registered predicate`,
     };
   }
-  const arity = arityProblem(r.pred, entry.params, r.args);
+  const arity = arityProblem(r, entry.params);
   if (arity) return { kind: "refinement-args-invalid", message: arity };
-  const combined = entry.combined?.(r.args);
+  const combined = entry.combined?.(r.args, (i) => showArg(r, i));
   if (combined) return { kind: "refinement-args-invalid", message: `Refinement ${combined}` };
   if (!entry.body) {
     return {
@@ -284,19 +298,16 @@ export function refinementBaseProblem(
   if (tests === "choice" && shape !== undefined) {
     const wrong = r.args.findIndex((a) => shapeOfArg(a) !== shape);
     if (wrong === -1) return undefined;
-    return `Refinement "${r.pred}" lists ${showArg(r.args[wrong])} (argument ${wrong + 1}) but ${over}, so no value equals it`;
+    return `Refinement "${r.pred}" lists ${showArg(r, wrong)} (argument ${wrong + 1}) but ${over}, so no value equals it`;
   }
   if (shape !== undefined && shape === tests) return undefined;
   return `Refinement "${r.pred}" tests ${TESTS_DESCRIPTION[tests]} but ${over}, so no value satisfies it`;
 }
 
-function arityProblem(
-  pred: string,
-  params: Params,
-  args: readonly RefinementArg[],
-): string | undefined {
+function arityProblem(r: Refinement, params: Params): string | undefined {
+  const { pred, args } = r;
   const wrongArg = (i: number, kind: ArgKind): string =>
-    `Refinement "${pred}" takes ${ARG_DESCRIPTION[kind]} but argument ${i + 1} is ${showArg(args[i])}`;
+    `Refinement "${pred}" takes ${ARG_DESCRIPTION[kind]} but argument ${i + 1} is ${showArg(r, i)}`;
   if ("rest" in params) {
     if (args.length < params.min) {
       return `Refinement "${pred}" needs at least ${params.min} value(s) but got ${args.length}`;
