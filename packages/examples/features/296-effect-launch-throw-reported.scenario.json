@@ -1,0 +1,26 @@
+{
+  "steps": [
+    {
+      "label": "nothing is sent at mount",
+      "expect": { "noErrors": true, "domIncludes": ["log=", "app.error x0: "] }
+    },
+    {
+      "label": "the first click queues one write, and it arrives with nothing for app.error",
+      "do": { "click": "#send-a" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "a", "crashes": 0, "crash": "" },
+        "domIncludes": ["log=a", "app.error x0: "]
+      }
+    },
+    {
+      "label": "the second click queues the next write behind it",
+      "do": { "click": "#send-b" },
+      "expect": {
+        "noErrors": true,
+        "state": { "log": "ab", "crashes": 0, "crash": "" },
+        "domIncludes": ["log=ab", "app.error x0: "]
+      }
+    }
+  ]
+}

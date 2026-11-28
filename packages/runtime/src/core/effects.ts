@@ -76,6 +76,7 @@ export function makeEffectDispatcher(
     token: string,
   ) => void,
   onRefusal: (effect: string, why: EmitRefusal, token?: string) => void,
+  onThrow: (effect: string, e: unknown, token?: string) => void,
   onLaunch?: (effect: string, input: unknown) => string,
   onCancel?: (targetId: string) => void,
   onPolicyCancel?: (token: string, effectName: string) => void,
@@ -128,6 +129,9 @@ export function makeEffectDispatcher(
     }
   };
 
+  // What throws past a launch, outside the reducers its result runs, such as a host's episode
+  // logger recording the request, goes to `onThrow`: a promise nothing handles would drop it, and
+  // under `queue` the next entry would run as its rejection handler and discard it.
   const launch = async (
     eff: EffectSpec,
     input: unknown,
@@ -135,32 +139,60 @@ export function makeEffectDispatcher(
     presetToken?: string,
   ): Promise<void> => {
     if (disposed) return;
-    // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
-    if (eff.cap !== "" && !caps.has(eff.cap)) {
-      settle(id);
-      try {
-        onRefusal(eff.name, { category: "capability", cap: eff.cap }, presetToken);
-      } finally {
-        if (presetToken) onPolicyCancel?.(presetToken, eff.name);
+    let token = presetToken;
+    try {
+      // Empty cap = standard presentation effect (e.g. scroll-to); no permission gate.
+      if (eff.cap !== "" && !caps.has(eff.cap)) {
+        settle(id);
+        try {
+          onRefusal(eff.name, { category: "capability", cap: eff.cap }, presetToken);
+        } finally {
+          if (presetToken) onPolicyCancel?.(presetToken, eff.name);
+        }
+        return;
       }
-      return;
+      token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
+      const ctl = new AbortController();
+      const run: Run = { name: eff.name, token, ctl };
+      state.inflight.set(id, ctl);
+      state.runs.add(run);
+      // An invoke that throws, or resolves to no result, is already this request's err here.
+      const { kind: outcome, value } = await runEffect(eff, input, caps, ctl.signal);
+      // Released before its result is delivered, so a cancel the `.ok` / `.err` reducers emit
+      // finds a request that is over. Under `latest` a newer request may hold the id by now.
+      if (state.inflight.get(id) === ctl) {
+        state.inflight.delete(id);
+        settle(id);
+      }
+      // Outside runEffect's catch: this is the request's one result, and what its delivery
+      // throws is the app's to report, not a second result.
+      if (state.runs.delete(run)) onResult(eff.name, outcome, value, input, token);
+    } catch (e) {
+      onThrow(eff.name, e, token);
     }
-    const token = presetToken ?? onLaunch?.(eff.name, input) ?? "";
-    const ctl = new AbortController();
-    const run: Run = { name: eff.name, token, ctl };
-    state.inflight.set(id, ctl);
-    state.runs.add(run);
-    // An invoke that throws, or resolves to no result, is already this request's err here.
-    const { kind: outcome, value } = await runEffect(eff, input, caps, ctl.signal);
-    // Released before its result is delivered, so a cancel the `.ok` / `.err` reducers emit finds
-    // a request that is over. Under `latest` a newer request may hold the id by now.
-    if (state.inflight.get(id) === ctl) {
-      state.inflight.delete(id);
-      settle(id);
+  };
+
+  // A policy that defers the launch records its `effect-start` at the emit. What that throws goes
+  // to `onThrow`, as what throws inside `launch` does, and not to the reducer that emitted; the
+  // request does not run, which `undefined` says.
+  const claim = (eff: EffectSpec, input: unknown): string | undefined => {
+    try {
+      return onLaunch?.(eff.name, input) ?? "";
+    } catch (e) {
+      onThrow(eff.name, e);
+      return undefined;
     }
-    // Outside the catch: this is the request's one result, and what its delivery throws is the
-    // app's to report, not a second result.
-    if (state.runs.delete(run)) onResult(eff.name, outcome, value, input, token);
+  };
+
+  // Releasing a request a policy deferred can commit the episode that claimed it, which hands it to
+  // the logger's hooks. What they throw goes to `onThrow`, not to the reducer whose emit released
+  // it, so the dispatch carries on: a `debounce` still schedules the emit that replaced the request.
+  const release = (token: string, name: string): void => {
+    try {
+      onPolicyCancel?.(token, name);
+    } catch (e) {
+      onThrow(name, e);
+    }
   };
 
   return {
@@ -190,7 +222,7 @@ export function makeEffectDispatcher(
             const i = q.pending.findIndex((e) => e.id === target);
             if (i === -1) continue;
             const [e] = q.pending.splice(i, 1);
-            if (e?.token) onPolicyCancel?.(e.token, name);
+            if (e?.token) release(e.token, name);
             released = true;
             break;
           }
@@ -200,7 +232,7 @@ export function makeEffectDispatcher(
             clearTimeout(t.h);
             state.timers.delete(name);
             released = true;
-            if (t.token) onPolicyCancel?.(t.token, name);
+            if (t.token) release(t.token, name);
             break;
           }
           settle(target);
@@ -229,9 +261,14 @@ export function makeEffectDispatcher(
         if (prev?.kind === "debounce") {
           clearTimeout(prev.h);
           absorb(prev.id, id);
-          if (prev.token) onPolicyCancel?.(prev.token, eff.name);
+          if (prev.token) release(prev.token, eff.name);
         }
-        const token = onLaunch?.(eff.name, input) ?? "";
+        const token = claim(eff, input);
+        if (token === undefined) {
+          state.timers.delete(eff.name);
+          settle(id);
+          return;
+        }
         const h = setTimeout(() => {
           state.timers.delete(eff.name);
           void launch(eff, input, id, token);
@@ -240,7 +277,8 @@ export function makeEffectDispatcher(
         return;
       }
       if (policy.kind === "queue") {
-        const token = onLaunch?.(eff.name, input) ?? "";
+        const token = claim(eff, input);
+        if (token === undefined) return;
         const entry: QueueEntry = { id, token };
         const q = state.queues.get(eff.name) ?? { tail: Promise.resolve(), pending: [] };
         q.pending.push(entry);
