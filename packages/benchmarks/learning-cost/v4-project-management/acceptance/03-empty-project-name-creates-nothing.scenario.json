@@ -1,0 +1,50 @@
+{
+  "effects": {
+    "loadProjects": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadTasks": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "clickText": "Create project"
+      }
+    },
+    {
+      "label": "an empty name creates no project",
+      "do": {
+        "navigate": "/"
+      },
+      "expect": {
+        "domIncludes": ["No projects"]
+      }
+    }
+  ]
+}

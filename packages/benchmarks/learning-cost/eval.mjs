@@ -2,11 +2,13 @@
 //   - parse?
 //   - typecheck?
 //   - build?
-// Emits a JSON line summary to stdout.
+//   - smoke? (mounts, renders, survives the generic interaction pass)
+// Emits a JSON line summary to stdout. acceptance.mjs scores what the program does.
 
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { smokeSource } from "@kumikijs/cli";
 import { encode as encodeCl100k } from "gpt-tokenizer/encoding/cl100k_base";
 import { compile } from "../../compiler/src/compile.ts";
 import { lex } from "../../compiler/src/lexer.ts";
@@ -32,7 +34,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", ".
 // Recorded in eval.json, so it reads the same whichever directory or OS the harness ran from.
 const recordedPath = (abs) => relative(repoRoot, abs).split(sep).join("/");
 
-function evalFile(abs) {
+async function evalFile(abs) {
   const path = recordedPath(abs);
   if (!existsSync(abs)) {
     return { path, stage: "missing", error: "file not found" };
@@ -46,6 +48,7 @@ function evalFile(abs) {
     parse: false,
     typecheck: false,
     build: false,
+    smoke: false,
     errorCount: 0,
     errorCategories: {},
     firstError: null,
@@ -93,6 +96,14 @@ function evalFile(abs) {
     }
   }
 
+  if (result.build) {
+    try {
+      result.smoke = (await smokeSource(source)).ok;
+    } catch {
+      result.smoke = false;
+    }
+  }
+
   return result;
 }
 
@@ -105,6 +116,6 @@ if (targets.length === 0) {
 const results = [];
 for (const t of targets) {
   const abs = resolve(process.cwd(), t);
-  results.push(evalFile(abs));
+  results.push(await evalFile(abs));
 }
 console.log(JSON.stringify(results, null, 2));

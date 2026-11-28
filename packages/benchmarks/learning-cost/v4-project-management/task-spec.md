@@ -112,6 +112,16 @@ Two themes, Light / Dark. A minimal set of color / spacing / typography tokens.
 
 Save and restore `projects`, `tasks`, `comments` in localStorage.
 
+## Acceptance contract
+
+The program is scored by driving it through the names below, so use them exactly. Everything else — layout, wording, extra features — is yours to choose.
+
+- Status is shown as `Backlog` / `In Progress` / `Review` / `Done`, priority as `Low` / `Med` / `High` / `Critical`, wherever they appear (labels, badges, select options, board columns).
+- **`/`**: an `input` `id: "project-name"`, a `textarea` `id: "project-description"` and a submit button `Create project` (an empty name creates nothing). Each project shows its name as a link to its page, a button `Archive` — or, once archived, the text `Archived` and a button `Unarchive` — and a button `Delete project`. With no project, the text `No projects`.
+- **`/projects/:id`**: the project name, a button `New task` that opens `/projects/:id/new-task`, and one button that reads `Board view` in the list and `List view` on the board. A `select` `id: "filter-status"` (`All` and the statuses), a `select` `id: "filter-priority"` (`All` and the priorities), an `input` `id: "filter-assignee"` (assignees containing the text), an `input` `id: "filter-search"` (titles containing the text) and a button `Clear filters`. Each task shows its title as a link to its page, its status and its priority; on the board, each task also has a button `Advance` that moves it to the next status. With no task to show, the text `No tasks`.
+- **`/projects/:id/new-task`**: an `input` `id: "task-title"`, a `textarea` `id: "task-description"`, a `select` `id: "task-priority"` (`Med` by default), an `input` `id: "task-assignee"`, an `input` `id: "task-tags"` (comma-separated), an `input` `id: "task-due"` of `type="date"` (may be left empty), a submit button `Create task` and a button `Cancel`. An empty title creates nothing.
+- **`/projects/:id/tasks/:taskId`**: the title, the description, the due date as `yyyy-MM-dd` when it has one, a `select` `id: "detail-status"` and a `select` `id: "detail-priority"` that change the task, its tags each with a button `Remove tag`, an `input` `id: "tag-input"` with a button `Add tag`, a button `Add subtask` that opens the new-task form for a task under this one, the titles of its subtasks as links, an `input` `id: "comment-input"` with a button `Add comment`, each comment's body with a button `Delete comment`, a button `Delete task` that returns to the project, and a button `Back` to the project.
+
 ## Constraints
 
 - The output is a single `.kumiki` file
@@ -125,5 +135,6 @@ Write it out as a `.kumiki` file at the specified path. **Do not leave any stray
 
 ## Evaluation
 
-Score parse / typecheck / build with `benchmarks/learning-cost/eval.mjs`.
-The best version also goes through `kumiki build` + a browser smoke test.
+- parse / typecheck / build, and `kumiki smoke` (`benchmarks/learning-cost/eval.mjs`)
+- the acceptance scenarios, which drive the program through the contract above (`benchmarks/learning-cost/acceptance.mjs`); the score is the number of criteria passed
+- LOC and token count are recorded

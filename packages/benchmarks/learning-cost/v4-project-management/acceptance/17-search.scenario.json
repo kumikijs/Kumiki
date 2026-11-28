@@ -1,0 +1,105 @@
+{
+  "effects": {
+    "loadProjects": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadTasks": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/"
+      }
+    },
+    {
+      "do": {
+        "fill": "#project-name",
+        "value": "Website"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create project"
+      }
+    },
+    {
+      "do": {
+        "clickText": "New task"
+      }
+    },
+    {
+      "do": {
+        "fill": "#task-title",
+        "value": "Design header"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create task"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Back"
+      }
+    },
+    {
+      "do": {
+        "clickText": "New task"
+      }
+    },
+    {
+      "do": {
+        "fill": "#task-title",
+        "value": "Fix typo"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create task"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Back"
+      }
+    },
+    {
+      "label": "search narrows to matching titles",
+      "do": {
+        "fill": "#filter-search",
+        "value": "typo"
+      },
+      "expect": {
+        "domIncludes": ["Fix typo"],
+        "domExcludes": ["Design header"]
+      }
+    }
+  ]
+}

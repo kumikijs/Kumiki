@@ -1,0 +1,98 @@
+{
+  "effects": {
+    "loadProjects": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadTasks": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/"
+      }
+    },
+    {
+      "do": {
+        "fill": "#project-name",
+        "value": "Website"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create project"
+      }
+    },
+    {
+      "do": {
+        "clickText": "New task"
+      }
+    },
+    {
+      "do": {
+        "fill": "#task-title",
+        "value": "Design header"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create task"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Back"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Board view"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Advance"
+      }
+    },
+    {
+      "do": {
+        "clickText": "List view"
+      }
+    },
+    {
+      "label": "after Advance the task is In Progress",
+      "do": {
+        "choose": "#filter-status",
+        "value": "In Progress"
+      },
+      "expect": {
+        "domIncludes": ["Design header"]
+      }
+    }
+  ]
+}

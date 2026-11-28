@@ -112,6 +112,16 @@ Light / Dark の 2 種 theme。最低限の色 / spacing / typography トーク�
 
 `projects`, `tasks`, `comments` を localStorage に保存・復元。
 
+## 受け入れ条件の約束事
+
+プログラムは以下の名前を使って操作し採点するので、そのとおりに使うこと。それ以外（レイアウト、文言、追加機能）は自由に決めてよい。
+
+- ステータスは `Backlog` / `In Progress` / `Review` / `Done`、優先度は `Low` / `Med` / `High` / `Critical` と表示する（ラベル、バッジ、select の選択肢、ボードの列のどこでも）。
+- **`/`**：`id: "project-name"` の `input`、`id: "project-description"` の `textarea`、送信ボタン `Create project`（名前が空なら何も作らない）。各プロジェクトは名前をそのページへのリンクとして表示し、ボタン `Archive`（アーカイブ後はテキスト `Archived` とボタン `Unarchive`）とボタン `Delete project` を持つ。プロジェクトが無いときはテキスト `No projects`。
+- **`/projects/:id`**：プロジェクト名、`/projects/:id/new-task` を開くボタン `New task`、リスト表示では `Board view`、ボード表示では `List view` と読める 1 つのボタン。`id: "filter-status"` の `select`（`All` と各ステータス）、`id: "filter-priority"` の `select`（`All` と各優先度）、`id: "filter-assignee"` の `input`（担当者がその文字列を含む）、`id: "filter-search"` の `input`（タイトルがその文字列を含む）、ボタン `Clear filters`。各タスクはタイトルをそのページへのリンクとして表示し、ステータスと優先度も表示する。ボードでは各タスクに、次のステータスへ進めるボタン `Advance` もある。表示するタスクが無いときはテキスト `No tasks`。
+- **`/projects/:id/new-task`**：`id: "task-title"` の `input`、`id: "task-description"` の `textarea`、`id: "task-priority"` の `select`（既定は `Med`）、`id: "task-assignee"` の `input`、`id: "task-tags"` の `input`（カンマ区切り）、`type="date"` の `id: "task-due"` の `input`（空でもよい）、送信ボタン `Create task`、ボタン `Cancel`。タイトルが空なら何も作らない。
+- **`/projects/:id/tasks/:taskId`**：タイトル、説明、期日があれば `yyyy-MM-dd` 形式の期日、タスクを変更する `id: "detail-status"` の `select` と `id: "detail-priority"` の `select`、各タグとそのボタン `Remove tag`、`id: "tag-input"` の `input` とボタン `Add tag`、このタスクの下にタスクを作る新規タスクフォームを開くボタン `Add subtask`、サブタスクのタイトル（リンク）、`id: "comment-input"` の `input` とボタン `Add comment`、各コメントの本文とボタン `Delete comment`、プロジェクトに戻るボタン `Delete task`、プロジェクトに戻るボタン `Back`。
+
 ## 制約
 
 - 出力は 1 つの `.kumiki` ファイル
@@ -125,5 +135,6 @@ Light / Dark の 2 種 theme。最低限の色 / spacing / typography トーク�
 
 ## 評価
 
-`benchmarks/learning-cost/eval.mjs` で parse / typecheck / build を採点。
-ベスト版は `kumiki build` + ブラウザ動作確認まで。
+- parse / typecheck / build と `kumiki smoke`（`benchmarks/learning-cost/eval.mjs`）
+- 上の約束事を使ってプログラムを操作する受け入れシナリオ（`benchmarks/learning-cost/acceptance.mjs`）。合格した条件の数が得点になる
+- LOC とトークン数を記録する

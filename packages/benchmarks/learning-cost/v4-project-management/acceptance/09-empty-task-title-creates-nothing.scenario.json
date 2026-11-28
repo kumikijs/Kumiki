@@ -1,0 +1,71 @@
+{
+  "effects": {
+    "loadProjects": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadTasks": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/"
+      }
+    },
+    {
+      "do": {
+        "fill": "#project-name",
+        "value": "Website"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create project"
+      }
+    },
+    {
+      "do": {
+        "clickText": "New task"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create task"
+      }
+    },
+    {
+      "label": "an empty title creates no task",
+      "do": {
+        "clickText": "Cancel"
+      },
+      "expect": {
+        "domIncludes": ["No tasks"]
+      }
+    }
+  ]
+}
