@@ -504,7 +504,19 @@ export function mountCore(
     key: unknown,
     token = "",
   ): void {
-    const exitScope = episode?.recordEffectEnd(token, effect, outcome, value);
+    let exitScope: (() => void) | undefined;
+    try {
+      exitScope = episode?.recordEffectEnd(token, effect, outcome, value);
+    } catch (e) {
+      // No reducer runs on a result the log could not take, as after any throw past a launch.
+      // Once the report has put its `panic` step on the episode that claimed the request, the
+      // claim is released, so that episode commits and the episodes begun after it are handed
+      // over. What the release throws, such as a hook as that episode commits, goes on to
+      // `launch`, as a throw while the result's scope closes does.
+      handleLaunchThrow(effect, e, token);
+      episode?.cancelPendingEffect(token, effect);
+      return;
+    }
     // What throws past a reducer's body here, such as the dispatch of what it emitted or the
     // episode logger recording its render, is not another result: the request already has its
     // one. It is an error of the app, reported as a reducer panic is. `escaped` cannot throw, so
