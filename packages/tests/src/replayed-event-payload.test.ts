@@ -75,6 +75,8 @@ describe("a replayed entry reducer gets the payload it ran with", () => {
     expect(eps.map((ep) => [ep.trigger.kind, ep.trigger.payload])).toEqual([
       ["effect.ok", { $1: { text: "hi", author: "me" } }],
       ["ui.click", { $el: { idx: 5 }, $event: { idx: 5 } }],
+      // `Field`'s `bind=draft` writes ahead of the reducer, and a bind write has no payload.
+      ["ui.input", undefined],
       ["ui.input", { $el: { value: "hello" }, $event: { value: "hello" } }],
     ]);
     const { report, diffs } = await replay(eps);

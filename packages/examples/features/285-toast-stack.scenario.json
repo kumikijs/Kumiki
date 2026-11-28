@@ -1,0 +1,28 @@
+{
+  "steps": [
+    {
+      "label": "no toast before a click",
+      "expect": { "noErrors": true, "domExcludes": ["Save failed", "Saved"] }
+    },
+    {
+      "label": "the error toast appears",
+      "do": { "clickText": "Fail" },
+      "expect": { "noErrors": true, "domIncludes": ["Save failed"] }
+    },
+    {
+      "label": "a success toast joins it rather than taking its place",
+      "do": { "clickText": "Save" },
+      "expect": { "noErrors": true, "domIncludes": ["Save failed", "Saved"] }
+    },
+    {
+      "label": "the success toast goes after the 500ms it asked for, and the error toast stays",
+      "do": { "wait": 600 },
+      "expect": { "noErrors": true, "domIncludes": ["Save failed"], "domExcludes": ["Saved"] }
+    },
+    {
+      "label": "the error toast goes when its dismiss button is clicked",
+      "do": { "click": "[data-kumiki-toast][data-level='error'] [data-kumiki-toast-dismiss]" },
+      "expect": { "noErrors": true, "domExcludes": ["Save failed"] }
+    }
+  ]
+}

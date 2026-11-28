@@ -30,7 +30,10 @@
       "do": { "navigate": "/read-missing" },
       "expect": {
         "state": { "tries": 0, "picked": "-" },
-        "domIncludes": ["tries: 0", "failed: Key \"zz\" is not in the Map"],
+        "domIncludes": [
+          "tries: 0",
+          "failed: Key \"zz\" is not in {\"t1\":{\"title\":\"write docs\",\"done\":true}}"
+        ],
         "errorIncludes": ["panic in reducer \"read-missing\""]
       }
     }

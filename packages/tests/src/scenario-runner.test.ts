@@ -206,7 +206,11 @@ describe("a debounced effect", () => {
     expect(kinds).toContain("effect-end");
     expect(reducersOf(edit)).toEqual(expect.arrayContaining(["edit", "saved"]));
     expect(edit.status).toBe("completed");
-    expect(eps.filter((ep) => ep.trigger.kind === "ui.input")).toHaveLength(1);
+    // The first is `bind=text`'s write, which runs no reducer.
+    expect(eps.filter((ep) => ep.trigger.kind === "ui.input").map(reducersOf)).toEqual([
+      [],
+      reducersOf(edit),
+    ]);
     expect(
       eps.filter((ep) => ep.trigger.kind.startsWith("effect.") && reducersOf(ep).includes("saved")),
     ).toEqual([]);

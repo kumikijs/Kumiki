@@ -1,6 +1,14 @@
 import type { IndexedDbStore, KeyKind, ShowShape } from "@kumikijs/runtime";
+import type { PrimName } from "./stdlib-types.ts";
 
 export type Pos = { line: number; col: number };
+
+/**
+ * On a value, statement or tile `match`: `outer` is where the `match` starts whose last arm this
+ * one ends with nothing closing it off, so every arm written after it is its own (language.md).
+ * Absent once parentheses or braces close it.
+ */
+export type EndsOuterArm = { outer?: Pos };
 
 export type Token =
   | { kind: "ident"; value: string; pos: Pos }
@@ -60,10 +68,22 @@ export type TestDef = {
 
 export type ThemeValue = string | number | { [k: string]: ThemeValue };
 
+/**
+ * A string or number a `theme` body holds: the keys that lead to it, and the position of its first
+ * token, a negative number's `-`.
+ */
+export type ThemeLeaf = { path: readonly string[]; value: string | number; pos: Pos };
+
 export type ThemeDef = {
   kind: "ThemeDef";
   name: string;
   body: { [k: string]: ThemeValue };
+  /**
+   * Every string and number the body is written with, in source order, a duplicate key's included.
+   * In `body` a duplicate key's later entry replaces the earlier one, so a leaf's path can lead to
+   * nothing there.
+   */
+  leaves: ThemeLeaf[];
   /** Keys seen more than once in the body, at any nesting depth. */
   duplicateKeys?: DuplicateName[];
   pos: Pos;
@@ -207,7 +227,7 @@ export type AppDef = {
 export type TypeExpr =
   | {
       kind: "TypePrim";
-      name: "Int" | "Text" | "Bool" | "Unit" | "Float" | "Time" | "Bytes" | "File" | "EffectId";
+      name: PrimName;
       pos: Pos;
     }
   | { kind: "TypeRef"; name: string; pos: Pos }
@@ -250,24 +270,32 @@ export function assertNever(node: never): void {
   void node;
 }
 
+/** A number literal: the text it is written as, its sign included, and the number it was read as. */
+export type NumberLiteral = { readonly value: number; readonly raw: string };
+
 /**
  * The sign is part of a number literal (language.md), but the lexer emits it as
  * its own operator, so `-1` reaches the AST as a negation of `1`. One leading `-`
  * is folded in: `- -1` is the negation of the literal `-1`, so it is `null` here.
  * Parentheses leave no node, so `-(1)` is the literal `-1`.
  */
-export function numberLiteral(e: Expr): { value: number; raw: string } | null {
-  if (e.kind === "Num") return { value: e.value, raw: e.raw ?? String(e.value) };
+export function numberLiteral(e: Expr): NumberLiteral | null {
+  if (e.kind === "Num") return { value: e.value, raw: e.raw };
   if (e.kind === "UnaryOp" && e.op === "-" && e.rhs.kind === "Num") {
-    return { value: -e.rhs.value, raw: `-${e.rhs.raw ?? String(e.rhs.value)}` };
+    return { value: -e.rhs.value, raw: `-${e.rhs.raw}` };
   }
   return null;
 }
+
+/** A refinement's number argument as written, where it starts, and its place in `args`. */
+export type RefinementNumber = NumberLiteral & { readonly index: number; readonly pos: Pos };
 
 export type Refinement = {
   kind: "Refinement";
   pred: string;
   args: (number | string)[];
+  /** Each number among `args`, as written. A refinement the compiler builds itself has none. */
+  numbers?: readonly RefinementNumber[];
   pos: Pos;
 };
 
@@ -320,12 +348,12 @@ export type Statement =
   | { kind: "StopTimer"; name: string; pos: Pos }
   | { kind: "ForStmt"; bind: string; bindPos: Pos; iter: Expr; body: Statement[]; pos: Pos }
   | { kind: "IfStmt"; cond: Expr; consequent: Statement[]; alternate: Statement[]; pos: Pos }
-  | {
+  | ({
       kind: "MatchStmt";
       scrutinee: Expr;
       arms: { pattern: Pattern; body: Statement[] }[];
       pos: Pos;
-    }
+    } & EndsOuterArm)
   | { kind: "PanicStmt"; message: Expr; pos: Pos }
   | { kind: "NoopStmt"; pos: Pos };
 
@@ -344,7 +372,17 @@ export type Lvalue =
 
 export type { KeyKind };
 
-export type FragmentShape = "pair" | "key-value" | "value" | "undecided";
+/**
+ * How `$1` / `$2` are bound from what a `filter` / `map` / `find` / `sort-by` fragment is handed,
+ * which the checker reads to type them and the lowering to bind them:
+ * - `pair`: a `Tuple(A, B)` element, taken apart into `$1` and `$2`;
+ * - `key-value`: a Map's entry, its key as `$1` and its value as `$2`;
+ * - `key`: an entry whose key alone is `$1`, as a Set's `filter` is handed `[member, true]`;
+ * - `value`: one value, `$1`, with no `$2`;
+ * - `undecided`: a value whose type the checker cannot decide, taken apart when it is a two-item
+ *   array.
+ */
+export type FragmentShape = "pair" | "key-value" | "key" | "value" | "undecided";
 
 export type { ShowShape };
 
@@ -357,7 +395,7 @@ export type Expr = ExprForm & {
 };
 
 type ExprForm =
-  | { kind: "Num"; value: number; raw?: string; pos: Pos }
+  | { kind: "Num"; value: number; raw: string; pos: Pos }
   | { kind: "Str"; value: string; pos: Pos }
   | { kind: "Bool"; value: boolean; pos: Pos }
   | { kind: "Unit"; pos: Pos }
@@ -398,7 +436,7 @@ type ExprForm =
   | { kind: "MapLit"; entries: { key: Expr; value: Expr }[]; pos: Pos }
   | { kind: "Wildcard"; wild: "any-id"; pos: Pos }
   | { kind: "Wildcard"; wild: "slot"; slot: string; slotPos: Pos; pos: Pos }
-  | { kind: "MatchExpr"; scrutinee: Expr; arms: MatchArm[]; pos: Pos }
+  | ({ kind: "MatchExpr"; scrutinee: Expr; arms: MatchArm[]; pos: Pos } & EndsOuterArm)
   | { kind: "IfExpr"; cond: Expr; consequent: Expr; alternate: Expr; pos: Pos }
   | { kind: "LetIn"; name: string; namePos: Pos; value: Expr; body: Expr; pos: Pos }
   | { kind: "EmitExpr"; effect: string; args: Expr[]; effectPos?: Pos; pos: Pos }
@@ -436,11 +474,20 @@ export type RetryExpr =
 // ----- Tile expressions -----
 
 export type TileExpr =
-  | { kind: "TileCall"; name: string; args: TileArg[]; props: TileProp[]; pos: Pos }
+  | {
+      kind: "TileCall";
+      name: string;
+      args: TileArg[];
+      props: TileProp[];
+      pos: Pos;
+      // Written with neither `(…)` nor `{…}`: a builtin's name written so is the builtin only when no
+      // value in scope has the name.
+      bare?: true;
+    }
   | { kind: "TileFor"; bind: string; bindPos: Pos; iter: Expr; body: TileExpr; pos: Pos }
   | { kind: "TileWhen"; cond: Expr; body: TileExpr; pos: Pos }
   | { kind: "TileIf"; cond: Expr; consequent: TileExpr; alternate: TileExpr; pos: Pos }
-  | { kind: "TileMatch"; scrutinee: Expr; arms: TileMatchArm[]; pos: Pos };
+  | ({ kind: "TileMatch"; scrutinee: Expr; arms: TileMatchArm[]; pos: Pos } & EndsOuterArm);
 
 export type TileMatchArm = {
   pattern: Pattern;

@@ -7,7 +7,7 @@ import {
   type ReplayEvent,
   replayEpisodes,
 } from "@kumikijs/runtime";
-import { ensureDom, loadApp } from "./smoke.ts";
+import { compileForLoad, ensureDom, printWarnings } from "./load.ts";
 import { messageOf } from "./text.ts";
 
 export type ReplayCmdOptions = {
@@ -99,6 +99,14 @@ export function formatEvent(ev: ReplayEvent): string | null {
       const env = ev.env ? `  (env: ${formatEnvDrift(ev.env)})` : "";
       return `  [reducer] ${ev.name}${diffs ? `  ${diffs}` : ""}${env}`;
     }
+    case "bind": {
+      const diffs = ev.slotDiffs
+        .map((d) => `${d.name}: ${jsonOrNull(d.before)} -> ${jsonOrNull(d.after)}`)
+        .join(", ");
+      const refused = ev.refused ? `(refused ${jsonOrNull(ev.value)})` : "";
+      const said = [diffs, refused].filter((part) => part !== "").join("  ");
+      return `  [bind] ${ev.name}${said ? `  ${said}` : ""}`;
+    }
     case "effect-start":
       return `  [effect-start] ${ev.name}(${jsonOrNull(ev.args)})`;
     case "effect-end": {
@@ -141,7 +149,8 @@ export async function replayCmd(
 ): Promise<void> {
   await ensureDom();
   const source = readFileSync(kumikiPath, "utf8");
-  const app = await loadApp(source, capabilities, { sourcePath: kumikiPath });
+  const { app, warnings } = await compileForLoad(source, capabilities, { sourcePath: kumikiPath });
+  printWarnings(source, warnings);
 
   const raw = readFileSync(opts.fromLog, "utf8");
   let parsed: EpisodeLogEntry[];

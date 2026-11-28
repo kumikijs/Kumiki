@@ -49,9 +49,16 @@ export class TileParser extends StatementParser {
       return { kind: "TileIf", cond, consequent: thenT, alternate: elseT, pos: start.pos };
     }
     if (this.matchKw("match")) {
-      return { kind: "TileMatch", ...this.parseMatch(() => this.parseTileExpr()) };
+      return this.parseMatch("TileMatch", () => this.parseTileExpr());
     }
-    return this.parseTileCall();
+    const bare = !this.nameOpensCall();
+    const call = this.parseTileCall();
+    return bare && call.kind === "TileCall" ? { ...call, bare } : call;
+  }
+
+  protected nameOpensCall(): boolean {
+    const next = this.peek(1);
+    return next.kind === "op" && (next.value === "(" || next.value === "{");
   }
 
   protected parseTileCall(): TileExpr {
@@ -88,24 +95,48 @@ export class TileParser extends StatementParser {
     return { kind: "TileCall", name, args, props, pos: nameTok.pos };
   }
 
-  // Where a builtin's positional argument is a tile, a capitalised handler parses as a tile call
-  // too, so that `onClick=Bump {}` parses; every other named argument is a value.
+  // A handler may be written as `Bump {}`, which is no expression, so it is parsed apart from the
+  // other named arguments.
   protected parseTileArg(callee: string): TileArg {
     const first = this.peek();
     if ((first.kind === "ident" || first.kind === "kw") && this.matchTAt(1, "op", "=")) {
       this.next();
       this.eat("op", "=");
-      const head = this.peek();
-      const value =
-        HANDLER_NAMES.has(first.value) &&
-        parsesPositionalAsTile(callee) &&
-        head.kind === "ident" &&
-        isCapitalised(head.value)
-          ? this.parseTileCall()
-          : this.parseArgValue(false);
+      const value = HANDLER_NAMES.has(first.value)
+        ? this.parseHandlerArg(callee)
+        : this.parseArgValue(false);
       return { kind: "TileArg", name: first.value, namePos: first.pos, value };
     }
     return { kind: "TileArg", value: this.parseArgValue(parsesPositionalAsTile(callee)) };
+  }
+
+  // `Bump`, `Bump()` and `Bump {}` are one node on every tile: a tile call where the positional
+  // argument parses as a tile, and the variant tag elsewhere. Elsewhere only a handler carrying
+  // braces, which is no expression, takes the call form; one carrying arguments or props stays a
+  // tile call for the handler check to refuse.
+  protected parseHandlerArg(callee: string): Expr | TileExpr {
+    const head = this.peek();
+    if (head.kind !== "ident" || !isCapitalised(head.value)) return this.parseArgValue(false);
+    if (parsesPositionalAsTile(callee)) return this.parseTileCall();
+    if (!this.braceFollowsName()) return this.parseArgValue(false);
+    const call = this.parseTileCall();
+    if (call.kind !== "TileCall" || call.args.length > 0 || call.props.length > 0) return call;
+    return { kind: "Variant", name: call.name, payload: [], pos: call.pos };
+  }
+
+  // Whether a `{` follows the name at the cursor, directly or after its parenthesised arguments.
+  private braceFollowsName(): boolean {
+    let at = 1;
+    if (this.matchTAt(at, "op", "(")) {
+      for (let open = 0; ; at++) {
+        const t = this.peek(at);
+        if (t.kind === "eof") return false;
+        if (t.kind === "op" && t.value === "(") open++;
+        if (t.kind === "op" && t.value === ")" && --open === 0) break;
+      }
+      at++;
+    }
+    return this.matchTAt(at, "op", "{");
   }
 
   // `for` and `when` have no expression form, so they are tiles wherever they are written.
@@ -115,9 +146,7 @@ export class TileParser extends StatementParser {
     if (this.matchKw("if") || this.matchKw("match")) return this.parseTileExpr();
     const head = this.peek();
     if (head.kind === "ident") {
-      const next = this.peek(1);
-      const opensCall = next.kind === "op" && (next.value === "(" || next.value === "{");
-      if (BUILTIN_TILES.has(head.value) && opensCall) return this.parseTileCall();
+      if (BUILTIN_TILES.has(head.value) && this.nameOpensCall()) return this.parseTileCall();
       if (isCapitalised(head.value)) return this.parseTileCall();
     }
     return this.parseExpr();

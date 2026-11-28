@@ -11,6 +11,8 @@ const COUNTER = app("01-counter");
 const RETRY = app("08-http-retry");
 const EVERY_EPISODE = feature("191-episode-log-keeps-every-episode");
 const EVERY_EPISODE_SCENARIO = EVERY_EPISODE.replace(/\.kumiki$/, ".scenario.json");
+const TRIGGER_ORDER = feature("283-episode-log-trigger-order");
+const TRIGGER_ORDER_SCENARIO = TRIGGER_ORDER.replace(/\.kumiki$/, ".scenario.json");
 
 describe("kumiki run --episode-log", () => {
   it("records an episode for every reducer the scenario fires", async () => {
@@ -103,30 +105,42 @@ describe("kumiki run --episode-log", () => {
   });
 
   // The request is still waiting in its retry backoff when the scenario ends. Disposing the app
-  // ends that wait, so the click's episode commits before the run returns, ending in the aborted
-  // err that no reducer receives.
-  it("writes the episode of a request the app's dispose ended in its retry backoff", SPAWN, () => {
-    const full = JSON.parse(readFileSync(join(dirname(RETRY), "scenario.json"), "utf8")) as {
-      steps: Array<{ do?: unknown }>;
-    };
-    expect(full.steps.at(-1)?.do).toEqual({ wait: 1500 });
-    const dir = tempDir();
-    const scenario = join(dir, "no-wait.scenario.json");
-    writeFileSync(scenario, JSON.stringify({ ...full, steps: full.steps.slice(0, -1) }));
-    const logFile = join(dir, "run.log.jsonl");
-    const r = runCli(["run", RETRY, scenario, "--episode-log", logFile]);
-    expect(r.code, r.out).toBe(0);
-    const lines = readFileSync(logFile, "utf8").trim().split("\n");
-    expect(lines).toHaveLength(1);
-    const ep = JSON.parse(lines[0] ?? "") as { status: string; steps: unknown[] };
-    expect(ep.status).toBe("completed");
-    expect(ep.steps.at(-1)).toMatchObject({
-      kind: "effect-end",
-      name: "loadQuote",
-      result: "err",
-      value: { status: 0, message: "aborted" },
-    });
-  });
+  // cancels it, so the click's episode commits before the run returns, ending in an
+  // `effect-cancel`, and nothing the request could still deliver is recorded. Replaying that
+  // episode ends in the state the run ended in.
+  it(
+    "writes the episode of a request the app's dispose cancelled in its retry backoff",
+    SPAWN,
+    () => {
+      const full = JSON.parse(readFileSync(join(dirname(RETRY), "scenario.json"), "utf8")) as {
+        steps: Array<{ do?: unknown }>;
+      };
+      expect(full.steps.at(-1)?.do).toEqual({ wait: 1500 });
+      const dir = tempDir();
+      const scenario = join(dir, "no-wait.scenario.json");
+      writeFileSync(scenario, JSON.stringify({ ...full, steps: full.steps.slice(0, -1) }));
+      const logFile = join(dir, "run.log.jsonl");
+      const r = runCli(["run", RETRY, scenario, "--episode-log", logFile]);
+      expect(r.code, r.out).toBe(0);
+      const lines = readFileSync(logFile, "utf8").trim().split("\n");
+      expect(lines).toHaveLength(1);
+      const ep = JSON.parse(lines[0] ?? "") as { status: string; steps: Array<{ kind: string }> };
+      expect(ep.status).toBe("completed");
+      expect(ep.steps.at(-1)).toMatchObject({ kind: "effect-cancel", targetId: "loadQuote" });
+      expect(ep.steps.map((s) => s.kind)).not.toContain("effect-end");
+
+      const replayed = runCli([
+        "replay",
+        RETRY,
+        "--from-log",
+        logFile,
+        "--mock",
+        "loadQuote: from-log",
+      ]);
+      expect(replayed.code, replayed.out).toBe(0);
+      expect(replayed.stdout).toContain('final slots: {"state":{"_tag":"Loading"}}');
+    },
+  );
 
   // A directory fails at open on Linux, before the scenario runs. On Windows the open
   // succeeds and the first episode's write fails; either way no step reports it.
@@ -151,6 +165,29 @@ describe("kumiki run --episode-log", () => {
     const refused = runCli(["run", EVERY_EPISODE, scenario, "--episode-log", missing]);
     expect(refused.code, refused.out).toBe(1);
     expect(refused.stderr).toContain(`could not write episode log ${missing}`);
+  });
+
+  // A's save is still waiting out its debounce when B is clicked, so B's episode is done first.
+  it("writes the episodes in the order their triggers began, the order replay runs", SPAWN, () => {
+    const logFile = join(tempDir(), "run.log.jsonl");
+    const r = runCli(["run", TRIGGER_ORDER, TRIGGER_ORDER_SCENARIO, "--episode-log", logFile]);
+    expect(r.code, r.out).toBe(0);
+    const targets = readFileSync(logFile, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => (JSON.parse(line) as { trigger: { target?: string } }).trigger.target);
+    expect(targets).toEqual(["ABtn", "BBtn"]);
+
+    const replayed = runCli([
+      "replay",
+      TRIGGER_ORDER,
+      "--from-log",
+      logFile,
+      "--mock",
+      "save: from-log",
+    ]);
+    expect(replayed.code, replayed.out).toBe(0);
+    expect(replayed.stdout).toContain('final slots: {"x":"b","saved":"a"}');
   });
 });
 
