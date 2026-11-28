@@ -1,7 +1,8 @@
 import type { AppShape, ReducerSpec, TileNode } from "@kumikijs/runtime";
 import { createEpisodeLogger, mount } from "@kumikijs/runtime";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { bareApp, lifecycleReducer } from "./helpers/app.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { bareApp, keylessEffect, lifecycleReducer } from "./helpers/app.ts";
+import { captureConsole } from "./helpers/console.ts";
 import { freshRoot } from "./helpers/dom.ts";
 
 const baseApp = (overrides: Partial<AppShape>): AppShape =>
@@ -120,6 +121,7 @@ describe("runtime: route.error fallback", () => {
   });
   afterEach(() => {
     root.remove();
+    vi.restoreAllMocks();
   });
 
   it("fires route.error(<pattern>) with a tile-render $event when the route's tile throws", () => {
@@ -206,6 +208,62 @@ describe("runtime: route.error fallback", () => {
     expect(captured.event?.pattern).toBe("/");
     expect(captured.event?.cause).toEqual({ _tag: "Some", _0: "the socket" });
     expect(captured.event?.["episode-id"]).toEqual({ _tag: "None" });
+    dispose();
+  });
+
+  it("reports a throw past a route.error reducer's body as its own, and still runs the next one", () => {
+    const errors = captureConsole("error");
+    const appErrors: unknown[] = [];
+    let mode: "boom" | "ok" = "boom";
+    let nextRan = false;
+    const routeError = { kind: "lifecycle", name: 'route.error("/")' } as const;
+    const app: AppShape = baseApp({
+      effects: { save: keylessEffect("save", () => new Error("no key for this page")) },
+      reducers: [
+        {
+          name: "recover",
+          event: routeError,
+          apply: (s) => {
+            mode = "ok";
+            return { slots: s, emits: [{ effect: "save", args: ["page"] }] };
+          },
+        },
+        {
+          name: "note",
+          event: routeError,
+          apply: (s) => {
+            nextRan = true;
+            return { slots: s, emits: [] };
+          },
+        },
+        lifecycleReducer("app.error", (s, payload) => {
+          appErrors.push(payload.$event);
+          return { slots: s, emits: [] };
+        }),
+      ],
+      routes: [
+        {
+          pattern: "/",
+          tile: (): TileNode => {
+            if (mode === "boom") throw new Error("kaboom");
+            return { kind: "text", text: "recovered" };
+          },
+        },
+      ],
+    });
+    const { dispose } = mount(app, root);
+    expect(nextRan).toBe(true);
+    expect(root.textContent).toContain("recovered");
+    expect(errors.filter((line) => line.includes('reducer "recover"'))).toEqual([
+      expect.stringContaining("no key for this page"),
+    ]);
+    expect(appErrors).toEqual([
+      expect.objectContaining({
+        message: "no key for this page",
+        location: 'reducer "recover"',
+        category: "reducer",
+      }),
+    ]);
     dispose();
   });
 });

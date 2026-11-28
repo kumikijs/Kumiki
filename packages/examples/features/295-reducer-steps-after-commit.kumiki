@@ -1,0 +1,49 @@
+# Feature: what a reducer does after its batch commits runs in full (runtime.md).
+#
+# `save` writes `status`, emits `persist` and `stamp`, and stops the
+# `autosave` timer, which counts in `beats`. Once the batch has committed,
+# each of those runs whatever the others do. When one throws, such as a host's
+# episode logger recording `save`, both effects still run, `autosave` still
+# stops, and the page still shows what `save` wrote. What threw then goes on
+# to the click that ran `save`.
+#
+# The scenario walks the plain case: a save before `autosave` first fires, and
+# no beat after it. An integration test in `packages/tests` mounts this app
+# with an episode logger that throws while it records `save`.
+
+slot draft  : Text = "hello"
+slot status : Text = "editing"
+slot beats  : Int  = 0
+slot stored : Int  = 0
+slot stamps : Int  = 0
+
+effect persist cap=storage.write
+               in=Text
+               out=Result(Unit, Text)
+               map-request={key: "draft", value: $1}
+
+effect stamp cap=storage.write
+             in=Text
+             out=Result(Unit, Text)
+             map-request={key: "stamp", value: $1}
+
+reducer tick      on=timer(50ms, name=autosave) do= beats := beats + 1
+reducer save      on=ui.click(SaveBtn)          do= status := "saved"
+                                                    emit persist(draft)
+                                                    emit stamp(draft)
+                                                    stop-timer(autosave)
+reducer persisted on=persist.ok(_, _)           do= stored := stored + 1
+reducer stamped   on=stamp.ok(_, _)             do= stamps := stamps + 1
+
+tile SaveBtn = button(text="Save", onClick=save) {id: "save"}
+
+tile App = column(
+    SaveBtn,
+    text("status: " + status),
+    text("stored=" + stored.show + " stamps=" + stamps.show)
+) {pad: "lg", gap: "md"}
+
+app ReducerStepsAfterCommit
+    caps   = [storage.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

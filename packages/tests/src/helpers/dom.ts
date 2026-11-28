@@ -33,23 +33,26 @@ export function mountApp(
 }
 
 /**
- * Mount the feature example `name` into a fresh root, collecting every `console.error` until the
- * test ends, when the mount is torn down.
+ * Mount the feature example `name` into a fresh root with `options`, collecting every
+ * `console.error` until the test ends, when the mount is torn down.
  */
-export async function mountFeature(name: string): Promise<{ root: HTMLElement; errors: string[] }> {
+export async function mountFeature(
+  name: string,
+  options: MountOptions = {},
+): Promise<{ app: AppShape; root: HTMLElement; errors: string[] }> {
   const app = await loadApp(feature(name));
   const root = freshRoot();
   const errors: string[] = [];
   const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
     errors.push(args.map(String).join(" "));
   });
-  const { dispose } = mount(app, root);
+  const { dispose } = mount(app, root, options);
   onTestFinished(() => {
     dispose();
     root.remove();
     spy.mockRestore();
   });
-  return { root, errors };
+  return { app, root, errors };
 }
 
 /**

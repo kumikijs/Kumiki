@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import type {
   AppShape,
   EpisodeLogEntry,
+  EpisodeLogger,
   EpisodeStep,
   Scenario,
   ScenarioStep,
@@ -87,4 +88,25 @@ export function withFixture(example: string, log: EpisodeLogEntry[]): string {
   const lines = log.map((ep) => `${JSON.stringify(ep)}\n`).join("");
   writeFileSync(path.replace(/\.kumiki$/, ".fixture.jsonl"), lines);
   return path;
+}
+
+/** What {@link throwingLogger} throws, as a host's episode sink that went offline would. */
+export const SINK_DOWN = "episode sink offline";
+
+/**
+ * An episode logger whose `method` does its work and then throws {@link SINK_DOWN}, each time
+ * `when` holds for what it was handed.
+ */
+export function throwingLogger<M extends keyof EpisodeLogger>(
+  method: M,
+  when: (...args: Parameters<EpisodeLogger[M]>) => boolean,
+): EpisodeLogger {
+  const logger = createEpisodeLogger();
+  const work = logger[method] as (...args: Parameters<EpisodeLogger[M]>) => unknown;
+  const throwing = (...args: Parameters<EpisodeLogger[M]>): unknown => {
+    const out = work(...args);
+    if (when(...args)) throw new Error(SINK_DOWN);
+    return out;
+  };
+  return { ...logger, [method]: throwing };
 }

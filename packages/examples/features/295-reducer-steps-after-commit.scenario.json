@@ -1,0 +1,26 @@
+{
+  "steps": [
+    {
+      "label": "nothing is saved at mount",
+      "expect": { "noErrors": true, "domIncludes": ["status: editing", "stored=0 stamps=0"] }
+    },
+    {
+      "label": "a save writes status and runs both effects once",
+      "do": { "click": "#save" },
+      "expect": {
+        "noErrors": true,
+        "state": { "status": "saved", "stored": 1, "stamps": 1 },
+        "domIncludes": ["status: saved", "stored=1 stamps=1"]
+      }
+    },
+    {
+      "label": "the save stopped autosave, which does not fire again",
+      "do": { "wait": 200 },
+      "expect": { "noErrors": true, "state": { "beats": 0 } }
+    }
+  ],
+  "effects": {
+    "persist": [{ "outcome": "ok", "value": null }],
+    "stamp": [{ "outcome": "ok", "value": null }]
+  }
+}

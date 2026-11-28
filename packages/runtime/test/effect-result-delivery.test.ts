@@ -4,16 +4,21 @@ import type {
   EffectSpec,
   EmitSpec,
   Episode,
+  EpisodeLogger,
   MountedApp,
   ReducerSpec,
 } from "@kumikijs/runtime";
-import { createEpisodeLogger, mount } from "@kumikijs/runtime";
+import { createEpisodeLogger } from "@kumikijs/runtime";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
-import { bareApp } from "./helpers/app.ts";
+import { bareApp, keylessEffect } from "./helpers/app.ts";
 import { captureConsole } from "./helpers/console.ts";
 import { defined } from "./helpers/defined.ts";
-import { freshRoot } from "./helpers/dom.ts";
-import { type LoggedMount, mountLogged } from "./helpers/episode-apps.ts";
+import {
+  type LoggedMount,
+  mountLogged,
+  SINK_DOWN,
+  throwingLogger,
+} from "./helpers/episode-apps.ts";
 import { tick } from "./helpers/time.ts";
 
 // What each reducer of `load` was handed, and every `PanicInfo` `app.error` was handed.
@@ -25,11 +30,10 @@ type Seen = {
   appErrors: unknown[];
 };
 
-// `save`'s key is read by the dispatcher when it takes the emit, after the reducer body that
-// emitted it has returned, so a reducer that emits it throws past its body.
-const SAVE: EmitSpec = { effect: "save", args: ["note"] };
-
-const NO_KEY = "no key for this note";
+const saveOf = (what: string): EmitSpec => ({ effect: "save", args: [what] });
+const noKeyFor = (what: unknown): string => `no key for ${String(what)}`;
+const SAVE = saveOf("note");
+const NO_KEY = noKeyFor("note");
 const GAVE_UP = "loaded gave up";
 
 type DeliveryOptions = {
@@ -44,8 +48,8 @@ type DeliveryOptions = {
   appError?: "none" | "records" | "emits-save";
   /** An `app.http` 5xx reducer, which emits `save`. */
   on5xx?: boolean;
-  /** The page holds `Panel` once `note` has changed, and `tile.mount("Panel")` emits `save`. */
-  panel?: boolean;
+  /** The page holds `Panel` once `note` has changed, and `tile.mount("Panel")` emits these. */
+  panel?: EmitSpec[];
   errText?: EffectSpec["errText"];
   fromInit?: boolean;
 };
@@ -109,11 +113,12 @@ function deliveryApp(opts: DeliveryOptions): { app: AppShape; seen: Seen } {
       },
     });
   }
-  if (opts.panel) {
+  const panel = opts.panel;
+  if (panel) {
     reducers.push({
       name: "panelShown",
       event: { kind: "lifecycle", name: 'tile.mount("Panel")' },
-      apply: () => ({ slots: {}, emits: [SAVE] }),
+      apply: () => ({ slots: {}, emits: panel }),
     });
   }
   const note = (): string => `note=${String((app as MountedApp).live?.note)}`;
@@ -127,17 +132,7 @@ function deliveryApp(opts: DeliveryOptions): { app: AppShape; seen: Seen } {
         invoke: () => opts.answer(),
         ...(opts.errText ? { errText: opts.errText } : {}),
       },
-      save: {
-        name: "save",
-        cap: "",
-        policy: {
-          kind: "latest-per-key",
-          keyOf: () => {
-            throw new Error(NO_KEY);
-          },
-        },
-        invoke: async () => ({ kind: "ok", value: null }),
-      },
+      save: keylessEffect("save", (what) => new Error(noKeyFor(what))),
     },
     init: opts.fromInit ? [{ effect: "load", args: ["note"] }] : [],
     reducers,
@@ -169,16 +164,16 @@ const throwing = async (): Promise<EffectResult> => {
   throw new Error("disk gone");
 };
 
-/** Mount `app` with an episode logger, torn down when the test finishes. */
-function mounted(app: AppShape): LoggedMount {
-  const m = mountLogged(app);
+/** Mount `app` with `logger`, or a plain episode logger, torn down when the test finishes. */
+function mounted(app: AppShape, logger?: EpisodeLogger): LoggedMount {
+  const m = mountLogged(app, logger);
   onTestFinished(m.dispose);
   return m;
 }
 
 /** Mount `app` and dispatch `start`, which launches `load`. */
-function started(app: AppShape): LoggedMount {
-  const m = mounted(app);
+function started(app: AppShape, logger?: EpisodeLogger): LoggedMount {
+  const m = mounted(app, logger);
   m.dispatch("start", {});
   return m;
 }
@@ -296,15 +291,19 @@ describe("a request whose result delivery throws past a reducer body", () => {
     expect(errors.filter((line) => line.includes('effect "load"'))).toHaveLength(1);
   });
 
-  // With an `app.error` reducer, its own render mounts `Panel` first, and that throw is its own.
-  it("reports what the render after it throws in turn, and still runs the other reducers", async () => {
+  // `loaded`'s own render mounts `Panel`, so what `tile.mount("Panel")` throws there is reported
+  // under the effect too, before any `app.error` reducer runs.
+  it.each<[string, "none" | "records"]>([
+    ["with no app.error reducer", "none"],
+    ["with an app.error reducer", "records"],
+  ])("reports what the render after it throws in turn, and still runs the other reducers, %s", async (_, appError) => {
     const rejections = unhandledRejections();
     const { app, seen } = deliveryApp({
       answer: answerOk,
       throwingOn: "ok",
       secondOk: true,
-      panel: true,
-      appError: "none",
+      panel: [SAVE],
+      appError,
     });
     const { root, logger } = started(app);
     await settled(seen);
@@ -319,25 +318,60 @@ describe("a request whose result delivery throws past a reducer body", () => {
     expect(rejections).toEqual([]);
   });
 
+  it("reports each throw of a tile.mount reducer the render after it runs, one by one", async () => {
+    const { app, seen } = deliveryApp({
+      answer: answerOk,
+      throwingOn: "ok",
+      panel: [saveOf("a"), saveOf("b")],
+      appError: "records",
+    });
+    started(app);
+    await settled(seen);
+    const messages = [NO_KEY, noKeyFor("a"), noKeyFor("b")];
+    expect(seen.appErrors).toEqual(
+      messages.map((message) =>
+        expect.objectContaining({ message, location: 'effect "load"', category: "effect" }),
+      ),
+    );
+    expect(errors.filter((line) => line.includes('effect "load"'))).toEqual(
+      messages.map((message) =>
+        expect.stringContaining(`[kumiki] error in effect "load": ${message}`),
+      ),
+    );
+  });
+
+  it("reports a throw while the logger closes the result's episode, and still runs the other reducers", async () => {
+    captureConsole("warn");
+    const rejections = unhandledRejections();
+    const { app, seen } = deliveryApp({
+      answer: answerOk,
+      secondOk: true,
+      fromInit: true,
+      appError: "none",
+    });
+    mounted(
+      app,
+      throwingLogger("endTrigger", () => seen.ok.length > 0),
+    );
+    await settled(seen);
+    expect(seen.okAgain).toEqual(["hello"]);
+    expect(errors.filter((line) => line.includes('effect "load"'))).toEqual([
+      expect.stringContaining(`[kumiki] error in effect "load": ${SINK_DOWN}`),
+      expect.stringContaining(`[kumiki] error in effect "load": ${SINK_DOWN}`),
+    ]);
+    expect(rejections).toEqual([]);
+  });
+
   it("still runs the other reducers when the episode logger cannot record the throw", async () => {
     captureConsole("warn");
     const rejections = unhandledRejections();
     const { app, seen } = deliveryApp({ answer: answerOk, throwingOn: "ok", secondOk: true });
-    const logger = createEpisodeLogger();
-    const root = freshRoot();
-    const handle = mount(app, root, {
-      episodeLogger: {
-        ...logger,
-        recordPanic: () => {
-          throw new Error("episode sink offline");
-        },
+    started(app, {
+      ...createEpisodeLogger(),
+      recordPanic: () => {
+        throw new Error(SINK_DOWN);
       },
     });
-    onTestFinished(() => {
-      handle.dispose();
-      root.remove();
-    });
-    (app as MountedApp)._dispatch("start", {});
     await settled(seen);
     expect(seen.appErrors).toEqual([
       expect.objectContaining({ location: 'effect "load"', category: "effect" }),
