@@ -170,6 +170,8 @@ reducer onPanic
         emit toast({kind: "error", text: "Something went wrong"})
 ```
 
+`app.error` reducer には、1 つの失敗が 1 回だけ伝えられる。その reducer 自身の失敗、つまり本体の中の panic や、それが emit したものの dispatch のような本体の外の throw は、`console.error` と、`category: "reducer"` で自身の `location`（`reducer "onPanic"`）を持つ `panic` step として報告され、もう一度 `app.error` に伝えられることはない。他の `app.error` reducer は引き続き実行され、それらに伝えられた失敗を報告した側の処理も続く。たとえば、ある結果に対する effect の他の reducer がそうである（[runtime.md §10.4.5](./runtime.md#_10-4-5-delivery-of-results)）。
+
 `PanicInfo` の型。[標準ライブラリ](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library)が提供し、プログラムは名指すだけで宣言はしない（[E0231](./errors.md#e0231-reserved-type-name)）：
 
 ```kumiki fragment
@@ -182,7 +184,7 @@ type PanicInfo = {
 }
 ```
 
-`category` は、runtime 側のどこでその失敗を捕捉したかを名指す。現時点で自前の category を出すのは reducer / tile-render / hydrate の経路と、何も throw されていない出来事を報告する 2 つの値である。`effect` は dispatcher が実行できなかった emit — `app.effects` にその名前の effect が無いもの — を指し（[runtime.md §10.4.1](./runtime.md#_10-4-1-acceptance)）、`capability` は capability チェックが拒否した effect を指す（[runtime.md §10.4.2](./runtime.md#_10-4-2-capability-check)）。`unknown` は予約値であり、今後 callsite が配線されていっても、アプリ側のコードが fallthrough なしに網羅的に match できるようにするためにある。
+`category` は、runtime 側のどこでその失敗を捕捉したかを名指す。現時点で自前の category を出すのは reducer / tile-render / hydrate の経路である。2 つの値は、dispatcher が拒否した、何も throw されていない emit を名指す。`effect` は dispatcher が実行できなかった emit — `app.effects` にその名前の effect が無いもの — を指し（[runtime.md §10.4.1](./runtime.md#_10-4-1-acceptance)）、`capability` は capability チェックが拒否した emit を指す（[runtime.md §10.4.2](./runtime.md#_10-4-2-capability-check)）。`effect` はさらに、effect の結果を配送している最中に、結果が実行した reducer の本体の外で起きた throw も名指す。その reducer が emit したものの dispatch がその一例である（[runtime.md §10.4.5](./runtime.md#_10-4-5-delivery-of-results)）。どちらの場合も `location` は `effect "loadNote"` のように effect を名指し、配送中の throw では、その結果が答えたリクエストはそれ以上の結果を受け取らない。`unknown` は予約値であり、今後 callsite が配線されていっても、アプリ側のコードが fallthrough なしに網羅的に match できるようにするためにある。
 
 `episode-id` は panic が起きた episode を名指す（[runtime.md §10.5](./runtime.md#_10-5-episode-loop)）—— ユーザーが見た panic と、`kumiki replay` / `kumiki_episode_tail` が読み戻すものとを繋ぐ結合キーである。`Option(Text)` なのは、episode が常に開いているとは限らないからだ：episode logger を接続していないホストには名指すべき episode が無く、それに対する答えが `None` である。どの dispatch にも属さない場所で発生した panic —— 例えば初回描画で捕捉された描画 panic —— も同じである。
 
@@ -337,7 +339,9 @@ reducer notifySave
 
 `kind` は `info` / `success` / `warn` / `error` のいずれかで、DOM には `data-level` として載る — ランタイムは見た目を与えない。`duration` 未指定なら kind 別のデフォルト（info 3s, success 3s, warn 5s, error 0 = 閉じるまで残る）。`Some(Duration.ms(0))` は同じことを明示的に頼む書き方。
 
-ランタイムは画面右下にトーストスタックを管理する組み込み tile を持つ。
+`toast` effect は画面右下にスタックを 1 つ持つ。これは `<body>` の中の effect 自身の要素で、tile ではなく `toast` tile とも別物であり、最初のバナーとともに現れ、最後のバナーとともに消える。同時に表示されたトーストは積み重なり、互いの上に描かれることはない：最新のものが最も隅に近く、1 つが消えると残りがその隙間を詰める。スタック自体はポインタを受けないので、バナーの間の隙間の下にあるページはそのままクリックできる。
+
+ランタイムが描くどのトーストも duration に関わらず閉じられる：アクセシブルネームが "Dismiss" の閉じるボタンか、そのボタンにフォーカスがある間の Escape による。それ以外の場所で押された Escape はページに任されるので、トーストがアプリ自身のキーハンドラやダイアログから Escape を奪うことはなく、トーストを閉じた押下はそれ以上伝わらない。消えるトーストが（閉じられたにせよ時間切れにせよ）フォーカスを持っていたとき、フォーカスはバナーが消える前に移る。移る先は、その場所を引き継ぐトースト——その下のもの、それが最新だったなら上のもの——であり、引き継ぐトーストが無いときは、フォーカスがトーストに入る前にあった要素である。フォーカスがページへ落ちるのは、その要素がもうページに無いとき、またはフォーカスがどこからでもなくトーストに入ったときだけである。
 
 ---
 
@@ -351,7 +355,7 @@ reducer notifySave
 | `label {for: "x"}` は存在する `id="x"` を指すこと | [E0705](./errors.md#e0705-a11y-label-for)、`--strict-a11y` 時 |
 | キーボード操作 (Tab/Enter/Esc) はランタイムが自動 | ランタイム保証 |
 | フォーカス管理: `modal` は trap focus | ランタイム保証 |
-| `aria-live` 領域: `toast`（`role="status"`、polite）と `error`（`role="alert"`、assertive）で自動 — tile も `toast` effect のバナーも、クライアント／サーバとも | ランタイム保証 |
+| `aria-live` 領域: `toast`（`role="status"`、polite）と `error`（`role="alert"`、assertive）で自動 — tile も `toast` effect のバナーも、クライアント／サーバとも。バナーでは領域はそのテキストだけで、隣の閉じるボタンは含まない | ランタイム保証 |
 
 検査される行は**デフォルト off、on のときはエラー**。`--strict-a11y` を付けなければコンパイラはこれらを警告として報告するのではなく完全に除外するため、ビルドは何も言わない。フラグを付けるとビルドが落ちる。ランタイム保証はどちらでも成立する。
 

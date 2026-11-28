@@ -510,7 +510,7 @@ describe("httpFetch request body", () => {
   });
 
   it("fails a FileV that holds no file, without making a request", async () => {
-    // A file record restored from persistence through JSON has `_file: {}`.
+    // A `File` decoded from JSON has `_file: {}`: the handle on the picked file does not survive JSON.
     const { calls } = stubFetch(() => new Response("ok"));
     const res = await httpFetch("POST", {
       url: "/up",
@@ -612,5 +612,21 @@ describe("the HttpError's body", () => {
   ])("gives %s its status and body", async (_, respond, status, body, input) => {
     stubFetch(respond);
     expect(await failure(httpFetch("POST", { url: "/r", ...input }))).toEqual({ status, body });
+  });
+
+  // A recursive type's check overflows the stack on a value nested deep enough.
+  it("refuses a 2xx whose check throws as a decode failure carrying the text", async () => {
+    stubFetch(() => new Response("[[[1]]]", { status: 200 }));
+    const tooDeep = () => {
+      throw new RangeError("Maximum call stack size exceeded");
+    };
+    expect(await httpFetch("GET", { url: "/r", decode: tooDeep })).toMatchObject({
+      kind: "err",
+      value: {
+        status: 200,
+        message: "decode failed: RangeError: Maximum call stack size exceeded",
+        body: some("[[[1]]]"),
+      },
+    });
   });
 });

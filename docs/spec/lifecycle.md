@@ -170,6 +170,8 @@ reducer onPanic
         emit toast({kind: "error", text: "Something went wrong"})
 ```
 
+An `app.error` reducer is told about each failure once. A failure of its own, a panic in its body or a throw past it such as in the dispatch of what it emitted, is reported to `console.error` and as a `panic` step under `category: "reducer"` with its own `location` (`reducer "onPanic"`), and is not told to `app.error` again. The other `app.error` reducers still run, and so does whatever reported the failure they were told about: the effect's other reducers on a result, for one ([runtime.md §10.4.5](./runtime.md#_10-4-5-delivery-of-results)).
+
 The `PanicInfo` type, which the [standard library provides](./stdlib.md#_2-1-3-domain-types-provided-by-the-standard-library) — a program names it and does not declare it ([E0231](./errors.md#e0231-reserved-type-name)):
 
 ```kumiki fragment
@@ -182,7 +184,7 @@ type PanicInfo = {
 }
 ```
 
-`category` names where in the runtime the failure was intercepted. The reducer / tile-render / hydrate paths emit their own category today, and two values report something nothing threw: `effect` names an emit the dispatcher could not run, because no effect in `app.effects` has its name ([runtime.md §10.4.1](./runtime.md#_10-4-1-acceptance)), and `capability` names an effect the capability check refused ([runtime.md §10.4.2](./runtime.md#_10-4-2-capability-check)). `unknown` is a reserved value so app code can exhaustive-match without a fallthrough as future callsites are wired in.
+`category` names where in the runtime the failure was intercepted. The reducer / tile-render / hydrate paths emit their own category today. Two values name an emit the dispatcher refused, which nothing threw: `effect` one it could not run, because no effect in `app.effects` has its name ([runtime.md §10.4.1](./runtime.md#_10-4-1-acceptance)), and `capability` one the capability check refused ([runtime.md §10.4.2](./runtime.md#_10-4-2-capability-check)). `effect` also names a throw while an effect's result was being delivered, past the body of a reducer it ran, such as in the dispatch of what that reducer emitted ([runtime.md §10.4.5](./runtime.md#_10-4-5-delivery-of-results)). Either way its `location` names the effect, as in `effect "loadNote"`; after a delivery throw, the request it answered gets no further result. `unknown` is a reserved value so app code can exhaustive-match without a fallthrough as future callsites are wired in.
 
 `episode-id` names the episode the panic happened in ([runtime.md §10.5](./runtime.md#_10-5-episode-loop)) — the join between a panic a user saw and what `kumiki replay` / `kumiki_episode_tail` read back. It is `Option(Text)` because an episode is not always open: a host that attached no episode logger has none to name, and `None` is the answer for that. The same is true of a panic raised outside any dispatch — a render panic caught on the first paint, for one.
 
@@ -337,7 +339,9 @@ reducer notifySave
 
 `kind` is one of `info` / `success` / `warn` / `error`, and reaches the DOM as `data-level` — the runtime attaches no appearance to it. If `duration` is unspecified, the default per kind applies (info 3s, success 3s, warn 5s, error 0 = stays until dismissed); `Some(Duration.ms(0))` asks for the same thing explicitly.
 
-The runtime has a built-in tile that manages a toast stack at the bottom-right of the screen.
+The `toast` effect keeps one stack at the bottom-right of the screen: an element of its own in `<body>`, not a tile and apart from the `toast` tile, that comes with the first banner and goes with the last. Toasts shown at the same time are stacked, never drawn over one another: the newest sits nearest the corner, and when one leaves, the others close the gap. The stack takes no pointer itself, so the page under the gaps between banners can still be clicked.
+
+Every toast the runtime draws can be dismissed, whatever its duration: by its dismiss button, whose accessible name is "Dismiss", or by Escape while that button has focus. Escape pressed anywhere else is left to the page, so a toast never takes it from the app's own key handlers or from a dialog, and the press that dismisses a toast goes no further. When the toast that leaves, dismissed or timed out, held focus, focus moves before the banner goes: to the toast that takes its place — the one below it, or the one above when it was the newest — or, when no toast does, back to the element that had focus before it moved into the toasts. Focus falls to the page only when that element is no longer on the page, or focus came into the toasts from nowhere.
 
 ---
 
@@ -351,7 +355,7 @@ The runtime has a built-in tile that manages a toast stack at the bottom-right o
 | A `label {for: "x"}` must name an `id="x"` that exists | [E0705](./errors.md#e0705-a11y-label-for), under `--strict-a11y` |
 | Keyboard operations (Tab/Enter/Esc) are automatic in the runtime | Runtime guarantee |
 | Focus management: `modal` traps focus | Runtime guarantee |
-| `aria-live` regions: automatic for `toast` (`role="status"`, polite) and `error` (`role="alert"`, assertive) — the tiles and the `toast` effect's banner alike, client and server | Runtime guarantee |
+| `aria-live` regions: automatic for `toast` (`role="status"`, polite) and `error` (`role="alert"`, assertive) — the tiles and the `toast` effect's banner alike, client and server; in the banner the region is its text alone, not the dismiss button beside it | Runtime guarantee |
 
 The checked rows are **off by default and errors when on**: without `--strict-a11y` the compiler filters them out entirely rather than reporting them as warnings, so a build is silent about them; with the flag they fail the build. The runtime guarantees hold either way.
 

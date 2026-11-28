@@ -10,11 +10,7 @@ import {
 } from "./core.ts";
 import { isPositiveInt } from "./positive-int.ts";
 import { valueEqual } from "./stdlib.ts";
-import type {
-  EpisodeLogEntry,
-  EpisodeMockPolicy,
-  EpisodeReducerStep,
-} from "./testkit/episode-log.ts";
+import type { EpisodeLogEntry, EpisodeMockPolicy } from "./testkit/episode-log.ts";
 import {
   _jsonStr,
   compareReducerExpect,
@@ -275,7 +271,10 @@ export const _stdlibTest = {
         }
       }
     } catch (e) {
-      panic = e && (e as Error).message ? (e as Error).message : String(e);
+      // Only a panic is the test's outcome: anything else points at the compiler or the runtime,
+      // so it is a throw in the test's body and keeps its kind.
+      if (!isPanic(e)) throw e;
+      panic = e.message || "KumikiPanic";
     }
     return compareReducerExpect(name, { ...live }, residual, panic, expect, unhandledErr);
   },
@@ -309,12 +308,15 @@ export const _stdlibTest = {
     let expectedSlots: Record<string, unknown> | null = null;
     if (expect.slotsEqual === "from-log") {
       expectedSlots = {};
-      for (const [k, m] of Object.entries(app.slots)) expectedSlots[k] = m.value;
+      // The program's log records no write to a `volatile` slot, so it says nothing of where one
+      // ends; an older log that does is about a slot the program has since taken out of it.
+      const logged = (slot: string) => !app.slots[slot]?.volatile;
+      for (const [k, m] of Object.entries(app.slots)) if (logged(k)) expectedSlots[k] = m.value;
       for (const ep of episodes) {
         for (const s of ep.steps) {
-          if (s.kind === "reducer") {
-            const diffs = (s as EpisodeReducerStep)["slot-diffs"] ?? [];
-            for (const d of diffs) expectedSlots[d.name] = d.after;
+          if (s.kind === "reducer" || s.kind === "bind") {
+            const diffs = s["slot-diffs"] ?? [];
+            for (const d of diffs) if (logged(d.name)) expectedSlots[d.name] = d.after;
           }
         }
       }

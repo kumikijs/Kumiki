@@ -31,7 +31,7 @@ export type OpLogEntry = {
   cascade?: boolean;
   /** Every definition a cascade deleted, the requested one first. */
   removed?: string[];
-  bodies?: DefSpec[];
+  bodies?: RemovedDef[];
   with?: DefSpec[];
   prev?: string;
   patch?: unknown;
@@ -50,7 +50,7 @@ export type RawOp = {
   newName?: string;
   cascade?: boolean;
   removed?: string[];
-  bodies?: DefSpec[];
+  bodies?: RemovedDef[];
   with?: DefSpec[];
   prev?: string;
   patch?: unknown;
@@ -58,6 +58,27 @@ export type RawOp = {
 
 /** One definition as an `add` writes it: its layer, its name and its body. */
 export type DefSpec = { layer: string; name: string; body: string };
+
+/** One definition as a `remove` deleted it; one logged before `text` existed has only its body. */
+export type RemovedDef = DefSpec & {
+  /**
+   * What the remove cut: the lines it stood on, comments included, or its text from its first
+   * token to its last when another definition still shared one of them.
+   */
+  text?: string;
+  /** The definition it followed in the file; none for the first one. */
+  after?: string;
+  /**
+   * How many lines lay between the end of `after`, or the file's start, and its first line; 0 also
+   * when it started on the line `after` ended on.
+   */
+  gap?: number;
+  /**
+   * `true` when its last line ended the file, with no line break after it, even when another
+   * definition followed it on that line.
+   */
+  last?: boolean;
+};
 
 export function opLogPath(path: string): string {
   return `${path}.kumiki-ops.jsonl`;
@@ -162,7 +183,7 @@ export function opShapeProblem(op: RawOp): string | undefined {
   }
   if (op.bodies !== undefined) {
     if (op.op !== "remove") return "`bodies` is only valid on `remove`";
-    const problem = defSpecsProblem(op.bodies, "bodies");
+    const problem = defSpecsProblem(op.bodies, "bodies") ?? removedTextsProblem(op.bodies);
     if (problem !== undefined) return problem;
     const [first] = op.bodies;
     if (first === undefined || `${first.layer}.${first.name}` !== own) {
@@ -197,6 +218,21 @@ function defSpecsProblem(value: unknown, field: string): string | undefined {
         return `\`${field}\`[${i}].${key} must be a string`;
       }
     }
+  }
+  return undefined;
+}
+
+function removedTextsProblem(bodies: readonly RemovedDef[]): string | undefined {
+  for (const [i, d] of bodies.entries()) {
+    const { text, after, gap, last }: Record<string, unknown> = d;
+    if ([text, after, gap, last].every((v) => v === undefined)) continue;
+    const at = `\`bodies\`[${i}]`;
+    if (typeof text !== "string") return `${at}.text must be a string`;
+    if (after !== undefined && typeof after !== "string") return `${at}.after must be a string`;
+    if (typeof gap !== "number" || !Number.isInteger(gap) || gap < 0) {
+      return `${at}.gap must be a whole number, 0 or more`;
+    }
+    if (last !== undefined && typeof last !== "boolean") return `${at}.last must be a boolean`;
   }
   return undefined;
 }
