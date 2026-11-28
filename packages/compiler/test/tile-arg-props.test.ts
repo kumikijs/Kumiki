@@ -184,7 +184,7 @@ test probe-list =
   });
 });
 
-describe("the checker reads a tile-test's expected tree as its lowering does, with no block", () => {
+describe("the checker reads a tile-test's expected tree as its lowering does", () => {
   const tileTest = (defs: string, tile: string, expected: string) => `${defs}
 tile Probe = ${tile}
 
@@ -228,6 +228,21 @@ test probe =
     ],
   ])("accepts %s written as an argument", (_, defs, tile, expected) => {
     expect(codesOf(tileTest(defs, tile, expected))).toEqual([]);
+  });
+
+  // A value builtin's named content is content, not a prop, so the expected tree compares it in
+  // either spelling, as the tile it tests renders it.
+  it.each([
+    ["a label's text", 'label(text="A")', 'label() {text: "A"}', []],
+    ["a text builtin's text, as E0129", 'heading("x")', 'heading() {text: "x"}', ["E0129"]],
+    [
+      "a positional argument shadowing it, as E0129",
+      'label("B")',
+      'label("B") {text: "C"}',
+      ["E0129"],
+    ],
+  ])("reads the content the block writes: %s", (_, tile, expected, codes) => {
+    expect(codesOf(tileTest("", tile, expected))).toEqual(codes);
   });
 });
 
@@ -314,6 +329,28 @@ describe("which argument a builtin takes as its content", () => {
     expect(js).toContain('_s.show("Title")');
     expect(js).not.toContain("_s.show(2)");
     expect(propsOf(js)).toContain("level: 2");
+  });
+
+  it.each([
+    ["a label's text", 'label() {text: "Name"}', 'label(text="Name")'],
+    ["a link's text", 'link(to="/x") {text: "Home"}', 'link(text="Home", to="/x")'],
+    ["an editable's text", 'editable() {text: "draft"}', 'editable(text="draft")'],
+    ["an image's src", 'image(alt="a") {src: "a.png"}', 'image(src="a.png", alt="a")'],
+    ["an icon's name", 'icon() {name: "home"}', 'icon(name="home")'],
+  ])("lowers %s the same from the block as from its argument", (_, block, arg) => {
+    expect(emit(block)).toBe(emit(arg));
+  });
+
+  it.each([
+    ['label(text="Named") {text: "Block"}', '"Named"', '"Block"'],
+    ['link(to="/x", text="Named") {text: "Block"}', '"Named"', '"Block"'],
+    ['editable(text="Named") {text: "Block"}', '"Named"', '"Block"'],
+    ['image(alt="a", src="named.png") {src: "block.png"}', '"named.png"', '"block.png"'],
+    ['icon(name="home") {name: "plus"}', '"home"', '"plus"'],
+  ])("shows the block's content when %s writes both spellings", (tile, named, block) => {
+    const js = emit(tile);
+    expect(js).toContain(`_s.show(${block})`);
+    expect(js).not.toContain(`_s.show(${named})`);
   });
 });
 

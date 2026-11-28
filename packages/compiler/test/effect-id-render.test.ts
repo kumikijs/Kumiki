@@ -71,6 +71,10 @@ describe("what a builtin renders as text", () => {
     ["button", "button(text=handle)"],
     ["button", "button() {text: handle}"],
     ["link", 'link(to="/") {text: handle}'],
+    ["label", "label() {text: handle}"],
+    ["editable", "editable() {text: handle}"],
+    ["image", 'image(alt="a") {src: handle}'],
+    ["icon", "icon() {name: handle}"],
     ["editable", "editable(bind=handle)"],
     ["editable", "editable() {bind: handle}"],
   ])("%s refuses %s", (name, expr) => {

@@ -50,7 +50,9 @@ const BOTH_PATHS: readonly Path[] = ["client", "server"];
 
 /** Each row on each path it renders on, its name led by `group`. */
 const onEachPath = (rs: Row[], group = "") =>
-  rs.flatMap((row) => (row.paths ?? BOTH_PATHS).map((path) => ({ ...row, group, path })));
+  rs.flatMap((row) =>
+    (row.paths ?? BOTH_PATHS).map((path) => ({ ...row, name: `${group}${row.name}`, path })),
+  );
 
 const rows: Row[] = [
   {
@@ -326,6 +328,37 @@ const rows: Row[] = [
       expect([cell.getAttribute("colspan"), cell.getAttribute("rowspan")]).toEqual(["2", "3"]);
     },
   },
+  // A value builtin's named content is one argument with the block entry of its name, as a prop is.
+  {
+    name: "label text",
+    arg: 'label(text="Name")',
+    block: 'label() {text: "Name"}',
+    claim: (root) => expect(find(root, "label").textContent).toBe("Name"),
+  },
+  {
+    name: "link text",
+    arg: 'link(to="/x", text="Home")',
+    block: 'link(to="/x") {text: "Home"}',
+    claim: (root) => expect(find(root, "a").textContent).toBe("Home"),
+  },
+  {
+    name: "editable text",
+    arg: 'editable(text="draft")',
+    block: 'editable() {text: "draft"}',
+    claim: (root) => expect(find(root, tile("editable")).textContent).toBe("draft"),
+  },
+  {
+    name: "image src",
+    arg: 'image(src="/a.png", alt="a")',
+    block: 'image(alt="a") {src: "/a.png"}',
+    claim: (root) => expect(find(root, "img").getAttribute("src")).toBe("/a.png"),
+  },
+  {
+    name: "icon name",
+    arg: 'icon(name="plus")',
+    block: 'icon() {name: "plus"}',
+    claim: (root) => expect(find(root, tile("icon")).dataset.kumikiIconName).toBe("plus"),
+  },
 ];
 
 /** Each row written both ways, the block holding a different value from the argument it overrides. */
@@ -365,6 +398,36 @@ const both: Row[] = [
     arg: "input(bind=draft)",
     block: "input(bind=pick) {bind: draft}",
     claim: (root) => expect(find(root, "input").dataset.kumikiBind).toBe("draft"),
+  },
+  {
+    name: "label text",
+    arg: 'label(text="Name")',
+    block: 'label(text="Other") {text: "Name"}',
+    claim: (root) => expect(find(root, "label").textContent).toBe("Name"),
+  },
+  {
+    name: "link text",
+    arg: 'link(to="/x", text="Home")',
+    block: 'link(to="/x", text="Other") {text: "Home"}',
+    claim: (root) => expect(find(root, "a").textContent).toBe("Home"),
+  },
+  {
+    name: "editable text",
+    arg: 'editable(text="draft")',
+    block: 'editable(text="other") {text: "draft"}',
+    claim: (root) => expect(find(root, tile("editable")).textContent).toBe("draft"),
+  },
+  {
+    name: "image src",
+    arg: 'image(src="/a.png", alt="a")',
+    block: 'image(src="/b.png", alt="a") {src: "/a.png"}',
+    claim: (root) => expect(find(root, "img").getAttribute("src")).toBe("/a.png"),
+  },
+  {
+    name: "icon name",
+    arg: 'icon(name="plus")',
+    block: 'icon(name="home") {name: "plus"}',
+    claim: (root) => expect(find(root, tile("icon")).dataset.kumikiIconName).toBe("plus"),
   },
 ];
 
@@ -409,7 +472,7 @@ describe("a prop a builtin lifts reads either spelling", () => {
     ...onEachPath(rows),
     ...onEachPath(both, "both written, the block wins: "),
     ...onEachPath(shown, "a Map or Tuple it shows: "),
-  ])("$group$name, $path", async ({ arg, block, claim, path }) => {
+  ])("$name, $path", async ({ arg, block, claim, path }) => {
     const viaArg = await rendered(arg, path);
     const viaBlock = await rendered(block, path);
     claim(viaArg);

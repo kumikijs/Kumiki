@@ -251,9 +251,11 @@ export function isTileExpr(v: Expr | TileExpr): v is TileExpr {
 
 export type WrittenProp = { value: Expr; namePos: Pos };
 
-// A named argument and a `{…}` entry of the same name are one prop, and every reader asks here so
-// none reads one spelling only. The block wins when a call writes both; a tile-test's expected tree
-// passes no block because a snapshot does not compare it. A tile written as an argument is a child.
+// A named argument and a `{…}` entry of the same name are one prop, and every prop reader asks here
+// so none reads one spelling only. The block wins when a call writes both; a tile-test's expected
+// tree passes no block because a snapshot does not compare it. A tile written as an argument is a
+// child. A value builtin's named content is read by `contentArg` instead: it is content, which an
+// expected tree compares in either spelling, and a tile written there is E0236, not a child.
 export function writtenProp(
   t: TileExpr & { kind: "TileCall" },
   name: string,

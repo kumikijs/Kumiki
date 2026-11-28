@@ -57,9 +57,17 @@ const builtins: readonly (readonly [string, string, (x: string) => string, strin
   ["icon", "icon", (x) => `icon(name=${x})`, "icon(name=x.show)"],
 ];
 
-const tiles: readonly (readonly [string, string, readonly string[]])[] = [
-  ["a when", "when(c, Header)", ["when"]],
-  ["a for", "for x in xs Header", ["for"]],
+/** The named content of each value builtin that takes one, written as the `{…}` entry of its name. */
+const inTheBlock: typeof builtins = [
+  ["label", "label", (x) => `label() {text: ${x}}`, "label {text: x.show}"],
+  ["link", "link", (x) => `link(to="/") {text: ${x}}`, "link {text: x.show}"],
+  ["editable", "editable", (x) => `editable(bind=s) {text: ${x}}`, "editable {text: x.show}"],
+  ["image", "image", (x) => `image(alt="a") {src: ${x}}`, "image {src: x.show}"],
+  ["icon", "icon", (x) => `icon() {name: ${x}}`, "icon {name: x.show}"],
+];
+
+/** The tiles that parse where an expression does, a `{…}` entry among those places. */
+const tilesInAnExpr: readonly (readonly [string, string, readonly string[]])[] = [
   ["a builtin's call", `column(text("a"))`, ["column"]],
   ["a call of a tile the program defines", `Card({label: "a"})`, ["Card"]],
   ["a call of a lower-cased tile", "lower()", ["lower"]],
@@ -72,6 +80,12 @@ const tiles: readonly (readonly [string, string, readonly string[]])[] = [
     ["Header", `text("a")`],
   ],
   ["the body of a let", "let x = 1 in Header", ["Header"]],
+];
+
+const tiles: typeof tilesInAnExpr = [
+  ["a when", "when(c, Header)", ["when"]],
+  ["a for", "for x in xs Header", ["for"]],
+  ...tilesInAnExpr,
 ];
 
 it("is E0236 at a when as text's content", () => {
@@ -96,6 +110,14 @@ describe.each(builtins)("a tile as the content of %s", (_, builtin, write, shown
   });
 });
 
+describe.each(
+  inTheBlock,
+)("a tile as the content of %s, in the block", (_, builtin, write, shown) => {
+  it.each(tilesInAnExpr)("is E0236 at %s", (_, tile, starts) => {
+    expect(reported(write(tile), starts)).toEqual(tilesAt(starts, builtin, shown));
+  });
+});
+
 describe("a tile in the content", () => {
   it.each([
     ["the tile arm of an if whose other arm is a value", `text(if c then "a" else Header)`],
@@ -112,11 +134,6 @@ describe("a tile in the content", () => {
   it("is reported once at a builtin's call as the body of a let", () => {
     const home = `text(let x = 1 in column(text("a")))`;
     expect(reported(home, ["column"])).toEqual(tilesAt(["column"]));
-  });
-
-  it("is reported at link's {text: …}, which link renders when no content is written", () => {
-    const home = `link(to="/") {text: Header}`;
-    expect(reported(home, ["Header"])).toEqual(tilesAt(["Header"], "link", "link {text: x.show}"));
   });
 
   it("is a builtin's call where a value, but no fn, has the builtin's name", () => {
