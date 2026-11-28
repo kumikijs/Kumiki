@@ -1,3 +1,4 @@
+import { VARIANT_TAG_FIELD } from "@kumikijs/runtime/variant-tag";
 import type {
   AppDef,
   Def,
@@ -54,9 +55,6 @@ function duplicatesIn(declared: readonly DuplicateName[]): readonly DuplicateNam
   }
   return out;
 }
-
-/** The field the runtime marks a variant with, so a record that has one reads as a variant. */
-export const VARIANT_TAG_FIELD = "_tag";
 
 /** Accumulates findings so each site can state only what it declares. */
 class Finder {

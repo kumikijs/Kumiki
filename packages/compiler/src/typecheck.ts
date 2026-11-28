@@ -1,3 +1,4 @@
+import { VARIANT_TAG_FIELD } from "@kumikijs/runtime/variant-tag";
 import {
   type AppDef,
   type FnDef,
@@ -37,12 +38,7 @@ import { checkTheme } from "./typecheck/theme.ts";
 import { checkTile } from "./typecheck/tile.ts";
 import { collectElementIds, collectPrefetchTargets, tileKinds } from "./typecheck/tile-collect.ts";
 import { checkTypeDef, reservedTypeName } from "./typecheck/types.ts";
-import {
-  describeDuplicate,
-  findDuplicateDefinitions,
-  findWrittenNames,
-  VARIANT_TAG_FIELD,
-} from "./uniqueness.ts";
+import { describeDuplicate, findDuplicateDefinitions, findWrittenNames } from "./uniqueness.ts";
 
 export { type KumikiError, type Severity, severityOf } from "./typecheck/context.ts";
 export { servesNotFound } from "./typecheck/route-chain.ts";

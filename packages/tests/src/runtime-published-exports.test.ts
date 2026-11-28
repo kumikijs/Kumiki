@@ -23,7 +23,7 @@ const names = (mod: object): string[] => Object.keys(mod).sort();
 describe("the runtime's published entry points", () => {
   it("include the subpaths the compiler imports", () => {
     expect(entries.map((e) => e.subpath)).toEqual(
-      expect.arrayContaining([".", "./positive-int", "./text-distance"]),
+      expect.arrayContaining([".", "./positive-int", "./text-distance", "./variant-tag"]),
     );
   });
 
