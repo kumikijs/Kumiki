@@ -14,6 +14,7 @@ import type {
   TypeExpr,
 } from "./ast.ts";
 import { isTileExpr, numberLiteral } from "./ast.ts";
+import { isRecordPosition, keysNames, type RecordPosition } from "./test-sections.ts";
 
 const DUPLICATE_KINDS = {
   clause: { kind: "duplicate-clause", noun: "clause" },
@@ -257,12 +258,35 @@ function walkTest(def: TestDef, f: Finder): void {
     `test "${def.name}"`,
   );
   for (const g of def.forAll ?? []) walkType(g.type, f);
-  walkExpr(def.given, f);
+  walkTestRecord(def.given, "given", f);
   walkExpr(def.invariant, f);
-  walkExpr(def.mocks, f);
+  walkTestRecord(def.mocks, "mocks", f);
   if (def.expect === undefined) return;
   if (isTileExpr(def.expect)) walkTile(def.expect, f);
-  else walkExpr(def.expect, f);
+  else walkTestRecord(def.expect, "expect", f);
+}
+
+/**
+ * A test's record at `position`. Keys that name sections, slots or effects are checked for
+ * duplicates only, since no record is built with them as its fields.
+ */
+function walkTestRecord(e: Expr | undefined, position: RecordPosition, f: Finder): void {
+  if (e?.kind !== "RecordLit" || !keysNames(position)) {
+    walkExpr(e, f);
+    return;
+  }
+  f.declared(
+    e.fields,
+    "key",
+    "Record field",
+    (fld) => fld.name,
+    (fld) => fld.pos,
+  );
+  for (const fld of e.fields) {
+    const inner = `${position}.${fld.name}`;
+    if (isRecordPosition(inner)) walkTestRecord(fld.value, inner, f);
+    else walkExpr(fld.value, f);
+  }
 }
 
 function walkTile(t: TileExpr | undefined, f: Finder): void {

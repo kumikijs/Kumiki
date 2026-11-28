@@ -101,3 +101,118 @@ tile App = column(
     expect(errorCodesOf(src)).toEqual([]);
   });
 });
+
+// A slot and an effect may be named `_tag`. A test section keyed by slot or effect names, and a
+// test's `given` / `expect` keyed by section names, write a name there and build no record of it.
+const testing = (test: string): string =>
+  withApp(
+    `slot _tag : Int = 0
+slot r : {t: Text} = {t="a"}
+effect _tag cap=storage.write in=Text out=Result(Unit, Text) map-request={key: "k", value: $1}
+reducer bump on=ui.click(Bump) do= _tag := _tag + 1
+reducer keep on=ui.click(Keep) do= emit _tag(_tag.show)
+tile Bump = button(text="bump", onClick=bump)
+tile Keep = button(text="keep", onClick=keep)
+tile Card in={t: Text} = text($1.t)
+tile App = column(text("n: " + _tag.show), Bump, Keep)
+test t =
+    ${test}`,
+    { caps: "storage.write" },
+  );
+
+/** Each diagnostic's code and the text it points at. */
+const pointsOf = (src: string): [code: string, text: string][] =>
+  pointedErrorsOf(src).map((e) => [e.code, e.text]);
+
+describe("a slot or an effect named _tag", () => {
+  it.each<[where: string, test: string]>([
+    [
+      "a reducer-test's given.slots and expect.slots",
+      `reducer-test bump
+        given  = {slots: {_tag: 1}, event: {type: ui.click, target: Bump}}
+        expect = {slots: {_tag: 2}, effects: []}`,
+    ],
+    [
+      "a reducer-test's given.mocks",
+      `reducer-test keep
+        given  = {event: {type: ui.click, target: Keep}, mocks: {_tag: ok(())}}
+        expect = {slots: {}, effects: [_tag("0")]}`,
+    ],
+    [
+      "a property-test's given.slots",
+      `property-test
+        for-all   = {n: Int where between(0, 50)}
+        given     = {slots: {_tag: n}, event: {type: ui.click, target: Bump}}
+        invariant = run-reducer(bump).slots._tag == n + 1`,
+    ],
+    [
+      "a tile-test's given.slots",
+      `tile-test App
+        given  = {slots: {_tag: 3}}
+        expect = column(text("n: 3"), Bump, Keep)`,
+    ],
+    [
+      "an episode-test's mocks and expect.slots-equal",
+      `episode-test
+        load   = "t.fixture.jsonl"
+        mocks  = {_tag: from-log}
+        expect = {slots-equal: {_tag: 2}, no-panics: true}`,
+    ],
+  ])("is a key, not a field, in %s", (_, test) => {
+    expect(pointedErrorsOf(testing(test))).toEqual([]);
+  });
+
+  it.each<[where: string, test: string, points: [string, string][]]>([
+    [
+      "a field of a tile-test's given.in",
+      `tile-test Card
+        given  = {in: {_tag: "a", t: "b"}}
+        expect = text("b")`,
+      [
+        ["E0215", '"a", t: "b"}}'],
+        ["E0240", '_tag: "a", t: "b"}}'],
+      ],
+    ],
+    [
+      "a field of a record a slot is given",
+      `reducer-test bump
+        given  = {slots: {r: {_tag="x", t="b"}}, event: {type: ui.click, target: Bump}}
+        expect = {slots: {_tag: 1}}`,
+      [
+        ["E0215", '"x", t="b"}}, event: {type: ui.click, target: Bump}}'],
+        ["E0240", '_tag="x", t="b"}}, event: {type: ui.click, target: Bump}}'],
+      ],
+    ],
+    [
+      "a field of a given.event's payload",
+      `reducer-test bump
+        given  = {event: {type: ui.click, target: Bump, _tag: 1}}
+        expect = {slots: {_tag: 1}}`,
+      [["E0240", "_tag: 1}}"]],
+    ],
+  ])("leaves E0240 on %s", (_, test, points) => {
+    expect(pointsOf(testing(test))).toEqual(points);
+  });
+
+  it.each<[where: string, test: string, points: [string, string][]]>([
+    [
+      "a slot given twice",
+      `reducer-test bump
+        given  = {slots: {_tag: 1, _tag: 2}, event: {type: ui.click, target: Bump}}
+        expect = {slots: {_tag: 3}}`,
+      [["E0008", "_tag: 2}, event: {type: ui.click, target: Bump}}"]],
+    ],
+    [
+      "a section named _tag",
+      `reducer-test bump
+        given  = {_tag: 1, event: {type: ui.click, target: Bump}}
+        expect = {slots: {_tag: 1}, _tag: 2}`,
+      [
+        ["E0714", "_tag: 1, event: {type: ui.click, target: Bump}}"],
+        ["E0714", "_tag: 2}"],
+      ],
+    ],
+  ])("leaves only the key's own error on %s", (_, test, points) => {
+    expect(pointsOf(testing(test))).toEqual(points);
+  });
+});
