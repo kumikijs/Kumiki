@@ -1,0 +1,41 @@
+{
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "fill": "input",
+        "value": "Write tests"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Add"
+      }
+    },
+    {
+      "do": {
+        "clickText": "→"
+      }
+    },
+    {
+      "do": {
+        "clickText": "→"
+      }
+    },
+    {
+      "label": "→ is disabled for a card in the last column",
+      "do": {
+        "clickText": "→"
+      },
+      "expect": {
+        "actionErrorIncludes": ["is disabled"],
+        "domIncludes": ["Done (1)"]
+      }
+    }
+  ]
+}

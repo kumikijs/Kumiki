@@ -1,0 +1,24 @@
+{
+  "steps": [
+    {
+      "do": {
+        "clickText": "Start"
+      }
+    },
+    {
+      "label": "while running, remaining goes down once a second",
+      "do": {
+        "wait": 2500
+      },
+      "expect": {
+        "state": {
+          "running": true,
+          "mode": {
+            "_tag": "Work"
+          }
+        },
+        "domExcludes": ["1500"]
+      }
+    }
+  ]
+}

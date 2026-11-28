@@ -1,0 +1,30 @@
+{
+  "steps": [
+    {
+      "do": {
+        "clickText": "Start"
+      }
+    },
+    {
+      "do": {
+        "wait": 2500
+      }
+    },
+    {
+      "label": "Reset returns to the mode's maximum, stopped",
+      "do": {
+        "clickText": "Reset"
+      },
+      "expect": {
+        "state": {
+          "remaining": 1500,
+          "running": false,
+          "mode": {
+            "_tag": "Work"
+          }
+        },
+        "domIncludes": ["1500"]
+      }
+    }
+  ]
+}

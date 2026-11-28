@@ -1,0 +1,58 @@
+{
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "fill": "input",
+        "value": "First"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Add"
+      }
+    },
+    {
+      "do": {
+        "fill": "input",
+        "value": "Second"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Add"
+      }
+    },
+    {
+      "do": {
+        "fill": "input",
+        "value": "Third"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Add"
+      }
+    },
+    {
+      "label": "three cards in Todo",
+      "expect": {
+        "domIncludes": ["First", "Second", "Third", "Todo (3)"]
+      }
+    },
+    {
+      "label": "moving one leaves the others",
+      "do": {
+        "clickText": "→"
+      },
+      "expect": {
+        "domIncludes": ["Todo (2)", "Doing (1)", "Done (0)"]
+      }
+    }
+  ]
+}

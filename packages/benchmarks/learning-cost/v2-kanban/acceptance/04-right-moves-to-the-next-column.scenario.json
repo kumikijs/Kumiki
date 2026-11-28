@@ -1,0 +1,39 @@
+{
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "fill": "input",
+        "value": "Write tests"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Add"
+      }
+    },
+    {
+      "label": "→ moves the card from Todo to Doing",
+      "do": {
+        "clickText": "→"
+      },
+      "expect": {
+        "domIncludes": ["Write tests", "Todo (0)", "Doing (1)"]
+      }
+    },
+    {
+      "label": "and again from Doing to Done",
+      "do": {
+        "clickText": "→"
+      },
+      "expect": {
+        "domIncludes": ["Doing (0)", "Done (1)"]
+      }
+    }
+  ]
+}
