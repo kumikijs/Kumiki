@@ -204,7 +204,7 @@ app S
   });
 
   it("drops the keys a stored record's type does not declare, so .ok gets the record", async () => {
-    const app = await loadSource(`slot shown : Text = ""
+    const app = await loadSource(`slot got : Option({n: Int}) = None
 
 effect load cap=storage.read
             in=Unit
@@ -212,9 +212,9 @@ effect load cap=storage.read
             map-request={key: "item", decode: Decoder.Json({n: Int})}
 
 reducer boot on=app.start      do= emit load()
-reducer got  on=load.ok($v, _) do= shown := $v.show
+reducer ok   on=load.ok($v, _) do= got := $v
 
-tile App = column(text(shown))
+tile App = column(text("x"))
 
 app S
     caps   = [storage.read]
@@ -222,11 +222,11 @@ app S
     init   = []
 `);
     localStorage.setItem("item", JSON.stringify({ _tag: "a", n: 1, note: "dropped" }));
-    const seen = await withMounted(app, async () => {
-      const live = defined(app.live, "the app's live map") as Record<string, unknown>;
-      await waitUntil(() => live.shown !== "", { timeoutMs: 3000 });
-      return live.shown;
+    const got = await withMounted(app, async () => {
+      const live = defined(app.live, "the app's live map") as Record<string, { _tag?: string }>;
+      await waitUntil(() => live.got?._tag === "Some", { timeoutMs: 3000 });
+      return live.got;
     });
-    expect(seen).toBe("Some({n: 1})");
+    expect(got).toEqual({ _tag: "Some", _0: { n: 1 } });
   });
 });
