@@ -133,6 +133,12 @@ const rows: Row[] = [
     },
   },
   {
+    name: "button text",
+    arg: 'button(text="Go")',
+    block: 'button() {text: "Go"}',
+    claim: (root) => expect(find(root, "button").textContent).toBe("Go"),
+  },
+  {
     name: "button type",
     arg: 'button(text="Go", type="button")',
     block: 'button(text="Go") {type: "button"}',
@@ -374,6 +380,12 @@ const both: Row[] = [
     arg: 'list(text("a"), ordered=true)',
     block: 'list(text("a"), ordered=false) {ordered: true}',
     claim: (root) => expect(find(root, tile("list")).tagName).toBe("OL"),
+  },
+  {
+    name: "button text",
+    arg: 'button(text="B")',
+    block: 'button(text="A") {text: "B"}',
+    claim: (root) => expect(find(root, "button").textContent).toBe("B"),
   },
   {
     name: "input type",

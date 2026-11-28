@@ -776,7 +776,7 @@ An opaque handle, an `EffectId` or a `Decoder`, is used where it is not defined.
 A handle is refused where these render it as text:
 
 - the content of a value builtin: `text`, `heading`, `markdown`, `code`, `label`, `link` and `editable`, and `image` / `icon`, whose content is `src=` / `name=` ([Standard Library §2.3.2](./stdlib.md#_2-3-2-text-elements)), a named one in either spelling, `label(text=h)` or `label() {text: h}`;
-- `button`'s `text=`, and the value `editable` binds;
+- `button`'s `text`, in either spelling, and the value `editable` binds;
 - an argument of `fmt(...)`, the template included;
 - `.show`. `show` is the member every value has ([Standard Library §2.2.7](./stdlib.md#_2-2-7-int-float)); on a handle it is this error rather than [E0108](#e0108-undef-member), in each of its spellings: `h.show`, `h.show()`, and `T.show(h)` whatever `T` is, since the qualifier is discarded ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)). A handle has no other member, so `h.upper` is E0108.
 
@@ -1712,7 +1712,7 @@ a11y checking is enabled via `check(program, { strictA11y: true })`.
 
 ### E0701 `a11y-button`
 
-> `button must have a text= argument or aria-label`
+> `button must have text or aria-label`
 
 ### E0702 `a11y-image`
 
@@ -1723,6 +1723,8 @@ a11y checking is enabled via `check(program, { strictA11y: true })`.
 > `link must have inner text or aria-label`
 
 `aria-label` and `alt` count in either spelling, a named argument (`button(aria-label="Close")`) or the props block (`button() {aria-label: "Close"}`): a named argument is a prop wherever it is written ([Language §1.7.1](./language.md#_1-7-1-syntax)), and both put the attribute on the element. Where both are written, the props block's is the one read, as it is the one rendered. Each check reads whether one is written, not its value, so `""` and a value read from a slot count too. A value that is not a `Text` is not checked here yet: `button(aria-label=Mark)` writes the variant `Mark`, passes, and renders `aria-label="[object Object]"`. A `when` or `for` written as the argument (`button(aria-label=when(c, text("x")))`) is a tile, not prop data, and renders no attribute, so it does not count; a prop cannot hold a tile, so it is [E0201](#e0201-type-mismatch) as well.
+
+A `button`'s `text` counts in either spelling the same way: `button(text="Go")` and `button() {text: "Go"}` both render the label that names the button, and a `when` or `for` written as it does not count.
 
 **Fix**: Provide visible text, or an `aria-label` / `alt`. For general guidance on forms, see [Forms](./forms.md).
 

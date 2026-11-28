@@ -96,7 +96,7 @@ describe("content written in the {…} block", () => {
   ])("%s() {text: …} is E0129 at the block's text", (b) => {
     const tile = `${b}() {text: "Hi"}`;
     expect(diagnostics(tile)).toEqual([
-      `E0129 2:${at(tile, "text:")} content is positional: write \`${b}("…")\` — the block's \`text\` is a prop on ${b} and never renders (\`text=\` is the label argument of button, link, label and editable)`,
+      `E0129 2:${at(tile, "text:")} content is positional: write \`${b}("…")\` — the block's \`text\` is a prop on ${b} and never renders (it is the label argument of button, link, label and editable)`,
     ]);
   });
 
