@@ -1,0 +1,154 @@
+# Reference implementation for the v5 acceptance criteria. Never shown to a model.
+
+type NoteId    = nominal Text
+type Note      = {id: NoteId, title: Text, body: Text}
+type SyncState = Saved | Saving | Failed(Text)
+type LoadState = Loading | Loaded | LoadFailed(Text)
+type NewNote   = {tempId: NoteId, title: Text}
+
+slot notes      : Map(NoteId, Note)      = {}
+slot sync       : Map(NoteId, SyncState) = {}
+slot load       : LoadState              = Loading
+slot session    : Text                   = "demo-token"
+slot signedOut  : Bool                   = false
+slot draftTitle : Text                   = ""
+slot banner     : Option(Text)           = None
+
+effect loadNotes cap=http.get
+                 in=Unit
+                 out=Result(List(Note), HttpError)
+                 policy=latest
+                 retry=exponential(3, 200ms, 2.0)
+                 map-request={url: "/notes", decode: Decoder.Json(List(Note))}
+
+effect createNote cap=http.post
+                  in=NewNote
+                  out=Result(Note, HttpError)
+                  map-request={url: "/notes", body: Json({"title": $1.title, "body": ""}), decode: Decoder.Json(Note)}
+
+effect updateNote cap=http.put
+                  in=Note
+                  out=Result(Note, HttpError)
+                  policy=latest-per-key($1.id)
+                  map-request={url: "/notes/" + $1.id.show, body: Json($1), decode: Decoder.Json(Note)}
+
+effect deleteNote cap=http.delete
+                  in=Note
+                  out=Result(Unit, HttpError)
+                  map-request={url: "/notes/" + $1.id.show, decode: Decoder.None}
+
+fn byId(ns: List(Note)) -> Map(NoteId, Note) = ns.fold({}, $1.insert($2.id, $2))
+
+fn allSaved(ns: List(Note)) -> Map(NoteId, SyncState) = ns.fold({}, $1.insert($2.id, Saved))
+
+fn noteIds(ns: Map(NoteId, Note)) -> List(NoteId) = ns.keys.sort-by($1.show)
+
+reducer start on=app.start do= emit loadNotes()
+
+reducer loaded on=loadNotes.ok($ns, _)
+    do= notes := byId($ns)
+        sync := allSaved($ns)
+        load := Loaded
+
+reducer loadFailed on=loadNotes.err($e, _) do= load := LoadFailed($e.message)
+
+reducer retryLoad on=ui.click(RetryBtn)
+    do= load := Loading
+        emit loadNotes()
+
+reducer addNote on=ui.click(AddBtn)
+    do= let title = draftTitle.trim
+        if not title.is-empty then {
+          let tempId = NoteId.fresh()
+          notes[tempId] := {id: tempId, title: title, body: ""}
+          sync[tempId] := Saving
+          draftTitle := ""
+          emit createNote({tempId: tempId, title: title}) }
+
+reducer added on=createNote.ok($n, $req)
+    do= notes := notes.remove($req.tempId).insert($n.id, $n)
+        sync := sync.remove($req.tempId).insert($n.id, Saved)
+
+reducer addFailed on=createNote.err(_, $req)
+    do= notes := notes.remove($req.tempId)
+        sync := sync.remove($req.tempId)
+        banner := Some("Could not add note")
+
+reducer edit on=ui.input(BodyInput)
+    do= let id = $el.noteId
+        notes[id].body := $el.value
+        sync[id] := Saving
+        emit updateNote(notes[id].copy(body = $el.value))
+
+reducer saved on=updateNote.ok($n, _) do= sync[$n.id] := Saved
+
+reducer saveFailed on=updateNote.err($e, $n) do= sync[$n.id] := Failed($e.message)
+
+reducer retrySave on=ui.click(RetrySaveBtn)
+    do= sync[$el.noteId] := Saving
+        emit updateNote(notes[$el.noteId])
+
+reducer remove on=ui.click(DeleteBtn)
+    do= let n = notes[$el.noteId]
+        notes := notes.remove(n.id)
+        emit deleteNote(n)
+
+reducer removeFailed on=deleteNote.err(_, $n)
+    do= notes[$n.id] := $n
+        banner := Some("Could not delete note")
+
+reducer expired on=app.http-401 do= signedOut := true
+
+reducer signIn on=ui.click(SignInBtn)
+    do= signedOut := false
+        load := Loading
+        emit loadNotes()
+
+tile RetryBtn     = button(text="Retry")
+tile AddBtn       = button(text="Add note")
+tile SignInBtn    = button(text="Sign in again")
+tile DeleteBtn    in=NoteId = button(text="Delete note") {noteId: $1}
+tile RetrySaveBtn in=NoteId = button(text="Retry save") {noteId: $1}
+tile BodyInput    in=NoteId = textarea(value=notes[$1].body, id="body-" + $1.show) {noteId: $1}
+
+tile SyncBadge in=NoteId
+    = match sync.get($1).get-or(Saved) with
+        | Saved     -> text("Saved") {color: "muted"}
+        | Saving    -> text("Saving") {color: "muted"}
+        | Failed(_) -> row(text("Save failed") {color: "danger"}, RetrySaveBtn($1)) {gap: "sm"}
+
+tile NoteCard in=NoteId
+    = card(column(
+        row(heading(notes[$1].title) {level: 3}, SyncBadge($1)) {justify: "between"},
+        BodyInput($1),
+        DeleteBtn($1)) {gap: "sm"})
+
+tile NoteList = column(for id in noteIds(notes) NoteCard(id) {key: id.show}) {gap: "md"}
+
+tile Body
+    = match load with
+        | Loading       -> text("Loading notes")
+        | LoadFailed(_) -> column(text("Could not load notes") {color: "danger"}, RetryBtn) {gap: "sm"}
+        | Loaded        -> NoteList
+
+tile Notes
+    = column(
+        heading("Notes (" + notes.size.show + ")"),
+        when(banner.is-some, text(banner.get-or("")) {color: "danger"}),
+        row(input(bind=draftTitle, id="new-title", placeholder="Title"), AddBtn) {gap: "sm"},
+        Body)
+      {gap: "md", pad: "lg"}
+
+tile Expired = column(text("Session expired"), SignInBtn) {gap: "sm", pad: "lg"}
+
+tile App = if signedOut then Expired else Notes
+
+app SyncedNotes
+    caps   = [http.get, http.post, http.put, http.delete]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []
+    http   = {
+        base-url: "https://api.example.com",
+        headers: {"Authorization": "Bearer " + session},
+        on-401: expired
+    }

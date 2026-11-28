@@ -1,0 +1,8 @@
+{
+  "GET /notes": { "json": [{ "id": "n1", "title": "Groceries", "body": "milk" }] },
+  "POST /notes": { "json": { "id": "n2", "title": "New", "body": "" } },
+  "PUT /notes/n1": { "json": { "id": "n1", "title": "Groceries", "body": "milk, eggs" } },
+  "PUT /notes/n2": { "json": { "id": "n2", "title": "New", "body": "a book" } },
+  "DELETE /notes/n1": { "status": 204 },
+  "DELETE /notes/n2": { "status": 204 }
+}

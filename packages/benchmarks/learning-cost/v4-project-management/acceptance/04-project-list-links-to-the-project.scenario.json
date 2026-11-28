@@ -1,0 +1,73 @@
+{
+  "effects": {
+    "loadProjects": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadTasks": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/"
+      }
+    },
+    {
+      "do": {
+        "fill": "#project-name",
+        "value": "Website"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create project"
+      }
+    },
+    {
+      "do": {
+        "navigate": "/"
+      }
+    },
+    {
+      "label": "the list shows the project",
+      "expect": {
+        "domIncludes": ["Website"],
+        "domExcludes": ["No projects"]
+      }
+    },
+    {
+      "label": "its name opens it",
+      "do": {
+        "clickText": "Website"
+      },
+      "expect": {
+        "domIncludes": ["New task"]
+      }
+    }
+  ]
+}

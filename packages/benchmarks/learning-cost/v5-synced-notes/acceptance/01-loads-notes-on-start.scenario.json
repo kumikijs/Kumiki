@@ -1,0 +1,29 @@
+{
+  "effects": {
+    "loadNotes": [
+      {
+        "outcome": "ok",
+        "value": [
+          {
+            "id": "n1",
+            "title": "Groceries",
+            "body": "milk"
+          }
+        ]
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": null
+  },
+  "steps": [
+    {
+      "label": "start-up loads the notes from the server",
+      "expect": {
+        "domIncludes": ["Notes (1)", "Groceries", "Saved"],
+        "domExcludes": ["Loading notes"]
+      }
+    }
+  ]
+}

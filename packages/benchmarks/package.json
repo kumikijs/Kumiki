@@ -13,6 +13,8 @@
     "measure:keyed-moves": "tsx reactivity/keyed-move-cost.mjs",
     "measure:bundle": "node bundle-size/measure.mjs",
     "eval": "tsx learning-cost/eval.mjs",
+    "acceptance": "tsx learning-cost/acceptance.mjs",
+    "learning-cost": "node learning-cost/run.mjs",
     "test": "vitest run",
     "lint": "biome check ."
   },

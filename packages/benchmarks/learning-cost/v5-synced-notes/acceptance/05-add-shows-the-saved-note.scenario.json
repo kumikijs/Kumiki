@@ -1,0 +1,61 @@
+{
+  "effects": {
+    "loadNotes": [
+      {
+        "outcome": "ok",
+        "value": []
+      }
+    ],
+    "createNote": [
+      {
+        "outcome": "ok",
+        "value": {
+          "id": "n9",
+          "title": "Call mom",
+          "body": ""
+        }
+      }
+    ],
+    "updateNote": [
+      {
+        "outcome": "ok",
+        "value": {
+          "id": "n9",
+          "title": "Call mom",
+          "body": "Remember the cake"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": null
+  },
+  "steps": [
+    {
+      "do": {
+        "fill": "#new-title",
+        "value": "Call mom"
+      }
+    },
+    {
+      "label": "Add note shows the note, saved under the server's id",
+      "do": {
+        "clickText": "Add note"
+      },
+      "expect": {
+        "domIncludes": ["Notes (1)", "Call mom", "Saved"]
+      }
+    },
+    {
+      "label": "its body field carries the server's id",
+      "do": {
+        "fill": "#body-n9",
+        "value": "Remember the cake"
+      },
+      "expect": {
+        "domIncludes": ["Call mom"]
+      }
+    }
+  ]
+}

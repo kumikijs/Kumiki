@@ -1,0 +1,295 @@
+# Synced Notes
+
+# --- Types ---
+
+type NoteId      = nominal Text
+type Note        = {id: NoteId, title: Text, body: Text}
+type SyncState   = Saved | Saving | Failed(Text)
+type LoadState   = Loading | Loaded | LoadFailed(Text)
+type DeletedNote = {note: Note, prevSync: SyncState}
+
+# --- Slots ---
+
+slot notes          : Map(NoteId, Note)        = {}
+slot sync           : Map(NoteId, SyncState)   = {}
+slot load           : LoadState                = Loading
+slot session        : Text                     = "demo-token"
+slot signedOut      : Bool                     = false
+slot draftTitle     : Text                     = ""
+slot banner         : Option(Text)             = None
+slot pendingDeletes : Map(NoteId, DeletedNote) = {}
+
+# --- Effects ---
+
+effect loadNotes cap=http.get
+                 in=Unit
+                 out=Result(List(Note), HttpError)
+                 policy=latest
+                 retry=exponential(3, 200ms, 2.0)
+                 map-request={
+                     url: "/notes",
+                     headers: {},
+                     query: {},
+                     decode: Decoder.Json(List(Note))
+                 }
+
+effect createNote cap=http.post
+                  in={tempId: NoteId, title: Text, body: Text}
+                  out=Result(Note, HttpError)
+                  policy=latest-per-key($1.tempId)
+                  map-request={
+                      url: "/notes",
+                      headers: {},
+                      query: {},
+                      body: Json({title: $1.title, body: $1.body}),
+                      decode: Decoder.Json(Note)
+                  }
+
+effect updateNote cap=http.put
+                  in=Note
+                  out=Result(Note, HttpError)
+                  policy=latest-per-key($1.id)
+                  map-request={
+                      url: "/notes/" + $1.id.show,
+                      headers: {},
+                      query: {},
+                      body: Json($1),
+                      decode: Decoder.Json(Note)
+                  }
+
+effect deleteNote cap=http.delete
+                  in=NoteId
+                  out=Result(Unit, HttpError)
+                  policy=latest-per-key($1)
+                  map-request={
+                      url: "/notes/" + $1.show,
+                      headers: {},
+                      query: {},
+                      body: Empty,
+                      decode: Decoder.None
+                  }
+
+# --- Pure Functions ---
+
+fn emptyNotes() -> Map(NoteId, Note) = {}
+
+fn emptySync() -> Map(NoteId, SyncState) = {}
+
+fn listToNotesMap(list: List(Note)) -> Map(NoteId, Note)
+    = list.fold(emptyNotes(), $1.insert($2.id, $2))
+
+fn listToSyncMap(list: List(Note)) -> Map(NoteId, SyncState)
+    = list.fold(emptySync(), $1.insert($2.id, Saved))
+
+# --- Reducers ---
+
+reducer onLoadOk
+    on=loadNotes.ok($list, _)
+    do= notes := listToNotesMap($list)
+        sync := listToSyncMap($list)
+        load := Loaded
+        banner := None
+
+reducer onLoadErr
+    on=loadNotes.err($err, _)
+    do= if $err.status == 401 then
+            signedOut := true
+        else if $err.status != 0 || $err.message != "aborted" then
+            load := LoadFailed($err.message)
+
+reducer retryLoad
+    on=ui.click(RetryLoadBtn)
+    do= load := Loading
+        banner := None
+        emit loadNotes()
+
+reducer addNote
+    on=ui.click(AddNoteBtn)
+    do= let title = draftTitle.trim
+        if title != "" then {
+            let tempId = NoteId.fresh()
+            notes[tempId] := {id: tempId, title: title, body: ""}
+            sync[tempId] := Saving
+            draftTitle := ""
+            banner := None
+            emit createNote({tempId: tempId, title: title, body: ""})
+        }
+
+reducer onCreateOk
+    on=createNote.ok($created, $tempId)
+    do= notes := notes.remove($tempId).insert($created.id, $created)
+        sync := sync.remove($tempId).insert($created.id, Saved)
+
+reducer onCreateErr
+    on=createNote.err($err, $tempId)
+    do= notes := notes.remove($tempId)
+        sync := sync.remove($tempId)
+        if $err.status == 401 then
+            signedOut := true
+        else
+            banner := Some("Could not add note")
+
+reducer editBody
+    on=ui.input(NoteBodyInput)
+    do= match notes.get($el.noteId) with
+          | Some(note) -> {
+              let updated = note.copy(body=$event.value)
+              notes[$el.noteId] := updated
+              sync[$el.noteId] := Saving
+              banner := None
+              emit updateNote(updated)
+          }
+
+reducer onUpdateOk
+    on=updateNote.ok($saved, _)
+    do= if notes.has($saved.id) then {
+            notes[$saved.id] := $saved
+            sync[$saved.id] := Saved
+        }
+
+reducer onUpdateErr
+    on=updateNote.err($err, $id)
+    do= if $err.status == 401 then
+            signedOut := true
+        else if ($err.status != 0 || $err.message != "aborted") && notes.has($id) then
+            sync[$id] := Failed($err.message)
+
+reducer retrySave
+    on=ui.click(RetrySaveBtn)
+    do= match notes.get($el.noteId) with
+          | Some(note) -> {
+              sync[$el.noteId] := Saving
+              banner := None
+              emit updateNote(note)
+          }
+
+reducer removeNote
+    on=ui.click(DeleteNoteBtn)
+    do= match notes.get($el.noteId) with
+          | Some(note) -> {
+              let prevSync = sync.get-or($el.noteId, Saved)
+              pendingDeletes[$el.noteId] := {note: note, prevSync: prevSync}
+              notes := notes.remove($el.noteId)
+              sync := sync.remove($el.noteId)
+              banner := None
+              emit deleteNote($el.noteId)
+          }
+
+reducer onDeleteOk
+    on=deleteNote.ok(_, $id)
+    do= pendingDeletes := pendingDeletes.remove($id)
+
+reducer onDeleteErr
+    on=deleteNote.err($err, $id)
+    do= match pendingDeletes.get($id) with
+          | Some(deleted) -> {
+              notes[$id] := deleted.note
+              sync[$id] := deleted.prevSync
+              pendingDeletes := pendingDeletes.remove($id)
+              if $err.status == 401 then
+                  signedOut := true
+              else
+                  banner := Some("Could not delete note")
+          }
+
+reducer handleUnauthorized
+    on=app.http-401
+    do= signedOut := true
+        banner := None
+
+reducer signInAgain
+    on=ui.click(SignInBtn)
+    do= signedOut := false
+        load := Loading
+        banner := None
+        pendingDeletes := {}
+        emit loadNotes()
+
+# --- Tiles ---
+
+tile NewTitleInput
+    = input(bind=draftTitle, placeholder="New note title") {id: "new-title"}
+
+tile AddNoteBtn
+    = button(text="Add note")
+
+tile RetryLoadBtn
+    = button(text="Retry")
+
+tile NoteBodyInput in=NoteId
+    = textarea(value=notes[$1].body, placeholder="Write a note...") {id: "body-" + $1.show, noteId: $1, rows: 3}
+
+tile DeleteNoteBtn in=NoteId
+    = button(text="Delete note") {noteId: $1}
+
+tile RetrySaveBtn in=NoteId
+    = button(text="Retry save") {noteId: $1}
+
+tile NoteSyncStatus in=NoteId
+    = match sync.get-or($1, Saved) with
+        | Saved     -> text("Saved") {color: "success", size: "sm"}
+        | Saving    -> text("Saving") {color: "muted", size: "sm"}
+        | Failed(_) -> row(
+                         text("Save failed") {color: "danger", size: "sm"},
+                         RetrySaveBtn($1)) {gap: "sm", align: "center"}
+
+tile NoteCard in=NoteId
+    = card(
+        column(
+          row(
+            heading(notes[$1].title, level=2) {size: "md"},
+            DeleteNoteBtn($1)) {justify: "between", align: "center"},
+          NoteBodyInput($1),
+          NoteSyncStatus($1)) {gap: "sm"}) {pad: "md", radius: "md"}
+
+tile LoadStatus
+    = match load with
+        | Loading       -> row(spinner() {size: "sm"}, text("Loading notes")) {gap: "sm", align: "center"}
+        | LoadFailed(_) -> row(
+                             text("Could not load notes") {color: "danger"},
+                             RetryLoadBtn) {gap: "sm", align: "center"}
+        | Loaded        -> text("")
+
+tile AddNoteBar
+    = row(NewTitleInput, AddNoteBtn) {gap: "sm", align: "center"}
+
+tile NotesList
+    = column(
+        for id in notes.keys
+          NoteCard(id) {key: id.show}) {gap: "md"}
+
+tile NotesView
+    = column(
+        heading(fmt("Notes ({0})", notes.size)),
+        when(banner.is-some,
+          box(text(banner.get-or("")) {color: "danger"}) {pad: "sm", bg: "surface", radius: "sm"}),
+        when(load != Loaded, LoadStatus),
+        AddNoteBar,
+        NotesList) {gap: "md"}
+
+tile SignInBtn
+    = button(text="Sign in again")
+
+tile SignedOutView
+    = column(
+        heading("Session expired"),
+        text("Your session has expired. Please sign in again."),
+        SignInBtn) {gap: "md"}
+
+tile App
+    = page(
+        if signedOut then SignedOutView else NotesView) {pad: "lg", max-w: 720}
+
+# --- Application ---
+
+app SyncedNotes
+    caps   = [http.get, http.post, http.put, http.delete]
+    routes = {"/" -> App, "/404" -> App}
+    init   = [loadNotes()]
+    http   = {
+        base-url: "https://api.example.com",
+        headers: {
+            "Authorization": fmt("Bearer {0}", session)
+        },
+        on-401: handleUnauthorized
+    }

@@ -1,0 +1,43 @@
+{
+  "effects": {
+    "loadNotes": [
+      {
+        "outcome": "ok",
+        "value": [
+          {
+            "id": "n1",
+            "title": "Groceries",
+            "body": "milk"
+          }
+        ]
+      }
+    ],
+    "updateNote": [
+      {
+        "outcome": "ok",
+        "value": {
+          "id": "n1",
+          "title": "Groceries",
+          "body": "milk, eggs"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": null
+  },
+  "steps": [
+    {
+      "label": "editing the body saves it",
+      "do": {
+        "fill": "#body-n1",
+        "value": "milk, eggs"
+      },
+      "expect": {
+        "domIncludes": ["Groceries", "Saved"],
+        "domExcludes": ["Save failed"]
+      }
+    }
+  ]
+}

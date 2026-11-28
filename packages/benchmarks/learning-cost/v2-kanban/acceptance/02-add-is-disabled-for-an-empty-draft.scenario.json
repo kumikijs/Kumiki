@@ -1,0 +1,19 @@
+{
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "label": "Add is disabled while the draft is empty",
+      "do": {
+        "clickText": "Add"
+      },
+      "expect": {
+        "actionErrorIncludes": ["is disabled"]
+      }
+    }
+  ]
+}

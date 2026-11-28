@@ -1,0 +1,50 @@
+{
+  "effects": {
+    "loadNotes": [
+      {
+        "outcome": "err",
+        "value": {
+          "status": 401,
+          "message": "Unauthorized",
+          "body": {
+            "_tag": "Some",
+            "_0": ""
+          }
+        }
+      },
+      {
+        "outcome": "ok",
+        "value": [
+          {
+            "id": "n1",
+            "title": "Groceries",
+            "body": "milk"
+          }
+        ]
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": null
+  },
+  "steps": [
+    {
+      "label": "a 401 replaces the notes with the expired-session page",
+      "expect": {
+        "domIncludes": ["Session expired", "Sign in again"],
+        "domExcludes": ["Notes ("]
+      }
+    },
+    {
+      "label": "signing in again loads the notes",
+      "do": {
+        "clickText": "Sign in again"
+      },
+      "expect": {
+        "domIncludes": ["Groceries"],
+        "domExcludes": ["Session expired"]
+      }
+    }
+  ]
+}

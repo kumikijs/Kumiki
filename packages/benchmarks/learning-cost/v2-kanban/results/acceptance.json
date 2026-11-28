@@ -1,0 +1,17 @@
+{
+  "Claude": {
+    "passed": 9,
+    "total": 9,
+    "failed": []
+  },
+  "Codex": {
+    "passed": 9,
+    "total": 9,
+    "failed": []
+  },
+  "Gemini": {
+    "passed": 9,
+    "total": 9,
+    "failed": []
+  }
+}

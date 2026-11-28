@@ -78,6 +78,15 @@ Define a minimal set of color / spacing / typography tokens.
 
 Save and restore `issues` and `comments` in localStorage.
 
+## Acceptance contract
+
+The program is scored by driving it through the names below, so use them exactly. Everything else — layout, wording, extra features — is yours to choose.
+
+- Status is shown as `Open` / `In Progress` / `Done`, priority as `Low` / `Med` / `High`, wherever they appear (labels, badges, select options).
+- **`/`**: a button `New Issue` that opens `/new`. A `select` with `id: "filter-status"` (options `All`, `Open`, `In Progress`, `Done`), a `select` with `id: "filter-priority"` (`All`, `Low`, `Med`, `High`), an `input` with `id: "filter-search"` (matches titles containing the text), and a button `Clear filters`. Each issue shows its title as a link to its detail page, its status and its priority. With no issue to show, the text `No issues`.
+- **`/new`**: an `input` `id: "new-title"`, a `textarea` `id: "new-body"`, a `select` `id: "new-priority"` (`Low`, `Med`, `High`; `Med` by default), an `input` `id: "new-assignee"`, an `input` `id: "new-tags"` (comma-separated), a submit button `Create issue`, and a button `Cancel` that returns to `/`. An empty title creates nothing.
+- **`/issues/:id`**: the title, a `select` `id: "detail-status"` and a `select` `id: "detail-priority"` that change the issue, its tags each with a button `Remove tag`, an `input` `id: "tag-input"` with a button `Add tag`, an `input` `id: "comment-input"` with a button `Add comment`, each comment's body with a button `Delete comment`, a button `Delete issue` that returns to `/`, and a button `Back` to `/`.
+
 ## Constraints
 
 - The output is a single `.kumiki` file
@@ -91,5 +100,6 @@ Write it out as a `.kumiki` file at the specified path. **Do not leave any stray
 
 ## Evaluation
 
-Score parse / typecheck / build with `benchmarks/learning-cost/eval.mjs`.
-The best version also goes through `kumiki build` + a browser smoke test.
+- parse / typecheck / build, and `kumiki smoke` (`benchmarks/learning-cost/eval.mjs`)
+- the acceptance scenarios, which drive the program through the contract above (`benchmarks/learning-cost/acceptance.mjs`); the score is the number of criteria passed
+- LOC and token count are recorded

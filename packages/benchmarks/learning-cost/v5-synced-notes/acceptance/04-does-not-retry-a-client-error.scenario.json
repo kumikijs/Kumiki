@@ -1,0 +1,40 @@
+{
+  "effects": {
+    "loadNotes": [
+      {
+        "outcome": "err",
+        "value": {
+          "status": 404,
+          "message": "Not Found",
+          "body": {
+            "_tag": "Some",
+            "_0": ""
+          }
+        }
+      },
+      {
+        "outcome": "ok",
+        "value": [
+          {
+            "id": "n1",
+            "title": "Groceries",
+            "body": "milk"
+          }
+        ]
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": null
+  },
+  "steps": [
+    {
+      "label": "a 404 fails at once, without waiting out a backoff",
+      "expect": {
+        "domIncludes": ["Could not load notes"],
+        "domExcludes": ["Groceries"]
+      }
+    }
+  ]
+}

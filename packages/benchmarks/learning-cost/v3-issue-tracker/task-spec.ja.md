@@ -78,6 +78,15 @@ GitHub Issues 風の Issue Tracker SPA:
 
 `issues` と `comments` を localStorage に保存・復元。
 
+## 受け入れ条件の約束事
+
+プログラムは以下の名前を使って操作し採点するので、そのとおりに使うこと。それ以外（レイアウト、文言、追加機能）は自由に決めてよい。
+
+- ステータスは `Open` / `In Progress` / `Done`、優先度は `Low` / `Med` / `High` と表示する（ラベル、バッジ、select の選択肢のどこでも）。
+- **`/`**：`/new` を開くボタン `New Issue`。`id: "filter-status"` の `select`（選択肢 `All`・`Open`・`In Progress`・`Done`）、`id: "filter-priority"` の `select`（`All`・`Low`・`Med`・`High`）、`id: "filter-search"` の `input`（その文字列を含むタイトルに絞る）、ボタン `Clear filters`。各 Issue はタイトルを詳細ページへのリンクとして表示し、ステータスと優先度も表示する。表示する Issue が無いときはテキスト `No issues`。
+- **`/new`**：`id: "new-title"` の `input`、`id: "new-body"` の `textarea`、`id: "new-priority"` の `select`（`Low`・`Med`・`High`、既定は `Med`）、`id: "new-assignee"` の `input`、`id: "new-tags"` の `input`（カンマ区切り）、送信ボタン `Create issue`、`/` に戻るボタン `Cancel`。タイトルが空なら何も作らない。
+- **`/issues/:id`**：タイトル、Issue を変更する `id: "detail-status"` の `select` と `id: "detail-priority"` の `select`、各タグとそのボタン `Remove tag`、`id: "tag-input"` の `input` とボタン `Add tag`、`id: "comment-input"` の `input` とボタン `Add comment`、各コメントの本文とボタン `Delete comment`、`/` に戻るボタン `Delete issue`、`/` に戻るボタン `Back`。
+
 ## 制約
 
 - 出力は 1 つの `.kumiki` ファイル
@@ -91,5 +100,6 @@ GitHub Issues 風の Issue Tracker SPA:
 
 ## 評価
 
-`benchmarks/learning-cost/eval.mjs` で parse / typecheck / build を採点。
-さらにベスト版は `kumiki build` + ブラウザでの動作確認まで。
+- parse / typecheck / build と `kumiki smoke`（`benchmarks/learning-cost/eval.mjs`）
+- 上の約束事を使ってプログラムを操作する受け入れシナリオ（`benchmarks/learning-cost/acceptance.mjs`）。合格した条件の数が得点になる
+- LOC とトークン数を記録する

@@ -1,0 +1,84 @@
+{
+  "effects": {
+    "loadProjects": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadTasks": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/"
+      }
+    },
+    {
+      "do": {
+        "fill": "#project-name",
+        "value": "Website"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create project"
+      }
+    },
+    {
+      "do": {
+        "clickText": "New task"
+      }
+    },
+    {
+      "do": {
+        "fill": "#task-title",
+        "value": "Design header"
+      }
+    },
+    {
+      "do": {
+        "fill": "#task-description",
+        "value": "Logo and nav"
+      }
+    },
+    {
+      "do": {
+        "fill": "#task-tags",
+        "value": "ui, design"
+      }
+    },
+    {
+      "label": "Create task opens the new task with what was entered",
+      "do": {
+        "clickText": "Create task"
+      },
+      "expect": {
+        "domIncludes": ["Design header", "Logo and nav", "ui", "design", "Delete task"]
+      }
+    }
+  ]
+}

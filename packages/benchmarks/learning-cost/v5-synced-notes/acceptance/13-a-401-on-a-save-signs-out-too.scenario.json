@@ -1,0 +1,45 @@
+{
+  "effects": {
+    "loadNotes": [
+      {
+        "outcome": "ok",
+        "value": [
+          {
+            "id": "n1",
+            "title": "Groceries",
+            "body": "milk"
+          }
+        ]
+      }
+    ],
+    "updateNote": [
+      {
+        "outcome": "err",
+        "value": {
+          "status": 401,
+          "message": "Unauthorized",
+          "body": {
+            "_tag": "Some",
+            "_0": ""
+          }
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": null
+  },
+  "steps": [
+    {
+      "label": "a 401 from any request ends the session",
+      "do": {
+        "fill": "#body-n1",
+        "value": "milk, eggs"
+      },
+      "expect": {
+        "domIncludes": ["Session expired"]
+      }
+    }
+  ]
+}

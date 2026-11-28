@@ -1,0 +1,31 @@
+{
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "fill": "input",
+        "value": "Write tests"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Add"
+      }
+    },
+    {
+      "label": "✕ deletes the card",
+      "do": {
+        "clickText": "✕"
+      },
+      "expect": {
+        "domExcludes": ["Write tests"],
+        "domIncludes": ["Todo (0)"]
+      }
+    }
+  ]
+}

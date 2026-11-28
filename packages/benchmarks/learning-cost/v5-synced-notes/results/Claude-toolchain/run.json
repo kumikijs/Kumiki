@@ -1,0 +1,14 @@
+{
+  "vendor": "Claude",
+  "model": "opus",
+  "track": "toolchain",
+  "durationMs": 503973,
+  "timedOut": false,
+  "exitCode": 0,
+  "wrote": true,
+  "kumikiCalls": {
+    "guide": 2,
+    "check": 2
+  },
+  "commands": 4
+}

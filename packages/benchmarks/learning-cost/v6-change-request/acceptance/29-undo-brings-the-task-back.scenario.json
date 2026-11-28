@@ -1,0 +1,87 @@
+{
+  "effects": {
+    "loadProjects": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadTasks": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/"
+      }
+    },
+    {
+      "do": {
+        "fill": "#project-name",
+        "value": "Website"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create project"
+      }
+    },
+    {
+      "do": {
+        "clickText": "New task"
+      }
+    },
+    {
+      "do": {
+        "fill": "#task-title",
+        "value": "Design header"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create task"
+      }
+    },
+    {
+      "label": "Delete task offers to undo it",
+      "do": {
+        "clickText": "Delete task"
+      },
+      "expect": {
+        "domIncludes": ["Task deleted", "Undo", "No tasks"]
+      }
+    },
+    {
+      "label": "Undo brings it back",
+      "do": {
+        "clickText": "Undo"
+      },
+      "expect": {
+        "domIncludes": ["Design header"],
+        "domExcludes": ["Task deleted"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "effects": {
+    "loadNotes": [
+      {
+        "outcome": "ok",
+        "value": [
+          {
+            "id": "n1",
+            "title": "Groceries",
+            "body": "milk"
+          },
+          {
+            "id": "n2",
+            "title": "Ideas",
+            "body": ""
+          }
+        ]
+      }
+    ],
+    "updateNote": [
+      {
+        "outcome": "err",
+        "value": {
+          "status": 500,
+          "message": "Internal Server Error",
+          "body": {
+            "_tag": "Some",
+            "_0": ""
+          }
+        }
+      },
+      {
+        "outcome": "ok",
+        "value": {
+          "id": "n2",
+          "title": "Ideas",
+          "body": "a book"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": null
+  },
+  "steps": [
+    {
+      "do": {
+        "fill": "#body-n1",
+        "value": "milk, eggs"
+      }
+    },
+    {
+      "label": "a failed save of one note leaves the other's save alone",
+      "do": {
+        "fill": "#body-n2",
+        "value": "a book"
+      },
+      "expect": {
+        "domIncludes": ["Save failed", "Saved", "Notes (2)"]
+      }
+    }
+  ]
+}

@@ -3,7 +3,7 @@
 「React よりトークンが少ない」「LLM が仕様書だけで習得できる」という Kumiki の主張は、宣言ではなく実測に基づいています。2 つのスイートが [`benchmarks`](https://github.com/kumikijs/Kumiki/tree/main/packages/benchmarks) にあります。
 
 - **サイズ比較** — Kumiki のアプリと*編集*は、等価な React と比べてどれだけコンパクトか。決定的で、いつでも再実行できます。
-- **学習コスト** — 仕様書だけを与えられた LLM が、単一パスで parse / typecheck / build を通るプログラムを書けるか。
+- **学習コスト** — 仕様書だけを与えられた LLM が、ビルドが通りタスクの求める動作をするプログラムを書けるか。Kumiki CLI を使える場合と使えない場合の両方で測ります。
 
 ## サイズ比較（Kumiki vs React）
 
@@ -46,32 +46,33 @@
 
 Kumiki の AI 編集動詞（`add` / `replace` / `remove`）は定義を丸ごと送ります。同じ 4 シナリオで計測すると、op ストリームのコストは**ファイル全体を書き直す場合の 24%**（cl100k で 1,456 vs 6,142）でした。ただし素の unified テキストパッチのほうがさらに小さく（1,052）なります。op ストリームの価値は最小バイト数ではなく、各 op を独立に検査でき、構文的に壊れたファイルを決して生まないことにあります。
 
-## 学習コスト（仕様書だけで Kumiki を書く）
+## 学習コスト（仕様書から Kumiki を書く）
 
-各タスクはモデルに **`docs/spec/` とタスク仕様だけ** を与え、単一パスで `.kumiki` プログラムを書かせます。example アプリもコンパイラのループもリトライもありません。その後ハーネスが parse / typecheck / build を採点します。プロトコルの詳細、実行したコマンド、公平性に関する注記は [`learning-cost/summary.md`](https://github.com/kumikijs/Kumiki/blob/main/packages/benchmarks/learning-cost/summary.md) を参照してください。
+各タスクはモデルに **`docs/spec/` とタスク仕様だけ** を、ほかに何も置いていないワークスペースで与え、書かれたプログラムを 2 つの観点で採点します。ビルドが通るか（parse / typecheck / build と `kumiki smoke`）と、タスクが求める動作をするかです。後者のために、タスク仕様はアプリが使うべき id・ラベル・effect の名前を定めています。採点には基準 1 つにつき 1 本の受け入れシナリオを使い、そうした名前を通してアプリを操作します。このシナリオはモデルには見せません。各タスクは 2 つのトラックで実行します。
 
-| タスク | ベンダー | LOC | cl100k | parse | typecheck | build |
-|---|---|---:|---:|:--:|:--:|:--:|
-| v1 Pomodoro（~60 行） | Claude | 63 | 439 | ✅ | ✅ | ✅ |
-| | Codex | 51 | 341 | ✅ | ✅ | ✅ |
-| | Gemini | 69 | 609 | ✅ | ✅ | ✅ |
-| v2 Kanban（~200 行） | Claude | 188 | 1,624 | ✅ | ✅ | ✅ |
-| | Codex | 200 | 1,611 | ✅ | ✅ | ✅ |
-| | Gemini | 331 | 2,323 | ✅ | ✅ | ✅ |
-| v3 Issue Tracker（~600 行） | Claude | 864 | 7,482 | ✅ | ✅ | ✅ |
-| | Codex | 772 | 6,143 | ✅ | ✅ | ✅ |
-| | Gemini | 1,460 | 10,353 | ✅ | ✅ | ✅ |
-| v4 Project Mgmt（~1,000 行） | Claude | 986 | 10,122 | ✅ | ✅ | ✅ |
-| | Codex | 897 | 8,644 | ✅ | ✅ | ✅ |
-| | Gemini | 1,995 | 16,598 | ✅ | ✅ | ✅ |
+- **spec**: ワークスペースにコンパイラがないので、プログラムは単一パスで書きます。
+- **toolchain**: Kumiki CLI もインストールされており、モデルは 30 分以内なら `kumiki guide`・`check`・`build`・`smoke`・`run`・`test` を何度でも実行できます。
 
-モデルは Claude Opus 5.5、Codex `gpt-6.1-terra`、Gemini `gemini-4-neon` で、推論の強さ（effort）はすべて `high` です。各タスク 1 回ずつ、仕様とタスク仕様だけを置いたワークスペース（example もコンパイラもなし）で実行しました。
+プロトコルの詳細、実行したコマンド、実行ごとの規模は [`learning-cost/summary.md`](https://github.com/kumikijs/Kumiki/blob/main/packages/benchmarks/learning-cost/summary.md) を参照してください。
+
+受け入れ基準の合格数:
+
+| タスク | Claude | Claude + CLI | Codex | Codex + CLI | Gemini | Gemini + CLI |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|
+| v1 Pomodoro（~60 行） | 5/5 | — | 5/5 | — | 5/5 | — |
+| v2 Kanban（~200 行） | 9/9 | — | 9/9 | — | 9/9 | — |
+| v3 Issue Tracker（~700 行） | 17/17 | 17/17 | 17/17 | 17/17 | 17/17 | 17/17 |
+| v4 Project Mgmt（~1,000 行） | 25/25 | 25/25 | 25/25 | 25/25 | 25/25 | 25/25 |
+| v5 Synced Notes（HTTP effect、~300 行） | 9/14 | 14/14 | 0/14 | 14/14 | 10/14 | 14/14 |
+| v6 Change Request（990 行のアプリを改修） | 30/30 | 30/30 | 30/30 | 30/30 | 30/30 | 30/30 |
+
+モデルは Claude Opus 5.5、Codex `gpt-6.1-terra`、Gemini `gemini-4-neon` で、推論の強さ（effort）はすべて `high`、各セル 1 回ずつの実行です。v1 と v2 は spec トラックだけで実行しました。
 
 表から読み取れること:
 
-- **最大のアプリでも、仕様書だけ・単一パスでビルドが通ります。** 3 社とも ~1,000 行の v4 を含む 4 タスクすべてをビルドし、すべての出力が `kumiki smoke` も通りました。
-- **effort も結果の一部です。** 最初に effort `low` で走らせた Codex は、v1 と v4 をそれぞれ規則 1 つで落とし、v4 は 287 行しか書きませんでした。同じモデルを `high` にすると、どちらもビルドが通ります。
-- **正しさは揃い、規模は揃いません。** v3 で 3 社が書いた行数は 772・864・1,460 です。ビルドと smoke が通るのは、プログラムが言語として正しく、実行できるということです。タスク仕様をすべて満たしているかどうかは、このベンチマークでは採点していません。
+- **機能の多いアプリは、仕様書だけで正しく書けます。** 3 社とも v3・v4・v6 の基準をすべて満たしました。コンパイラを一度も実行せずに、~1,000 行の v4 まで書けています。
+- **仕様書だけで足りないのは effect で、そこをツールが補います。** すべての操作が、失敗・再試行・新しい要求による置き換えのありうる HTTP effect を通る v5 では、spec トラックで 4〜14 基準を落としました。2 社は effect 結果の 2 番目の束縛が何を持つかを読み違えました。これは何もチェックしない箇所です。残る 1 社は、すべてのアプリに必要な `/404` ルートを書き忘れました。CLI があると 3 社とも 14/14 です。
+- **大きなプログラムの改修は小さく収まります。** v6 の 6 回の実行は、990 行のアプリに 49〜68 行を追加して 4〜11 行を削除しました。守るべき 23 の振る舞いを壊した実行はありません。
 
 ## 再現方法
 
@@ -79,7 +80,8 @@ Kumiki の AI 編集動詞（`add` / `replace` / `remove`）は定義を丸ご�
 pnpm --filter @kumikijs/benchmarks measure            # ファイル全体のサイズ + 比率
 pnpm --filter @kumikijs/benchmarks measure:scenarios  # シナリオごとのパッチサイズ
 pnpm --filter @kumikijs/benchmarks measure:ops        # ファイル全体 vs パッチ vs op ストリーム
-pnpm --filter @kumikijs/benchmarks eval <output.kumiki>  # 学習コスト出力の採点
+pnpm --filter @kumikijs/benchmarks eval <output.kumiki>  # 学習コスト出力のビルドが通るか
+pnpm --filter @kumikijs/benchmarks acceptance [tasks]     # 受け入れ基準を満たすか
 ```
 
-学習コストのベンダー列を更新するには、コミット済みのプロンプト（`vN-*/codex-prompt.txt` / `gemini-prompt.txt`）でモデルを実行し、出力を `results/<Vendor>/output.kumiki` に保存して `eval` を再実行します。
+学習コストのセルを更新するには `pnpm --filter @kumikijs/benchmarks learning-cost <task> <vendor> <spec|toolchain>` を実行します。ワークスペースを作り、そのベンダーのエージェントを走らせ、出力を `results/<Vendor>[-toolchain]/` に保存します。その後 `eval` と `acceptance` を再実行してください。

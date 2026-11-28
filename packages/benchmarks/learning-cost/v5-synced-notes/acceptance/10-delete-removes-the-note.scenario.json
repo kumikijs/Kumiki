@@ -1,0 +1,38 @@
+{
+  "effects": {
+    "loadNotes": [
+      {
+        "outcome": "ok",
+        "value": [
+          {
+            "id": "n1",
+            "title": "Groceries",
+            "body": "milk"
+          }
+        ]
+      }
+    ],
+    "deleteNote": [
+      {
+        "outcome": "ok",
+        "value": null
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": null
+  },
+  "steps": [
+    {
+      "label": "Delete note removes it",
+      "do": {
+        "clickText": "Delete note"
+      },
+      "expect": {
+        "domIncludes": ["Notes (0)"],
+        "domExcludes": ["Groceries"]
+      }
+    }
+  ]
+}

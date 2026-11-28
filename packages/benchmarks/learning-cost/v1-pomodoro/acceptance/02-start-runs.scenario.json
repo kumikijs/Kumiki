@@ -1,0 +1,15 @@
+{
+  "steps": [
+    {
+      "label": "Start sets running",
+      "do": {
+        "clickText": "Start"
+      },
+      "expect": {
+        "state": {
+          "running": true
+        }
+      }
+    }
+  ]
+}

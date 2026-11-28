@@ -1,0 +1,31 @@
+{
+  "steps": [
+    {
+      "do": {
+        "clickText": "Start"
+      }
+    },
+    {
+      "label": "Pause clears running",
+      "do": {
+        "clickText": "Pause"
+      },
+      "expect": {
+        "state": {
+          "running": false
+        }
+      }
+    },
+    {
+      "label": "and a paused timer does not count",
+      "do": {
+        "wait": 2500
+      },
+      "expect": {
+        "state": {
+          "remaining": 1500
+        }
+      }
+    }
+  ]
+}

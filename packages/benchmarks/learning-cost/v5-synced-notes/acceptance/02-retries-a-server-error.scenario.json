@@ -1,0 +1,54 @@
+{
+  "effects": {
+    "loadNotes": [
+      {
+        "outcome": "err",
+        "value": {
+          "status": 503,
+          "message": "Service Unavailable",
+          "body": {
+            "_tag": "Some",
+            "_0": ""
+          }
+        }
+      },
+      {
+        "outcome": "err",
+        "value": {
+          "status": 503,
+          "message": "Service Unavailable",
+          "body": {
+            "_tag": "Some",
+            "_0": ""
+          }
+        }
+      },
+      {
+        "outcome": "ok",
+        "value": [
+          {
+            "id": "n1",
+            "title": "Groceries",
+            "body": "milk"
+          }
+        ]
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": null
+  },
+  "steps": [
+    {
+      "label": "two 503s are retried with backoff, and the third attempt loads",
+      "do": {
+        "wait": 1500
+      },
+      "expect": {
+        "domIncludes": ["Groceries"],
+        "domExcludes": ["Could not load notes"]
+      }
+    }
+  ]
+}

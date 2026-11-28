@@ -1,0 +1,17 @@
+{
+  "steps": [
+    {
+      "label": "the timer starts stopped, in Work, with 1500 seconds, and shows the mode and the seconds",
+      "expect": {
+        "state": {
+          "mode": {
+            "_tag": "Work"
+          },
+          "remaining": 1500,
+          "running": false
+        },
+        "domIncludes": ["Work", "1500"]
+      }
+    }
+  ]
+}

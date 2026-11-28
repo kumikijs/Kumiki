@@ -1,0 +1,37 @@
+{
+  "Reference": {
+    "passed": 17,
+    "total": 17,
+    "failed": []
+  },
+  "Claude": {
+    "passed": 17,
+    "total": 17,
+    "failed": []
+  },
+  "Claude-toolchain": {
+    "passed": 17,
+    "total": 17,
+    "failed": []
+  },
+  "Codex": {
+    "passed": 17,
+    "total": 17,
+    "failed": []
+  },
+  "Codex-toolchain": {
+    "passed": 17,
+    "total": 17,
+    "failed": []
+  },
+  "Gemini": {
+    "passed": 17,
+    "total": 17,
+    "failed": []
+  },
+  "Gemini-toolchain": {
+    "passed": 17,
+    "total": 17,
+    "failed": []
+  }
+}

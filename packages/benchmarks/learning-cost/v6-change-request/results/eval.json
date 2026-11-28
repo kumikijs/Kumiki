@@ -1,0 +1,104 @@
+[
+  {
+    "path": "packages/benchmarks/learning-cost/v6-change-request/results/Claude-toolchain/output.kumiki",
+    "chars": 38395,
+    "loc": 1048,
+    "cl100k": 10782,
+    "changed": {
+      "added": 64,
+      "removed": 7
+    },
+    "parse": true,
+    "typecheck": true,
+    "build": true,
+    "smoke": true,
+    "errorCount": 0,
+    "errorCategories": {},
+    "firstError": null
+  },
+  {
+    "path": "packages/benchmarks/learning-cost/v6-change-request/results/Claude/output.kumiki",
+    "chars": 38410,
+    "loc": 1048,
+    "cl100k": 10787,
+    "changed": {
+      "added": 64,
+      "removed": 7
+    },
+    "parse": true,
+    "typecheck": true,
+    "build": true,
+    "smoke": true,
+    "errorCount": 0,
+    "errorCategories": {},
+    "firstError": null
+  },
+  {
+    "path": "packages/benchmarks/learning-cost/v6-change-request/results/Codex-toolchain/output.kumiki",
+    "chars": 37974,
+    "loc": 1030,
+    "cl100k": 10678,
+    "changed": {
+      "added": 49,
+      "removed": 10
+    },
+    "parse": true,
+    "typecheck": true,
+    "build": true,
+    "smoke": true,
+    "errorCount": 0,
+    "errorCategories": {},
+    "firstError": null
+  },
+  {
+    "path": "packages/benchmarks/learning-cost/v6-change-request/results/Codex/output.kumiki",
+    "chars": 38144,
+    "loc": 1036,
+    "cl100k": 10714,
+    "changed": {
+      "added": 56,
+      "removed": 11
+    },
+    "parse": true,
+    "typecheck": true,
+    "build": true,
+    "smoke": true,
+    "errorCount": 0,
+    "errorCategories": {},
+    "firstError": null
+  },
+  {
+    "path": "packages/benchmarks/learning-cost/v6-change-request/results/Gemini-toolchain/output.kumiki",
+    "chars": 38548,
+    "loc": 1047,
+    "cl100k": 10829,
+    "changed": {
+      "added": 60,
+      "removed": 4
+    },
+    "parse": true,
+    "typecheck": true,
+    "build": true,
+    "smoke": true,
+    "errorCount": 0,
+    "errorCategories": {},
+    "firstError": null
+  },
+  {
+    "path": "packages/benchmarks/learning-cost/v6-change-request/results/Gemini/output.kumiki",
+    "chars": 38911,
+    "loc": 1055,
+    "cl100k": 10927,
+    "changed": {
+      "added": 68,
+      "removed": 4
+    },
+    "parse": true,
+    "typecheck": true,
+    "build": true,
+    "smoke": true,
+    "errorCount": 0,
+    "errorCategories": {},
+    "firstError": null
+  }
+]

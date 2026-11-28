@@ -26,7 +26,7 @@ features:
   - title: AI が部分編集しやすい
     details: 各定義が独立し、参照は明示的です。CLI と MCP サーバーが定義単位の list / view / add / replace / fix を提供します。
   - title: 実測された学習しやすさ
-    details: Claude / Codex / Gemini で実測しています。仕様書だけを渡した単一パスで、~1,000 行規模のアプリまでビルドが通り、動きます。
+    details: Claude / Codex / Gemini で実測しています。仕様書だけで ~1,000 行規模のアプリまでタスクどおりに動き、CLI を使えばすべてのタスクに合格します。
     link: /ja/guide/benchmarks
     linkText: ベンチマークを見る
   - title: 動く例ですべてに答える

@@ -1,0 +1,90 @@
+[
+  {
+    "path": "packages/benchmarks/learning-cost/v5-synced-notes/results/Claude-toolchain/output.kumiki",
+    "chars": 8399,
+    "loc": 252,
+    "cl100k": 2079,
+    "parse": true,
+    "typecheck": true,
+    "build": true,
+    "smoke": true,
+    "errorCount": 0,
+    "errorCategories": {},
+    "firstError": null
+  },
+  {
+    "path": "packages/benchmarks/learning-cost/v5-synced-notes/results/Claude/output.kumiki",
+    "chars": 7968,
+    "loc": 279,
+    "cl100k": 1945,
+    "parse": true,
+    "typecheck": true,
+    "build": true,
+    "smoke": true,
+    "errorCount": 0,
+    "errorCategories": {},
+    "firstError": null
+  },
+  {
+    "path": "packages/benchmarks/learning-cost/v5-synced-notes/results/Codex-toolchain/output.kumiki",
+    "chars": 8759,
+    "loc": 252,
+    "cl100k": 2257,
+    "parse": true,
+    "typecheck": true,
+    "build": true,
+    "smoke": true,
+    "errorCount": 0,
+    "errorCategories": {},
+    "firstError": null
+  },
+  {
+    "path": "packages/benchmarks/learning-cost/v5-synced-notes/results/Codex/output.kumiki",
+    "chars": 8640,
+    "loc": 251,
+    "cl100k": 2126,
+    "parse": true,
+    "typecheck": false,
+    "build": false,
+    "smoke": false,
+    "errorCount": 1,
+    "errorCategories": {
+      "missing-404-route": 1
+    },
+    "firstError": {
+      "stage": "typecheck",
+      "code": "E0001",
+      "message": "app.routes must include a \"/404\" entry",
+      "pos": {
+        "line": 244,
+        "col": 1
+      }
+    }
+  },
+  {
+    "path": "packages/benchmarks/learning-cost/v5-synced-notes/results/Gemini-toolchain/output.kumiki",
+    "chars": 10732,
+    "loc": 342,
+    "cl100k": 2642,
+    "parse": true,
+    "typecheck": true,
+    "build": true,
+    "smoke": true,
+    "errorCount": 0,
+    "errorCategories": {},
+    "firstError": null
+  },
+  {
+    "path": "packages/benchmarks/learning-cost/v5-synced-notes/results/Gemini/output.kumiki",
+    "chars": 9100,
+    "loc": 296,
+    "cl100k": 2247,
+    "parse": true,
+    "typecheck": true,
+    "build": true,
+    "smoke": false,
+    "errorCount": 0,
+    "errorCategories": {},
+    "firstError": null
+  }
+]

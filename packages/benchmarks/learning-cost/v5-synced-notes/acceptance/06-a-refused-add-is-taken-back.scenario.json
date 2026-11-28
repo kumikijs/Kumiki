@@ -1,0 +1,45 @@
+{
+  "effects": {
+    "loadNotes": [
+      {
+        "outcome": "ok",
+        "value": []
+      }
+    ],
+    "createNote": [
+      {
+        "outcome": "err",
+        "value": {
+          "status": 500,
+          "message": "Internal Server Error",
+          "body": {
+            "_tag": "Some",
+            "_0": ""
+          }
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": null
+  },
+  "steps": [
+    {
+      "do": {
+        "fill": "#new-title",
+        "value": "Call mom"
+      }
+    },
+    {
+      "label": "the note is removed again and the banner says why",
+      "do": {
+        "clickText": "Add note"
+      },
+      "expect": {
+        "domIncludes": ["Notes (0)", "Could not add note"],
+        "domExcludes": ["Call mom"]
+      }
+    }
+  ]
+}

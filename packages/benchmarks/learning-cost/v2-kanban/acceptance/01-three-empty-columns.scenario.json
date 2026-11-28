@@ -1,0 +1,19 @@
+{
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "label": "three columns, each header with its count",
+      "expect": {
+        "state": {
+          "draft": ""
+        },
+        "domIncludes": ["Todo (0)", "Doing (0)", "Done (0)"]
+      }
+    }
+  ]
+}

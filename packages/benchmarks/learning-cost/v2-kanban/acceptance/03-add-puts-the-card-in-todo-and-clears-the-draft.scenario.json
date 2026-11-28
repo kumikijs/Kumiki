@@ -1,0 +1,33 @@
+{
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "fill": "input",
+        "value": "Write tests"
+      },
+      "expect": {
+        "state": {
+          "draft": "Write tests"
+        }
+      }
+    },
+    {
+      "label": "Add puts the card in Todo and clears the draft",
+      "do": {
+        "clickText": "Add"
+      },
+      "expect": {
+        "state": {
+          "draft": ""
+        },
+        "domIncludes": ["Write tests", "Todo (1)", "Doing (0)"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "effects": {
+    "loadIssues": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/new"
+      }
+    },
+    {
+      "do": {
+        "fill": "#new-title",
+        "value": "Login fails"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create issue"
+      }
+    },
+    {
+      "do": {
+        "choose": "#detail-status",
+        "value": "Done"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Back"
+      }
+    },
+    {
+      "label": "a Done issue is not under the Open filter",
+      "do": {
+        "choose": "#filter-status",
+        "value": "Open"
+      },
+      "expect": {
+        "domExcludes": ["Login fails"]
+      }
+    },
+    {
+      "label": "and is under Done",
+      "do": {
+        "choose": "#filter-status",
+        "value": "Done"
+      },
+      "expect": {
+        "domIncludes": ["Login fails"]
+      }
+    }
+  ]
+}

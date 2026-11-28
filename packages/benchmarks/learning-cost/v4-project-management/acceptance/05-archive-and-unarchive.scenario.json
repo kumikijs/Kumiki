@@ -1,0 +1,75 @@
+{
+  "effects": {
+    "loadProjects": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadTasks": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ],
+    "loadComments": [
+      {
+        "outcome": "ok",
+        "value": {
+          "_tag": "None"
+        }
+      }
+    ]
+  },
+  "defaultEffect": {
+    "outcome": "ok",
+    "value": {
+      "_tag": "None"
+    }
+  },
+  "steps": [
+    {
+      "do": {
+        "navigate": "/"
+      }
+    },
+    {
+      "do": {
+        "fill": "#project-name",
+        "value": "Website"
+      }
+    },
+    {
+      "do": {
+        "clickText": "Create project"
+      }
+    },
+    {
+      "do": {
+        "navigate": "/"
+      }
+    },
+    {
+      "label": "Archive marks it archived",
+      "do": {
+        "clickText": "Archive"
+      },
+      "expect": {
+        "domIncludes": ["Archived", "Unarchive"]
+      }
+    },
+    {
+      "label": "Unarchive undoes it",
+      "do": {
+        "clickText": "Unarchive"
+      },
+      "expect": {
+        "domExcludes": ["Archived"]
+      }
+    }
+  ]
+}

@@ -22,7 +22,7 @@ Kumiki は JSX・Hooks・依存配列・Provider といった「人間の認知�
 
 ## なぜ Kumiki か
 
-クロスベンダー実測（Claude / Codex / Gemini）では、仕様書だけ・単一パスで、LLM は中規模の Kumiki アプリ（最大 〜600 行のマルチルートなイシュートラッカー）を build が通る形で書ける。〜1000 行規模になると編集ループが必要になる。React 比のトークン効率も高く、同等アプリはトークン・行数とも概ね 1.4〜2.0 倍コンパクト。詳細は [packages/benchmarks](./packages/benchmarks/)。
+クロスベンダー実測（Claude / Codex / Gemini）では、仕様書だけで、LLM は 〜1,000 行規模までの Kumiki アプリをタスクどおりに動く形で書ける（隠した受け入れシナリオで採点）。仕様書だけで足りないのは HTTP effect を使うロジックで、CLI を使えばすべてのタスクに合格する。React 比のトークン効率も高く、同等アプリはトークン・行数とも概ね 1.4〜2.0 倍コンパクト。詳細は [packages/benchmarks](./packages/benchmarks/)。
 
 ## リポジトリ構成
 
