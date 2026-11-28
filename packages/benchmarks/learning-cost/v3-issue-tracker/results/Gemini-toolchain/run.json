@@ -1,0 +1,17 @@
+{
+  "vendor": "Gemini",
+  "model": "gemini-4-neon-high",
+  "track": "toolchain",
+  "durationMs": 550522,
+  "timedOut": false,
+  "exitCode": 0,
+  "wrote": true,
+  "kumikiCalls": {
+    "guide": 3,
+    "check": 3,
+    "build": 3,
+    "smoke": 2,
+    "run": 5
+  },
+  "commands": 18
+}

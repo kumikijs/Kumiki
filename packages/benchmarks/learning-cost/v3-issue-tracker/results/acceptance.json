@@ -5,54 +5,33 @@
     "failed": []
   },
   "Claude": {
-    "passed": 3,
+    "passed": 17,
     "total": 17,
-    "failed": [
-      "03-create-opens-the-new-issue",
-      "05-cancel-returns-to-the-list",
-      "06-the-list-shows-title-status-and-priority",
-      "07-a-title-opens-its-issue",
-      "08-status-change-moves-it-between-filters",
-      "09-priority-filter",
-      "10-priority-change-on-the-detail-page",
-      "11-search",
-      "12-clear-filters",
-      "13-filters-can-empty-the-list",
-      "14-add-and-remove-a-tag",
-      "15-add-and-delete-a-comment",
-      "16-delete-issue-returns-to-the-list",
-      "17-tags-from-the-form-are-split-on-commas"
-    ]
+    "failed": []
+  },
+  "Claude-toolchain": {
+    "passed": 17,
+    "total": 17,
+    "failed": []
   },
   "Codex": {
-    "passed": 14,
+    "passed": 17,
     "total": 17,
-    "failed": [
-      "04-empty-title-creates-nothing",
-      "14-add-and-remove-a-tag",
-      "15-add-and-delete-a-comment"
-    ]
+    "failed": []
+  },
+  "Codex-toolchain": {
+    "passed": 17,
+    "total": 17,
+    "failed": []
   },
   "Gemini": {
-    "passed": 1,
+    "passed": 17,
     "total": 17,
-    "failed": [
-      "02-new-issue-opens-the-form",
-      "03-create-opens-the-new-issue",
-      "04-empty-title-creates-nothing",
-      "05-cancel-returns-to-the-list",
-      "06-the-list-shows-title-status-and-priority",
-      "07-a-title-opens-its-issue",
-      "08-status-change-moves-it-between-filters",
-      "09-priority-filter",
-      "10-priority-change-on-the-detail-page",
-      "11-search",
-      "12-clear-filters",
-      "13-filters-can-empty-the-list",
-      "14-add-and-remove-a-tag",
-      "15-add-and-delete-a-comment",
-      "16-delete-issue-returns-to-the-list",
-      "17-tags-from-the-form-are-split-on-commas"
-    ]
+    "failed": []
+  },
+  "Gemini-toolchain": {
+    "passed": 17,
+    "total": 17,
+    "failed": []
   }
 }

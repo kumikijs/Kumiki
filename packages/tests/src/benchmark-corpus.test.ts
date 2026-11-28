@@ -9,8 +9,11 @@ import { describe, expect, it } from "vitest";
 // way learning-cost/summary.md scores them.
 const benchmarksDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "benchmarks");
 
-// Every output of the current re-take checks clean. A future run that fails lists its file here.
-const KNOWN_BAD: Record<string, "parse" | readonly string[]> = {};
+// An output that fails lists its file here, with how it fails.
+const KNOWN_BAD: Record<string, "parse" | readonly string[]> = {
+  // Codex, writing from the spec alone, routed no `/404`.
+  "learning-cost/v5-synced-notes/results/Codex/output.kumiki": ["E0001"],
+};
 
 // The workspace links under benchmarks/node_modules lead into other packages' fixtures.
 const SKIP_DIRS = new Set(["node_modules", ".turbo", "dist"]);

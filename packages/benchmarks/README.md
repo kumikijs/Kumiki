@@ -16,13 +16,17 @@ benchmarks/
 │   ├── reactivity-cost.mjs #   nodes created + render time across app sizes
 │   ├── keyed-move-cost.mjs #   children moved per reorder of a keyed list
 │   └── stats.mjs           #   median / p90 / stddev of the timing sample (+ stats.test.mjs)
-└── learning-cost/          # Can an LLM write Kumiki from the spec alone?
+└── learning-cost/          # Can an LLM write Kumiki from the spec, with and without the CLI?
     ├── summary.md          #   cross-vendor results + methodology (read this)
-    ├── eval.mjs            #   scores one .kumiki file: parse / typecheck / build + LOC / tokens
+    ├── run.mjs             #   runs one vendor's agent on one task, with or without the CLI
+    ├── eval.mjs            #   scores .kumiki files: parse / typecheck / build / smoke + LOC / tokens
+    ├── acceptance.mjs      #   runs each task's hidden acceptance scenarios against its outputs
     ├── v1-pomodoro/        #   ~60 LOC
     ├── v2-kanban/          #   ~200 LOC
-    ├── v3-issue-tracker/   #   ~600 LOC
-    └── v4-project-management/  # ~1000 LOC
+    ├── v3-issue-tracker/   #   ~700 LOC
+    ├── v4-project-management/  # ~1000 LOC
+    ├── v5-synced-notes/    #   ~300 LOC, every action an HTTP effect
+    └── v6-change-request/  #   three changes to v4's 990-line reference
         ├── task-spec.md / task-spec.ja.md   # the requirements given to the model
         ├── codex-prompt.txt / gemini-prompt.txt  # the exact driving prompts
         └── results/{Claude,Codex,Gemini}/output.kumiki + results/eval.json
@@ -75,13 +79,16 @@ pnpm --filter @kumikijs/benchmarks measure:keyed-moves   # moves vs the hand-der
 
 ## Learning cost (LLM writes Kumiki from spec)
 
-Each `vN-*/` task gives a model only its `task-spec.md` + `docs/spec/` and asks for a single-pass `.kumiki` program (no example apps, no compiler-in-the-loop). `eval.mjs` then scores parse / typecheck / build and records LOC + token count.
+Each `vN-*/` task gives a model only its `task-spec.md` + `docs/spec/`, with or without the Kumiki CLI in the workspace. `eval.mjs` scores parse / typecheck / build / smoke and records LOC + token count; `acceptance.mjs` runs the task's hidden acceptance scenarios, `vN-*/acceptance/`, against each output.
 
 ```sh
-# score one (or more) output files
+# run one cell: a fresh workspace, the vendor's agent, the output under results/
+pnpm --filter @kumikijs/benchmarks learning-cost v5-synced-notes Codex toolchain
+# score outputs
 pnpm --filter @kumikijs/benchmarks eval learning-cost/v3-issue-tracker/results/Claude/output.kumiki
+pnpm --filter @kumikijs/benchmarks acceptance v3-issue-tracker
 ```
 
 Cross-vendor results (Claude / Codex / Gemini), the exact commands, and how each failure happened are in **[learning-cost/summary.md](./learning-cost/summary.md)**.
 
-To refresh a vendor column: copy `docs/spec/` and the tasks into an empty workspace, point the prompts (`vN-*/codex-prompt.txt` or `gemini-prompt.txt`) at it, run the model, save its output to `results/<Vendor>/output.kumiki`, then re-run `eval` over the task's three outputs into `results/eval.json` and update the failures `packages/tests/src/benchmark-corpus.test.ts` pins.
+To refresh a cell, run it as above, re-run `eval` over the task's outputs into `results/eval.json` and `acceptance` over the task, and update the failures `packages/tests/src/benchmark-corpus.test.ts` pins.

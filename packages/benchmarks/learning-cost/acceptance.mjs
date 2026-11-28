@@ -48,8 +48,9 @@ for (const task of taskDirs) {
         .map((d) => d.name)
         .sort()
     : [];
+  const reference = join(task, "reference", "app.kumiki");
   const outputs = [
-    ["Reference", join(task, "reference", "app.kumiki")],
+    ...(existsSync(reference) ? [["Reference", reference]] : []),
     ...runs.map((r) => [r, join(resultsDir, r, "output.kumiki")]),
   ];
   for (const [vendor, file] of outputs) {

@@ -3,7 +3,7 @@
 Kumiki's claims — "fewer tokens than React" and "an LLM can learn it from the spec alone" — are measured, not asserted. Two suites live in [`benchmarks`](https://github.com/kumikijs/Kumiki/tree/main/packages/benchmarks).
 
 - **Size comparison** — how compact is a Kumiki app, and a Kumiki *edit*, versus the equivalent React? Deterministic.
-- **Learning cost** — given only the spec, can an LLM write a program that parses, typechecks, and builds in a single pass?
+- **Learning cost** — given only the spec, can an LLM write a program that builds and does what the task asks, with and without the Kumiki CLI in the loop?
 
 ## Size comparison (Kumiki vs React)
 
@@ -42,32 +42,33 @@ Totals favor Kumiki — 1.78× fewer added lines, 1.24× fewer tokens — but no
 
 Kumiki's AI-editing verbs (`add` / `replace` / `remove`) send whole definitions. Measured across the same four scenarios, the op stream costs **24% of the tokens of rewriting the full file** (1,456 vs 6,142 cl100k) — but a plain unified text patch is smaller still (1,052). The op stream's value is not minimal bytes; it's that each op is independently checkable and never produces a syntactically broken file.
 
-## Learning cost (writing Kumiki from the spec alone)
+## Learning cost (writing Kumiki from the spec)
 
-Each task gives a model **only `docs/spec/` + a task spec** and asks for a single-pass `.kumiki` program — no example apps, no compiler in the loop, no retries. The harness then scores parse / typecheck / build. Protocol details, the exact commands, and fairness notes are in [`learning-cost/summary.md`](https://github.com/kumikijs/Kumiki/blob/main/packages/benchmarks/learning-cost/summary.md).
+Each task gives a model **only `docs/spec/` and a task spec**, in a workspace that holds nothing else, and scores the program it writes twice: does it build (parse, typecheck, build, `kumiki smoke`), and does it do what the task asks. For the second, the task spec names the ids, labels and effects the app must use, and hidden acceptance scenarios, one per criterion, drive it through them. Every task is run on two tracks:
 
-| Task | Vendor | LOC | cl100k | parse | typecheck | build |
-|---|---|---:|---:|:--:|:--:|:--:|
-| v1 Pomodoro (~60 LOC) | Claude | 63 | 439 | ✅ | ✅ | ✅ |
-| | Codex | 51 | 341 | ✅ | ✅ | ✅ |
-| | Gemini | 69 | 609 | ✅ | ✅ | ✅ |
-| v2 Kanban (~200 LOC) | Claude | 188 | 1,624 | ✅ | ✅ | ✅ |
-| | Codex | 200 | 1,611 | ✅ | ✅ | ✅ |
-| | Gemini | 331 | 2,323 | ✅ | ✅ | ✅ |
-| v3 Issue Tracker (~600 LOC) | Claude | 864 | 7,482 | ✅ | ✅ | ✅ |
-| | Codex | 772 | 6,143 | ✅ | ✅ | ✅ |
-| | Gemini | 1,460 | 10,353 | ✅ | ✅ | ✅ |
-| v4 Project Mgmt (~1,000 LOC) | Claude | 986 | 10,122 | ✅ | ✅ | ✅ |
-| | Codex | 897 | 8,644 | ✅ | ✅ | ✅ |
-| | Gemini | 1,995 | 16,598 | ✅ | ✅ | ✅ |
+- **spec**: no compiler in the workspace, so the program is written in one pass.
+- **toolchain**: the Kumiki CLI is installed too, and the model may run `kumiki guide`, `check`, `build`, `smoke`, `run` and `test` as often as it likes, within 30 minutes.
 
-Models: Claude Opus 5.5, Codex `gpt-6.1-terra`, Gemini `gemini-4-neon`, all at reasoning effort `high`, each run once per task in a workspace that holds the spec and the task and nothing else — no examples, no compiler.
+Protocol details, the exact commands and per-run sizes are in [`learning-cost/summary.md`](https://github.com/kumikijs/Kumiki/blob/main/packages/benchmarks/learning-cost/summary.md).
+
+Acceptance criteria passed:
+
+| Task | Claude | Claude + CLI | Codex | Codex + CLI | Gemini | Gemini + CLI |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|
+| v1 Pomodoro (~60 LOC) | 5/5 | — | 5/5 | — | 5/5 | — |
+| v2 Kanban (~200 LOC) | 9/9 | — | 9/9 | — | 9/9 | — |
+| v3 Issue Tracker (~700 LOC) | 17/17 | 17/17 | 17/17 | 17/17 | 17/17 | 17/17 |
+| v4 Project Mgmt (~1,000 LOC) | 25/25 | 25/25 | 25/25 | 25/25 | 25/25 | 25/25 |
+| v5 Synced Notes (HTTP effects, ~300 LOC) | 9/14 | 14/14 | 0/14 | 14/14 | 10/14 | 14/14 |
+| v6 Change Request (edit a 990-line app) | 30/30 | 30/30 | 30/30 | 30/30 | 30/30 | 30/30 |
+
+Models: Claude Opus 5.5, Codex `gpt-6.1-terra`, Gemini `gemini-4-neon`, all at reasoning effort `high`, one run per cell. v1 and v2 were run on the spec track only.
 
 What the table says:
 
-- **Even the largest app builds from the spec alone, in one pass.** All three vendors build all four tasks, including the ~1,000-line v4, and every output also passes `kumiki smoke`.
-- **Effort is part of the result.** A first Codex pass at `low` effort failed v1 and v4 on one rule each and wrote 287 lines for v4; at `high` the same model builds both.
-- **Correctness converges; size does not.** For v3 the three write 772, 864 and 1,460 lines. A build-green output is legal and runs; whether it covers the whole task spec is a separate question this benchmark does not score.
+- **Feature-heavy apps come out right from the spec alone.** All three vendors meet every criterion of v3, v4 and v6 without ever running a compiler, up to the ~1,000-line v4.
+- **Effects are where the spec alone falls short, and the tools close the gap.** On v5, where every action goes through an HTTP effect that can fail, be retried or be superseded, the spec track loses 4–14 criteria. Two vendors misread what an effect result's second bind holds, which nothing checks; the third forgot the `/404` route every app needs. With the CLI all three reach 14/14.
+- **Changing a large program stays small.** On v6 the six runs add 49–68 lines to the 990-line app and remove 4–11, and none breaks one of the 23 behaviours the change had to keep.
 
 ## Reproducing
 
@@ -75,7 +76,8 @@ What the table says:
 pnpm --filter @kumikijs/benchmarks measure            # whole-file sizes + ratios
 pnpm --filter @kumikijs/benchmarks measure:scenarios  # per-scenario patch sizes
 pnpm --filter @kumikijs/benchmarks measure:ops        # full-file vs patch vs op stream
-pnpm --filter @kumikijs/benchmarks eval <output.kumiki>  # score a learning-cost output
+pnpm --filter @kumikijs/benchmarks eval <output.kumiki>  # does a learning-cost output build
+pnpm --filter @kumikijs/benchmarks acceptance [tasks]     # does it meet its acceptance criteria
 ```
 
-To refresh a learning-cost vendor column, run the model on the committed prompt (`vN-*/codex-prompt.txt` / `gemini-prompt.txt`), save its output under `results/<Vendor>/output.kumiki`, and re-run `eval`.
+To refresh a learning-cost cell, run `pnpm --filter @kumikijs/benchmarks learning-cost <task> <vendor> <spec|toolchain>`: it builds the workspace, runs the vendor's agent and saves the output under `results/<Vendor>[-toolchain]/`. Then re-run `eval` and `acceptance`.

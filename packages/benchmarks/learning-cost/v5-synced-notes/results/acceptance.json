@@ -1,0 +1,63 @@
+{
+  "Reference": {
+    "passed": 14,
+    "total": 14,
+    "failed": []
+  },
+  "Claude": {
+    "passed": 9,
+    "total": 14,
+    "failed": [
+      "05-add-shows-the-saved-note",
+      "06-a-refused-add-is-taken-back",
+      "08-an-edit-is-saved",
+      "09-a-failed-save-can-be-retried",
+      "14-notes-are-saved-independently"
+    ]
+  },
+  "Claude-toolchain": {
+    "passed": 14,
+    "total": 14,
+    "failed": []
+  },
+  "Codex": {
+    "passed": 0,
+    "total": 14,
+    "failed": [
+      "01-loads-notes-on-start",
+      "02-retries-a-server-error",
+      "03-gives-up-after-the-retries",
+      "04-does-not-retry-a-client-error",
+      "05-add-shows-the-saved-note",
+      "06-a-refused-add-is-taken-back",
+      "07-an-empty-title-adds-nothing",
+      "08-an-edit-is-saved",
+      "09-a-failed-save-can-be-retried",
+      "10-delete-removes-the-note",
+      "11-a-refused-delete-brings-it-back",
+      "12-a-401-signs-out",
+      "13-a-401-on-a-save-signs-out-too",
+      "14-notes-are-saved-independently"
+    ]
+  },
+  "Codex-toolchain": {
+    "passed": 14,
+    "total": 14,
+    "failed": []
+  },
+  "Gemini": {
+    "passed": 10,
+    "total": 14,
+    "failed": [
+      "05-add-shows-the-saved-note",
+      "06-a-refused-add-is-taken-back",
+      "09-a-failed-save-can-be-retried",
+      "14-notes-are-saved-independently"
+    ]
+  },
+  "Gemini-toolchain": {
+    "passed": 14,
+    "total": 14,
+    "failed": []
+  }
+}
