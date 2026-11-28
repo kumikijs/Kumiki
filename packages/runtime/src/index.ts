@@ -179,6 +179,7 @@ export {
   type BrowserAction,
   type BrowserExpect,
   describeAction,
+  type EffectScript,
   type Expect,
   HEADLESS_ACTION_KEYS,
   HEADLESS_EXPECT_KEYS,
@@ -188,7 +189,6 @@ export {
   validateScenario,
 } from "./scenario/vocabulary.ts";
 export {
-  type EffectScript,
   runScenario,
   type Scenario,
   type ScenarioReport,

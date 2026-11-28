@@ -16,6 +16,7 @@ import { stateMismatches, textMismatches } from "./scenario/expect.ts";
 import {
   type Action,
   describeAction,
+  type EffectScript,
   type Expect,
   type ScenarioStep,
   type StepOutcome,
@@ -23,8 +24,6 @@ import {
   validateScenario,
 } from "./scenario/vocabulary.ts";
 import { submitFault } from "./submit-check.ts";
-
-export type EffectScript = { outcome: "ok" | "err"; value?: unknown };
 
 export type Scenario = {
   steps: ScenarioStep[];

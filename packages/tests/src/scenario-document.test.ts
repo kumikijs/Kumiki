@@ -70,6 +70,22 @@ describe("an expectation the headless tier cannot evaluate is a failure", () => 
       [/"steps"/],
     ],
     ["a document with no steps at all", { steps: [] }, [/no steps|asserts nothing/i]],
+    [
+      "a scripted result whose outcome is neither ok nor err, by its path",
+      {
+        steps: [{ expect: { noErrors: true } }],
+        effects: { save: [{ outcome: "ok" }, { outcome: "error", value: "x" }] },
+      } as unknown as Scenario,
+      [/effects\.save\[1\]\.outcome must be "ok" or "err", not "error"/],
+    ],
+    [
+      "a default result with no outcome, by its path",
+      {
+        steps: [{ expect: { noErrors: true } }],
+        defaultEffect: { value: 1 },
+      } as unknown as Scenario,
+      [/defaultEffect\.outcome must be "ok" or "err"; it is missing/],
+    ],
   ])("refuses %s", async (_what, scenario, mentions) => {
     const failures = await failuresOf(scenario);
     for (const m of mentions) expect(failures).toMatch(m);
@@ -83,12 +99,14 @@ describe("an expectation the headless tier cannot evaluate is a failure", () => 
         { do: { press: "Enter" } as never },
         { expect: { domContains: ["x"] } as never },
       ],
+      effects: { save: [{ outcome: "fail" as never }] },
     });
     expect(report.ok).toBe(false);
     const text = report.steps.flatMap((s) => s.failures).join("\n");
     expect(text).toMatch(/animating/);
     expect(text).toMatch(/press/);
     expect(text).toMatch(/domContains/);
+    expect(text).toMatch(/effects\.save\[0\]\.outcome/);
     expect(root.childElementCount).toBe(0);
   });
 });
