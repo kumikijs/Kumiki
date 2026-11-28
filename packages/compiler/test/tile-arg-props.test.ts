@@ -1,6 +1,6 @@
 import { check, codegen, compile, lex, parse } from "@kumikijs/compiler";
 import { describe, expect, it } from "vitest";
-import { checkSource, codesOf } from "./helpers/diagnostics.ts";
+import { checkSource, codesOf, soleMessageOf } from "./helpers/diagnostics.ts";
 import { loweredOf } from "./helpers/module.ts";
 import { withRoot } from "./helpers/programs.ts";
 
@@ -126,19 +126,38 @@ describe("a prop a kind lifts into its node reads either spelling", () => {
       "column(for t in ts Row {key: t})",
       "column(for t in ts Row(key=t))",
     ],
+    ["a button's text", 'button() {text: "Go"}', 'button(text="Go")'],
+    ["a button's text from a slot", "button() {text: label}", "button(text=label)"],
   ])("lowers %s the same from either spelling", (_, block, arg) => {
     const defs = `slot xs : List(Text) = []
 slot ts : List(Tuple(Int, Text)) = []
 tile Row = text("r")
 slot n : Int = 0
+slot label : Text = "Go"
 reducer load on=route.enter("/") do= n := 1`;
     expect(emit(arg, defs)).toBe(emit(block, defs));
   });
 
-  it("lowers the value the block writes when both spellings are written", () => {
-    const js = emit('list(text("a"), ordered=false) {ordered: true}');
-    expect(fieldsOf(js, "list")).toContain("ordered: !!(true)");
-    expect(fieldsOf(js, "list")).not.toContain("false");
+  it.each([
+    ["list", 'list(text("a"), ordered=false) {ordered: true}', "ordered: !!(true)", "false"],
+    ["button", 'button(text="Named") {text: "Block"}', '"Block"', '"Named"'],
+  ])("lowers the value the block writes when both spellings are written on %s", (kind, tile, read, dropped) => {
+    const fields = fieldsOf(emit(tile), kind);
+    expect(fields).toContain(read);
+    expect(fields).not.toContain(dropped);
+  });
+
+  it.each([
+    'button(text="Go")',
+    'button() {text: "Go"}',
+  ])("counts the text of %s as the button's name under strictA11y", (tile) => {
+    expect(codesOf(withRoot(tile, ""), { strictA11y: true })).toEqual([]);
+  });
+
+  it("asks a button with neither for its text or an aria-label, in no one spelling", () => {
+    expect(soleMessageOf("E0701", withRoot("button()", ""), { strictA11y: true })).toBe(
+      "button must have text or aria-label",
+    );
   });
 
   it("reads no block in a tile-test's expected tree, which compares arguments only", () => {
@@ -165,7 +184,7 @@ test probe-list =
   });
 });
 
-describe("the checker reads a tile-test's expected tree as its lowering does, with no block", () => {
+describe("the checker reads a tile-test's expected tree as its lowering does", () => {
   const tileTest = (defs: string, tile: string, expected: string) => `${defs}
 tile Probe = ${tile}
 
@@ -209,6 +228,21 @@ test probe =
     ],
   ])("accepts %s written as an argument", (_, defs, tile, expected) => {
     expect(codesOf(tileTest(defs, tile, expected))).toEqual([]);
+  });
+
+  // A value builtin's named content is content, not a prop, so the expected tree compares it in
+  // either spelling, as the tile it tests renders it.
+  it.each([
+    ["a label's text", 'label(text="A")', 'label() {text: "A"}', []],
+    ["a text builtin's text, as E0129", 'heading("x")', 'heading() {text: "x"}', ["E0129"]],
+    [
+      "a positional argument shadowing it, as E0129",
+      'label("B")',
+      'label("B") {text: "C"}',
+      ["E0129"],
+    ],
+  ])("reads the content the block writes: %s", (_, tile, expected, codes) => {
+    expect(codesOf(tileTest("", tile, expected))).toEqual(codes);
   });
 });
 
@@ -295,6 +329,28 @@ describe("which argument a builtin takes as its content", () => {
     expect(js).toContain('_s.show("Title")');
     expect(js).not.toContain("_s.show(2)");
     expect(propsOf(js)).toContain("level: 2");
+  });
+
+  it.each([
+    ["a label's text", 'label() {text: "Name"}', 'label(text="Name")'],
+    ["a link's text", 'link(to="/x") {text: "Home"}', 'link(text="Home", to="/x")'],
+    ["an editable's text", 'editable() {text: "draft"}', 'editable(text="draft")'],
+    ["an image's src", 'image(alt="a") {src: "a.png"}', 'image(src="a.png", alt="a")'],
+    ["an icon's name", 'icon() {name: "home"}', 'icon(name="home")'],
+  ])("lowers %s the same from the block as from its argument", (_, block, arg) => {
+    expect(emit(block)).toBe(emit(arg));
+  });
+
+  it.each([
+    ['label(text="Named") {text: "Block"}', '"Named"', '"Block"'],
+    ['link(to="/x", text="Named") {text: "Block"}', '"Named"', '"Block"'],
+    ['editable(text="Named") {text: "Block"}', '"Named"', '"Block"'],
+    ['image(alt="a", src="named.png") {src: "block.png"}', '"named.png"', '"block.png"'],
+    ['icon(name="home") {name: "plus"}', '"home"', '"plus"'],
+  ])("shows the block's content when %s writes both spellings", (tile, named, block) => {
+    const js = emit(tile);
+    expect(js).toContain(`_s.show(${block})`);
+    expect(js).not.toContain(`_s.show(${named})`);
   });
 });
 

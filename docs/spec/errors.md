@@ -673,6 +673,8 @@ On a builtin that renders no positional argument, `<args>` names what it shows i
 
 Each is reported at the dropped argument, and the diagnostic's `unrendered` field names which shape it is: `positional` for the first three forms, then `text-prop` and `text-shadowed`. Nothing else reports these: the argument parses and builds, and never reaches the page, so a `smoke` run is green on it. With a positional argument also written, `text=` on a text builtin is an ordinary prop and is not reported.
 
+`text=` and the block's `text` are one argument, so the last two shapes are reported in whichever spelling is written: `heading() {text: title}` and `label("B") {text: "A"}` are E0129 at the block entry, and the message says ``the block's `text` `` where it says `` `text=` `` above. Such a diagnostic has no `unrendered` field, since `kumiki fix` rewrites `text=` only; remove the entry, or move its value to where the builtin reads it. Where the builtin does read that argument, the block entry is its content (`label() {text: "A"}`, `image(alt="…") {src: url}`, [Language §1.7.1](./language.md#_1-7-1-syntax)), and nothing is reported.
+
 **Fix**: Write the content where the builtin reads it — `heading(title)`, `image(src=url, alt=…)`, `button(text="Go")` — and join values meant to show together (`text(a + " " + b)`). A tile goes beside a builtin that renders none, in a container: `row(button(text="Go"), Header)`. `kumiki fix` removes the `text=` of a text builtin that has no positional argument, making its value the content, and removes a `text=` that a positional argument shadows on `link` / `label` / `editable` — neither changes what renders. A dropped positional argument has no single repair and is left to you.
 
 ## E02xx — Types
@@ -773,8 +775,8 @@ An opaque handle, an `EffectId` or a `Decoder`, is used where it is not defined.
 
 A handle is refused where these render it as text:
 
-- the content of a value builtin: `text`, `heading`, `markdown`, `code`, `label`, `link` and `editable`, and `image` / `icon`, whose content is `src=` / `name=` ([Standard Library §2.3.2](./stdlib.md#_2-3-2-text-elements));
-- `button`'s `text=`, `link`'s `{text: …}` prop, and the value `editable` binds;
+- the content of a value builtin: `text`, `heading`, `markdown`, `code`, `label`, `link` and `editable`, and `image` / `icon`, whose content is `src=` / `name=` ([Standard Library §2.3.2](./stdlib.md#_2-3-2-text-elements)), a named one in either spelling, `label(text=h)` or `label() {text: h}`;
+- `button`'s `text`, in either spelling, and the value `editable` binds;
 - an argument of `fmt(...)`, the template included;
 - `.show`. `show` is the member every value has ([Standard Library §2.2.7](./stdlib.md#_2-2-7-int-float)); on a handle it is this error rather than [E0108](#e0108-undef-member), in each of its spellings: `h.show`, `h.show()`, and `T.show(h)` whatever `T` is, since the qualifier is discarded ([Standard Library §2.4.3](./stdlib.md#_2-4-3-type-conversion)). A handle has no other member, so `h.upper` is E0108.
 
@@ -1315,7 +1317,7 @@ Two places are not this code. Where a record field name goes — `{null = 1}`, `
 
 ### E0236 `tile-as-content`
 
-A tile is written as a value builtin's content. A value builtin shows a value as its content ([Language §1.7.1](./language.md#_1-7-1-syntax)) — read from the first positional argument on `text`, `heading`, `markdown` and `code`, from it or `text=` on `link`, `label` and `editable` (and on `link` from the `{text: …}` block entry when neither is written), from `src=` on `image` and from `name=` on `icon` ([E0129](#e0129-unrendered-arg)) — so a tile written there is never rendered: `text(when(c, column(…)))` shows nothing. The mirror, a value where a tile belongs, is [E0128](#e0128-value-as-child). A `when` / `for` as a user tile's input or another named argument is [E0201](#e0201-type-mismatch), save the exceptions listed there.
+A tile is written as a value builtin's content. A value builtin shows a value as its content ([Language §1.7.1](./language.md#_1-7-1-syntax)) — read from the first positional argument on `text`, `heading`, `markdown` and `code`, from it or `text=` on `link`, `label` and `editable`, from `src=` on `image` and from `name=` on `icon`, each of those named arguments also written as the `{…}` entry of its name, which is the one read when a call writes both ([E0129](#e0129-unrendered-arg)) — so a tile written there is never rendered: `text(when(c, column(…)))` shows nothing. The mirror, a value where a tile belongs, is [E0128](#e0128-value-as-child). A `when` / `for` as a user tile's input or another named argument is [E0201](#e0201-type-mismatch), save the exceptions listed there.
 
 > ``A tile is not a value: <builtin> shows a value as its content, so this tile is never rendered. Write the tile as a child of a container — `column(when(c, …))` — or show a value — `<content>` ``
 
@@ -1710,7 +1712,7 @@ a11y checking is enabled via `check(program, { strictA11y: true })`.
 
 ### E0701 `a11y-button`
 
-> `button must have a text= argument or aria-label`
+> `button must have text or aria-label`
 
 ### E0702 `a11y-image`
 
@@ -1721,6 +1723,8 @@ a11y checking is enabled via `check(program, { strictA11y: true })`.
 > `link must have inner text or aria-label`
 
 `aria-label` and `alt` count in either spelling, a named argument (`button(aria-label="Close")`) or the props block (`button() {aria-label: "Close"}`): a named argument is a prop wherever it is written ([Language §1.7.1](./language.md#_1-7-1-syntax)), and both put the attribute on the element. Where both are written, the props block's is the one read, as it is the one rendered. Each check reads whether one is written, not its value, so `""` and a value read from a slot count too. A value that is not a `Text` is not checked here yet: `button(aria-label=Mark)` writes the variant `Mark`, passes, and renders `aria-label="[object Object]"`. A `when` or `for` written as the argument (`button(aria-label=when(c, text("x")))`) is a tile, not prop data, and renders no attribute, so it does not count; a prop cannot hold a tile, so it is [E0201](#e0201-type-mismatch) as well.
+
+A `button`'s `text` counts in either spelling the same way: `button(text="Go")` and `button() {text: "Go"}` both render the label that names the button, and a `when` or `for` written as it does not count.
 
 **Fix**: Provide visible text, or an `aria-label` / `alt`. For general guidance on forms, see [Forms](./forms.md).
 
@@ -1742,7 +1746,7 @@ Strict-icons checking is enabled via `check(program, { strictIcons: true, iconNa
 
 > `Unknown icon name "<x>" — not in @kumikijs/icons or any theme.icons block`
 
-A literal `icon(name="<x>")` reference whose name is not in the `iconNames` set passed to `check()` (typically the keys of `@kumikijs/icons`'s `ALL_ICONS`) and is not declared in any `theme.icons` block in the source. Dynamic `icon(name=<expr>)` calls are never checked — the name is unresolvable at check time and falls through to the runtime placeholder (see [Style §4.8.4](./style.md#_4-8-4-strict-mode)).
+A literal `icon(name="<x>")` or `icon() {name: "<x>"}` reference whose name is not in the `iconNames` set passed to `check()` (typically the keys of `@kumikijs/icons`'s `ALL_ICONS`) and is not declared in any `theme.icons` block in the source. Dynamic `icon(name=<expr>)` calls are never checked — the name is unresolvable at check time and falls through to the runtime placeholder (see [Style §4.8.4](./style.md#_4-8-4-strict-mode)).
 
 **Fix**: Correct the typo, register the custom path in `theme.icons`, or install `@kumikijs/icons` so the built-in name is in scope.
 

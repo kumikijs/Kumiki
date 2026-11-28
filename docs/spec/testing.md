@@ -328,7 +328,7 @@ What is compared is the expected node's `kind`, its `children` in order, and **e
 
 Some things are never compared, whatever the expected node says:
 
-- the `{…}` block: styles, classes and any other prop written there. `column(…) {pad: "sm"}` asserts no padding; to compare a prop, write it as a named argument;
+- the `{…}` block: styles, classes and any other prop written there. `column(…) {pad: "sm"}` asserts no padding; to compare a prop, write it as a named argument. A value builtin's content is the exception: `{text: …}` on `label`, `link` and `editable`, `{src: …}` on `image` and `{name: …}` on `icon` are one argument with `text=`, `src=` and `name=` ([Language §1.7.1](./language.md#_1-7-1-syntax)), so `label() {text: "A"}` asserts `text: "A"` as `label(text="A")` does;
 - handlers (`onClick=…`, and the reducers a `ui.*` subscription wires);
 - the identity and wiring a node carries: its `key` (written as `{key: …}`, or implicit in a `for`), a control's `bind`, and a link's `prefetch`.
 

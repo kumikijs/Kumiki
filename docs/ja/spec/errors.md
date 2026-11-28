@@ -636,6 +636,8 @@ builtin に、決して描画されない引数が書かれている。値 built
 
 どれも捨てられる引数の位置で報告し、診断の `unrendered` フィールドがどの形かを示す：最初の 3 つの形は `positional`、続いて `text-prop`・`text-shadowed`。ほかに報告するものはない：引数はパースされビルドされるがページには届かないので、`smoke` もそれを通す。位置引数も書かれていれば、テキスト系 builtin の `text=` は普通の prop であり報告しない。
 
+`text=` とブロックの `text` は 1 つの引数なので、後の 2 つの形はどちらの書き方でも報告する：`heading() {text: title}` と `label("B") {text: "A"}` はブロックの項目の位置で E0129 になり、メッセージは上の `` `text=` `` の代わりに ``the block's `text` `` と言う。この診断には `unrendered` フィールドが無い。`kumiki fix` が書き換えるのは `text=` だけだからである。項目を消すか、その値を builtin が読む位置へ移す。builtin がその引数を読む場合は、ブロックの項目がその内容であり（`label() {text: "A"}`、`image(alt="…") {src: url}`、[言語 §1.7.1](./language.md#_1-7-1-構文)）、何も報告しない。
+
 **修正**：builtin が読む位置に内容を書く —— `heading(title)`、`image(src=url, alt=…)`、`button(text="Go")` —— 一緒に表示したい値はつなげる（`text(a + " " + b)`）。位置引数を描画しない builtin には、tile をコンテナの中でその隣に置く：`row(button(text="Go"), Header)`。`kumiki fix` は位置引数の無いテキスト系 builtin の `text=` を取り除いてその値を内容にし、`link` / `label` / `editable` で位置引数に隠れた `text=` を取り除く —— どちらも描画を変えない。捨てられる位置引数には一意の修正が無いので手で直す。
 
 ## E02xx — 型
@@ -736,8 +738,8 @@ builtin に、決して描画されない引数が書かれている。値 built
 
 ハンドルは、次の場所でテキストとして描画されるときに拒否される：
 
-- 値 builtin の内容：`text`・`heading`・`markdown`・`code`・`label`・`link`・`editable`、そして内容が `src=` / `name=` である `image` / `icon`（[標準ライブラリ §2.3.2](./stdlib.md#_2-3-2-テキスト要素)）。
-- `button` の `text=`、`link` の `{text: …}` prop、`editable` が束縛する値。
+- 値 builtin の内容：`text`・`heading`・`markdown`・`code`・`label`・`link`・`editable`、そして内容が `src=` / `name=` である `image` / `icon`（[標準ライブラリ §2.3.2](./stdlib.md#_2-3-2-テキスト要素)）。名前付きの内容はどちらの書き方でもよく、`label(text=h)` も `label() {text: h}` も拒否される。
+- `button` の `text`（どちらの書き方でも）、`editable` が束縛する値。
 - テンプレートを含む `fmt(...)` の引数。
 - `.show`。`show` はすべての値が持つメンバーであり（[標準ライブラリ §2.2.7](./stdlib.md#_2-2-7-int-float)）、ハンドルに対しては [E0108](#e0108-undef-member) ではなくこのエラーになる。どの書き方でも同じである：`h.show`、`h.show()`、そして修飾子は捨てられるので `T` が何であれ `T.show(h)`（[標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換)）。ハンドルはほかにメンバーを持たないので、`h.upper` は E0108 になる。
 
@@ -1278,7 +1280,7 @@ dispatcher は各リクエストをその key で実行し、同じ key で別�
 
 ### E0236 `tile-as-content`
 
-値 builtin の内容に tile が書かれている。値 builtin は値を内容として表示する（[言語 §1.7.1](./language.md#_1-7-1-構文)）—— `text`・`heading`・`markdown`・`code` は最初の位置引数から、`link`・`label`・`editable` はそれか `text=` から（`link` はどちらも書かれていなければ `{text: …}` ブロックの項目から）、`image` は `src=` から、`icon` は `name=` から読む（[E0129](#e0129-unrendered-arg)）—— ので、そこに書いた tile は決して描画されない：`text(when(c, column(…)))` は何も表示しない。逆向き、tile の位置にある値は [E0128](#e0128-value-as-child) である。ユーザー tile の入力やほかの名前付き引数にある `when` / `for` は、そこに挙げる例外を除いて [E0201](#e0201-type-mismatch) である。
+値 builtin の内容に tile が書かれている。値 builtin は値を内容として表示する（[言語 §1.7.1](./language.md#_1-7-1-構文)）—— `text`・`heading`・`markdown`・`code` は最初の位置引数から、`link`・`label`・`editable` はそれか `text=` から、`image` は `src=` から、`icon` は `name=` から読み、これらの名前付き引数はそれぞれ同じ名前の `{…}` の項目としても書け、両方を書いたときに読まれるのはその項目である（[E0129](#e0129-unrendered-arg)）—— ので、そこに書いた tile は決して描画されない：`text(when(c, column(…)))` は何も表示しない。逆向き、tile の位置にある値は [E0128](#e0128-value-as-child) である。ユーザー tile の入力やほかの名前付き引数にある `when` / `for` は、そこに挙げる例外を除いて [E0201](#e0201-type-mismatch) である。
 
 > ``A tile is not a value: <builtin> shows a value as its content, so this tile is never rendered. Write the tile as a child of a container — `column(when(c, …))` — or show a value — `<content>` ``
 
@@ -1673,7 +1675,7 @@ a11y 検査は `check(program, { strictA11y: true })` で有効化される。
 
 ### E0701 `a11y-button`
 
-> `button must have a text= argument or aria-label`
+> `button must have text or aria-label`
 
 ### E0702 `a11y-image`
 
@@ -1684,6 +1686,8 @@ a11y 検査は `check(program, { strictA11y: true })` で有効化される。
 > `link must have inner text or aria-label`
 
 `aria-label` と `alt` は、名前付き引数（`button(aria-label="Close")`）と props ブロック（`button() {aria-label: "Close"}`）のどちらで書いても数える。名前付き引数はどこに書いても prop であり（[言語 §1.7.1](./language.md#_1-7-1-構文)）、どちらも要素に属性を付けるからである。両方を書いた場合は、描かれるのと同じく props ブロックのほうを読む。検査が見るのは書かれているかどうかで値ではないので、`""` やスロットから読む値も数える。`Text` でない値はここではまだ検査しない：`button(aria-label=Mark)` はバリアント `Mark` を書いたことになり、検査を通って `aria-label="[object Object]"` を描く。引数に `when` / `for` を書いた場合（`button(aria-label=when(c, text("x")))`）はタイルで prop のデータではなく、属性を描かないので数えない。prop はタイルを保持できないので、これは [E0201](#e0201-type-mismatch) でもある。
+
+`button` の `text` も同じく、どちらで書いても数える：`button(text="Go")` も `button() {text: "Go"}` もボタンの名前になるラベルを描く。`when` / `for` を書いた場合は数えない。
 
 **修正**：可視テキストか、`aria-label` / `alt` を付与する。フォーム全般の指針は [フォーム](./forms.md)。
 
@@ -1705,7 +1709,7 @@ strict-icons 検査は `check(program, { strictIcons: true, iconNames })` で有
 
 > `Unknown icon name "<x>" — not in @kumikijs/icons or any theme.icons block`
 
-リテラルの `icon(name="<x>")` 参照のうち、`check()` に渡された `iconNames`（通常は `@kumikijs/icons` の `ALL_ICONS` キー集合）にも、ソース内のどの `theme.icons` ブロックにも含まれない名前。動的な `icon(name=<expr>)` は check 時に解決不能なので対象外で、ランタイムのプレースホルダにフォールバックする（[スタイル §4.8.4](./style.md#_4-8-4-strict-mode) 参照）。
+リテラルの `icon(name="<x>")` または `icon() {name: "<x>"}` 参照のうち、`check()` に渡された `iconNames`（通常は `@kumikijs/icons` の `ALL_ICONS` キー集合）にも、ソース内のどの `theme.icons` ブロックにも含まれない名前。動的な `icon(name=<expr>)` は check 時に解決不能なので対象外で、ランタイムのプレースホルダにフォールバックする（[スタイル §4.8.4](./style.md#_4-8-4-strict-mode) 参照）。
 
 **修正**：タイポを直す、カスタムパスを `theme.icons` に登録する、または `@kumikijs/icons` をインストールして組み込み名を有効化する。
 

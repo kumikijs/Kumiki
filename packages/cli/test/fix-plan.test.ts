@@ -169,6 +169,22 @@ ${APP_A}`;
     expect(readFileSync(file, "utf8")).toBe(source);
   });
 
+  it("leaves a block's text the builtin never reads as written, since it rewrites text= alone (E0129)", () => {
+    const source = `slot title : Text = "Hi"
+tile App = column(label("B") {text: "A"}, heading() {text: title})
+${APP_A}`;
+    const file = seed(source);
+    const store = load(file);
+    const { patches, skipped } = planFixesExplained(store, check(store.program));
+    expect(patches).toEqual([]);
+    expect(skipped.map((sk) => sk.reason)).toEqual([
+      "e0129-block-entry-not-rewritten",
+      "e0129-block-entry-not-rewritten",
+    ]);
+    expect(applyFixPlan(file, undefined).applied).toBe(0);
+    expect(readFileSync(file, "utf8")).toBe(source);
+  });
+
   it("tells the E0129 shapes apart by the diagnostic's field, not its message", () => {
     const store = storeOf(`slot title : Text = "Hi"
 tile App = column(heading(level=2, text=title), text("A", "B"), label(text="X", "Y"))
