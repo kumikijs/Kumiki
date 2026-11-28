@@ -184,6 +184,17 @@ export function makeEffectDispatcher(
     }
   };
 
+  // Releasing a request a policy deferred can commit the episode that claimed it, which hands it to
+  // the logger's hooks. What they throw goes to `onThrow`, not to the reducer whose emit released
+  // it, so the dispatch carries on: a `debounce` still schedules the emit that replaced the request.
+  const release = (token: string, name: string): void => {
+    try {
+      onPolicyCancel?.(token, name);
+    } catch (e) {
+      onThrow(name, e);
+    }
+  };
+
   return {
     dispatch(emit: EmitSpec): void {
       if (disposed) return;
@@ -211,7 +222,7 @@ export function makeEffectDispatcher(
             const i = q.pending.findIndex((e) => e.id === target);
             if (i === -1) continue;
             const [e] = q.pending.splice(i, 1);
-            if (e?.token) onPolicyCancel?.(e.token, name);
+            if (e?.token) release(e.token, name);
             released = true;
             break;
           }
@@ -221,7 +232,7 @@ export function makeEffectDispatcher(
             clearTimeout(t.h);
             state.timers.delete(name);
             released = true;
-            if (t.token) onPolicyCancel?.(t.token, name);
+            if (t.token) release(t.token, name);
             break;
           }
           settle(target);
@@ -250,7 +261,7 @@ export function makeEffectDispatcher(
         if (prev?.kind === "debounce") {
           clearTimeout(prev.h);
           absorb(prev.id, id);
-          if (prev.token) onPolicyCancel?.(prev.token, eff.name);
+          if (prev.token) release(prev.token, eff.name);
         }
         const token = claim(eff, input);
         if (token === undefined) {

@@ -144,15 +144,77 @@ function sendApp(
   return { app, seen };
 }
 
-/** Mount `app` under `logger`, torn down when the test finishes, and click `send` `clicks` times. */
-function sent(app: AppShape, logger: EpisodeLogger, clicks = 1): void {
+/** Mount `app` under `logger`, torn down when the test finishes. */
+function mounted(app: AppShape, logger: EpisodeLogger): void {
   const root = freshRoot();
   const handle = mount(app, root, { episodeLogger: logger });
   onTestFinished(() => {
     handle.dispose();
     root.remove();
   });
+}
+
+/** Mount `app` under `logger`, and click `send` `clicks` times. */
+function sent(app: AppShape, logger: EpisodeLogger, clicks = 1): void {
+  mounted(app, logger);
   for (let i = 0; i < clicks; i++) (app as MountedApp)._dispatch("send", {});
+}
+
+/** A reducer a click dispatches, which emits `emits`. */
+const onClick = (name: string, emits: EmitSpec[]): ReducerSpec => ({
+  name,
+  event: { kind: "ui", ev: "click" },
+  apply: () => ({ slots: {}, emits }),
+});
+
+/**
+ * `sendFirst` and `sendSecond` emit `load` under `policy`, with `r1` and `r2` as input and id, and
+ * `cancelFirst` and `cancelSecond` cancel them. What `.ok` and `app.error` hand over is noted as
+ * in `sendApp`.
+ */
+function releaseApp(policy: EffectSpec["policy"]): { app: AppShape; seen: Seen } {
+  const seen: Seen = { ok: [], appErrors: [] };
+  const load = (id: string): EmitSpec => ({ effect: "load", args: [id], id });
+  const app = bareApp({
+    caps: ["storage.read", "http.cancel"],
+    effects: {
+      load: {
+        name: "load",
+        cap: "storage.read",
+        ...(policy ? { policy } : {}),
+        invoke: async (input): Promise<EffectResult> => ({ kind: "ok", value: input }),
+      },
+      stop: {
+        name: "stop",
+        cap: "http.cancel",
+        invoke: async () => ({ kind: "ok", value: null }),
+      },
+    },
+    reducers: [
+      onClick("sendFirst", [load("r1")]),
+      onClick("sendSecond", [load("r2")]),
+      onClick("cancelFirst", [{ effect: "stop", args: ["r1"] }]),
+      onClick("cancelSecond", [{ effect: "stop", args: ["r2"] }]),
+      {
+        name: "loaded",
+        event: { kind: "effect", effect: "load", outcome: "ok" },
+        apply: (_live, payload) => {
+          seen.ok.push(payload.$1);
+          return { slots: {}, emits: [] };
+        },
+      },
+      {
+        name: "onError",
+        event: { kind: "lifecycle", name: "app.error" },
+        apply: (_live, payload) => {
+          seen.appErrors.push(payload.$event as Record<string, unknown>);
+          return { slots: {}, emits: [] };
+        },
+      },
+    ],
+    root: () => ({ kind: "text", text: "" }),
+  });
+  return { app, seen };
 }
 
 // Long enough for every request, deferred ones included, to have settled.
@@ -302,11 +364,6 @@ describe("a throw past an effect's launch, outside the reducers its result runs"
   it("under debounce, from the logger at effect-start, leaves nothing a cancel of the replaced request reaches", async () => {
     const ok: unknown[] = [];
     const load = (input: string, id: string) => ({ effect: "load", args: [input], id });
-    const onClick = (name: string, emits: EmitSpec[]): ReducerSpec => ({
-      name,
-      event: { kind: "ui", ev: "click" },
-      apply: () => ({ slots: {}, emits }),
-    });
     const app = bareApp({
       caps: ["storage.read", "http.cancel"],
       effects: {
@@ -409,6 +466,71 @@ describe("a throw from the built-in logger's hook, as a request's episode commit
       expect.objectContaining({ category: "capability", "episode-id": some(opened[2]) }),
     ]);
     expect(reports(errors)).toHaveLength(4);
+    expect(rejections).toEqual([]);
+  });
+});
+
+describe("a throw from the built-in logger's hook, as a dispatch releases a request a policy deferred", () => {
+  let errors: string[];
+  beforeEach(() => {
+    errors = captureConsole("error");
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const DEBOUNCE: EffectSpec["policy"] = { kind: "debounce", ms: 1 };
+  const QUEUE: EffectSpec["policy"] = { kind: "queue" };
+  const REPLACE = ["sendFirst", "sendSecond"];
+  const CANCEL_TIMER = ["sendFirst", "cancelFirst"];
+  const CANCEL_ENTRY = ["sendFirst", "sendSecond", "cancelSecond"];
+
+  // Each case: the hook, the site, the reducers dispatched in order, the inputs whose `.ok` runs,
+  // and the step whose episode the report names. The release commits the episode that claimed the
+  // request, so the report goes on the episode of the dispatch that released it. Under `onEpisode`
+  // the queued entry's episode is handed over only after the one before it, which waits on the
+  // entry ahead, so the hook throws as that entry's result scope closes, with no episode to name.
+  const RELEASES: [CommitHook, string, EffectSpec["policy"], string[], string[], number?][] = [
+    ["onCommit", "a debounce replaces a pending timer", DEBOUNCE, REPLACE, ["r2"], 1],
+    ["onEpisode", "a debounce replaces a pending timer", DEBOUNCE, REPLACE, ["r2"], 1],
+    ["onCommit", "an http.cancel clears a pending debounce timer", DEBOUNCE, CANCEL_TIMER, [], 1],
+    ["onEpisode", "an http.cancel clears a pending debounce timer", DEBOUNCE, CANCEL_TIMER, [], 1],
+    ["onCommit", "an http.cancel removes a queued entry", QUEUE, CANCEL_ENTRY, ["r1"], 2],
+    ["onEpisode", "an http.cancel removes a queued entry", QUEUE, CANCEL_ENTRY, ["r1"]],
+  ];
+
+  it.each(
+    RELEASES,
+  )("from %s, as %s, escapes no dispatch and is reported once", async (hook, _, policy, steps, ok, reportedOn) => {
+    const rejections = unhandledRejections();
+    const { app, seen } = releaseApp(policy);
+    const { logger, opened } = hookThrowingOnce(hook);
+    mounted(app, logger);
+    const escaped: unknown[] = [];
+    for (const step of steps) {
+      try {
+        (app as MountedApp)._dispatch(step, {});
+      } catch (e) {
+        escaped.push(e);
+      }
+    }
+    await settled();
+    const named = reportedOn === undefined ? undefined : opened[reportedOn];
+    expect(escaped).toEqual([]);
+    expect(seen.ok).toEqual(ok);
+    expect(seen.appErrors).toEqual([
+      expect.objectContaining({
+        message: SINK_DOWN,
+        location: 'effect "load"',
+        category: "effect",
+        "episode-id": named === undefined ? NONE : some(named),
+      }),
+    ]);
+    expect(reports(errors)).toEqual([
+      expect.stringContaining(`[kumiki] error in effect "load": ${SINK_DOWN}`),
+    ]);
+    const withPanic = logger.list().filter((ep) => ep.steps.some((s) => s.kind === "panic"));
+    expect(withPanic.map((ep) => ep.id)).toEqual(named === undefined ? [] : [named]);
     expect(rejections).toEqual([]);
   });
 });
