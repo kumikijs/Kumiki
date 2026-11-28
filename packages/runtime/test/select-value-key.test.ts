@@ -60,6 +60,7 @@ describe("a select's option key agrees with ==", () => {
     ["a number", 3, "3"],
     ["a nullary variant", tag("M"), "M"],
     ["a variant with a payload", some(tag("B")), "Some|B"],
+    ["a variant with two payloads", { _tag: "Pair", _0: 1, _1: 2 }, "Pair|1|2"],
     ["no value", undefined, "undefined"],
   ])("keys %s as before", (_, v, key) => {
     expect(valueKey(v)).toBe(key);
@@ -94,7 +95,7 @@ describe("a select holds a record option whatever order its fields are written i
 
 // A Set is held as an object keyed by its members and a Map as one keyed by its keys, so a Set
 // or a Map that holds the text "_tag" has a `_tag` field without being a variant.
-describe("a Set or a Map holding the text _tag is keyed as itself, not as a variant", () => {
+describe("a Set or a Map holding the text _tag is told apart as == tells it apart", () => {
   const set = (...members: string[]) => Object.fromEntries(members.map((m) => [m, true]));
 
   it.each<[string, unknown, unknown, boolean]>([
@@ -107,11 +108,24 @@ describe("a Set or a Map holding the text _tag is keyed as itself, not as a vari
       false,
     ],
     ["two Maps from _tag to a number", { _tag: 1, a: 2 }, { _tag: 1, a: 3 }, false],
-    ["a Map from _tag to a text that names no variant", { _tag: '{"a":"b"}' }, { a: "b" }, false],
+    ["a Map from _tag to a text that is no identifier", { _tag: '{"a":"b"}' }, { a: "b" }, false],
     [
       "two Maps from _tag and _1, with no _0",
       { _tag: "S", _1: "x" },
       { _tag: "S", _1: "y" },
+      false,
+    ],
+    ["a Set holding _tag in a payload", some(set("_tag")), some(set("_tag", "a")), false],
+    [
+      "two Maps from _tag and _0, to two texts",
+      { _tag: "S", _0: "x" },
+      { _tag: "S", _0: "y" },
+      false,
+    ],
+    [
+      "two Maps from _tag and _0, one with another entry",
+      { _tag: "S", _0: "x" },
+      { _tag: "S", _0: "x", a: "y" },
       false,
     ],
   ])("%s", (_, a, b, equal) => {
@@ -126,18 +140,25 @@ describe("a Set or a Map holding the text _tag is keyed as itself, not as a vari
     expect(valueKey(set(...members))).toBe(key);
   });
 
-  it("holds the slot's Set among options that each hold _tag", () => {
+  const sets = [set("_tag"), set("_tag", "a")];
+  const maps = [{ _tag: "S" }, { _tag: "S", a: "x" }];
+
+  // Each pair is held at either option: where two options share a key, the mounted select marks
+  // the later one, so only the first option tells a shared key apart from a key of its own.
+  it.each<[string, unknown[], number, boolean[]]>([
+    ["the first of two Sets", sets, 0, [true, false]],
+    ["the second of two Sets", sets, 1, [false, true]],
+    ["the first of two Maps", maps, 0, [true, false]],
+    ["the second of two Maps", maps, 1, [false, true]],
+  ])("holds %s among options that each hold _tag", (_, values, held, selected) => {
     const node: TileNode = {
       kind: "select",
-      value: set("_tag", "a"),
-      options: [
-        { label: "one", value: set("_tag") },
-        { label: "two", value: set("_tag", "a") },
-      ],
+      value: values[held],
+      options: values.map((value, i) => ({ label: `option ${i}`, value })),
     };
     const sel = clientElement(node) as HTMLSelectElement;
-    expect(Array.from(sel.options, (o) => o.selected)).toEqual([false, true]);
+    expect(Array.from(sel.options, (o) => o.selected)).toEqual(selected);
     const served = serverElement(node) as HTMLSelectElement;
-    expect(Array.from(served.options, (o) => o.hasAttribute("selected"))).toEqual([false, true]);
+    expect(Array.from(served.options, (o) => o.hasAttribute("selected"))).toEqual(selected);
   });
 });

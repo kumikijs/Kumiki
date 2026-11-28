@@ -84,12 +84,14 @@ export function tileId(node: { id?: unknown; props?: unknown }): string | undefi
   return raw == null ? undefined : String(raw);
 }
 
-// A variant's name is an identifier, which a Map's text value under "_tag" need not be.
+// A variant's name is an identifier, so its key never reads as JSON text; a Map's text under
+// "_tag" can be any text.
 const VARIANT_NAME = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 
 /**
- * A variant: a `_tag` naming one, and no field beside its payload `_0`, `_1`, …. A Set holding
- * the text "_tag", or a Map with it as a key, has a `_tag` field too, and is not one.
+ * A value shaped as a variant: a `_tag` that is an identifier, and no field beside its payload
+ * `_0`, `_1`, …. A Set or a Map of that shape is keyed the same way, which still tells apart
+ * two of one type.
  */
 function isVariant(v: unknown): v is { _tag: string } & Record<string, unknown> {
   if (v === null || typeof v !== "object") return false;

@@ -4,7 +4,9 @@
 # A Set is held as an object keyed by its members, and a Map as one keyed by
 # its keys, so a Set holding "_tag", or a Map with it as a key, has the field a
 # variant is marked with. A select keys a value as a variant only when its
-# `_tag` names a variant and it has no field beside its payload, so each option
+# `_tag` is an identifier and it has no field beside its payload. The Sets are
+# keyed by their JSON text. The "bare" Map is keyed as a variant, `S`, and
+# "with a" by its JSON text, since it has a field beside `_tag`. So each option
 # here keeps a key of its own: choosing "two" writes the Set of two members, and
 # choosing "with a" writes the Map of two entries.
 
