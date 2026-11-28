@@ -122,6 +122,21 @@ effect load cap=storage.read
     ]);
   });
 
+  it("names the types a tuple in a Decoder.Json argument holds, and its values", () => {
+    const src = `type Item = {label: Text}
+slot limit : Int = 1
+effect load cap=storage.read
+    in=Unit
+    out=Result(Option(Text), Text)
+    policy=once
+    map-request={key: "items", decode: Decoder.Json(List((Item, Int, limit)))}
+`;
+    expect(refsOf(src, "effect.load").filter((r) => r.includes("@7:"))).toEqual([
+      "type.Item@7:59",
+      "slot.limit@7:70",
+    ]);
+  });
+
   it("walks an argument after a Decoder.Json's first as a value", () => {
     const src = `type Item = {label: Text}
 slot limit : Int = 1

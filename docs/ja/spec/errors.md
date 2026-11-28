@@ -468,11 +468,20 @@ builtin tile の名前も候補に含まれない。tile は関数ではなく�
 
 `Decoder` / `EffectId` / `Duration` / `Bytes` はその例外であり、括弧の有無にかかわらず、またその名前が型でもあるかどうかにかかわらず適用される：これらのメンバは [E0116](#e0116-undef-call-undef-variant-undef-qualifier) が挙げる組み込み呼び出しちょうどであり、`fresh`（および引数なしで書かれた `parse` / `show`）はその中では解決されず、これではなくその E0116 になる。引数を与えられた `parse` / `show` は、他の qualifier と同様にこれらの上でも [標準ライブラリ §2.4.3](./stdlib.md#_2-4-3-型変換) の型メンバである: `Duration.parse(t)` は `Option(Duration)`、`Duration.show(d)` は `Text` である。例外がある理由は、`fresh` が書かれた qualifier を無視し、引数なしで書かれた `parse` / `show` がこれらの名前空間のメンバではないからである——`EffectId.fresh()` も `Duration.fresh()` も新しい id の生成へ lowering され、片方は著者が空のセンチネルを書いた場所に、もう片方は `Duration` slot にそのまま入っていて、どちらも報告されていなかった。`Duration` は標準ライブラリ型、`Bytes` はプリミティブなので、実在する型名が `fresh`、および引数なしの `parse` / `show` について答えない唯一の場所がここである。
 
-**`Decoder.Json(T)` の引数**も型である。値の位置に書かれ、値として parse されるが（[HTTP §6.1.4](./http.md#_6-1-4-decoder-型)）、lowering はそれによって decode する。そのため、その中の各名前——型そのもの、適用の先頭とその引数、その場に書かれたレコードの各フィールドの型——は、呼び出しがどこに書かれていても（`map-request`、リクエストを組み立てる `fn`、`let`）宣言の中と同じく解決される。そこでの綴り間違いは上で述べた不透明型であり、build がそれに対して lowering した decoder はその位置で何も検査していなかった：`Decoder.Json(Map(TodoIdd, Todo))` は `check` を通り、キーの uuid 検査を落としていたので、キーが uuid でない保存済みの map が `.ok` で返っていた。引数は宣言された型とまったく同じく、型引数の個数も適用も含めて解決されるので、`Decoder.Json(List(Item, Int))` は [E0210](#e0210-type-arity-mismatch) になる。全体では型を綴っていない引数——テキストリテラルや slot のような値、あるいは内側のどこかに値を持つ適用やレコード——は型を名指さず、`"json"` センチネルへ落ちる。それでもその内側で型を綴っている引数やフィールドはそれぞれ型として解決されるので、`Decoder.Json({note: Notte, n: 1})` は `Notte` での E0117 になる。その中の値は値として検査され、値を持つ適用の先頭は解決されない。2 つ目以降の引数も解決されず、それは [E0213](#e0213-call-arity-mismatch) になる。
+**`Decoder.Json(T)` の引数**も型である。値の位置に書かれ、値として parse されるが（[HTTP §6.1.4](./http.md#_6-1-4-decoder-型)）、lowering はそれによって decode する。そのため、その中の各名前——型そのもの、適用の先頭とその引数、その場に書かれたレコードの各フィールドの型——は、呼び出しがどこに書かれていても（`map-request`、リクエストを組み立てる `fn`、`let`）宣言の中と同じく解決される。そこでの綴り間違いは上で述べた不透明型であり、build がそれに対して lowering した decoder はその位置で何も検査していなかった：`Decoder.Json(Map(TodoIdd, Todo))` は `check` を通り、キーの uuid 検査を落としていたので、キーが uuid でない保存済みの map が `.ok` で返っていた。引数は宣言された型とまったく同じく、型引数の個数も適用も含めて解決されるので、`Decoder.Json(List(Item, Int))` は [E0210](#e0210-type-arity-mismatch) になる。全体では型を綴っていない引数——テキストリテラルや slot のような値、あるいは内側のどこかに値を持つ適用やレコード——は型を名指さず、`"json"` センチネルへ落ちる。それでもその内側で型を綴っている引数やフィールドはそれぞれ型として解決されるので、`Decoder.Json({note: Notte, n: 1})` は `Notte` での E0117 になる。その中の値は値として検査され、値を持つ適用の先頭は解決されない。タプルもそうした値であり、その要素も同じように解決される：タプル型は `Tuple(A, B)` と書くので、`(Note, Int)` はその型を持つタプルの値であり、要素がすべて型なら [E0241](#e0241-tuple-as-type) になる。2 つ目以降の引数も解決されず、それは [E0213](#e0213-call-arity-mismatch) になる。
 
 **修正**：綴りを直すか、型を定義するか、外側の定義のパラメータ列に名前を加える。`kumiki fix` が最も近い型名を提案する。
 
-### E0118 `undef-theme`
+### E0241 `tuple-as-type`
+
+`Decoder.Json(T)` の引数が、要素がすべて型であるタプルになっている（`Decoder.Json((Note, Int))` など）。`T` は型であり（[E0117](#e0117-undef-type)）、タプル型は `Tuple(T1, ..., Tn)` と書く（[言語 §1.3.2](./language.md#_1-3-2-ビルトイン汎化型)）：`(a, b)` はタプルの*値*の書き方であり、そう綴る宣言された型はない（`slot p : (Int, Text)` は `(` での parse エラーになる）。そのため引数は型を名指さず、decoder は要素が示すことを何も検査しないことになる。
+
+> ``The tuple `(<type>, <type>)` is a value, and Decoder.Json decodes by a type: write the tuple type as `Tuple(<type>, <type>)` ``
+
+引数の中のどこにタプルがあっても、そのタプルの `(` で報告される：`Decoder.Json(List((Note, Int)))` も `Decoder.Json({pair: (Note, Int)})` も内側のタプルでの E0241 になる。各要素はそれでも型として解決されるので、綴りを間違えた要素はその名前での E0117 としてこれの後に報告され、以前の `check` が報告していた未定義バリアントの [E0116](#e0116-undef-call-undef-variant-undef-qualifier) になることはない。要素に値を含むタプル（`(Note, 1)` など）は他の値と同じく型を名指さず、報告されないが、型を綴る要素は解決される。2 つ目以降の引数にあるタプルは [E0213](#e0213-call-arity-mismatch) に任せる。
+
+**修正**：メッセージが示す型を書く：`Decoder.Json(Tuple(Note, Int))`。この decoder は各要素をその添字の位置でそれぞれの型に照らして検査する。
+
 
 `app.theme = <name>` の `<name>` が、`theme` 定義でも slot でもない。どちらも正しい書き方であり、theme 名ならその theme を選び、slot ならその値が名指す theme を選ぶ — つまり実行中に theme を切り替えられる（[スタイル §4.6](./style.md#_4-6-dark-mode)）。
 

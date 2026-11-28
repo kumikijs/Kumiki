@@ -84,7 +84,7 @@ Decoder.Bytes        # バイト列のまま
 Decoder.None         # レスポンス本文を捨てる
 ```
 
-`T` は値の位置に書かれるが型である：その中の各名前は宣言の中と同じく解決され、何も指さない名前は [E0117](./errors.md#e0117-undef-type) になる。
+`T` は値の位置に書かれるが型である：その中の各名前は宣言の中と同じく解決され、何も指さない名前は [E0117](./errors.md#e0117-undef-type) になる。宣言される型と同じ綴りで書くので、要素の組は `Decoder.Json(Tuple(Note, Int))` と書く。`(Note, Int)` はタプルの値であり、[E0241](./errors.md#e0241-tuple-as-type) になる。
 
 JSON の本文はデータを持つので、`T` の中のどこにある不透明なハンドル（`Decoder` か `EffectId`）も、書かれた位置で [E0204](./errors.md#e0204-effect-id-misuse) になる：`Decoder.Json(List(Decoder))` はその `Decoder` の位置で、`Decoder.Json(EffectId)` はその `EffectId` の位置で、ハンドルを持つエイリアスやジェネリック（`Box(Decoder)` など）はその名前の位置で報告される。
 

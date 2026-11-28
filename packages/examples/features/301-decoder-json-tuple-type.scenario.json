@@ -1,0 +1,21 @@
+{
+  "effects": {
+    "seedPinned": [{ "outcome": "ok", "value": null }],
+    "loadPinned": [{ "outcome": "err", "value": "decode failed: uuid at [0].id" }]
+  },
+  "steps": [
+    {
+      "label": "the stored pair the Tuple type refuses reaches .err, so nothing is pinned",
+      "expect": {
+        "noErrors": true,
+        "state": { "status": "refused", "pinned": { "_tag": "None" } },
+        "domIncludes": ["status: refused", "nothing pinned"]
+      }
+    },
+    {
+      "label": "a pair written as the Tuple type is pinned",
+      "do": { "click": "#pin" },
+      "expect": { "noErrors": true, "domIncludes": ["a note is pinned"] }
+    }
+  ]
+}

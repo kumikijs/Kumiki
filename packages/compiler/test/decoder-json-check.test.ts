@@ -61,6 +61,7 @@ describe("Decoder.Json(T) carries T's check to the handler", () => {
 
   it("an argument with a value inside it spells no T, so it keeps the json sentinel", async () => {
     expect(await decodeOf("Decoder.Json({note: Note, n: 1})")).toBe("json");
+    expect(await decodeOf("Decoder.Json((Note, 1))")).toBe("json");
   });
 
   it("a container of a refined record answers the first predicate refused, and where", async () => {
@@ -83,6 +84,16 @@ describe("Decoder.Json(T) carries T's check to the handler", () => {
     const check = (await decodeOf("Decoder.Json(NoteId)")) as Check;
     expect(check(UUID)).toBeUndefined();
     expect(check("k3j9x")).toEqual({ kind: "uuid", args: [], path: [] });
+  });
+
+  it("holds each member of a Tuple type to its own type, at its index", async () => {
+    const check = (await decodeOf("Decoder.Json(Tuple(Note, Int))")) as Check;
+    expect(check([{ id: UUID, text: "a" }, 1])).toBeUndefined();
+    expect(check([{ id: "legacy-1", text: "a" }, 1])).toEqual({
+      kind: "uuid",
+      args: [],
+      path: [0, "id"],
+    });
   });
 
   it("reads a record type written in place", async () => {
@@ -220,6 +231,7 @@ describe("Decoder.Json(T) resolves T as a type", () => {
     "Decoder.Json(Notes)",
     "Decoder.Json(Result(Note, Text))",
     "Decoder.Json(HttpError)",
+    "Decoder.Json(Tuple(Note, Int))",
   ])("reports nothing for %s", (decoder) => {
     expect(locatedOf(program(decoder))).toEqual([]);
   });
@@ -259,6 +271,64 @@ describe("Decoder.Json(T) resolves T as a type", () => {
   it("refuses the build rather than lowering the decoder without the name's check", () => {
     expect(builtSummariesOf(program("Decoder.Json(Map(NoteIdd, Note))"))).toEqual([
       'E0117 Reference to undefined type "NoteIdd"',
+    ]);
+  });
+});
+
+describe("Decoder.Json(T) and a tuple, which is a value", () => {
+  /** The one E0241 for the tuple written `tuple` in `src`, which names the type `type`. */
+  const tupleAt = (src: string, tuple: string, type: string) => ({
+    code: "E0241",
+    message: `The tuple \`${tuple}\` is a value, and Decoder.Json decodes by a type: write the tuple type as \`${type}\``,
+    ...posOf(src, tuple),
+  });
+
+  it.each([
+    { decoder: "Decoder.Json((Note, Int))", tuple: "(Note, Int)", type: "Tuple(Note, Int)" },
+    {
+      decoder: "Decoder.Json((NoteId, Note, Text))",
+      tuple: "(NoteId, Note, Text)",
+      type: "Tuple(NoteId, Note, Text)",
+    },
+    {
+      decoder: "Decoder.Json((Map(NoteId, Note), {n: Int}))",
+      tuple: "(Map(NoteId, Note), {n: Int})",
+      type: "Tuple(Map(NoteId, Note), {n: Int})",
+    },
+    { decoder: "Decoder.Json(List((Note, Int)))", tuple: "(Note, Int)", type: "Tuple(Note, Int)" },
+    {
+      decoder: "Decoder.Json({pair: (Note, Int), n: Int})",
+      tuple: "(Note, Int)",
+      type: "Tuple(Note, Int)",
+    },
+  ])("reports $tuple in $decoder as a tuple type to write", ({ decoder, tuple, type }) => {
+    const src = program(decoder);
+    expect(locatedOf(src)).toEqual([tupleAt(src, tuple, type)]);
+  });
+
+  it("resolves each item as a type, reported after the tuple", () => {
+    const src = program("Decoder.Json((Notte, Int))");
+    expect(locatedOf(src)).toEqual([
+      tupleAt(src, "(Notte, Int)", "Tuple(Notte, Int)"),
+      { code: "E0117", message: 'Reference to undefined type "Notte"', ...posOf(src, "Notte") },
+    ]);
+  });
+
+  it("names no type with a value among its items, whose types are still resolved", () => {
+    expect(locatedOf(program("Decoder.Json((Note, 1))"))).toEqual([]);
+    const src = program("Decoder.Json((Notte, 1))");
+    expect(locatedOf(src)).toEqual([
+      { code: "E0117", message: 'Reference to undefined type "Notte"', ...posOf(src, "Notte") },
+    ]);
+  });
+
+  it("leaves a tuple in an argument after the first to the count", () => {
+    expect(codesOf(program("Decoder.Json(Note, (Note, Int))"))).toEqual(["E0213"]);
+  });
+
+  it("refuses the build rather than lowering the decoder with no check", () => {
+    expect(builtSummariesOf(program("Decoder.Json((Note, Int))"))).toEqual([
+      "E0241 The tuple `(Note, Int)` is a value, and Decoder.Json decodes by a type: write the tuple type as `Tuple(Note, Int)`",
     ]);
   });
 });

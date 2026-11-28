@@ -77,6 +77,7 @@ AI-editing CRDT ops (add / replace / remove / rename, [§9.3.1](./ai-edit.md#_9-
 | [E0115](./errors.md#e0115-reserved-slot-name) | `reserved-slot-name` | slot | core |
 | [E0116](./errors.md#e0116-undef-call-undef-variant-undef-qualifier) | `undef-call` / `undef-variant` / `undef-qualifier` | fn | core |
 | [E0117](./errors.md#e0117-undef-type) | `undef-type` | type | core |
+| [E0241](./errors.md#e0241-tuple-as-type) | `tuple-as-type` | effect | http |
 | [E0118](./errors.md#e0118-undef-theme) | `undef-theme` | app | style |
 | [E0119](./errors.md#e0119-route-bind-out-of-scope) | `route-bind-out-of-scope` | reducer | routing |
 | [E0120](./errors.md#e0120-route-in-app-init) | `route-in-app-init` | app | routing |

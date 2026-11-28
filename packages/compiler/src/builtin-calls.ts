@@ -148,22 +148,35 @@ export function decodedType(e: Expr | undefined): TypeExpr | undefined {
   return undefined;
 }
 
+type TupleLit = Extract<Expr, { kind: "TupleLit" }>;
+
 /**
  * Walks a `Decoder.Json(T)` argument in the order it is written, handing `type` each largest part
  * that spells a type and `value` each part that spells none. An argument that spells a type
  * throughout is one such part; in `{note: Note, n: 1}`, `Note` is a type and `1` a value.
+ *
+ * A tuple is a value, since a tuple type is written `Tuple(A, B)`, so its items are parts. `tuple`
+ * is handed each tuple whose items all spell types, ahead of them: one written where `Tuple` was
+ * meant.
  */
 export function visitDecodedParts(
   e: Expr | undefined,
   type: (t: TypeExpr) => void,
   value: (v: Expr) => void,
+  tuple?: (e: TupleLit, items: TypeExpr[]) => void,
 ): void {
   if (!e) return;
   const t = decodedType(e);
+  const parts = (es: readonly Expr[]) => {
+    for (const p of es) visitDecodedParts(p, type, value, tuple);
+  };
   if (t) type(t);
-  else if (e.kind === "Variant") for (const p of e.payload) visitDecodedParts(p, type, value);
-  else if (e.kind === "RecordLit") {
-    for (const f of e.fields) visitDecodedParts(f.value, type, value);
+  else if (e.kind === "Variant") parts(e.payload);
+  else if (e.kind === "RecordLit") parts(e.fields.map((f) => f.value));
+  else if (e.kind === "TupleLit") {
+    const items = e.items.map(decodedType);
+    if (tuple && items.every((i): i is TypeExpr => i !== undefined)) tuple(e, items);
+    parts(e.items);
   } else value(e);
 }
 

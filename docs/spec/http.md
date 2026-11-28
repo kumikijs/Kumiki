@@ -84,7 +84,7 @@ Decoder.Bytes        # keep it as a byte sequence
 Decoder.None         # discard the response body
 ```
 
-`T` is a type, though it is written where a value goes: each name in it resolves as it would in a declaration, and one that resolves to nothing is [E0117](./errors.md#e0117-undef-type).
+`T` is a type, though it is written where a value goes: each name in it resolves as it would in a declaration, and one that resolves to nothing is [E0117](./errors.md#e0117-undef-type). It is spelt as a declared type is, so a tuple of members is `Decoder.Json(Tuple(Note, Int))`; `(Note, Int)` is a tuple value, which is [E0241](./errors.md#e0241-tuple-as-type).
 
 A JSON body holds data, so an opaque handle, a `Decoder` or an `EffectId`, anywhere in `T` is [E0204](./errors.md#e0204-effect-id-misuse), where it is written: `Decoder.Json(List(Decoder))` at its `Decoder`, `Decoder.Json(EffectId)` at the `EffectId`, and an alias or a generic that holds one, as `Box(Decoder)`, at its name.
 

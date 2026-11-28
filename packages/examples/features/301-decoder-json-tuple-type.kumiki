@@ -1,0 +1,52 @@
+# Feature: the tuple type a `Decoder.Json(T)` decodes to is written `Tuple(A, B)`.
+#
+# `(a, b)` is how a tuple value is written, and no type is spelt that way, so
+# `Decoder.Json((Note, Int))` names no type. `check` reports it as E0241 at the
+# `(`, with the type to write instead: `Tuple(Note, Int)`. Its items are still
+# read as types, so a misspelt one is E0117, not an undefined variant.
+#
+# Written as below, the decoder holds each member to its type. `boot` stores a
+# pair whose note has an id that is no uuid, so the read is `.err` and the app
+# starts with nothing pinned; `smoke` reads it back through the real storage
+# handler, and the scenario scripts the two answers that gives.
+
+type NoteId = nominal Text where uuid
+type Note   = {id: NoteId, text: Text where nonempty}
+type Pinned = Tuple(Note, Int)
+
+slot pinned : Option(Pinned) = None
+slot status : Text           = "loading"
+
+effect seedPinned cap=storage.write
+                  in=Tuple({id: Text, text: Text}, Int)
+                  out=Result(Unit, Text)
+                  map-request={key: "pinned", value: $1}
+
+effect loadPinned cap=storage.read
+                  in=Unit
+                  out=Result(Option(Pinned), Text)
+                  policy=once
+                  map-request={key: "pinned", decode: Decoder.Json(Tuple(Note, Int))}
+
+reducer boot    on=app.start             do= emit seedPinned(({id: "legacy-1", text: "old"}, 3))
+reducer seeded  on=seedPinned.ok(_, _)   do= emit loadPinned()
+reducer loaded  on=loadPinned.ok($p, _)  do= pinned := $p
+                                            status := "restored"
+reducer refused on=loadPinned.err(_, _)  do= status := "refused"
+
+reducer pin
+    on=ui.click(PinBtn)
+    do= pinned := Some(({id: NoteId.fresh(), text: "new note"}, 1))
+
+tile PinBtn = button(text="Pin a note") {id: "pin"}
+
+tile App = column(
+    text("status: " + status),
+    text(match pinned with | Some(_) -> "a note is pinned" | None -> "nothing pinned"),
+    PinBtn
+) {pad: "lg", gap: "md"}
+
+app DecoderJsonTupleType
+    caps   = [storage.read, storage.write]
+    routes = {"/" -> App, "/404" -> App}
+    init   = []

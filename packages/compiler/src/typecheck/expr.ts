@@ -625,9 +625,26 @@ function checkDecodedArgs(
 ): void {
   const [first, ...rest] = args;
   const value = (v: Expr): void => checkExpr(v, sym, errors, ctx);
-  visitDecodedParts(first, (t) => resolveType(t, sym, errors), value);
+  visitDecodedParts(
+    first,
+    (t) => resolveType(t, sym, errors),
+    value,
+    (tuple, items) => errors.push(tupleAsType(tuple.pos, items)),
+  );
   for (const a of rest) visitDecodedParts(a, leftToTheCount, value);
   visitDecodedParts(first, (t) => errors.push(...undecodableErrors(t, sym)), checkedAbove);
+}
+
+// `(a, b)` only ever spells a value, so a tuple of types names no type for the decoder to check by.
+function tupleAsType(pos: Pos, items: TypeExpr[]): KumikiError {
+  const written = `(${items.map(typeToString).join(", ")})`;
+  const type = typeToString({ kind: "TypeApp", name: "Tuple", args: items, pos });
+  return {
+    code: "E0241",
+    kind: "tuple-as-type",
+    message: `The tuple \`${written}\` is a value, and Decoder.Json decodes by a type: write the tuple type as \`${type}\``,
+    pos,
+  };
 }
 
 const leftToTheCount = (): void => undefined;
